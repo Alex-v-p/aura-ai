@@ -2440,6 +2440,18 @@ aura-ai/
     └── verify-instrumentation.sh
 ```
 
+The technology baseline adds these files to the target documentation tree after
+the reserved ADR-0011 record:
+
+```text
+docs/architecture/technology-stack.md
+docs/adr/0012-python-angular-tailwind-toolchain.md
+docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+docs/adr/0014-aura-owned-execution-langgraph-backend.md
+docs/adr/0015-authentik-bff-secrets-extensions.md
+docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+```
+
 ## 19. Expected internal module shape
 
 The full target tree does not require every domain to begin with maximum layering. A mature domain module may use:
@@ -2480,56 +2492,53 @@ The important rule is the public boundary, not ceremonial folder depth.
 
 ## 20. Current technology baseline
 
-The architecture currently assumes:
+The authoritative major-line choices are recorded in the [technology stack matrix](technology-stack.md) and accepted [ADRs](../adr/README.md). This section remains a compact baseline for routing; it does not duplicate every feature mapping.
 
 | Area | Baseline |
 |---|---|
-| Core backend | Python |
-| HTTP API | FastAPI |
-| Python workspace and locking | uv |
-| Transactional database | PostgreSQL |
-| Vector indexing | pgvector behind a replaceable port |
-| Database migrations | Alembic |
-| Frontend | Angular |
-| Frontend workspace | Nx and pnpm |
-| Local model provider | Ollama |
-| Home automation | Home Assistant |
-| Telemetry protocol | OpenTelemetry-compatible OTLP |
-| High-cardinality analytics | ClickHouse |
-| Infrastructure metrics | Prometheus |
-| Logs | Loki |
-| Low-level dashboards | Grafana |
-| Artifact storage | Local or S3-compatible object storage |
-| Search provider | SearXNG adapter |
-| Voice examples | Whisper-compatible STT and Piper-compatible TTS |
-| Deployment | Docker Compose, with Ansible and Proxmox support |
+| Languages and workspace | Python 3.14, strict TypeScript, uv; Node 24 LTS, Angular 22, Nx 23, pnpm 12 |
+| Core Python platform | FastAPI, Pydantic 2, pydantic-settings, SQLAlchemy 2 async, psycopg 3, Alembic, HTTPX, Typer, structlog |
+| Quality toolchain | Ruff, Pyright, pytest, pytest-asyncio, Hypothesis; Vitest 5, Playwright, Storybook, axe |
+| Frontend UI | Tailwind 4, Angular CDK, Signals/RxJS, optional NgRx Signal Store |
+| Transactional data | Separate Core and Observatory PostgreSQL databases; pgvector initially behind a port |
+| Async, cache, and locks | Transactional outbox to NATS JetStream; Valkey for ephemeral state; PostgreSQL locks and scheduler/workflow truth |
+| Agent execution | Aura-owned runtime with lightweight executor and optional LangGraph backend behind an Aura interface |
+| Models and evaluation | Ollama local default; explicit cloud adapters; deterministic checks, versioned local judges, human calibration |
+| Objects and research | Garage S3-compatible production storage; development filesystem; Python parsers with isolated Tika; SearXNG/HTTPX/Trafilatura/isolated Playwright |
+| Identity and secrets | Authentik OIDC, separate client/audience boundaries, same-origin BFF cookies, SOPS/age runtime injection |
+| API and voice | OpenAPI 3.1/JSON Schema 2020-12, generated clients, SSE, HTTP commands; Python voice satellites with Protobuf/gRPC and browser WebRTC |
+| Local model and home authority | Ollama and Home Assistant behind replaceable provider ports |
+| Observatory | OpenTelemetry SDK/Collector, ClickHouse, Prometheus, Loki, Grafana, Polars, PyArrow, NumPy/SciPy, ECharts |
+| Deployment and CI direction | Docker Compose profiles, BuildKit, Ansible, Proxmox, Nginx Proxy Manager, GitHub Actions, Renovate, Trivy, audits, validators, SBOM |
 
-Provider-specific choices are adapters unless explicitly described as service-owned storage or protocol.
+Provider-specific choices remain adapters unless explicitly described as service-owned storage or protocol. Exact dependency versions belong in future lockfiles.
+
+### 20.1 Accepted technology ADRs
+
+The reserved ADR range `0001`–`0011` remains reserved by the handover. The accepted records added after that range are:
+
+- [ADR-0012 — Python, Angular, Tailwind, workspace, and test toolchain](../adr/0012-python-angular-tailwind-toolchain.md).
+- [ADR-0013 — PostgreSQL, NATS JetStream, Valkey, Garage, scheduling, and consistency](../adr/0013-postgresql-nats-valkey-garage-consistency.md).
+- [ADR-0014 — Aura-owned execution with an optional LangGraph backend](../adr/0014-aura-owned-execution-langgraph-backend.md).
+- [ADR-0015 — Authentik BFF sessions, SOPS/age, and isolated extensions](../adr/0015-authentik-bff-secrets-extensions.md).
+- [ADR-0016 — API/realtime, generated clients, PWA, and voice protocols](../adr/0016-api-realtime-pwa-and-voice-protocols.md).
 
 ## 21. Intentionally unresolved decisions
 
 The following remain design decisions rather than hidden assumptions:
 
-- Exact authentication and household identity model.
-- Queue and job transport.
-- Cache and distributed-lock implementation.
-- Exact object-storage deployment.
-- Whether a dedicated vector database is ever required in addition to PostgreSQL.
-- Exact model routing policy and model inventory.
-- Exact calendar provider and authentication flow.
-- Exact wake-word, speech-to-text, and text-to-speech providers.
-- Voice streaming protocol details beyond the contract boundary.
-- Whether any cloud fallback is allowed and under which policy.
-- Memory retention and encryption policy.
-- File-source inclusion, exclusion, and confirmation rules.
+- Household role and membership semantics, including how identity claims become Aura household permissions.
+- Retention and encryption periods for memory, files, credentials, recordings, telemetry, and evaluation artifacts.
+- File-source inclusion, exclusion, authorization, and confirmation rules.
 - Home Assistant allowlists and high-impact action classification.
-- Detailed telemetry retention periods.
-- Evaluation judge models and calibration rules.
-- Alert delivery providers.
-- Exact Observatory authentication isolation.
-- Whether wall clients are browser kiosks only or require native wrappers.
-- Extension discovery and sandboxing mechanism.
-- Licensing and public/private repository policy.
+- Detailed telemetry and captured-content retention periods.
+- Exact model routing policy and model inventory, including hardware placement and fallback policy.
+- Thresholds and benchmark method for escalating from pgvector to dedicated vector infrastructure.
+- Evaluation judge models, local/cloud policy, and human calibration rules.
+- Repository licensing and public/private policy; licensing review for Piper-compatible providers and other third-party components.
+- External-provider credential retention, rotation, and revocation periods.
+- Exact provider discovery and extension sandbox policy within the isolated process/container boundary.
+- Alert delivery provider selection beyond the initial Web Push and Home Assistant channels.
 
 Codex must not silently choose these decisions while performing unrelated work.
 

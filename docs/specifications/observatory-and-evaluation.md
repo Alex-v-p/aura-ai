@@ -24,6 +24,12 @@ The envisioned evaluation system manages versioned datasets, suites, determinist
 
 Observatory PostgreSQL owns transactional metadata; ClickHouse stores high-cardinality observations; Prometheus stores infrastructure metrics; Loki stores logs; object storage holds approved large artifacts. Grafana remains a supplementary low-level diagnostic interface.
 
+## Authoritative implementation direction
+
+Observatory uses separate Python and Angular products and databases. OpenTelemetry SDKs and Collector provide the telemetry boundary; ClickHouse, Prometheus, Loki, and Grafana remain separate stores and views. Polars, PyArrow, NumPy/SciPy, and ECharts support analysis. ClickHouse and PostgreSQL migrations are service-owned and versioned. Core controls redaction and capture before telemetry leaves its boundary, and Observatory never reads Core tables.
+
+Evaluation prefers deterministic checks, versioned local Ollama judges, and human calibration. Cloud judges require explicit policy. Exact judge inventory, calibration rules, telemetry retention, and captured-content retention remain open. See [technology stack](../architecture/technology-stack.md), [ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md), and [open decisions](./open-decisions.md).
+
 ## Related working summaries
 
 [System context](../architecture/system-context.md) · [Module boundaries](../architecture/module-boundaries.md) · [Product overview](./product-overview.md) · [Open decisions](./open-decisions.md)

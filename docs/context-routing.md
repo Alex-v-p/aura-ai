@@ -6,7 +6,7 @@
 
 1. Do not read every file under `/docs` for every task.
 2. Do not load both canonical deep references for every task.
-3. Start with `docs/README.md`, the current request or work item, the relevant focused architecture summary, the relevant focused product summary, and applicable ADRs or module documentation when they exist.
+3. Start with `docs/README.md`, the current request or work item, the relevant focused architecture summary, the relevant focused product summary, the [authoritative technology matrix](architecture/technology-stack.md) when implementation choices are involved, and only applicable ADRs or module documentation.
 4. Consult the full architecture handover only when changing service boundaries, domain or module ownership, a top-level repository area, cross-service communication, or the separation between Aura Core and Aura Observatory; interpreting an unresolved architectural issue; reviewing an architecture-wide change; or verifying a focused summary against its source.
 5. Consult the full feature catalogue only when locating or interpreting a feature ID, checking whether a capability is already envisioned, reviewing broad product scope, or updating product-vision documentation.
 6. Search a canonical file for the relevant heading, term, or feature ID before reading large unrelated sections.
@@ -31,6 +31,10 @@ The canonical handover and feature catalogue are deep references. Their presence
 | Evaluation change | [Observatory and evaluation](specifications/observatory-and-evaluation.md) | Catalogue [`EVA`](specifications/aura-ai-envisioned-feature-catalogue.md#20-evaluation-experiments-and-regression-analysis) and [`CMP`](specifications/aura-ai-envisioned-feature-catalogue.md#21-component-specific-evaluation-coverage) sections |
 | Infrastructure change | [Architecture overview](architecture/overview.md), [repository structure](architecture/repository-structure.md) | Catalogue [`OPS`](specifications/aura-ai-envisioned-feature-catalogue.md#23-deployment-infrastructure-and-operations) section |
 | Architecture-wide change | [Architecture overview](architecture/overview.md), [module boundaries](architecture/module-boundaries.md), [open decisions](specifications/open-decisions.md), applicable ADRs | [Architecture handover](architecture/aura-ai-architecture-handover.md) |
+| Technology, dependency, or provider selection | [Technology matrix](architecture/technology-stack.md), [ADR index](adr/README.md), relevant focused summary | [Architecture handover](architecture/aura-ai-architecture-handover.md), applicable ADR |
+| Deployment or CI tooling | [Technology matrix](architecture/technology-stack.md), [ADR-0013](adr/0013-postgresql-nats-valkey-garage-consistency.md), [ADR-0015](adr/0015-authentik-bff-secrets-extensions.md) | [Architecture handover](architecture/aura-ai-architecture-handover.md), deployment catalogue section |
+| API, frontend, or voice client | [Clients and voice](specifications/clients-and-voice.md), [technology matrix](architecture/technology-stack.md), [ADR-0012](adr/0012-python-angular-tailwind-toolchain.md), [ADR-0016](adr/0016-api-realtime-pwa-and-voice-protocols.md) | [Aura Web design foundation](design/README.md), relevant catalogue group |
+| Runtime, queue, storage, or agent execution | [Agents and execution](specifications/agents-and-execution.md), [technology matrix](architecture/technology-stack.md), [ADR-0013](adr/0013-postgresql-nats-valkey-garage-consistency.md), [ADR-0014](adr/0014-aura-owned-execution-langgraph-backend.md) | [Architecture handover](architecture/aura-ai-architecture-handover.md), open decisions |
 | Product-scope lookup | [Product overview](specifications/product-overview.md) | [Feature catalogue](specifications/aura-ai-envisioned-feature-catalogue.md) |
 
 ## Selective architecture locator
@@ -53,6 +57,8 @@ Use these links to enter the canonical handover at the relevant section:
 - [Security and governance](architecture/aura-ai-architecture-handover.md#16-security-and-governance)
 - [Target repository tree](architecture/aura-ai-architecture-handover.md#18-full-target-repository-tree)
 - [Technology baseline](architecture/aura-ai-architecture-handover.md#20-current-technology-baseline)
+- [Authoritative technology matrix](architecture/technology-stack.md)
+- [Accepted ADR index](adr/README.md)
 - [Unresolved decisions](architecture/aura-ai-architecture-handover.md#21-intentionally-unresolved-decisions)
 
 ## Feature-prefix locator

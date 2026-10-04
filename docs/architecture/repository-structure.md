@@ -24,7 +24,7 @@ Organize backend code by cohesive domain and capability rather than repository-w
 
 Frontend feature behavior belongs in libraries rather than application shells. Core and Observatory contracts remain independent, generated clients follow those contracts, and service-owned migrations stay with their owning service.
 
-The current technology placement assumes one locked Python workspace and an Angular Nx/pnpm workspace while retaining package and dependency boundaries. Exact runtime choices that remain open are listed in [open decisions](../specifications/open-decisions.md).
+The current technology placement assumes the approved Python/uv workspace and Node/Angular/Nx/pnpm workspace while retaining package and dependency boundaries. The selected major lines and provider boundaries are in the [technology matrix](./technology-stack.md); only the explicitly listed owner choices remain in [open decisions](../specifications/open-decisions.md).
 
 ## Related working summaries
 

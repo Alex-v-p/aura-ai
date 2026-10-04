@@ -13,6 +13,12 @@ model-facing tool contract
 
 A tool states what a model may request. The application use case owns validation, policy, confirmation, audit, idempotency, and business rules. A port states what Core needs from an external capability. An adapter implements that port for a concrete provider.
 
+## Authoritative provider and platform direction
+
+Tool descriptors, events, and structured payloads use JSON Schema 2020-12. REST integrations use OpenAPI 3.1 and generated transport-only clients; approved third-party extensions run in isolated processes or containers behind versioned MCP, OpenAPI, or gRPC boundaries. Untrusted extension packages are never imported into Core, and extension-provided content is untrusted evidence rather than policy or instruction authority.
+
+PostgreSQL owns deterministic automation, workflow and scheduler state, and service migrations. A transactional outbox publishes durable reactions to NATS JetStream with at-least-once delivery and idempotent consumers. Valkey is limited to disposable cache, rate limits, leases, and short-lived session state. Home Assistant remains authoritative for devices, entities, areas, scenes, and automations. Google Calendar is the first selected calendar adapter using per-user OAuth; household sharing is a distinct Aura permission. SearXNG, HTTPX, Trafilatura, and isolated Playwright are the governed web-research adapters. Fetchers have no ambient credentials, enforce allowed schemes and destination/redirect revalidation, block private/link-local/loopback destinations, and bound size, type, time, and resources. Parsed content is untrusted evidence. See [technology stack](../architecture/technology-stack.md), [ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md), and [ADR-0015](../adr/0015-authentik-bff-secrets-extensions.md).
+
 Every tool has a stable identifier and version, typed input and result schemas, read/mutation classification, permission and confirmation policy, timeout and bounded retry rules, idempotency expectations, audit fields, sensitivity classification, validation requirements, and an observable component identifier.
 
 ## Deterministic automation
@@ -27,7 +33,7 @@ Home Assistant remains authoritative for devices, entities, areas, scenes, and a
 
 ## Envisioned integrations
 
-Potential adapters include Ollama, Home Assistant, SearXNG, local files, SMB, Nextcloud, calendars, speech services, Web Push, object and database stores, telemetry systems, GitHub, Proxmox, TrueNAS, printers, media services, cameras, email, and approved OpenAPI or MCP services. Listing an integration does not select its provider, authorize access, or promote it into the architecture baseline. Credentials remain isolated from prompts, logs, source control, and ordinary tool results.
+Potential adapters include Ollama, Home Assistant, SearXNG, local files, SMB, Nextcloud, calendars beyond the initial Google Calendar adapter, speech services, Web Push, object and database stores, telemetry systems, GitHub, Proxmox, TrueNAS, printers, media services, cameras, email, and approved OpenAPI or MCP services. Listing an integration does not authorize access or promote a catalogue item into implementation scope. Credentials remain isolated from prompts, logs, source control, and ordinary tool results; retention, allowlists, and exact discovery policies remain open.
 
 ## Related working summaries
 

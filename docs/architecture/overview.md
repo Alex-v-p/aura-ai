@@ -27,7 +27,7 @@ Observatory owns evaluation definitions, datasets, results, baselines, analytics
 
 ## Current technology baseline
 
-The baseline is Python with FastAPI and `uv`; PostgreSQL with Alembic and replaceable `pgvector` indexing; Angular with Nx and pnpm; Ollama and Home Assistant behind adapters; OpenTelemetry-compatible OTLP; ClickHouse, Prometheus, Loki, and Grafana; local or S3-compatible artifact storage; and Docker Compose with Ansible and Proxmox support.
+The authoritative baseline is Python 3.14 with FastAPI and `uv`; PostgreSQL with Alembic and replaceable `pgvector` indexing; Node 24 LTS with strict TypeScript, Angular 22, Nx 23, pnpm 12, and Tailwind 4; Ollama and Home Assistant behind adapters; OpenTelemetry-compatible OTLP; ClickHouse, Prometheus, Loki, and Grafana; Garage-backed production object storage; and Docker Compose with Ansible and Proxmox support. See the [technology matrix](./technology-stack.md) and [accepted ADRs](../adr/README.md) for the full boundary and version policy.
 
 Provider examples and envisioned capabilities do not settle the choices listed in [open decisions](../specifications/open-decisions.md).
 

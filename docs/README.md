@@ -42,6 +42,11 @@ The canonical handover and feature catalogue are deep references. Their presence
 - [Terminology](architecture/terminology.md) — stable meanings for core project concepts.
 - [Module boundaries](architecture/module-boundaries.md) — ownership, dependency direction, and prohibited coupling.
 - [Repository structure](architecture/repository-structure.md) — target placement map without the full repository tree.
+- [Authoritative technology stack](architecture/technology-stack.md) — selected major lines, feature-to-tool mappings, provider boundaries, licensing cautions, and official sources.
+
+### Accepted architecture decisions
+
+- [ADR index](adr/README.md) — accepted decisions `0012`–`0016` for the implementation toolchain, data/coordination, execution, security, and client/voice protocols.
 
 ## Focused product summaries
 
@@ -62,7 +67,7 @@ does not create runtime contracts, architecture decisions, frontend packages,
 or a delivery roadmap. Read the design entry point first, then only the
 focused design document relevant to the task.
 
-No ADR or module-specific documentation exists yet. When added, those documents belong in a task's context only when their scope applies.
+Read the technology matrix and only the applicable ADRs for architecture, backend, frontend, deployment, integration, voice, or Observatory work. Do not load the full ADR set by default.
 
 ## Development governance
 

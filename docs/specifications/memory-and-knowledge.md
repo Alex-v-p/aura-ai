@@ -26,7 +26,11 @@ Aura does not pre-parse and embed every byte of local, SMB, or other connected s
 4. Parse, chunk, embed, and rerank selected content; answer with source provenance.
 5. Cache processing by content identity and invalidate it when the source changes.
 
-Controlled web research follows the same provenance and policy principles: bounded search and retrieval, freshness awareness, source metadata, claim-linked citations, retention controls, and structured research artifacts.
+## Authoritative storage and processing direction
+
+Aura Core PostgreSQL owns memory, document metadata, provenance, authorization, and lifecycle state. pgvector is the initial index behind a replaceable port; a dedicated vector database requires measured benchmark thresholds and an accepted decision. Production object content uses the Garage S3-compatible boundary, while local filesystem storage is development-only. Format-specific Python parsers are preferred, with an isolated Apache Tika fallback. Search and web-source adapters use SearXNG, HTTPX, Trafilatura, or isolated Playwright as appropriate. Full captured content remains policy-gated and is never implied by an index or telemetry record. See [technology stack](../architecture/technology-stack.md) and [ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md).
+
+Controlled web research follows the same provenance and policy principles: bounded search and retrieval, freshness awareness, source metadata, claim-linked citations, retention controls, and structured research artifacts. Fetched, parsed, and extension-provided content is untrusted evidence, never policy or instruction authority. Fetchers have no ambient credentials; allowed schemes, destination and redirect revalidation, private/link-local/loopback blocking, size/type/time/resource limits, and parser sandbox restrictions are mandatory.
 
 ## Related working summaries
 

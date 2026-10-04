@@ -10,6 +10,12 @@ Personas control expression and interaction style. They do not change factual tr
 
 Every run receives an explicit, lifetime-immutable context containing the principal, household, workspace, agent revision, conversation, run lineage, task, channel, device, room, memory scopes, tool grants, model policy, execution budget, deadline, and trace identity. New state is recorded explicitly rather than through mutable global context.
 
+## Authoritative implementation direction
+
+Aura owns the run lifecycle, budgets, permissions, jobs, events, model policy, persistence, cancellation, approvals, and audit boundary. A lightweight Aura executor handles simple runs. An optional LangGraph executor may implement branching, loops, pauses, and resumable graphs behind an Aura-owned interface; LangGraph checkpoints are executor-internal and reference Aura run IDs. LangGraph state and node concepts must not become Aura domain contracts or client API concepts. PostgreSQL remains authoritative for run and workflow state, with transactional outbox publication to NATS JetStream and idempotent consumers.
+
+The Python runtime uses FastAPI/Pydantic at transport and validation edges and shared application use cases below thin API, worker, scheduler, CLI, and evaluation entrypoints. Ollama is the local model default. Cloud providers and judges are explicit opt-in adapters. Exact model inventory, routing policy, graph persistence details, and evaluation calibration remain [open decisions](./open-decisions.md). See [technology stack](../architecture/technology-stack.md) and [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md).
+
 ## Execution rules
 
 - Independent conversations and agents may run concurrently within resource limits.
