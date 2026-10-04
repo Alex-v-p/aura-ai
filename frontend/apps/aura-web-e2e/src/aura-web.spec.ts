@@ -36,7 +36,24 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await page.goto('/');
     await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(navigation).toHaveClass(/is-collapsed/);
+    await expect(navigation).toHaveCSS('flex-basis', '78px');
     await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toBeVisible();
+    await expect(navigation.locator('.wordmark-mark')).toBeVisible();
+    await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
+    await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
+    await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveCount(0);
+    await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveCSS('width', '44px');
+    await navigation.getByRole('button', { name: 'Expand navigation' }).click();
+    await page.waitForTimeout(60);
+    const expansionWidth = await navigation.evaluate((element) => element.getBoundingClientRect().width);
+    expect(expansionWidth).toBeLessThan(272);
+    await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
+    await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
+    await expect(navigation).not.toHaveClass(/is-collapsed/);
+    await expect(navigation).toHaveCSS('flex-basis', '272px');
+    await expect(navigation.locator('.conversation-nav')).toBeVisible();
+    await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
+    await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
     return;
   }
   await page.setViewportSize({ width: 1024, height: 768 });
@@ -47,6 +64,18 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveAttribute('title', 'New conversation');
   await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveAttribute('title', 'A thoughtful beginning');
+  const geometry = await navigation.evaluate((element) => {
+    const conversationNav = element.querySelector<HTMLElement>('.conversation-nav');
+    const conversationLink = element.querySelector<HTMLElement>('.conversation-link');
+    return {
+      navigationWidth: element.getBoundingClientRect().width,
+      conversationNavWidth: conversationNav?.getBoundingClientRect().width ?? 0,
+      conversationLinkWidth: conversationLink?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  expect(geometry.conversationNavWidth).toBeGreaterThanOrEqual(geometry.navigationWidth - 25);
+  expect(geometry.conversationLinkWidth).toBeGreaterThanOrEqual(geometry.navigationWidth - 25);
+  expect(geometry.conversationLinkWidth).toBeGreaterThan(40);
 });
 
 test('sends a local message and allows interruption', async ({ page }) => {
@@ -107,8 +136,43 @@ test('mobile navigation returns focus to its trigger', async ({ page }, testInfo
   const trigger = page.getByRole('button', { name: 'Open navigation' });
   await trigger.click();
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible();
-  await page.getByRole('button', { name: 'Close navigation' }).click();
+  await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Close navigation' }).click();
   await expect(trigger).toBeFocused();
+});
+
+test('desktop collapse cannot create a collapsed mobile drawer', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop-to-mobile collapse coverage runs once in the desktop project.');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const navigation = page.locator('#primary-navigation');
+  await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(navigation).toHaveClass(/is-collapsed/);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const trigger = page.getByRole('button', { name: 'Open navigation' });
+  await trigger.click();
+  await expect(navigation).toHaveClass(/is-mobile-open/);
+  await expect(navigation).not.toHaveClass(/is-collapsed/);
+  await expect(navigation).toHaveCSS('flex-basis', '272px');
+  await expect(navigation.getByRole('button', { name: 'Close navigation' })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toHaveCount(0);
+  await navigation.getByRole('button', { name: 'Close navigation' }).click();
+  await expect(navigation).not.toHaveClass(/is-mobile-open/);
+  await expect(trigger).toBeFocused();
+});
+
+test('sidebar motion respects reduced-motion preferences', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Motion preference coverage runs once in the desktop project.');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const transitionDurations = await page.locator('#primary-navigation').evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((duration) => Number.parseFloat(duration)));
+  expect(transitionDurations.every((duration) => duration <= 0.001)).toBe(true);
+  const navigation = page.locator('#primary-navigation');
+  await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
+  await navigation.getByRole('button', { name: 'Expand navigation' }).click();
+  await expect(navigation.locator('.conversation-nav')).toBeVisible();
+  await expect(navigation.locator('aura-theme-select')).toBeVisible();
 });
 
 test('mobile navigation closes on Escape and restores focus', async ({ page }, testInfo) => {
