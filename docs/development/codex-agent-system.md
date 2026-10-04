@@ -10,20 +10,20 @@ Reviewers report findings; the owning worker repairs them; the same reviewer ver
 
 ## Commit and push checkpoints
 
-The workflow may create a Git checkpoint only when the current user or task
-explicitly authorizes commits. A checkpoint belongs after a coherent reviewed
-and validated milestone: work-item completion, an ownership-zone handoff, a
-pre-integration or other risky transition, or prolonged work once a coherent
-validated slice exists. Workers do not prematurely commit unreviewed
+The workflow may create a focused local Git checkpoint after a coherent
+reviewed and validated milestone; per-commit user authorization is not
+required. Milestones include work-item completion, an ownership-zone handoff,
+a pre-integration or other risky transition, or prolonged work once a
+coherent validated slice exists. Workers do not commit unreviewed
 implementations; the normal lifecycle remains plan → implement → review →
-integrate. Do not create broken, unreviewed, unrelated, secret-bearing,
-temporary, generated-only, or noisy micro-commits.
+integrate. Do not create broken, unrelated, secret-bearing, temporary,
+generated-only, or noisy micro-commits.
 
 When push is also explicitly authorized, push each intentional checkpoint
 normally to the configured upstream or named destination after validation.
-Commit and push authorization is limited to the current task and does not
-become standing authority for later tasks. Force-pushes and history rewrites
-are prohibited.
+Push authorization is limited to the current task and does not become standing
+authority for later tasks. Force-pushes and history rewrites require separate
+explicit authorization.
 
 The activation matrix is:
 

@@ -22,15 +22,14 @@ Workers return an implementation handoff, reviewers return a verdict, and the In
 
 ## Authorized checkpoints
 
-Commit checkpoints require explicit authorization from the current user or
-task; that authorization expires with the task and is not standing authority.
-Create a focused checkpoint only after a coherent reviewed and validated slice,
+Per-commit user authorization is not required for a focused local checkpoint.
+Create it only after a coherent reviewed and validated slice,
 such as work-item completion, an ownership-zone handoff, a pre-integration or
 other risky transition, or prolonged work with a coherent validated slice. Do
-not commit broken, unreviewed, unrelated, secret-bearing, temporary,
-generated-only, or noisy micro-changes. Workers do not commit unreviewed
-implementations. When push is separately explicitly authorized, push each
-checkpoint normally to the configured upstream or named destination. Never
-force-push or rewrite history.
+not commit broken, unrelated, secret-bearing, temporary, generated-only, or
+noisy micro-changes. Workers do not commit unreviewed implementations. When
+push is separately explicitly authorized, push each checkpoint normally to the
+configured upstream or named destination. Never force-push or rewrite history
+without separate explicit authorization.
 
 Allowed paths narrow machine-readable path ownership. They never widen it. Critical paths require `human_approval_required: true` and an authorized change class. Contract and protected baseline changes also require their explicit permission fields.
