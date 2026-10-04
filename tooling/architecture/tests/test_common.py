@@ -70,6 +70,22 @@ class CommonTests(unittest.TestCase):
         errors = COMMON.scope_errors(["unknown/file.txt"], item)
         self.assertTrue(any("no architectural owner" in error for error in errors))
 
+    def test_platform_worker_owns_root_compose(self):
+        item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
+        item["allowed_paths"] = ["compose.yaml"]
+        item["forbidden_paths"] = ["services/**"]
+
+        self.assertEqual([], COMMON.scope_errors(["compose.yaml"], item, "platform_worker"))
+
+    def test_non_owner_cannot_change_root_compose(self):
+        item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
+        item["allowed_paths"] = ["compose.yaml"]
+        item["forbidden_paths"] = ["services/**"]
+
+        errors = COMMON.scope_errors(["compose.yaml"], item, "frontend_worker")
+
+        self.assertTrue(any("role frontend_worker is not an owner" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

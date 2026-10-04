@@ -11,6 +11,9 @@ ownership:
   - pattern: .agents/**
     roles: [delivery_lead, platform_worker]
     architectural_owner: repository-governance
+  - pattern: compose.yaml
+    roles: [platform_worker]
+    architectural_owner: deployment
   - pattern: tooling/architecture/**
     roles: [platform_worker]
     architectural_owner: repository-governance
