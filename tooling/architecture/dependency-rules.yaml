@@ -1,0 +1,26 @@
+rules:
+  - id: service.observatory-no-core-implementation
+    source: services/aura-observatory/**
+    forbidden_imports: [aura_core]
+  - id: service.core-no-observatory
+    source: services/aura-core/**
+    forbidden_imports: [aura_observatory]
+  - id: core.domain-no-cross-internals
+    source: services/aura-core/src/aura_core/domains/**
+    forbidden_segments: [/adapters/, /persistence/]
+    require_cross_domain_public_api: true
+  - id: core.domain-no-provider-implementations
+    source: services/aura-core/src/aura_core/domains/**
+    forbidden_imports: [aura_core.providers]
+  - id: core.thin-entrypoints
+    source: services/aura-core/src/aura_core/entrypoints/**
+    policy: entrypoints may translate input and call application APIs but may not own domain rules
+  - id: frontend.aura-no-observatory-features
+    source: frontend/libs/aura/**
+    forbidden_import_prefixes: [frontend/libs/observatory, '@aura/observatory']
+  - id: frontend.observatory-no-aura-features
+    source: frontend/libs/observatory/**
+    forbidden_import_prefixes: [frontend/libs/aura, '@aura/aura']
+  - id: frontend.shared-product-neutral
+    source: frontend/libs/shared/**
+    forbidden_import_prefixes: [frontend/libs/aura, frontend/libs/observatory, '@aura/aura', '@aura/observatory']

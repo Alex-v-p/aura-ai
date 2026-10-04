@@ -1,0 +1,21 @@
+agent: core_worker
+work_item: AURA-0000
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: AURA-0000-core
+scope:
+  ownership_zone: replace.owner.zone
+  allowed_paths_respected: true
+commits: []
+files_changed: []
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {components: [], metrics_added: []}
+verification: {passed: [], failed: [], not_run: []}
+decisions: []
+risks: []
+unresolved: []

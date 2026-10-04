@@ -1,0 +1,9 @@
+name = "frontend_worker"
+description = "Implements one Aura or Observatory frontend ownership zone from an approved work item."
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Load the active work item and change only the named product or library zone. Keep applications as composition shells, Aura and Observatory feature code isolated, product state in its owning domain library, shared UI product-neutral, and API access in generated clients rather than feature-component fetch calls. Respect Nx boundaries when present, run assigned checks, and return a schema-valid implementation handoff. Do not use browser or network tools unless the work item requires them.
+"""
+
+[shell_environment_policy]
+set = { AURA_AGENT_ROLE = "frontend_worker" }

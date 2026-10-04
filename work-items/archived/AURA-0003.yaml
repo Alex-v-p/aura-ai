@@ -1,0 +1,49 @@
+id: AURA-0003
+title: Enable interactive Codex approval prompts
+status: integrated
+change_class: repository_governance
+intent: >
+  Configure trusted interactive Codex sessions to surface approval prompts to
+  the user when command rules or sandbox policy require approval.
+sources_of_truth:
+  architecture: [docs/architecture/aura-ai-architecture-handover.md]
+  specifications: []
+  decisions: []
+  contracts: [https://learn.chatgpt.com/docs/config-file/config-reference]
+feature_references: []
+ownership_zones: [repository.governance]
+allowed_paths: [.codex/config.toml, docs/development/codex-agent-system.md, work-items/**]
+forbidden_paths: [services/**, frontend/**, contracts/**, evaluations/**, deploy/**, infra/**, satellites/**]
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data: {migration_required: false, owning_service: null, owning_module: null}
+observability: {applicable: false, affected_components: [], required_metrics: [], required_evaluators: [], capture_policy: null}
+security_privacy:
+  applicable: true
+  concerns: [interactive approval routing, command authorization]
+  data_classes: [repository metadata]
+required_agents:
+  implementation: [platform_worker]
+  review: [general_reviewer, security_privacy_reviewer]
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: false
+  escalation_reason_required: true
+acceptance_criteria:
+  - Trusted new Codex sessions use on-request approval policy.
+  - Eligible approval prompts are routed to the user.
+  - Existing command rules continue to classify git push as approval-required.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0003.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0003.yaml
+  - codex --strict-config --version
+  - codex execpolicy check --rules .codex/rules/repository.rules git push origin repo-setup
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

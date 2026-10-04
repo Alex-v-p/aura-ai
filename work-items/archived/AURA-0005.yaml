@@ -1,0 +1,101 @@
+id: AURA-0005
+title: Define Aura Web UI and UX design foundation
+status: integrated
+change_class: documentation
+intent: >
+  Establish an agent-ready, Aura Web-first visual and interaction foundation
+  covering themes, semantic color, components, accessibility, and recoverable
+  failure states without scaffolding frontend code or runtime contracts.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+  specifications:
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - User-approved Aura Web UI/UX Design Foundation plan (2026-10-04)
+  contracts: []
+feature_references:
+  - AUI-001
+  - AUI-002
+  - AUI-003
+  - AUI-004
+  - AUI-005
+  - AUI-006
+  - AUI-007
+  - AUI-023
+  - AUI-025
+  - AUI-026
+  - AUI-030
+ownership_zones: [documentation.design]
+allowed_paths:
+  - docs/design/**
+  - docs/README.md
+  - docs/context-routing.md
+  - work-items/**
+forbidden_paths:
+  - docs/architecture/**
+  - docs/adr/**
+  - frontend/**
+  - services/**
+  - contracts/**
+  - packages/**
+  - evaluations/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - .codex/**
+  - .agents/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - error and diagnostic detail redaction
+    - preservation of user-authored drafts and partial results
+    - accessible communication of status and failure states
+  data_classes:
+    - user-authored conversation drafts
+    - redacted operational diagnostics
+required_agents:
+  implementation: [platform_worker]
+  review: [general_reviewer, security_privacy_reviewer]
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Design guidance is discoverable from the documentation index and frontend context route.
+  - Light and dark themes define exact accessible semantic colors and system-aware selection behavior.
+  - Component guidance covers the Aura Web shell, conversation surface, composer, rich content, overlays, forms, and state matrices.
+  - Failure guidance covers validation, offline and reconnect, interrupted and partial work, permissions, approvals, uploads, tools, providers, timeouts, cancellation, and unknown failures.
+  - Errors preserve user work, provide accessible recovery, and hide sensitive technical detail by default.
+  - Screenshot references are analyzed without copying third-party image assets, and external research is attributed with an access date.
+  - The documentation does not create runtime APIs, contracts, packages, observable identifiers, or architecture decisions.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0005.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0005.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - python3 tooling/architecture/validate-repository-shape.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
