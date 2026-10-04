@@ -1,0 +1,8 @@
+node_modules
+.angular
+dist
+.nx
+coverage
+playwright-report
+test-results
+storybook-static

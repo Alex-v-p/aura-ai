@@ -1,0 +1,10 @@
+{
+  "name": "storybook",
+  "projectType": "application",
+  "sourceRoot": "apps/storybook/src",
+  "tags": ["scope:storybook", "type:storybook"],
+  "targets": {
+    "storybook": { "executor": "@nx/storybook:storybook", "options": { "configDir": "apps/storybook/.storybook", "port": 6006, "angularBrowserTarget": "aura-web:build:development", "compodoc": false } },
+    "build-storybook": { "executor": "@nx/storybook:build", "outputs": ["{options.outputDir}"], "options": { "configDir": "apps/storybook/.storybook", "outputDir": "dist/storybook", "angularBrowserTarget": "aura-web:build:development", "compodoc": false, "styles": ["apps/aura-web/src/styles.css"] } }
+  }
+}

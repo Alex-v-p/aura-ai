@@ -1,0 +1,31 @@
+:host { display: block; height: 100%; }
+.app-shell { background: var(--canvas); color: var(--text); display: flex; min-height: 100dvh; width: 100%; }
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex: 0 0 272px; flex-direction: column; min-height: 100dvh; padding: 1.5rem 1rem 1rem; position: relative; transition: flex-basis .18s ease; z-index: 20; }
+.sidebar.is-collapsed { flex-basis: 78px; align-items: center; padding-inline: .75rem; }
+.sidebar-top { align-items: center; display: flex; justify-content: space-between; margin-bottom: 2.25rem; min-height: 2.25rem; width: 100%; }
+.wordmark { align-items: center; color: var(--text); display: inline-flex; font-size: 1.25rem; font-weight: 750; gap: .55rem; letter-spacing: -.04em; text-decoration: none; }
+.wordmark-mark { align-items: center; background: var(--accent-soft); border-radius: .7rem; color: var(--accent); display: inline-flex; font-size: 1rem; height: 2rem; justify-content: center; width: 2rem; }
+.icon-button { align-items: center; background: transparent; border: 1px solid transparent; border-radius: .6rem; color: var(--text-muted); cursor: pointer; display: inline-flex; font-size: 1rem; height: 2.25rem; justify-content: center; transition: background .15s,color .15s; width: 2.25rem; }
+.icon-button:hover { background: var(--surface-subtle); color: var(--text); }
+.icon-button:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.new-conversation { align-items: center; background: var(--accent); border: 0; border-radius: .75rem; color: var(--on-accent); cursor: pointer; display: flex; font: inherit; font-size: .875rem; font-weight: 650; gap: .5rem; justify-content: center; min-height: 2.75rem; padding: .5rem .8rem; width: 100%; }
+.new-conversation:hover { background: var(--accent-hover); }
+.sidebar.is-collapsed .new-conversation { border-radius: .65rem; font-size: 1.2rem; width: 2.75rem; }
+.conversation-nav { margin-top: 2rem; overflow: auto; }
+.nav-label { color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .09em; margin: 0 .6rem .5rem; text-transform: uppercase; }
+.nav-empty { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .75rem .6rem; }
+.conversation-link, .quiet-link { align-items: center; background: transparent; border: 0; border-radius: .6rem; color: var(--text-muted); cursor: pointer; display: flex; font: inherit; font-size: .82rem; gap: .55rem; min-height: 2.5rem; overflow: hidden; padding: .45rem .6rem; text-align: left; text-decoration: none; width: 100%; }
+.conversation-link:hover, .conversation-link.is-active, .quiet-link:hover { background: var(--surface-subtle); color: var(--text); }
+.conversation-link.is-active { box-shadow: inset 3px 0 var(--accent); }
+.conversation-dot { color: var(--accent); font-size: 1.1rem; }
+.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-bottom { display: grid; gap: .25rem; margin-top: auto; width: 100%; }
+.sidebar-bottom aura-theme-select { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .8rem; }
+.sidebar.is-collapsed .wordmark-text, .sidebar.is-collapsed .label, .sidebar.is-collapsed .nav-label, .sidebar.is-collapsed .nav-empty, .sidebar.is-collapsed aura-theme-select { display: none; }
+.sidebar.is-collapsed .sidebar-top, .sidebar.is-collapsed .conversation-link, .sidebar.is-collapsed .quiet-link { justify-content: center; }
+.sidebar.is-collapsed .new-conversation { margin-inline: auto; }
+.main-content { display: flex; flex: 1; min-width: 0; }
+.mobile-header, .scrim { display: none; }
+@media (max-width: 1279px) and (min-width: 721px) { .sidebar { flex-basis: 78px; align-items: center; padding-inline: .75rem; } .sidebar .wordmark-text, .sidebar .collapse-button, .sidebar .label, .sidebar .nav-label, .sidebar .nav-empty { display: none; } .sidebar aura-theme-select, .sidebar.is-collapsed aura-theme-select { display: block; } .sidebar .sidebar-top, .sidebar .conversation-link, .sidebar .quiet-link { justify-content: center; } .sidebar .new-conversation { margin-inline: auto; width: 2.75rem; } }
+@media (max-width: 720px) { .app-shell { display: block; } .mobile-header { align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; height: 4rem; justify-content: space-between; padding: .75rem 1rem; position: relative; z-index: 10; } .mobile-header .wordmark { font-size: 1.1rem; } .mobile-header .wordmark-mark { height: 1.75rem; width: 1.75rem; } .mobile-header-spacer { width: 2.25rem; } .sidebar { box-shadow: 0 1rem 3rem rgb(0 0 0 / .15); height: 100dvh; left: 0; max-width: min(86vw, 21rem); position: fixed; top: 0; transform: translateX(-105%); transition: transform .2s ease; visibility: hidden; pointer-events: none; width: 21rem; } .sidebar.is-mobile-open { pointer-events: auto; transform: translateX(0); visibility: visible; } .sidebar.is-collapsed { align-items: stretch; flex-basis: 272px; padding-inline: 1rem; } .sidebar.is-collapsed .wordmark-text, .sidebar.is-collapsed .collapse-button, .sidebar.is-collapsed .label, .sidebar.is-collapsed .nav-label, .sidebar.is-collapsed .nav-empty, .sidebar.is-collapsed aura-theme-select { display: revert; } .scrim { background: rgb(18 16 18 / .4); border: 0; display: block; inset: 0 0 0 min(86vw, 21rem); position: fixed; z-index: 15; } .main-content { min-height: calc(100dvh - 4rem); } }
+@media (prefers-reduced-motion: reduce) { .sidebar, .icon-button, .new-conversation, .conversation-link { transition: none; } }

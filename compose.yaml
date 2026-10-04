@@ -1,0 +1,58 @@
+name: aura
+
+services:
+  aura-web:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-web.Dockerfile
+      target: runtime
+    init: true
+    ports:
+      - "127.0.0.1:${AURA_WEB_PORT:-4200}:8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+      - /var/cache/nginx:rw,noexec,nosuid,nodev
+      - /var/run:rw,noexec,nosuid,nodev
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --quiet --output-document=- http://127.0.0.1:8080/healthz | grep -q '^ok$'
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend-checks:
+    profiles:
+      - checks
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-web.Dockerfile
+      target: frontend-checks
+    command:
+      - sh
+      - -c
+      - pnpm --dir frontend run lint && pnpm --dir frontend run test && pnpm --dir frontend run build:production && pnpm --dir frontend run pwa:inject && pnpm --dir frontend run build-storybook
+
+  frontend-e2e:
+    profiles:
+      - checks
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-web.Dockerfile
+      target: frontend-e2e
+    depends_on:
+      aura-web:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://aura-web:8080
+    command:
+      - sh
+      - -c
+      - pnpm --dir frontend exec playwright test --config=/workspace/playwright.compose.config.ts

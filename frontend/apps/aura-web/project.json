@@ -1,0 +1,37 @@
+{
+  "name": "aura-web",
+  "projectType": "application",
+  "sourceRoot": "apps/aura-web/src",
+  "tags": ["scope:aura-web", "type:app"],
+  "targets": {
+    "build": {
+      "executor": "@angular-devkit/build-angular:application",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/apps/aura-web",
+        "index": "apps/aura-web/src/index.html",
+        "browser": "apps/aura-web/src/main.ts",
+        "polyfills": ["zone.js"],
+        "tsConfig": "apps/aura-web/tsconfig.app.json",
+        "inlineStyleLanguage": "css",
+        "assets": ["apps/aura-web/src/assets", "apps/aura-web/src/manifest.webmanifest", "apps/aura-web/src/sw.js"],
+        "styles": ["apps/aura-web/src/styles.css"],
+        "scripts": [],
+        "serviceWorker": false
+      },
+      "configurations": {
+        "production": { "budgets": [{ "type": "initial", "maximumWarning": "2mb", "maximumError": "5mb" }], "outputHashing": "all" },
+        "development": { "optimization": false, "extractLicenses": false, "sourceMap": true }
+      },
+      "defaultConfiguration": "production"
+    },
+    "serve": {
+      "executor": "@angular-devkit/build-angular:dev-server",
+      "options": { "buildTarget": "aura-web:build" },
+      "configurations": { "production": { "buildTarget": "aura-web:build:production" }, "development": { "buildTarget": "aura-web:build:development" } },
+      "defaultConfiguration": "development"
+    },
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts --dir apps/aura-web" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint apps/aura-web" } }
+  }
+}
