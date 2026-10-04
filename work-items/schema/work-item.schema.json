@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/schema/work-item.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "status", "change_class", "intent", "sources_of_truth", "feature_references", "ownership_zones", "allowed_paths", "forbidden_paths", "contracts", "data", "observability", "security_privacy", "required_agents", "execution", "acceptance_criteria", "required_checks", "baseline_changes_allowed", "human_approval_required", "open_decisions"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^AURA-[0-9]{4,}$"},
+    "title": {"type": "string", "minLength": 3},
+    "status": {"enum": ["draft", "approved", "in_progress", "review", "integrated", "blocked"]},
+    "change_class": {"enum": ["feature", "bugfix", "refactor", "contract", "migration", "evaluation", "infrastructure", "repository_governance", "documentation"]},
+    "intent": {"type": "string", "minLength": 10},
+    "sources_of_truth": {
+      "type": "object", "additionalProperties": false,
+      "required": ["architecture", "specifications", "decisions", "contracts"],
+      "properties": {"architecture": {"$ref": "#/$defs/strings"}, "specifications": {"$ref": "#/$defs/strings"}, "decisions": {"$ref": "#/$defs/strings"}, "contracts": {"$ref": "#/$defs/strings"}}
+    },
+    "feature_references": {"$ref": "#/$defs/strings"},
+    "ownership_zones": {"$ref": "#/$defs/nonEmptyStrings"},
+    "allowed_paths": {"$ref": "#/$defs/nonEmptyStrings"},
+    "forbidden_paths": {"$ref": "#/$defs/nonEmptyStrings"},
+    "contracts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["changes_allowed", "affected", "compatibility_requirement"],
+      "properties": {"changes_allowed": {"type": "boolean"}, "affected": {"$ref": "#/$defs/strings"}, "compatibility_requirement": {"enum": ["none", "backward_compatible", "coordinated_breaking_change"]}}
+    },
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "required": ["migration_required", "owning_service", "owning_module"],
+      "properties": {"migration_required": {"type": "boolean"}, "owning_service": {"type": ["string", "null"]}, "owning_module": {"type": ["string", "null"]}}
+    },
+    "observability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["applicable", "affected_components", "required_metrics", "required_evaluators", "capture_policy"],
+      "properties": {"applicable": {"type": "boolean"}, "affected_components": {"$ref": "#/$defs/strings"}, "required_metrics": {"$ref": "#/$defs/strings"}, "required_evaluators": {"$ref": "#/$defs/strings"}, "capture_policy": {"type": ["string", "null"]}}
+    },
+    "security_privacy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["applicable", "concerns", "data_classes"],
+      "properties": {"applicable": {"type": "boolean"}, "concerns": {"$ref": "#/$defs/strings"}, "data_classes": {"$ref": "#/$defs/strings"}}
+    },
+    "required_agents": {
+      "type": "object", "additionalProperties": false,
+      "required": ["implementation", "review", "integration"],
+      "properties": {"implementation": {"$ref": "#/$defs/strings"}, "review": {"$ref": "#/$defs/nonEmptyStrings"}, "integration": {"type": "boolean"}}
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["parallelism_class", "max_parallel_agents", "max_parallel_writers", "model_tier", "model_escalation_allowed", "escalation_reason_required"],
+      "properties": {
+        "parallelism_class": {"enum": ["local", "standard", "fanout"]},
+        "max_parallel_agents": {"type": "integer", "minimum": 1, "maximum": 15},
+        "max_parallel_writers": {"type": "integer", "minimum": 1, "maximum": 15},
+        "model_tier": {"enum": ["efficient", "balanced", "deep", "exceptional"]},
+        "model_escalation_allowed": {"type": "boolean"},
+        "escalation_reason_required": {"type": "boolean"}
+      }
+    },
+    "acceptance_criteria": {"$ref": "#/$defs/nonEmptyStrings"},
+    "required_checks": {"$ref": "#/$defs/nonEmptyStrings"},
+    "baseline_changes_allowed": {"type": "boolean"},
+    "human_approval_required": {"type": "boolean"},
+    "open_decisions": {"$ref": "#/$defs/strings"}
+  },
+  "$defs": {
+    "strings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "nonEmptyStrings": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  }
+}

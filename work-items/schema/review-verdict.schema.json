@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["agent", "work_item", "verdict", "checked", "findings"],
+  "properties": {
+    "agent": {"type": "string"}, "work_item": {"type": "string", "pattern": "^AURA-[0-9]{4,}$"}, "verdict": {"enum": ["PASS", "BLOCK", "ADR_REQUIRED", "NOT_APPLICABLE"]},
+    "checked": {"type": "array"},
+    "findings": {"type": "array", "items": {"type": "object", "required": ["severity", "rule", "summary", "evidence", "impact", "required_correction"], "properties": {"severity": {"enum": ["critical", "high", "medium", "low"]}, "rule": {"type": "string"}, "summary": {"type": "string"}, "evidence": {"type": "object", "required": ["files", "symbols"]}, "impact": {"type": "string"}, "required_correction": {"type": "string"}}}}
+  }
+}

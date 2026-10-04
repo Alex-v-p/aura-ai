@@ -1,0 +1,49 @@
+ownership:
+  - pattern: AGENTS.md
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: repository-governance
+  - pattern: .gitignore
+    roles: [platform_worker]
+    architectural_owner: repository-governance
+  - pattern: .codex/**
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: repository-governance
+  - pattern: .agents/**
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: repository-governance
+  - pattern: tooling/architecture/**
+    roles: [platform_worker]
+    architectural_owner: repository-governance
+  - pattern: work-items/**
+    roles: [delivery_lead, integration_maintainer]
+    architectural_owner: delivery
+  - pattern: docs/**
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: documentation
+  - pattern: services/aura-core/**
+    roles: [core_worker, test_evaluation_engineer]
+    architectural_owner: aura-core
+  - pattern: services/aura-observatory/**
+    roles: [observatory_worker, test_evaluation_engineer]
+    architectural_owner: aura-observatory
+  - pattern: frontend/**
+    roles: [frontend_worker, test_evaluation_engineer]
+    architectural_owner: frontend
+  - pattern: contracts/**
+    roles: [contract_steward]
+    architectural_owner: contracts
+  - pattern: packages/python/**
+    roles: [contract_steward, platform_worker, test_evaluation_engineer]
+    architectural_owner: python-packages
+  - pattern: evaluations/**
+    roles: [test_evaluation_engineer]
+    architectural_owner: evaluation
+  - pattern: satellites/**
+    roles: [platform_worker, test_evaluation_engineer]
+    architectural_owner: satellites
+  - pattern: deploy/**
+    roles: [platform_worker]
+    architectural_owner: deployment
+  - pattern: infra/**
+    roles: [platform_worker]
+    architectural_owner: infrastructure
