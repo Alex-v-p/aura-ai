@@ -53,6 +53,15 @@ The canonical handover and feature catalogue are deep references. Their presence
 - [Observatory and evaluation](specifications/observatory-and-evaluation.md)
 - [Open decisions](specifications/open-decisions.md) — unresolved choices preserved without selecting an outcome.
 
+## Design guidance
+
+- [Aura Web design foundation](design/README.md) — semantic themes, visual foundations, component interactions, failure recovery, accessibility, and attributed reference research.
+
+Design guidance is implementation-facing visual and interaction direction. It
+does not create runtime contracts, architecture decisions, frontend packages,
+or a delivery roadmap. Read the design entry point first, then only the
+focused design document relevant to the task.
+
 No ADR or module-specific documentation exists yet. When added, those documents belong in a task's context only when their scope applies.
 
 ## Development governance
