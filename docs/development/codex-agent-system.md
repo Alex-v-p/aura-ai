@@ -43,4 +43,6 @@ Project hooks and command rules are loaded only after the repository `.codex` la
 
 Trusted interactive sessions use `approval_policy = "on-request"` with `approvals_reviewer = "user"`. Commands classified as `prompt` by repository rules therefore surface an approval request instead of being rejected automatically. Configuration is resolved when a session starts; restart or open a new task after changing these settings. Managed requirements or a host-provided execution policy may still impose stricter behavior.
 
+An ordinary `git push` is execution-policy `allow` so Codex can carry out a user's explicit push instruction even in a non-interactive session. This does not grant standing authorization: `AGENTS.md` and the `git-commit` skill still prohibit pushing until the user asks. Force-push variants remain execution-policy `forbidden`, and the stricter matching rule wins.
+
 Official references: [custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents), [hooks](https://learn.chatgpt.com/docs/hooks), [rules](https://learn.chatgpt.com/docs/agent-configuration/rules), [skills](https://learn.chatgpt.com/docs/build-skills), and [AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md).

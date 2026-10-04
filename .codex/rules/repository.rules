@@ -8,8 +8,8 @@ prefix_rule(
 
 prefix_rule(
     pattern = ["git", "push"],
-    decision = "prompt",
-    justification = "Publishing repository changes requires explicit approval.",
+    decision = "allow",
+    justification = "Ordinary pushes are allowed at execution time; repository instructions still require explicit user authorization.",
     match = ["git push", "git push origin feature/aura-1"],
     not_match = ["git status", "git fetch origin"],
 )
