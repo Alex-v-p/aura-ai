@@ -1,0 +1,110 @@
+id: AURA-0013
+title: Center compact sidebar icons
+status: integrated
+change_class: bugfix
+intent: >
+  Center the Aura mark, expand glyph, and new-conversation glyph on the
+  wide-desktop compact sidebar axis without changing responsive behavior or
+  the expanded navigation layout.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+  specifications:
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - User-selected centered compact sidebar icons
+    - AURA-0012 minimal 78px desktop rail
+  contracts: []
+feature_references: []
+ownership_zones:
+  - frontend.aura-web
+allowed_paths:
+  - work-items/active/AURA-0013.yaml
+  - work-items/archived/AURA-0013.yaml
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - tooling/architecture/**
+  - services/**
+  - contracts/**
+  - packages/**
+  - evaluations/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - scripts/**
+  - compose.yaml
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/storybook/**
+  - frontend/libs/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The wide-desktop collapsed sidebar remains 78px wide.
+  - The Aura mark, expand glyph, and new-conversation glyph are centered within 1px of the compact rail content axis.
+  - Hidden labels do not reserve flex gaps in the collapsed desktop rail.
+  - The 272px expanded desktop sidebar retains its existing labels, spacing, transitions, accessible names, and keyboard behavior.
+  - Tablet rail and mobile overlay behavior and geometry remain unchanged.
+  - No component interface, backend, contract, persistence, Docker, shared-library, or design-document change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0013.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0013.yaml
+  - docker compose config --quiet
+  - docker compose --profile checks build frontend-checks frontend-e2e
+  - docker compose --profile checks run --rm frontend-checks
+  - docker compose up --build --detach --wait aura-web
+  - curl --fail --silent --show-error http://127.0.0.1:4200/
+  - docker compose --profile checks run --rm frontend-e2e
+  - docker compose down --remove-orphans
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0013.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0013.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0013.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

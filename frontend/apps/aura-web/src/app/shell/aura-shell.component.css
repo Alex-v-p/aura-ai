@@ -21,7 +21,8 @@
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bottom { display: grid; gap: .25rem; margin-top: auto; width: 100%; }
 .sidebar-bottom aura-theme-select { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .8rem; }
-.sidebar.is-collapsed .wordmark-text, .sidebar.is-collapsed .label { opacity: 0; visibility: hidden; width: 0; }
+.sidebar.is-collapsed .wordmark-text, .sidebar.is-collapsed .label { min-width: 0; opacity: 0; visibility: hidden; width: 0; }
+.sidebar.is-collapsed .wordmark, .sidebar.is-collapsed .new-conversation { gap: 0; }
 .sidebar.is-collapsed .sidebar-top { flex-direction: column; gap: .75rem; justify-content: flex-start; }
 .sidebar.is-collapsed .new-conversation { margin-inline: auto; }
 .main-content { display: flex; flex: 1; min-width: 0; }

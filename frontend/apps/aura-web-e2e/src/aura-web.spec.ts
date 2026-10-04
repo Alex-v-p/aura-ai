@@ -37,12 +37,35 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(navigation).toHaveClass(/is-collapsed/);
     await expect(navigation).toHaveCSS('flex-basis', '78px');
+    await page.waitForTimeout(220);
     await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toBeVisible();
     await expect(navigation.locator('.wordmark-mark')).toBeVisible();
     await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
     await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
     await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveCount(0);
     await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveCSS('width', '44px');
+    const compactAlignment = await navigation.evaluate((element) => {
+      const rail = element.getBoundingClientRect();
+      const borderRight = Number.parseFloat(getComputedStyle(element).borderRightWidth);
+      const axis = rail.left + (rail.width - borderRight) / 2;
+      const center = (selector: string): number => {
+        const rect = element.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+        return rect ? rect.left + rect.width / 2 : Number.NaN;
+      };
+      return {
+        axis,
+        width: rail.width,
+        borderRight,
+        mark: center('.wordmark-mark'),
+        expand: center('.collapse-button span'),
+        plus: center('.new-conversation > span[aria-hidden="true"]'),
+      };
+    });
+    expect(compactAlignment.width).toBeGreaterThanOrEqual(78);
+    expect(compactAlignment.borderRight).toBe(1);
+    expect(Math.abs(compactAlignment.mark - compactAlignment.axis)).toBeLessThanOrEqual(1);
+    expect(Math.abs(compactAlignment.expand - compactAlignment.axis)).toBeLessThanOrEqual(1);
+    expect(Math.abs(compactAlignment.plus - compactAlignment.axis)).toBeLessThanOrEqual(1);
     await navigation.getByRole('button', { name: 'Expand navigation' }).click();
     await page.waitForTimeout(60);
     const expansionWidth = await navigation.evaluate((element) => element.getBoundingClientRect().width);
@@ -54,6 +77,10 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation.locator('.conversation-nav')).toBeVisible();
     await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
     await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
+    await expect(navigation.locator('.wordmark-text')).toBeVisible();
+    await expect(navigation.getByRole('button', { name: 'New conversation' }).locator('.label')).toBeVisible();
+    await expect(navigation.locator('.wordmark')).toHaveCSS('gap', '8.8px');
+    await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveCSS('gap', '8px');
     return;
   }
   await page.setViewportSize({ width: 1024, height: 768 });
