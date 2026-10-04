@@ -8,6 +8,23 @@ Read-only roles are Repository Mapper, General Reviewer, Architecture Guardian, 
 
 Reviewers report findings; the owning worker repairs them; the same reviewer verifies the correction. The Integration Maintainer combines reviewed commits and resolves only mechanical conflicts. A blocking review cannot be downgraded by the Delivery Lead.
 
+## Commit and push checkpoints
+
+The workflow may create a Git checkpoint only when the current user or task
+explicitly authorizes commits. A checkpoint belongs after a coherent reviewed
+and validated milestone: work-item completion, an ownership-zone handoff, a
+pre-integration or other risky transition, or prolonged work once a coherent
+validated slice exists. Workers do not prematurely commit unreviewed
+implementations; the normal lifecycle remains plan → implement → review →
+integrate. Do not create broken, unreviewed, unrelated, secret-bearing,
+temporary, generated-only, or noisy micro-commits.
+
+When push is also explicitly authorized, push each intentional checkpoint
+normally to the configured upstream or named destination after validation.
+Commit and push authorization is limited to the current task and does not
+become standing authority for later tasks. Force-pushes and history rewrites
+are prohibited.
+
 The activation matrix is:
 
 | Change | Minimum specialist roles |

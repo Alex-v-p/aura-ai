@@ -8,6 +8,7 @@
 - Treat the envisioned feature catalogue as context, not implementation scope or priority.
 - Do not weaken governance, tests, evaluation thresholds, golden results, or protected baselines to make checks pass.
 - Run every check listed by the active work item. Use the plan → implement → review → integrate lifecycle described in `docs/development/codex-agent-system.md`.
+- Create a Git checkpoint only when the current user or task explicitly authorizes committing. Prefer a focused commit after a coherent, reviewed, validated milestone such as work-item completion, an ownership-zone handoff, a pre-integration or other risky transition, or prolonged work that has produced a coherent validated slice. Do not create broken, unreviewed, unrelated, secret-bearing, temporary, generated-only, or noisy micro-commits. If push is also explicitly authorized, push each such checkpoint normally to the configured upstream or named destination; authorization is task-specific, never standing. Never force-push or rewrite history.
 
 ## Code review rules
 
