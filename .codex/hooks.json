@@ -1,0 +1,81 @@
+{
+  "description": "Aura work-item scope and completion guardrails.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/session-context.py\"",
+            "timeout": 10,
+            "statusMessage": "Loading Aura work-item context",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/prompt-work-item.py\"",
+            "timeout": 10,
+            "statusMessage": "Resolving Aura work-item scope"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-tool-scope-guard.py\"",
+            "timeout": 15,
+            "statusMessage": "Checking Aura path scope"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/post-tool-drift-check.py\"",
+            "timeout": 15,
+            "statusMessage": "Checking Aura repository drift"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/validate-subagent-handoff.py\"",
+            "timeout": 10,
+            "statusMessage": "Validating Aura handoff"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/validate-turn-completion.py\"",
+            "timeout": 15,
+            "statusMessage": "Validating Aura turn completion"
+          }
+        ]
+      }
+    ]
+  }
+}

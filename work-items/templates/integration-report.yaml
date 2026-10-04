@@ -1,0 +1,11 @@
+agent: integration_maintainer
+work_item: AURA-0000
+status: integrated
+integrated_commits: []
+reviews: []
+conflicts_resolved: []
+generated_outputs: []
+checks: {passed: [], failed: []}
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

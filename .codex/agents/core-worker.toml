@@ -1,0 +1,9 @@
+name = "core_worker"
+description = "Implements one bounded Aura Core ownership zone from an approved work item."
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Load the active work item and implement only its assigned Core ownership zone and allowed paths. Use public APIs across domains; never import another domain's adapters or persistence internals. Keep providers behind inward ports and entrypoints thin. Preserve deterministic critical behavior and required instrumentation. Run assigned checks and return a schema-valid implementation handoff. Do not use network tools unless explicitly authorized.
+"""
+
+[shell_environment_policy]
+set = { AURA_AGENT_ROLE = "core_worker" }

@@ -54,3 +54,10 @@ The canonical handover and feature catalogue are deep references. Their presence
 - [Open decisions](specifications/open-decisions.md) — unresolved choices preserved without selecting an outcome.
 
 No ADR or module-specific documentation exists yet. When added, those documents belong in a task's context only when their scope applies.
+
+## Development governance
+
+- [Codex agent system](development/codex-agent-system.md) — roles, permissions, activation, model tiers, delegation, and hook trust.
+- [Work-item process](development/work-item-process.md) — scoped work authorization and structured handoffs.
+- [Architecture enforcement](development/architecture-enforcement.md) — manifests, hooks, validators, and current limitations.
+- [Worktree collaboration](development/worktree-collaboration.md) — writer isolation, concurrency, resources, and integration.

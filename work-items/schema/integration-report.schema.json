@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["agent", "work_item", "status", "integrated_commits", "reviews", "conflicts_resolved", "generated_outputs", "checks", "repository_clean", "changed_paths_valid", "remaining_risks"],
+  "properties": {
+    "agent": {"const": "integration_maintainer"}, "work_item": {"type": "string", "pattern": "^AURA-[0-9]{4,}$"}, "status": {"enum": ["integrated", "blocked"]},
+    "integrated_commits": {"type": "array"}, "reviews": {"type": "array"}, "conflicts_resolved": {"type": "array"}, "generated_outputs": {"type": "array"},
+    "checks": {"type": "object", "required": ["passed", "failed"]}, "repository_clean": {"type": "boolean"}, "changed_paths_valid": {"type": "boolean"}, "remaining_risks": {"type": "array"}
+  }
+}

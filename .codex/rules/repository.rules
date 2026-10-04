@@ -1,0 +1,75 @@
+prefix_rule(
+    pattern = ["git", "push", ["--force", "-f", "--force-with-lease"]],
+    decision = "forbidden",
+    justification = "Force-pushing can rewrite shared history; use an ordinary push or obtain an explicit owner-approved exception.",
+    match = ["git push --force", "git push -f origin main", "git push --force-with-lease"],
+    not_match = ["git push origin feature/aura-1"],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Publishing repository changes requires explicit approval.",
+    match = ["git push", "git push origin feature/aura-1"],
+    not_match = ["git status", "git fetch origin"],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "forbidden",
+    justification = "Hard reset can discard work; inspect the diff and use a recoverable, targeted operation.",
+    match = ["git reset --hard", "git reset --hard HEAD~1"],
+    not_match = ["git reset HEAD file.py"],
+)
+
+prefix_rule(
+    pattern = ["git", "clean"],
+    decision = "forbidden",
+    justification = "Git clean can irreversibly delete untracked work; inspect and remove only validated targets.",
+    match = ["git clean -fd", "git clean -ffdx"],
+    not_match = ["git status --short"],
+)
+
+prefix_rule(
+    pattern = ["rm", ["-rf", "-fr"], ["/", ".."]],
+    decision = "forbidden",
+    justification = "Broad recursive deletion is prohibited; use an explicit validated child path or a recoverable move.",
+    match = ["rm -rf /", "rm -fr .."],
+    not_match = ["rm -rf build/tmp"],
+)
+
+prefix_rule(
+    pattern = ["alembic", "upgrade"],
+    decision = "prompt",
+    justification = "Applying database migrations requires confirmation of the target environment.",
+    match = ["alembic upgrade head", "alembic upgrade +1"],
+    not_match = ["alembic history", "alembic current"],
+)
+
+prefix_rule(
+    pattern = [["terraform", "tofu"], ["apply", "destroy"]],
+    decision = "prompt",
+    justification = "Remote infrastructure changes require explicit approval and target review.",
+    match = ["terraform apply", "terraform destroy", "tofu apply plan.tfplan"],
+    not_match = ["terraform plan", "tofu validate"],
+)
+
+prefix_rule(
+    pattern = ["ansible-playbook"],
+    decision = "prompt",
+    justification = "Ansible playbooks can change remote systems; confirm inventory and scope first.",
+    match = ["ansible-playbook -i infra/inventory deploy.yml"],
+    not_match = ["ansible-inventory --list"],
+)
+
+prefix_rule(
+    pattern = ["kubectl", ["apply", "delete", "replace", "patch"]],
+    decision = "prompt",
+    justification = "Kubernetes state changes require explicit cluster and namespace confirmation.",
+    match = ["kubectl apply -f deploy.yaml", "kubectl delete pod aura"],
+    not_match = ["kubectl get pods", "kubectl diff -f deploy.yaml"],
+)
+
+prefix_rule(pattern = ["git", "status"], decision = "allow", match = ["git status", "git status --short"], not_match = ["git push"])
+prefix_rule(pattern = ["git", "diff"], decision = "allow", match = ["git diff", "git diff --cached"], not_match = ["git reset --hard"])
+prefix_rule(pattern = ["rg"], decision = "allow", match = ["rg TODO", "rg --files"], not_match = ["sed -n 1,20p README.md"])

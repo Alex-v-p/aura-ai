@@ -1,0 +1,37 @@
+critical_paths:
+  - pattern: .codex/**
+    change_classes: [repository_governance]
+  - pattern: .agents/**
+    change_classes: [repository_governance]
+  - pattern: AGENTS.md
+    change_classes: [repository_governance]
+  - pattern: '**/AGENTS.md'
+    change_classes: [repository_governance]
+  - pattern: tooling/architecture/**
+    change_classes: [repository_governance]
+  - pattern: .github/workflows/**
+    change_classes: [repository_governance, infrastructure]
+  - pattern: CODEOWNERS
+    change_classes: [repository_governance]
+  - pattern: docs/architecture/**
+    change_classes: [repository_governance]
+  - pattern: docs/adr/**
+    change_classes: [repository_governance]
+  - pattern: contracts/**
+    change_classes: [contract, repository_governance]
+  - pattern: evaluations/golden-results/**
+    change_classes: [evaluation, repository_governance]
+    baseline_permission: true
+  - pattern: evaluations/**/baselines/**
+    change_classes: [evaluation, repository_governance]
+    baseline_permission: true
+  - pattern: evaluations/**/*baseline*.yaml
+    change_classes: [evaluation, repository_governance]
+    baseline_permission: true
+  - pattern: evaluations/**/*threshold*.yaml
+    change_classes: [evaluation, repository_governance]
+    baseline_permission: true
+  - pattern: '**/*security*policy*'
+    change_classes: [repository_governance, infrastructure]
+  - pattern: '**/*permission*policy*'
+    change_classes: [repository_governance, infrastructure]

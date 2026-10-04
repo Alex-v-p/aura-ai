@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["agent", "work_item", "status", "runtime", "scope", "commits", "files_changed", "contracts", "migrations", "observability", "verification", "decisions", "risks", "unresolved"],
+  "properties": {
+    "agent": {"type": "string"}, "work_item": {"type": "string", "pattern": "^AURA-[0-9]{4,}$"}, "status": {"enum": ["complete", "partial", "blocked"]},
+    "runtime": {"type": "object", "required": ["model", "reasoning_effort", "execution_tier", "agent_thread_id", "worktree"]},
+    "scope": {"type": "object", "required": ["ownership_zone", "allowed_paths_respected"]},
+    "commits": {"type": "array"}, "files_changed": {"type": "array"},
+    "contracts": {"type": "object", "required": ["changed"]}, "migrations": {"type": "object", "required": ["changed"]},
+    "observability": {"type": "object", "required": ["components", "metrics_added"]},
+    "verification": {"type": "object", "required": ["passed", "failed", "not_run"]},
+    "decisions": {"type": "array"}, "risks": {"type": "array"}, "unresolved": {"type": "array"}
+  }
+}
