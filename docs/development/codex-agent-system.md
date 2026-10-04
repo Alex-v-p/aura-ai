@@ -41,4 +41,6 @@ In-thread subagents share the parent filesystem and are capped at eight open spa
 
 Project hooks and command rules are loaded only after the repository `.codex` layer is trusted. In Codex CLI, inspect and trust the exact hook definitions with `/hooks`. Hooks are guardrails with incomplete tool coverage; the Python validators and repository merge controls remain authoritative. Sandbox and permission choices on the parent turn may override custom-agent defaults, so read-only review must also be enforced by workflow and changed-path checks.
 
+Trusted interactive sessions use `approval_policy = "on-request"` with `approvals_reviewer = "user"`. Commands classified as `prompt` by repository rules therefore surface an approval request instead of being rejected automatically. Configuration is resolved when a session starts; restart or open a new task after changing these settings. Managed requirements or a host-provided execution policy may still impose stricter behavior.
+
 Official references: [custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents), [hooks](https://learn.chatgpt.com/docs/hooks), [rules](https://learn.chatgpt.com/docs/agent-configuration/rules), [skills](https://learn.chatgpt.com/docs/build-skills), and [AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
