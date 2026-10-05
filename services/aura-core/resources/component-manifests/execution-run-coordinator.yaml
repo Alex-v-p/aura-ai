@@ -1,0 +1,51 @@
+component:
+  id: aura.execution.run_coordinator
+  version: 1.2.0
+  owner: aura-core
+  category: execution
+input:
+  schema: aura-run-command-v1
+  replayable: false
+  replay_reason: Executes durable side effects and provider inference.
+output:
+  schema: aura-run-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.interaction.conversation_persistence
+  - aura.runtime.model_routing
+  - aura.runtime.model_inference
+  - aura.runtime.stream_delivery
+metrics:
+  - queue_wait_ms
+  - run_duration_ms
+  - operation_duration_ms
+  - run_started
+  - run_status
+  - cancellations
+  - retries
+  - outbox_dispatched
+  - outbox_duplicates
+  - consumer_received
+  - consumer_acknowledged
+  - lease_expired
+  - errors
+metric_semantics:
+  queue_wait_ms: Persisted run started_at minus persisted run created_at.
+  run_duration_ms: Monotonic elapsed execution time tagged with terminal status.
+  operation_duration_ms: Component-local command, dispatch, lease, and worker execution span duration; never substituted for run_duration_ms.
+  errors: Count classified as queue, provider, timeout, persistence, cancel, or delivery.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [status, error_class, provider, dependency, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, command_id, correlation_id, causation_id, attempt_count, delivery_count]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

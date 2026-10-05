@@ -18,6 +18,7 @@
 .conversation-link:hover, .conversation-link.is-active, .quiet-link:hover { background: var(--surface-subtle); color: var(--text); }
 .conversation-link.is-active { box-shadow: inset 3px 0 var(--accent); }
 .conversation-dot { color: var(--accent); font-size: 1.1rem; }
+.conversation-status { color: var(--text-muted); font-size: .65rem; margin-left: auto; white-space: nowrap; }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bottom { display: grid; gap: .25rem; margin-top: auto; width: 100%; }
 .sidebar-bottom aura-theme-select { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .8rem; }

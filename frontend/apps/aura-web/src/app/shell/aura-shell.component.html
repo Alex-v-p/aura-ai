@@ -22,7 +22,7 @@
           <p class="nav-label">Recent</p>
           @if (conversations.length === 0) { <p class="nav-empty">Your conversations will appear here.</p> }
           @for (conversation of conversations; track conversation.id) {
-            <button class="conversation-link" [class.is-active]="conversation.active" type="button" [attr.aria-label]="conversation.title" [attr.aria-current]="conversation.active ? 'page' : null" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span></button>
+            <button class="conversation-link" [class.is-active]="conversation.active" type="button" [attr.aria-label]="conversation.status ? conversation.title + ', ' + conversation.status : conversation.title" [attr.aria-current]="conversation.active ? 'page' : null" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span>@if (conversation.status) { <span class="conversation-status" aria-hidden="true">{{ conversation.status }}</span> }</button>
           }
         </div>
         <div class="sidebar-bottom"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>

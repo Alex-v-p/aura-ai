@@ -1,0 +1,38 @@
+component:
+  id: aura.interaction.conversation_persistence
+  version: 1.2.0
+  owner: aura-core
+  category: persistence
+input:
+  schema: core-conversation-command-v1
+  replayable: false
+  replay_reason: Commands mutate Core-owned durable state.
+output:
+  schema: core-conversation-record-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+metrics:
+  - checkpoint_persisted
+  - model_selection_persisted
+  - persistence_duration_ms
+  - errors
+metric_semantics:
+  checkpoint_persisted: Partial assistant output committed before a stream event is published.
+  model_selection_persisted: Model and immutable policy references committed successfully.
+  persistence_duration_ms: Component-local persistence boundary duration from a parented span.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [provider, error_class, dependency, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id, agent_revision_id, model_policy_revision_id]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

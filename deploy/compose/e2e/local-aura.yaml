@@ -1,0 +1,59 @@
+services:
+  aura-e2e-ollama:
+    build:
+      # This override is loaded after the repository-root Compose file, so
+      # paths are resolved from the root project directory.
+      context: .
+      dockerfile: deploy/docker/aura-api.Dockerfile
+      target: e2e-provider
+    environment:
+      AURA_E2E_PROVIDER: ollama
+    networks: [aura-core-egress]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=2)"]
+
+  aura-core-api:
+    environment:
+      AURA_ENVIRONMENT: test
+      AURA_SECURE_COOKIES: "false"
+      AURA_PUBLIC_ORIGIN: http://aura-web:8080
+      AURA_OIDC_ISSUER: http://authentik-server:9000/application/o/aura-e2e/
+      AURA_OIDC_AUDIENCE: aura-e2e
+      AURA_OIDC_CLIENT_ID: aura-e2e
+      AURA_OIDC_REDIRECT_URI: http://aura-web:8080/api/v1/auth/callback
+      # Authentik's fresh test database assigns the bootstrap owner user ID 4;
+      # the test-only provider emits that immutable ID rather than a hash.
+      AURA_OWNER_SUBJECT: "4"
+      AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
+      AURA_DEFAULT_MODEL: fixture-chat
+
+  aura-core-worker:
+    environment:
+      AURA_ENVIRONMENT: test
+      AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
+      AURA_DEFAULT_MODEL: fixture-chat
+
+  authentik-server:
+    environment:
+      AURA_E2E_CLIENT_ID: aura-e2e
+      AURA_E2E_REDIRECT_URI: http://aura-web:8080/api/v1/auth/callback
+    volumes:
+      - ./deploy/compose/e2e/authentik-blueprints:/blueprints/custom:ro
+
+  authentik-worker:
+    volumes:
+      - ./deploy/compose/e2e/authentik-blueprints:/blueprints/custom:ro
+
+  frontend-e2e:
+    environment:
+      BASE_URL: http://aura-web:8080
+      AURA_E2E_IDENTITY_MODE: local-identity
+      AURA_E2E_LOCAL_BASE_URL: http://aura-web:8080
+      AURA_E2E_LOCAL_ISSUER: http://authentik-server:9000/application/o/aura-e2e/
+      AURA_E2E_LOCAL_IDENTITY_URL: http://authentik-server:9000
+      AURA_E2E_LOCAL_OWNER_USERNAME: akadmin
+      AURA_E2E_LOCAL_OWNER_PASSWORD: fixture-authentik-admin
+      AURA_E2E_LOCAL_OWNER_SUBJECT: "4"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: fixture-authentik-admin
+    networks: [aura-identity]
+    command: [sh, -c, "pnpm --dir frontend exec playwright test --config=apps/aura-web-e2e/playwright.full-stack.config.ts"]

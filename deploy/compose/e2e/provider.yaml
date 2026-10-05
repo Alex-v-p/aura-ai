@@ -1,0 +1,32 @@
+name: aura-e2e-provider
+
+# Started as a separate Compose project by run-full-stack-e2e.sh. Aura's
+# external-provider mode therefore has no container dependency on this project.
+services:
+  aura-e2e-oidc:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/aura-api.Dockerfile
+      target: e2e-provider
+    environment:
+      AURA_E2E_PROVIDER: oidc
+      AURA_E2E_OIDC_ISSUER: http://aura-e2e-oidc:8081
+    networks: [aura-e2e-provider]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=2)"]
+
+  aura-e2e-ollama:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/aura-api.Dockerfile
+      target: e2e-provider
+    environment:
+      AURA_E2E_PROVIDER: ollama
+    networks: [aura-e2e-provider]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=2)"]
+
+networks:
+  aura-e2e-provider:
+    name: aura-e2e-provider
+    internal: true

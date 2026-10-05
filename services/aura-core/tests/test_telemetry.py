@@ -1,0 +1,484 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any, cast
+from uuid import UUID, uuid4
+
+import pytest
+from aura_core.domains.execution.runs.public import (
+    ChatMessage,
+    RunClaimLost,
+    RunCoordinator,
+)
+from aura_core.domains.interaction.conversations.public import (
+    ConversationStore,
+    MessageState,
+)
+from aura_core.domains.interaction.conversations.public import (
+    Message as ConversationMessage,
+)
+from aura_core.entrypoints.api.state import AppState
+from aura_core.entrypoints.worker.app import make_worker_telemetry, run_once
+from aura_core.platform.auth import Settings
+from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
+from aura_core.platform.outbox.nats import NatsOutbox, NatsRunConsumer
+from aura_core.platform.telemetry import (
+    MetadataMetrics,
+    StructuredContainerLogExporter,
+    TelemetryBatch,
+    TelemetryLifecycle,
+    new_span_id,
+    root_span_id,
+)
+from aura_core.providers.models.ollama.fake import FakeChatModel
+from aura_core.runtime.streaming.publisher import EventPublisher
+
+
+def test_metadata_metrics_is_bounded_and_separates_dimensions_from_trace_fields() -> None:
+    metrics = MetadataMetrics(capacity=2)
+    run_id, conversation_id = uuid4(), uuid4()
+    metadata = {
+        "trace_id": run_id.hex,
+        "run_id": str(run_id),
+        "conversation_id": str(conversation_id),
+    }
+
+    metrics.increment("aura.execution.run_coordinator", "run_started", **metadata)
+    metrics.increment(
+        "aura.runtime.model_routing",
+        "model_routed",
+        provider="ollama",
+        model_id="llama3.2:latest",
+        **metadata,
+    )
+    metrics.increment("aura.runtime.stream_delivery", "sse_connections", **metadata)
+    metrics.increment(
+        "aura.runtime.stream_delivery",
+        "errors",
+        prompt="private conversation text",
+        **metadata,
+    )
+    metrics.increment(
+        "aura.runtime.model_routing",
+        "model_routed",
+        provider="https://secret-bearing-endpoint.invalid",
+        model_id="fake",
+        **metadata,
+    )
+
+    assert [item.metric for item in metrics.snapshot()] == ["model_routed", "sse_connections"]
+    routed = metrics.snapshot()[0]
+    assert dict(routed.dimensions) == {"provider": "ollama"}
+    assert dict(routed.trace_attributes) == {
+        "conversation_id": str(conversation_id),
+        "model_id": "llama3.2:latest",
+        "run_id": str(run_id),
+    }
+    assert all(not _contains_uuid(dict(item.dimensions)) for item in metrics.snapshot())
+    assert metrics.stats().dropped == 1
+    assert metrics.stats().rejected == 2
+
+
+@pytest.mark.asyncio
+async def test_export_failure_retries_are_bounded_and_counters_survive() -> None:
+    class Exporter:
+        def __init__(self) -> None:
+            self.fail = True
+            self.exported: list[TelemetryBatch] = []
+
+        async def export(self, batch: TelemetryBatch) -> None:
+            if self.fail:
+                raise RuntimeError("collector unavailable")
+            self.exported.append(batch)
+
+    exporter = Exporter()
+    metrics = MetadataMetrics(exporter=exporter, max_export_attempts=2)
+    metrics.increment("aura.execution.run_coordinator", "run_started")
+
+    assert not await metrics.flush()
+    assert len(metrics.snapshot()) == 1
+    assert not await metrics.flush()
+    assert metrics.snapshot() == ()
+    assert metrics.stats().export_failures == 2
+    assert metrics.stats().dropped == 1
+    assert metrics.stats().abandoned_batches == 1
+
+    exporter.fail = False
+    assert await metrics.flush()
+    assert exporter.exported[-1].stats.export_failures == 2
+    assert exporter.exported[-1].stats.dropped == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_container_export_is_metadata_only_and_exports_health() -> None:
+    lines: list[str] = []
+    delegate = StructuredContainerLogExporter(lines.append)
+
+    class FailOnce:
+        def __init__(self) -> None:
+            self.failed = False
+
+        async def export(self, batch: TelemetryBatch) -> None:
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("stdout temporarily unavailable")
+            await delegate.export(batch)
+
+    run_id = uuid4()
+    metrics = MetadataMetrics(capacity=1, exporter=FailOnce())
+    metrics.increment(
+        "aura.runtime.model_routing",
+        "model_routed",
+        trace_id=run_id.hex,
+        run_id=str(run_id),
+        provider="ollama",
+        model_id="chat:latest",
+    )
+    metrics.increment("aura.runtime.stream_delivery", "sse_connections")
+    metrics.increment(
+        "aura.runtime.stream_delivery",
+        "errors",
+        response="private assistant output",
+    )
+
+    assert not await metrics.flush()
+    assert await metrics.flush()
+    records = [cast(dict[str, Any], json.loads(line)) for line in lines]
+    measurement = next(
+        record for record in records if record["event"] == "aura.telemetry.measurement"
+    )
+    health = next(record for record in records if record["event"] == "aura.telemetry.health")
+    assert measurement["capture_policy"] == "metadata_only"
+    assert set(cast(dict[str, object], measurement["dimensions"])) == set()
+    assert health["dropped"] == 1
+    assert health["rejected"] == 1
+    assert health["export_failures"] == 1
+    rendered = "\n".join(lines).casefold()
+    assert all(
+        forbidden not in rendered
+        for forbidden in ("private assistant", '"prompt"', '"response"', '"endpoint"', '"token"')
+    )
+
+
+@pytest.mark.asyncio
+async def test_periodic_lifecycle_flushes_and_shutdown_flushes() -> None:
+    class Exporter:
+        def __init__(self) -> None:
+            self.batches: list[TelemetryBatch] = []
+
+        async def export(self, batch: TelemetryBatch) -> None:
+            self.batches.append(batch)
+
+    exporter = Exporter()
+    metrics = MetadataMetrics(exporter=exporter)
+    lifecycle = TelemetryLifecycle(metrics, interval_seconds=0.01)
+    metrics.increment("aura.execution.run_coordinator", "run_started")
+
+    await lifecycle.start()
+    await asyncio.sleep(0.03)
+    metrics.increment("aura.execution.run_coordinator", "run_started")
+    assert await lifecycle.stop()
+
+    assert not lifecycle.running
+    assert any(batch.measurements for batch in exporter.batches)
+    assert metrics.snapshot() == ()
+
+
+def test_normal_api_composition_configures_real_exporter() -> None:
+    state = AppState(
+        Settings(
+            database_url="postgresql+psycopg://aura:aura@127.0.0.1:5432/aura",
+            oidc_issuer="https://identity.example",
+        )
+    )
+    assert isinstance(state.metrics.exporter, StructuredContainerLogExporter)
+    assert state.metrics.stats().exporter_configured
+
+
+def test_normal_worker_composition_configures_real_exporter() -> None:
+    metrics, lifecycle = make_worker_telemetry()
+
+    assert isinstance(metrics.exporter, StructuredContainerLogExporter)
+    assert metrics.stats().exporter_configured
+    assert lifecycle.metrics is metrics
+
+
+@pytest.mark.asyncio
+async def test_production_worker_execution_emits_a_unique_real_root_span() -> None:
+    provider = FakeChatModel(("ok",))
+    store = ConversationStore()
+    models = await provider.list_models()
+    _, _, run = await store.create(
+        "https://issuer", "owner", "worker", "fake", models, str(uuid4())
+    )
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+    command = OutboxCommand(
+        uuid4(),
+        "aura.runs.execute.v1",
+        run.id,
+        run.conversation_id,
+        datetime.now(UTC),
+        run.id,
+        run.id,
+    )
+
+    class Consumer:
+        acknowledged = False
+
+        async def receive(self) -> OutboxCommand:
+            return command
+
+        async def ack(self) -> None:
+            self.acknowledged = True
+
+    consumer = Consumer()
+    await run_once(coordinator, provider, cast(NatsRunConsumer, cast(object, consumer)))
+
+    roots = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "run.execute"
+    ]
+    assert consumer.acknowledged
+    assert len(roots) == 1
+    assert roots[0].trace_id == run.id.hex
+    assert roots[0].parent_span_id is None
+    assert roots[0].span_id != root_span_id(run.id.hex)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_records_actual_execution_boundaries() -> None:
+    provider = FakeChatModel(("four", " chars"))
+    store = ConversationStore()
+    models = await provider.list_models()
+    _, _, run = await store.create(
+        "https://issuer", "owner", "question", "fake", models, str(uuid4())
+    )
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+
+    await coordinator.execute(run.id, provider)
+
+    measurements = metrics.snapshot()
+    names = {item.metric for item in measurements}
+    assert {
+        "checkpoint_persisted",
+        "model_routed",
+        "output_tokens",
+        "queue_wait_ms",
+        "run_duration_ms",
+        "time_to_first_token_ms",
+    } <= names
+    output = next(item for item in measurements if item.metric == "output_tokens")
+    assert output.value == 3
+    assert dict(output.dimensions)["token_estimator"] == "chars_div_4_ceil"
+    duration = next(item for item in measurements if item.metric == "run_duration_ms")
+    assert dict(duration.dimensions)["status"] == "completed"
+    assert all(item.trace_id == run.id.hex for item in measurements)
+    spans = {
+        dict(item.trace_attributes)["operation"]: item
+        for item in measurements
+        if item.kind == "span"
+    }
+    worker = spans["run.execute"]
+    routed = spans["model.route"]
+    inferred = spans["model.infer"]
+    assert worker.metric == "operation_duration_ms"
+    assert routed.metric == "model_routing_duration_ms"
+    assert inferred.metric == "inference_duration_ms"
+    assert routed.value > 0
+    assert routed.parent_span_id == inferred.parent_span_id == worker.span_id
+    assert worker.parent_span_id is None
+    assert len({worker.span_id, routed.span_id, inferred.span_id}) == 3
+
+
+@pytest.mark.asyncio
+async def test_claim_loss_during_stream_is_not_classified_as_provider_error() -> None:
+    catalog = FakeChatModel()
+
+    class ClaimLostOnAppendStore(ConversationStore):
+        async def append_assistant(
+            self,
+            run_id: UUID,
+            text: str,
+            state: MessageState = MessageState.PARTIAL,
+            *,
+            attempt_id: UUID | None = None,
+        ) -> ConversationMessage:
+            del run_id, text, state, attempt_id
+            raise RunClaimLost
+
+    store = ClaimLostOnAppendStore()
+    models = await catalog.list_models()
+    _, _, run = await store.create(
+        "https://issuer", "owner", "lease loss", "fake", models, str(uuid4())
+    )
+
+    class LeaseLostProvider:
+        def stream_chat(
+            self, model_id: str, messages: Sequence[ChatMessage]
+        ) -> AsyncIterator[str]:
+            del model_id, messages
+
+            async def chunks() -> AsyncIterator[str]:
+                yield "stale"
+
+            return chunks()
+
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+
+    await coordinator.execute(run.id, LeaseLostProvider())
+
+    inference = next(
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "model.infer"
+    )
+    assert dict(inference.dimensions)["outcome"] == "skipped"
+    assert "error_class" not in dict(inference.dimensions)
+    assert not any(item.metric == "provider_errors" for item in metrics.snapshot())
+
+
+@pytest.mark.asyncio
+async def test_lease_expiry_metric_preserves_the_actual_run_trace() -> None:
+    provider = FakeChatModel()
+    store = ConversationStore()
+    models = await provider.list_models()
+    _, _, run = await store.create(
+        "https://issuer", "owner", "expire", "fake", models, str(uuid4())
+    )
+    await store.start_run(run.id, worker_id=uuid4(), lease_seconds=0.001)
+    await asyncio.sleep(0.01)
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+
+    await coordinator.execute(run.id, provider)
+
+    expiry = next(item for item in metrics.snapshot() if item.metric == "lease_expired")
+    _, interrupted = await store.find_run_any(run.id)
+    assert interrupted.error is not None
+    assert interrupted.error.trace_id == run.id.hex == expiry.trace_id
+    assert expiry.trace_id == run.id.hex
+    assert dict(expiry.trace_attributes)["run_id"] == str(run.id)
+    assert dict(expiry.trace_attributes)["conversation_id"] == str(run.conversation_id)
+
+
+def test_parented_span_has_component_identity_dependency_and_trace_only_ids() -> None:
+    run_id, conversation_id = uuid4(), uuid4()
+    metrics = MetadataMetrics()
+    child_id = new_span_id()
+    metrics.record_span(
+        "aura.interaction.conversation_persistence",
+        "checkpoint.persist",
+        3.5,
+        trace_id=run_id.hex,
+        span_id=child_id,
+        parent_span_id=root_span_id(run_id.hex),
+        dependency="postgresql",
+        outcome="ok",
+        run_id=str(run_id),
+        conversation_id=str(conversation_id),
+    )
+
+    span = metrics.snapshot()[0]
+    assert span.kind == "span"
+    assert span.component_version == "1.2.0"
+    assert span.span_id == child_id
+    assert span.parent_span_id == root_span_id(run_id.hex)
+    assert dict(span.dimensions) == {"dependency": "postgresql", "outcome": "ok"}
+    assert dict(span.trace_attributes)["run_id"] == str(run_id)
+    assert not _contains_uuid(dict(span.dimensions))
+
+
+@pytest.mark.asyncio
+async def test_nats_readiness_recovers_after_stream_subject_is_restored() -> None:
+    class Config:
+        subjects = ["aura.runs.execute.v1"]
+
+    class Info:
+        config = Config()
+
+    class JetStream:
+        async def account_info(self) -> object:
+            return object()
+
+        async def stream_info(self, name: str) -> Info:
+            assert name == "AURA_RUNS"
+            return Info()
+
+    class Connection:
+        is_closed = False
+
+    transport = NatsOutbox("nats://unused")
+    cast(Any, transport)._connection = Connection()
+    cast(Any, transport)._jetstream = JetStream()
+
+    assert await transport.readiness() == (True, None)
+    Config.subjects = ["wrong.subject"]
+    assert await transport.readiness() == (False, "run stream subject missing")
+    Config.subjects = ["aura.runs.execute.v1"]
+    assert await transport.readiness() == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_consumer_duplicate_and_ack_are_observed_without_uuid_dimensions() -> None:
+    command = OutboxCommand(
+        uuid4(),
+        "aura.runs.execute.v1",
+        uuid4(),
+        uuid4(),
+        datetime.now(UTC),
+        uuid4(),
+        uuid4(),
+    )
+
+    class Message:
+        def __init__(self) -> None:
+            self.data = command.wire_payload()
+            self.metadata = SimpleNamespace(num_delivered=2)
+            self.acknowledged = False
+
+        async def ack(self) -> None:
+            self.acknowledged = True
+
+    message = Message()
+
+    class Subscription:
+        async def fetch(self, count: int, timeout: int) -> Sequence[Message]:
+            assert count == 1 and timeout == 30
+            return (message,)
+
+    metrics = MetadataMetrics()
+    consumer = NatsRunConsumer("nats://unused", metrics=metrics)
+    cast(Any, consumer)._subscription = Subscription()
+
+    received = await consumer.receive()
+    await consumer.ack()
+
+    assert received == command
+    assert message.acknowledged
+    names = [item.metric for item in metrics.snapshot()]
+    assert names == ["consumer_received", "outbox_duplicates", "consumer_acknowledged"]
+    assert all(not _contains_uuid(dict(item.dimensions)) for item in metrics.snapshot())
+    assert all(
+        dict(item.trace_attributes)["command_id"] == str(command.id)
+        for item in metrics.snapshot()
+    )
+
+
+def _contains_uuid(values: dict[str, object]) -> bool:
+    for value in values.values():
+        try:
+            from uuid import UUID
+
+            UUID(str(value))
+        except ValueError:
+            continue
+        return True
+    return False

@@ -1,6 +1,81 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
+async function installApiFake(page: import('@playwright/test').Page): Promise<void> {
+  let errorOnce = false;
+  let failNextStream = false;
+  page.on('framenavigated', (frame) => { if (frame === page.mainFrame() && frame.url().includes('fixture=error')) errorOnce = true; });
+  let runNumber = 0;
+  let version = 1;
+  let selectedModel = 'qwen2.5:7b';
+  let messages: Array<Record<string, unknown>> = [];
+  let activeRun: Record<string, unknown> | null = null;
+  const now = (): string => new Date().toISOString();
+  const summary = (): Record<string, unknown> => ({ id: 'welcome', title: 'A thoughtful beginning', agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: selectedModel, version, createdAt: now(), updatedAt: now(), currentRun: activeRun });
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf', idleExpiresAt: now(), absoluteExpiresAt: now() } });
+    if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'embed-only', displayName: 'Embeddings only', provider: 'ollama', capabilities: ['embedding'], availability: 'available', selectable: false, disabledReason: 'This model does not support chat.' }], defaultModelId: 'qwen2.5:7b', observedAt: now() } });
+    if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: [summary()], nextCursor: null } });
+    if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'PATCH') {
+      const body = JSON.parse(request.postData() ?? '{}') as { modelId?: string; version?: number };
+      if (body.modelId) selectedModel = body.modelId;
+      version = (body.version ?? version) + 1;
+      return route.fulfill({ json: summary() });
+    }
+    if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'GET') return route.fulfill({ json: { ...summary(), messages, recentRuns: activeRun ? [activeRun] : [] } });
+    if (url.pathname.endsWith('/runs') && request.method() === 'POST') {
+      // Use the current document URL as a second source so the fixture does
+      // not depend on the relative ordering of `framenavigated` and the
+      // application's first API request.
+      if (errorOnce || page.url().includes('fixture=error')) { errorOnce = false; failNextStream = true; }
+      const body = JSON.parse(request.postData() ?? '{}') as { message?: string };
+      const runId = `run-${++runNumber}`;
+      const userMessage = { id: `user-${runId}`, conversationId: 'welcome', role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
+      activeRun = { id: runId, conversationId: 'welcome', userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: 'qwen2.5:7b', retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
+      messages = [...messages, userMessage]; version += 1;
+      return route.fulfill({ status: 202, json: { conversation: summary(), userMessage, run: activeRun } });
+    }
+    if (url.pathname.endsWith('/cancel') && request.method() === 'POST') { activeRun = activeRun ? { ...activeRun, status: 'canceled', finishedAt: now() } : null; return route.fulfill({ json: activeRun }); }
+    if (url.pathname.endsWith('/retry') && request.method() === 'POST') {
+      const runId = `run-${++runNumber}`; activeRun = { ...(activeRun ?? {}), id: runId, status: 'running', createdAt: now(), startedAt: now(), finishedAt: null, retryOfRunId: activeRun?.['id'] ?? null }; return route.fulfill({ status: 202, json: { conversation: summary(), userMessage: messages.at(-1), run: activeRun } });
+    }
+    if (url.pathname.includes('/events')) {
+      const run = activeRun; const lastUser = messages.filter((message) => message['role'] === 'user').at(-1)?.['content'] ?? 'your thought';
+      if (String(lastUser).includes('small local thought') && activeRun?.['status'] !== 'canceled') {
+        const deadline = Date.now() + 5_000;
+        while (activeRun?.['status'] !== 'canceled' && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      if (activeRun?.['status'] === 'canceled') {
+        const partial = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: 'welcome', role: 'assistant', content: 'A partial response from the provider.', state: 'interrupted', runId: activeRun['id'], createdAt: now(), updatedAt: now() };
+        const canceledEvent = [
+          `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-partial', sequence: 1, eventType: 'assistant.snapshot', runId: activeRun['id'], conversationId: 'welcome', occurredAt: now(), data: { message: partial } })}\n\n`,
+          `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-canceled', sequence: 2, eventType: 'run.status', runId: activeRun['id'], conversationId: 'welcome', occurredAt: now(), data: { status: 'canceled', startedAt: activeRun['startedAt'], finishedAt: activeRun['finishedAt'] } })}\n\n`,
+        ].join('');
+        return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: canceledEvent });
+      }
+      const assistant = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: 'welcome', role: 'assistant', content: `A server response with your thought: ${lastUser}`, state: 'complete', runId: run?.['id'] ?? 'run', createdAt: now(), updatedAt: now() };
+      if (failNextStream) {
+        failNextStream = false; activeRun = run ? { ...run, status: 'failed', finishedAt: now(), error: { code: 'provider_unavailable', message: 'Aura could not reach the selected provider.', retryable: true, traceId: 'trace-test' } } : null;
+        const errorEvent = `id: 1\nevent: run.error\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-error', sequence: 1, eventType: 'run.error', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: activeRun?.['error'] })}\n\n`;
+        return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: errorEvent });
+      }
+      messages = [...messages, assistant]; activeRun = run ? { ...run, status: 'completed', finishedAt: now() } : null;
+      const events = [
+        `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-1', sequence: 1, eventType: 'assistant.snapshot', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: { message: assistant } })}\n\n`,
+        `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-2', sequence: 2, eventType: 'run.status', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: { status: 'completed', startedAt: run?.['startedAt'] ?? now(), finishedAt: now() } })}\n\n`,
+      ].join('');
+      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: events });
+    }
+    return route.continue();
+  });
+}
+
+test.beforeEach(async ({ page }) => { await installApiFake(page); });
+
 test('opens with a welcome-first conversation surface', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
@@ -43,7 +118,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
     await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
     await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveCount(0);
-    await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveCSS('width', '44px');
+    await expect(navigation.locator('button.new-conversation')).toHaveCSS('width', '44px');
     const compactAlignment = await navigation.evaluate((element) => {
       const rail = element.getBoundingClientRect();
       const borderRight = Number.parseFloat(getComputedStyle(element).borderRightWidth);
@@ -78,18 +153,18 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
     await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
     await expect(navigation.locator('.wordmark-text')).toBeVisible();
-    await expect(navigation.getByRole('button', { name: 'New conversation' }).locator('.label')).toBeVisible();
+    await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
     await expect(navigation.locator('.wordmark')).toHaveCSS('gap', '8.8px');
-    await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveCSS('gap', '8px');
+    await expect(navigation.locator('button.new-conversation')).toHaveCSS('gap', '8px');
     return;
   }
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/');
   await expect(navigation).toHaveCSS('flex-basis', '78px');
   await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
-  await expect(navigation.getByRole('button', { name: 'New conversation' })).toBeVisible();
+  await expect(navigation.locator('button.new-conversation')).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
-  await expect(navigation.getByRole('button', { name: 'New conversation' })).toHaveAttribute('title', 'New conversation');
+  await expect(navigation.locator('button.new-conversation')).toHaveAttribute('title', 'New conversation');
   await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveAttribute('title', 'A thoughtful beginning');
   const geometry = await navigation.evaluate((element) => {
     const conversationNav = element.querySelector<HTMLElement>('.conversation-nav');
@@ -123,17 +198,29 @@ test('renders a completed local reply', async ({ page }) => {
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('A completed local thought');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByRole('article', { name: 'Aura response' })).toContainText('A completed local thought');
+  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText('A completed local thought');
 });
 
-test('recovers from a deterministic local error', async ({ page }) => {
+test('shows incompatible models as disabled and persists a conversation model change', async ({ page }) => {
+  await page.goto('/');
+  const picker = page.getByLabel('Model');
+  await expect(picker).toHaveValue('qwen2.5:7b');
+  await expect(picker.locator('option[value="embed-only"]')).toHaveAttribute('disabled', '');
+
+  await picker.selectOption('llama3.2:3b');
+  await expect(picker).toHaveValue('llama3.2:3b');
+  await page.reload();
+  await expect(page.getByLabel('Model')).toHaveValue('llama3.2:3b');
+});
+
+test('recovers from a provider error', async ({ page }) => {
   await page.goto('/?fixture=error');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('A recoverable local thought');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText(/could not complete that local preview/)).toBeVisible();
+  await expect(page.getByText(/could not reach the selected provider/)).toBeVisible();
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.getByRole('article', { name: 'Aura response' })).toContainText('A recoverable local thought');
+  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText('A recoverable local thought');
 });
 
 test('mobile composer remains sticky and passes axe checks', async ({ page }, testInfo) => {
@@ -251,7 +338,7 @@ test('mobile new conversation closes navigation and restores focus', async ({ pa
   const trigger = page.getByRole('button', { name: 'Open navigation' });
   const navigation = page.locator('#primary-navigation');
   await trigger.click();
-  await navigation.getByRole('button', { name: 'New conversation' }).click();
+  await navigation.locator('button.new-conversation').click();
   await expect(navigation).not.toHaveClass(/is-mobile-open/);
   await expect(trigger).toBeFocused();
 });

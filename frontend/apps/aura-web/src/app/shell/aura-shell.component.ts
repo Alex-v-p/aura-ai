@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListe
 import { AdaptiveLayoutComponent } from '@aura/shared/layout';
 import { ThemePreference, ThemeSelectComponent } from '@aura/shared/ui';
 
-export interface ShellConversationSummary { readonly id: string; readonly title: string; readonly active: boolean; }
+export interface ShellConversationSummary { readonly id: string; readonly title: string; readonly active: boolean; readonly status?: string; }
 
 @Component({
   selector: 'aura-shell',

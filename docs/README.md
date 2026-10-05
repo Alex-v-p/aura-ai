@@ -75,3 +75,73 @@ Read the technology matrix and only the applicable ADRs for architecture, backen
 - [Work-item process](development/work-item-process.md) — scoped work authorization and structured handoffs.
 - [Architecture enforcement](development/architecture-enforcement.md) — manifests, hooks, validators, and current limitations.
 - [Worktree collaboration](development/worktree-collaboration.md) — writer isolation, concurrency, resources, and integration.
+
+## Operational runbooks
+
+- [Authentik relocation](runbooks/authentik-relocation.md) — move the temporary local identity provider to an external instance while preserving Aura's OIDC issuer and subject boundary.
+
+## Local platform stack
+
+The base Compose file contains only the normal Aura runtime. Copy
+`.env.example` to `.env`, create the referenced runtime secret files, set
+`AURA_STATE_ROOT` to an encrypted host directory, and set the required owner
+subject before starting Aura:
+
+```sh
+docker compose up --build --detach --wait aura-core-api aura-core-worker aura-web
+```
+
+The temporary Authentik deployment is an explicit, optional override. It is
+never interpolated by normal Compose commands. The override defaults to the
+verified immutable Authentik 2026.5.7 multi-architecture digest. Operators may
+override `AUTHENTIK_IMAGE` only with another verified digest-qualified image.
+Set stable HTTPS issuer and browser-host inputs, stable OIDC
+audience/client/redirect values, and the runtime secret files, then include
+the override for every identity command. Authentik's startup guard rejects any
+image value that is not `...@sha256:<digest>` before it runs its lifecycle:
+
+```sh
+docker compose -f compose.yaml -f deploy/compose/local-identity.yaml \
+  --profile local-identity config --quiet
+docker compose -f compose.yaml -f deploy/compose/local-identity.yaml \
+  --profile local-identity up --build --detach --wait authentik-server authentik-worker
+```
+
+Aura Web forwards `/api/` and SSE requests to Core on the same origin. Core
+connects to Ollama through `AURA_OLLAMA_URL`; that endpoint is never exposed
+by nginx or returned by the API. The API receives narrow external egress for
+OIDC discovery/JWKS and Ollama; the worker receives it only for Ollama. Linux
+hosts map the local Ollama default through Docker's `host-gateway`; configure
+an operator-controlled LAN URL instead when appropriate. The browser-facing,
+database, NATS, and Valkey networks remain internal and no Core provider
+endpoint is host-published. When the optional identity override is selected,
+only the Core API also joins Authentik's control network so it can discover the
+temporary issuer; workers, Core persistence, Valkey, and NATS never join it.
+Nginx access logs record normalized paths without query strings, and Core's
+Uvicorn access log is disabled, so OIDC callback `code` and `state` values do
+not enter ordinary request logs. Core and Authentik use separate nonpersistent,
+password-protected Valkey services and isolated Compose networks; identity
+never shares Aura's cache.
+Every durable PostgreSQL, JetStream, and Authentik media mount requires the
+operator-provided encrypted `AURA_STATE_ROOT`. The normal config command is
+`docker compose config --quiet`; it does not read the optional override or
+require any Authentik variables.
+
+### Disposable full-stack verification
+
+The test-only full-stack fixture uses disposable state and deterministic fake
+credentials. External mode starts OIDC and Ollama in a separate Compose project
+and confirms Aura reaches them solely through configured provider URLs:
+
+```sh
+AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+```
+
+Local-identity mode exercises the optional Authentik profile using the pinned
+test default. Set `AURA_E2E_AUTHENTIK_IMAGE` only to override it with another
+digest-qualified, operator-approved test image; no real operator credentials
+or endpoints are used:
+
+```sh
+AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+```

@@ -19,6 +19,9 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
+  const url = new URL(event.request.url);
+  // Authenticated API responses, SSE, transcripts, and drafts never enter the
+  // static-shell cache. The server remains the source of truth after reload.
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/health/')) return;
   event.respondWith(caches.match(event.request).then((cached) => cached ?? fetch(event.request)));
 });

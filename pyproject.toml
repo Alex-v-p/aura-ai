@@ -1,0 +1,57 @@
+[project]
+name = "aura-ai"
+version = "0.1.0"
+description = "Aura AI local-first personal AI platform"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "alembic>=1.16,<2",
+  "authlib>=1.6,<2",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "nats-py>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "redis>=6,<7",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "structlog>=25,<26",
+  "typer>=0.16,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.140,<7",
+  "pyright>=1.1.400,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+aura-core = "aura_core.entrypoints.cli:main"
+
+[tool.pyright]
+include = ["services/aura-core"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+executionEnvironments = [
+  { root = "services/aura-core", extraPaths = ["services/aura-core/src"] },
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["services/aura-core", "services/aura-core/tests/system"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services/aura-core/tests", "services/aura-core/tests/system"]
+
+[tool.uv]
+package = false

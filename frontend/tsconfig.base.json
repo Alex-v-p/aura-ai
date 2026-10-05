@@ -20,7 +20,8 @@
     "paths": {
       "@aura/shared/ui": ["libs/shared/ui/src/index.ts"],
       "@aura/shared/layout": ["libs/shared/layout/src/index.ts"],
-      "@aura/aura/interaction/conversations": ["libs/aura/interaction/conversations/src/index.ts"]
+      "@aura/aura/interaction/conversations": ["libs/aura/interaction/conversations/src/index.ts"],
+      "@aura/aura-api-client": ["libs/platform/aura-api-client/src/index.ts"]
     }
   }
 }

@@ -15,7 +15,7 @@ export class AppComponent implements OnDestroy {
   readonly theme = signal<ThemePreference>(this.readTheme());
   readonly navCollapsed = signal(false);
   readonly mobileNavigationOpen = signal(false);
-  readonly conversationSummaries = () => this.store.conversations().map((conversation) => ({ id: conversation.id, title: conversation.title, active: conversation.id === this.store.selectedId() }));
+  readonly conversationSummaries = () => this.store.conversations().map((conversation) => ({ id: conversation.id, title: conversation.title, active: conversation.id === this.store.selectedId(), status: this.store.runStates()[conversation.id] === 'working' ? 'Working' : this.store.runStates()[conversation.id] === 'error' ? 'Needs attention' : undefined }));
   private readonly mediaQuery = typeof window === 'undefined' ? null : window.matchMedia('(prefers-color-scheme: dark)');
   private readonly mediaListener = (): void => { if (this.theme() === 'system') this.applyTheme('system'); };
   private readonly themeEffect = effect(() => this.applyTheme(this.theme()));

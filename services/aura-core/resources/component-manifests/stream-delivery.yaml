@@ -1,0 +1,39 @@
+component:
+  id: aura.runtime.stream_delivery
+  version: 1.2.0
+  owner: aura-core
+  category: delivery
+input:
+  schema: aura-run-events-v1
+  replayable: true
+output:
+  schema: server-sent-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.interaction.conversation_persistence
+  - nats-jetstream
+metrics:
+  - sse_reconnects
+  - sse_connections
+  - events_delivered
+  - stream_delivery_duration_ms
+  - errors
+metric_semantics:
+  sse_reconnects: Authorized stream requests carrying a valid Last-Event-ID cursor.
+  events_delivered: Events serialized at the SSE boundary; event data is never telemetry.
+  stream_delivery_duration_ms: Component-local serialization or delivery duration from a parented span.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [error_class, dependency, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]
