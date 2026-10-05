@@ -86,6 +86,28 @@ class CommonTests(unittest.TestCase):
 
         self.assertTrue(any("role frontend_worker is not an owner" in error for error in errors))
 
+    def test_platform_worker_owns_root_workspace_and_environment_files(self):
+        item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
+        paths = ["pyproject.toml", "uv.lock", ".python-version", ".env.example"]
+        item["allowed_paths"] = paths
+        item["forbidden_paths"] = ["services/**"]
+
+        self.assertEqual([], COMMON.scope_errors(paths, item, "platform_worker"))
+
+    def test_generated_api_client_is_contract_owned_with_frontend_fallback(self):
+        item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
+        client_path = "frontend/libs/platform/aura-api-client/generated.ts"
+        sibling_path = "frontend/libs/platform/conversation/data-access.ts"
+        item["allowed_paths"] = ["frontend/**"]
+        item["forbidden_paths"] = ["services/**"]
+
+        self.assertEqual([], COMMON.scope_errors([client_path], item, "contract_steward"))
+        client_errors = COMMON.scope_errors([client_path], item, "frontend_worker")
+        self.assertTrue(any("role frontend_worker is not an owner" in error for error in client_errors))
+        self.assertTrue(any("expected one of ['contract_steward']" in error for error in client_errors))
+        errors = COMMON.scope_errors([sibling_path], item, "contract_steward")
+        self.assertTrue(any("role contract_steward is not an owner" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()
