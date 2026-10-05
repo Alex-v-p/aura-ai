@@ -12,15 +12,17 @@ There is one contract author until the contract is fixed, one writer per service
 
 Assign each worktree a distinct application/test port range, database name or isolated database instance, and temporary-data root. Dependency download caches may be shared when the package manager supports concurrency; build outputs, mutable test state, and databases must be isolated. Limit simultaneous full suites according to host CPU, RAM, disk, GPU, and port pressure. Workers run targeted checks; the integration worktree runs the final repository-wide suite.
 
-Each worker supplies a validated handoff and, only when explicitly authorized
-by the current user or task, commits a focused reviewed scope. Workers do not
-commit unreviewed implementations. Use checkpoints for work-item completion,
+Each worker supplies a validated handoff and may commit a focused reviewed
+scope after a coherent, validated milestone; per-commit user authorization is
+not required. Workers do not commit unreviewed implementations. Use
+checkpoints for work-item completion,
 ownership-zone handoff, pre-integration or other risky transitions, or
 prolonged work once a coherent validated slice exists. Do not create broken,
 unreviewed, unrelated, secret-bearing, temporary, generated-only, or noisy
-micro-commits. When push is explicitly authorized too, push each checkpoint
+micro-commits. When push is explicitly authorized, push each checkpoint
 normally to the configured upstream or named destination. Authorization is
-task-specific; force-pushes and history rewrites are prohibited. The
+task-specific; force-pushes and history rewrites require separate explicit
+authorization. The
 Integration Maintainer applies reviewed commits in declared dependency order,
 returns semantic conflicts to owners, runs aggregate checks, and cleans stale
 worktrees and large disposable build outputs after successful integration.

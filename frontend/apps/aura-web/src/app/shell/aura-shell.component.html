@@ -1,0 +1,33 @@
+<aura-adaptive-layout>
+  <div class="app-shell">
+    <header class="mobile-header">
+      <button #mobileTrigger class="icon-button" type="button" aria-label="Open navigation" aria-controls="primary-navigation" [attr.aria-expanded]="mobileOpen" (click)="mobileOpenChange.emit(true)"><span aria-hidden="true">☰</span></button>
+      <a class="wordmark" href="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span>Aura</a>
+      <span class="mobile-header-spacer"></span>
+    </header>
+
+    @if (mobileOpen && isMobileViewport()) { <button class="scrim" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"></button> }
+    <nav id="primary-navigation" class="sidebar" [class.is-collapsed]="collapsed && isWideDesktopViewport()" [class.is-mobile-open]="mobileOpen && isMobileViewport()" [cdkTrapFocus]="mobileOpen && isMobileViewport()" [cdkTrapFocusAutoCapture]="mobileOpen && isMobileViewport()" (transitionend)="handleSidebarTransitionEnd($event)" aria-label="Primary navigation">
+      <div class="sidebar-top">
+        <a class="wordmark" href="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span><span class="wordmark-text">Aura</span></a>
+        @if (isMobileViewport()) {
+          <button class="icon-button mobile-close-button" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"><span aria-hidden="true">×</span></button>
+        } @else {
+          <button class="icon-button collapse-button" type="button" [attr.aria-label]="collapsed ? 'Expand navigation' : 'Collapse navigation'" (click)="collapseChange.emit(!collapsed)"><span aria-hidden="true">{{ collapsed ? '→' : '←' }}</span></button>
+        }
+      </div>
+      <button class="new-conversation" type="button" aria-label="New conversation" title="New conversation" (click)="startNewConversation()"><span aria-hidden="true">＋</span><span class="label">New conversation</span></button>
+      @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
+        <div class="conversation-nav" aria-label="Conversations">
+          <p class="nav-label">Recent</p>
+          @if (conversations.length === 0) { <p class="nav-empty">Your conversations will appear here.</p> }
+          @for (conversation of conversations; track conversation.id) {
+            <button class="conversation-link" [class.is-active]="conversation.active" type="button" [attr.aria-label]="conversation.title" [attr.aria-current]="conversation.active ? 'page' : null" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span></button>
+          }
+        </div>
+        <div class="sidebar-bottom"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
+      }
+    </nav>
+    <main id="main-content" class="main-content" tabindex="-1"><ng-content /></main>
+  </div>
+</aura-adaptive-layout>

@@ -4,13 +4,34 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-HOOKS = ROOT / ".codex" / "hooks"
+HOOK_ROOT = ROOT
+OVERLAY_DIRECTORIES = (".codex/hooks", "work-items/schema")
+OVERLAY_FILES = (
+    "tooling/architecture/common.py",
+    "tooling/architecture/path-ownership.yaml",
+    "tooling/architecture/critical-paths.yaml",
+)
+
+
+def overlay_runtime_sources(source_root: Path, isolated_root: Path) -> None:
+    """Use caller-worktree runtime files without copying its working tree."""
+    ignored = shutil.ignore_patterns("__pycache__", "*.pyc")
+    for relative in OVERLAY_DIRECTORIES:
+        source = source_root / relative
+        destination = isolated_root / relative
+        shutil.copytree(source, destination, dirs_exist_ok=True, ignore=ignored)
+    for relative in OVERLAY_FILES:
+        source = source_root / relative
+        destination = isolated_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
 
 
 def run_hook(name: str, payload: object, **environment: str):
@@ -19,7 +40,7 @@ def run_hook(name: str, payload: object, **environment: str):
     env.pop("AURA_AGENT_ROLE", None)
     env.update(environment)
     return subprocess.run(
-        ["python3", str(HOOKS / name)], cwd=ROOT, env=env,
+        ["python3", str(HOOK_ROOT / ".codex" / "hooks" / name)], cwd=HOOK_ROOT, env=env,
         input=json.dumps(payload), text=True, capture_output=True, check=False,
     )
 
@@ -27,8 +48,31 @@ def run_hook(name: str, payload: object, **environment: str):
 class HookTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fixture = ROOT / "work-items" / "active" / "AURA-0001.yaml"
-        shutil.copyfile(ROOT / "work-items" / "archived" / "AURA-0001.yaml", cls.fixture)
+        global HOOK_ROOT
+        cls.tempdir = tempfile.TemporaryDirectory(prefix="aura-hook-fixture-")
+        cls.repo_root = Path(cls.tempdir.name) / "repo"
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        cls.caller_untracked_paths = [
+            line[3:].strip()
+            for line in status.stdout.splitlines()
+            if line.startswith("?? ") and line[3:].strip()
+        ]
+        subprocess.run(
+            ["git", "clone", "--quiet", "--no-local", str(ROOT), str(cls.repo_root)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        overlay_runtime_sources(ROOT, cls.repo_root)
+        HOOK_ROOT = cls.repo_root
+        cls.fixture = cls.repo_root / "work-items" / "active" / "AURA-0001.yaml"
+        shutil.copyfile(cls.repo_root / "work-items" / "archived" / "AURA-0001.yaml", cls.fixture)
         base = yaml.safe_load(cls.fixture.read_text(encoding="utf-8"))
         cls.extra_fixtures = []
         variants = {
@@ -39,7 +83,7 @@ class HookTests(unittest.TestCase):
         for identifier, changes in variants.items():
             item = dict(base)
             item.update(id=identifier, **changes)
-            path = ROOT / "work-items" / "active" / f"{identifier}.yaml"
+            path = cls.repo_root / "work-items" / "active" / f"{identifier}.yaml"
             path.write_text(yaml.safe_dump(item, sort_keys=False), encoding="utf-8")
             cls.extra_fixtures.append(path)
 
@@ -48,6 +92,33 @@ class HookTests(unittest.TestCase):
         cls.fixture.unlink(missing_ok=True)
         for path in cls.extra_fixtures:
             path.unlink(missing_ok=True)
+        cls.tempdir.cleanup()
+
+    def test_isolated_runtime_matches_caller_and_excludes_unrelated_paths(self):
+        representative = ".codex/hooks/validate-turn-completion.py"
+        self.assertEqual(
+            (ROOT / representative).read_bytes(),
+            (self.repo_root / representative).read_bytes(),
+        )
+        unrelated = next(
+            (
+                path
+                for path in self.caller_untracked_paths
+                if not any(path == relative or path.startswith(f"{relative}/") for relative in OVERLAY_DIRECTORIES)
+                and path not in OVERLAY_FILES
+            ),
+            None,
+        )
+        if unrelated is not None:
+            self.assertFalse((self.repo_root / unrelated).exists(), unrelated)
+            isolated_status = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=self.repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotIn(unrelated, isolated_status.stdout)
 
     def test_no_work_item_blocks_patch(self):
         result = run_hook("pre-tool-scope-guard.py", {"tool_name": "apply_patch", "tool_input": {"command": "*** Begin Patch\n*** Add File: docs/x.md\n+x\n*** End Patch"}})
@@ -57,7 +128,7 @@ class HookTests(unittest.TestCase):
     def test_first_active_work_item_can_be_created(self):
         result = run_hook(
             "pre-tool-scope-guard.py",
-            {"tool_name": "apply_patch", "tool_input": {"command": f"*** Begin Patch\n*** Add File: {ROOT / 'work-items' / 'active' / 'AURA-0127.yaml'}\n+id: AURA-0127\n*** End Patch"}},
+            {"tool_name": "apply_patch", "tool_input": {"command": f"*** Begin Patch\n*** Add File: {HOOK_ROOT / 'work-items' / 'active' / 'AURA-0127.yaml'}\n+id: AURA-0127\n*** End Patch"}},
         )
         self.assertEqual({}, json.loads(result.stdout))
 
@@ -124,7 +195,7 @@ findings: []
     def test_malformed_hook_input_fails_closed(self):
         env = os.environ.copy()
         env.pop("AURA_WORK_ITEM", None)
-        result = subprocess.run(["python3", str(HOOKS / "pre-tool-scope-guard.py")], cwd=ROOT, env=env, input="not-json", text=True, capture_output=True, check=False)
+        result = subprocess.run(["python3", str(HOOK_ROOT / ".codex" / "hooks" / "pre-tool-scope-guard.py")], cwd=HOOK_ROOT, env=env, input="not-json", text=True, capture_output=True, check=False)
         self.assertEqual("deny", json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"])
 
     def test_stop_hook_reentry_does_not_loop(self):

@@ -1,0 +1,26 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "ignoreDeprecations": "6.0",
+    "lib": ["ES2022", "DOM"],
+    "useDefineForClassFields": false,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@aura/shared/ui": ["libs/shared/ui/src/index.ts"],
+      "@aura/shared/layout": ["libs/shared/layout/src/index.ts"],
+      "@aura/aura/interaction/conversations": ["libs/aura/interaction/conversations/src/index.ts"]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+<section class="conversation" aria-labelledby="conversation-heading">
+  <div class="conversation-header"><div><p class="eyebrow">Aura Web · local preview</p><h1 id="conversation-heading">A calm space to think.</h1></div><span class="connection"><span class="connection-dot" aria-hidden="true"></span>Ready</span></div>
+  <div class="transcript" aria-live="polite" aria-atomic="false">
+    @if (store.loading()) {
+      <aura-loading-state label="Loading your conversation" />
+    } @else if (store.selected().turns.length === 0) {
+      <div class="welcome"><div class="welcome-mark" aria-hidden="true">✦</div><h2>Where would you like to begin?</h2><p>Bring a question, an idea, or a half-formed thought. This preview keeps everything on this page.</p><div class="suggestions"><button type="button" (click)="store.updateDraft('Help me make sense of an idea')">Make sense of an idea <span aria-hidden="true">↗</span></button><button type="button" (click)="store.updateDraft('Help me plan a small next step')">Plan a next step <span aria-hidden="true">↗</span></button></div></div>
+    } @else {
+      <div class="turn-list">
+        @for (turn of store.selected().turns; track turn.id) {
+          <article class="turn" [class.user-turn]="turn.role === 'user'" [attr.aria-label]="turn.role === 'user' ? 'Your message' : 'Aura response'"><div class="turn-meta"><span class="turn-avatar" aria-hidden="true">{{ turn.role === 'user' ? 'You' : '✦' }}</span><span>{{ turn.role === 'user' ? 'You' : 'Aura' }}</span></div><p>{{ turn.text }}</p>@if (turn.state === 'partial') { <span class="partial-label">Partial response</span> } @if (turn.state === 'interrupted') { <span class="interrupted-label">Generation interrupted</span> }</article>
+        }
+        @if (store.runState() === 'working') { <div class="working" role="status"><span class="pulse" aria-hidden="true"></span><span>Aura is gathering a thought…</span><button type="button" class="stop-button" (click)="store.stop()">Stop</button></div> }
+      </div>
+    }
+  </div>
+  @if (store.notice(); as notice) { <div class="notice-wrap" id="composer-notice"><aura-status-message [tone]="store.runState() === 'interrupted' ? 'warning' : 'danger'" [icon]="store.runState() === 'interrupted' ? '!' : '×'"><span>{{ notice }}</span>@if (store.runState() === 'interrupted') { <button type="button" class="inline-action" (click)="store.retry()">Dismiss</button> } @if (store.runState() === 'error') { <button type="button" class="inline-action" (click)="store.retry()">Try again</button> }</aura-status-message></div> }
+  <form class="composer-wrap" (submit)="submit($event)"><label class="sr-only" for="composer">Message Aura</label><textarea #composer id="composer" name="composer" rows="1" [value]="store.draft()" (input)="store.updateDraft($any($event.target).value)" (keydown)="handleKeydown($event)" placeholder="Ask anything, or start with a thought…" [attr.aria-invalid]="store.notice() && store.runState() !== 'interrupted' ? true : null" [attr.aria-describedby]="store.notice() ? 'composer-notice' : null"></textarea><div class="composer-footer"><span class="composer-hint"><kbd>Enter</kbd> to send <span class="hide-mobile">·</span> <kbd>Shift + Enter</kbd> for a new line</span>@if (store.runState() === 'working') { <button class="send-button stop" type="button" (click)="store.stop()"><span aria-hidden="true">■</span> Stop</button> } @else { <button class="send-button" type="submit" [disabled]="!store.draft().trim()"><span aria-hidden="true">↑</span> Send</button> }</div></form>
+  <p class="privacy-note"><span aria-hidden="true">⌁</span> This is a local preview. Conversations are kept in memory.</p>
+</section>
