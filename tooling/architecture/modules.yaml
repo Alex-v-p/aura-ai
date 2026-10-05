@@ -1,3 +1,935 @@
-modules: {}
+version: 1
 metadata:
-  note: No product module roots exist yet. Add entries only when real boundaries are created.
+  source_work_item: AURA-0016
+  integrated_from: AURA-0015
+  purpose: Integrated module roots and their explicit dependency graph.
+  note: Registry entries describe existing roots; they do not authorize new product
+    behavior.
+modules:
+- id: aura-core.service
+  root: services/aura-core
+  kind: service
+  public_api: services/aura-core/src/aura_core/entrypoints/api/app.py
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-core.package
+  root: services/aura-core/src/aura_core
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/api/app.py
+  python_modules:
+  - aura_core
+  source_files:
+  - services/aura-core/src/aura_core/__init__.py
+  dependencies: []
+- id: aura-core.domains
+  root: services/aura-core/src/aura_core/domains
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/public.py
+  python_modules:
+  - aura_core.domains
+  source_files:
+  - services/aura-core/src/aura_core/domains/__init__.py
+  dependencies: []
+- id: aura-core.domains.execution
+  root: services/aura-core/src/aura_core/domains/execution
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/public.py
+  python_modules:
+  - aura_core.domains.execution
+  source_files:
+  - services/aura-core/src/aura_core/domains/execution/__init__.py
+  dependencies: []
+- id: aura-core.domains.governance
+  root: services/aura-core/src/aura_core/domains/governance
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/public.py
+  python_modules:
+  - aura_core.domains.governance
+  source_files:
+  - services/aura-core/src/aura_core/domains/governance/__init__.py
+  dependencies: []
+- id: aura-core.domains.interaction
+  root: services/aura-core/src/aura_core/domains/interaction
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  python_modules:
+  - aura_core.domains.interaction
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/__init__.py
+  dependencies: []
+- id: aura-core.entrypoints
+  root: services/aura-core/src/aura_core/entrypoints
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/api/app.py
+  python_modules:
+  - aura_core.entrypoints
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/__init__.py
+  dependencies: []
+- id: aura-core.platform
+  root: services/aura-core/src/aura_core/platform
+  kind: package
+  public_api: services/aura-core/src/aura_core/platform/auth.py
+  python_modules:
+  - aura_core.platform
+  source_files:
+  - services/aura-core/src/aura_core/platform/__init__.py
+  dependencies: []
+- id: aura-core.providers
+  root: services/aura-core/src/aura_core/providers
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  python_modules:
+  - aura_core.providers
+  source_files:
+  - services/aura-core/src/aura_core/providers/__init__.py
+  dependencies: []
+- id: aura-core.providers.models
+  root: services/aura-core/src/aura_core/providers/models
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.models
+  source_files:
+  - services/aura-core/src/aura_core/providers/models/__init__.py
+  dependencies: []
+- id: aura-core.runtime
+  root: services/aura-core/src/aura_core/runtime
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/models/ports.py
+  python_modules:
+  - aura_core.runtime
+  source_files:
+  - services/aura-core/src/aura_core/runtime/__init__.py
+  dependencies: []
+- id: aura-core.bootstrap
+  root: services/aura-core/src/aura_core/bootstrap
+  kind: package
+  public_api: services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  python_modules:
+  - aura_core.bootstrap
+  source_files:
+  - services/aura-core/src/aura_core/bootstrap/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.persistence
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.audit
+  - aura-core.domains.governance.audit.persistence
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity
+  - aura-core.domains.governance.identity.persistence
+  - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.agents
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.conversations
+  - aura-core.domains.interaction.conversations.persistence
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.persistence
+  - aura-core.runtime.models.capacity
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.execution.runs
+  root: services/aura-core/src/aura_core/domains/execution/runs
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/public.py
+  python_modules:
+  - aura_core.domains.execution.runs
+  source_files:
+  - services/aura-core/src/aura_core/domains/execution/runs/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.persistence
+  - aura-core.domains.execution.runs.ports
+  - aura-core.domains.execution.runs.repository
+  - aura-core.domains.execution.runs.service
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.database.base
+- id: aura-core.domains.governance.audit
+  root: services/aura-core/src/aura_core/domains/governance/audit
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/public.py
+  python_modules:
+  - aura_core.domains.governance.audit
+  source_files:
+  - services/aura-core/src/aura_core/domains/governance/audit/__init__.py
+  dependencies:
+  - aura-core.domains.governance.audit.persistence
+  - aura-core.domains.governance.audit.repository
+  - aura-core.platform.database.base
+- id: aura-core.domains.governance.identity
+  root: services/aura-core/src/aura_core/domains/governance/identity
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/public.py
+  python_modules:
+  - aura_core.domains.governance.identity
+  source_files:
+  - services/aura-core/src/aura_core/domains/governance/identity/__init__.py
+  dependencies:
+  - aura-core.domains.governance.identity.models
+  - aura-core.domains.governance.identity.persistence
+  - aura-core.domains.governance.identity.repository
+  - aura-core.platform.database.base
+- id: aura-core.domains.interaction.agents
+  root: services/aura-core/src/aura_core/domains/interaction/agents
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  python_modules:
+  - aura_core.domains.interaction.agents
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/agents/__init__.py
+  dependencies:
+  - aura-core.domains.interaction.agents.adapters
+  - aura-core.domains.interaction.agents.adapters.postgres
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.database.base
+  - aura-core.runtime.models.capacity
+- id: aura-core.domains.interaction.agents.adapters
+  root: services/aura-core/src/aura_core/domains/interaction/agents/adapters
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/adapters/__init__.py
+  python_modules:
+  - aura_core.domains.interaction.agents.adapters
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/__init__.py
+  dependencies:
+  - aura-core.domains.interaction.agents.adapters.postgres
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.runtime.models.capacity
+- id: aura-core.domains.interaction.conversations
+  root: services/aura-core/src/aura_core/domains/interaction/conversations
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  python_modules:
+  - aura_core.domains.interaction.conversations
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/conversations/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.interaction.conversations.context
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.conversations.persistence
+  - aura-core.domains.interaction.conversations.repository
+  - aura-core.domains.interaction.conversations.store
+  - aura-core.platform.database.base
+  - aura-core.runtime.models.capacity
+  - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.api
+  root: services/aura-core/src/aura_core/entrypoints/api
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/api/app.py
+  python_modules:
+  - aura_core.entrypoints.api
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/api/__init__.py
+  dependencies:
+  - aura-core.bootstrap.conversation-uow
+  - aura-core.bootstrap.health
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.identity.application
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.entrypoints.api.errors
+  - aura-core.entrypoints.api.routes
+  - aura-core.entrypoints.api.routes.auth
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.routes.health
+  - aura-core.entrypoints.api.routes.models
+  - aura-core.entrypoints.api.routes.runs
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.oidc
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.readiness
+  - aura-core.platform.telemetry
+  - aura-core.providers.models.ollama.adapter
+  - aura-core.runtime.models.gateway
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.streaming.publisher
+- id: aura-core.entrypoints.api.routes
+  root: services/aura-core/src/aura_core/entrypoints/api/routes
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  python_modules:
+  - aura_core.entrypoints.api.routes
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.identity.application
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
+  - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.worker
+  root: services/aura-core/src/aura_core/entrypoints/worker
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/app.py
+  python_modules:
+  - aura_core.entrypoints.worker
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/worker/__init__.py
+  dependencies:
+  - aura-core.bootstrap.conversation-uow
+  - aura-core.domains.execution.runs.public
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.telemetry
+  - aura-core.providers.models.ollama.adapter
+  - aura-core.runtime.streaming.publisher
+- id: aura-core.platform.database
+  root: services/aura-core/src/aura_core/platform/database
+  kind: package
+  public_api: services/aura-core/src/aura_core/platform/database/engine.py
+  python_modules:
+  - aura_core.platform.database
+  source_files:
+  - services/aura-core/src/aura_core/platform/database/__init__.py
+  dependencies: []
+- id: aura-core.platform.outbox
+  root: services/aura-core/src/aura_core/platform/outbox
+  kind: package
+  public_api: services/aura-core/src/aura_core/platform/outbox/__init__.py
+  python_modules:
+  - aura_core.platform.outbox
+  source_files:
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox.persistence
+  - aura-core.platform.outbox.repository
+  - aura-core.platform.outbox.service
+- id: aura-core.providers.models.ollama
+  root: services/aura-core/src/aura_core/providers/models/ollama
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.models.ollama
+  source_files:
+  - services/aura-core/src/aura_core/providers/models/ollama/__init__.py
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.runtime.models
+  root: services/aura-core/src/aura_core/runtime/models
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/models/ports.py
+  python_modules:
+  - aura_core.runtime.models
+  source_files:
+  - services/aura-core/src/aura_core/runtime/models/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
+  - aura-core.runtime.models.ports
+- id: aura-core.runtime.streaming
+  root: services/aura-core/src/aura_core/runtime/streaming
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  python_modules:
+  - aura_core.runtime.streaming
+  source_files:
+  - services/aura-core/src/aura_core/runtime/streaming/__init__.py
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.runtime.streaming.publisher
+- id: aura-core.bootstrap.conversation-uow
+  root: services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  python_modules:
+  - aura_core.bootstrap.conversation_uow
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.outbox
+  - aura-core.runtime.models.capacity
+  - aura-core.runtime.models.ports
+- id: aura-core.bootstrap.database
+  root: services/aura-core/src/aura_core/bootstrap/database.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/database.py
+  python_modules:
+  - aura_core.bootstrap.database
+  dependencies:
+  - aura-core.domains.execution.runs
+  - aura-core.domains.execution.runs.persistence
+  - aura-core.domains.governance.audit
+  - aura-core.domains.governance.audit.persistence
+  - aura-core.domains.governance.identity
+  - aura-core.domains.governance.identity.persistence
+  - aura-core.domains.interaction.agents
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.conversations
+  - aura-core.domains.interaction.conversations.persistence
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.persistence
+- id: aura-core.bootstrap.health
+  root: services/aura-core/src/aura_core/bootstrap/health.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/health.py
+  python_modules:
+  - aura_core.bootstrap.health
+  dependencies: []
+- id: aura-core.domains.execution.runs.dto
+  root: services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  python_modules:
+  - aura_core.domains.execution.runs.dto
+  dependencies:
+  - aura-core.domains.interaction.conversations.public
+- id: aura-core.domains.execution.runs.events
+  root: services/aura-core/src/aura_core/domains/execution/runs/events.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/events.py
+  python_modules:
+  - aura_core.domains.execution.runs.events
+  dependencies: []
+- id: aura-core.domains.execution.runs.persistence
+  root: services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  python_modules:
+  - aura_core.domains.execution.runs.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.execution.runs.ports
+  root: services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  python_modules:
+  - aura_core.domains.execution.runs.ports
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.interaction.conversations.public
+- id: aura-core.domains.execution.runs.public
+  root: services/aura-core/src/aura_core/domains/execution/runs/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/public.py
+  python_modules:
+  - aura_core.domains.execution.runs.public
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.ports
+  - aura-core.domains.execution.runs.repository
+  - aura-core.domains.execution.runs.service
+- id: aura-core.domains.execution.runs.repository
+  root: services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  python_modules:
+  - aura_core.domains.execution.runs.repository
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.persistence
+  - aura-core.domains.interaction.conversations.dto
+- id: aura-core.domains.execution.runs.service
+  root: services/aura-core/src/aura_core/domains/execution/runs/service.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/service.py
+  python_modules:
+  - aura_core.domains.execution.runs.service
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
+  - aura-core.domains.interaction.conversations.public
+- id: aura-core.domains.governance.audit.persistence
+  root: services/aura-core/src/aura_core/domains/governance/audit/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/persistence.py
+  python_modules:
+  - aura_core.domains.governance.audit.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.governance.audit.public
+  root: services/aura-core/src/aura_core/domains/governance/audit/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/public.py
+  python_modules:
+  - aura_core.domains.governance.audit.public
+  dependencies:
+  - aura-core.domains.governance.audit.repository
+- id: aura-core.domains.governance.audit.repository
+  root: services/aura-core/src/aura_core/domains/governance/audit/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/audit/repository.py
+  python_modules:
+  - aura_core.domains.governance.audit.repository
+  dependencies:
+  - aura-core.domains.governance.audit.persistence
+- id: aura-core.domains.governance.identity.application
+  root: services/aura-core/src/aura_core/domains/governance/identity/application.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/application.py
+  python_modules:
+  - aura_core.domains.governance.identity.application
+  dependencies:
+  - aura-core.domains.governance.identity.models
+- id: aura-core.domains.governance.identity.models
+  root: services/aura-core/src/aura_core/domains/governance/identity/models.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/models.py
+  python_modules:
+  - aura_core.domains.governance.identity.models
+  dependencies: []
+- id: aura-core.domains.governance.identity.persistence
+  root: services/aura-core/src/aura_core/domains/governance/identity/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/persistence.py
+  python_modules:
+  - aura_core.domains.governance.identity.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.governance.identity.public
+  root: services/aura-core/src/aura_core/domains/governance/identity/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/public.py
+  python_modules:
+  - aura_core.domains.governance.identity.public
+  dependencies:
+  - aura-core.domains.governance.identity.models
+  - aura-core.domains.governance.identity.repository
+- id: aura-core.domains.governance.identity.repository
+  root: services/aura-core/src/aura_core/domains/governance/identity/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/governance/identity/repository.py
+  python_modules:
+  - aura_core.domains.governance.identity.repository
+  dependencies:
+  - aura-core.domains.governance.identity.persistence
+- id: aura-core.domains.interaction.agents.adapters.postgres
+  root: services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  python_modules:
+  - aura_core.domains.interaction.agents.adapters.postgres
+  dependencies:
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.runtime.models.capacity
+- id: aura-core.domains.interaction.agents.persistence
+  root: services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  python_modules:
+  - aura_core.domains.interaction.agents.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.interaction.agents.public
+  root: services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  python_modules:
+  - aura_core.domains.interaction.agents.public
+  dependencies:
+  - aura-core.domains.interaction.agents.adapters
+- id: aura-core.domains.interaction.conversations.context
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.context
+  dependencies:
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.runtime.models.capacity
+- id: aura-core.domains.interaction.conversations.dto
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/dto.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/dto.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.dto
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+- id: aura-core.domains.interaction.conversations.persistence
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.interaction.conversations.public
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.public
+  dependencies:
+  - aura-core.domains.interaction.conversations.context
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.conversations.repository
+  - aura-core.domains.interaction.conversations.store
+- id: aura-core.domains.interaction.conversations.repository
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.repository
+  dependencies:
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.conversations.persistence
+- id: aura-core.domains.interaction.conversations.store
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.store
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.interaction.conversations.context
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.runtime.models.capacity
+  - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.api.app
+  root: services/aura-core/src/aura_core/entrypoints/api/app.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/app.py
+  python_modules:
+  - aura_core.entrypoints.api.app
+  dependencies:
+  - aura-core.entrypoints.api.errors
+  - aura-core.entrypoints.api.routes
+  - aura-core.entrypoints.api.routes.auth
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.health
+  - aura-core.entrypoints.api.routes.models
+  - aura-core.entrypoints.api.routes.runs
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.errors
+  root: services/aura-core/src/aura_core/entrypoints/api/errors.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/errors.py
+  python_modules:
+  - aura_core.entrypoints.api.errors
+  dependencies: []
+- id: aura-core.entrypoints.api.routes.auth
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/auth.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/auth.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.auth
+  dependencies:
+  - aura-core.domains.governance.identity.application
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.conversations
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.conversations
+  dependencies:
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
+  - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.api.routes.dependencies
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/dependencies.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/dependencies.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.dependencies
+  dependencies:
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.health
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/health.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/health.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.health
+  dependencies:
+  - aura-core.entrypoints.api.routes.conversations
+- id: aura-core.entrypoints.api.routes.models
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/models.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/models.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.models
+  dependencies:
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.runs
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.runs
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
+- id: aura-core.entrypoints.api.state
+  root: services/aura-core/src/aura_core/entrypoints/api/state.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/state.py
+  python_modules:
+  - aura_core.entrypoints.api.state
+  dependencies:
+  - aura-core.bootstrap.conversation-uow
+  - aura-core.bootstrap.health
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.identity.application
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.oidc
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.readiness
+  - aura-core.platform.telemetry
+  - aura-core.providers.models.ollama.adapter
+  - aura-core.runtime.models.gateway
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.streaming.publisher
+- id: aura-core.entrypoints.cli
+  root: services/aura-core/src/aura_core/entrypoints/cli.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/cli.py
+  python_modules:
+  - aura_core.entrypoints.cli
+  dependencies:
+  - aura-core.domains.interaction.agents.adapters
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+- id: aura-core.entrypoints.worker.app
+  root: services/aura-core/src/aura_core/entrypoints/worker/app.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/app.py
+  python_modules:
+  - aura_core.entrypoints.worker.app
+  dependencies:
+  - aura-core.bootstrap.conversation-uow
+  - aura-core.domains.execution.runs.public
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.telemetry
+  - aura-core.providers.models.ollama.adapter
+  - aura-core.runtime.streaming.publisher
+- id: aura-core.platform.auth
+  root: services/aura-core/src/aura_core/platform/auth.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/auth.py
+  python_modules:
+  - aura_core.platform.auth
+  dependencies:
+  - aura-core.domains.governance.identity.models
+- id: aura-core.platform.database.base
+  root: services/aura-core/src/aura_core/platform/database/base.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/database/base.py
+  python_modules:
+  - aura_core.platform.database.base
+  dependencies: []
+- id: aura-core.platform.database.engine
+  root: services/aura-core/src/aura_core/platform/database/engine.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/database/engine.py
+  python_modules:
+  - aura_core.platform.database.engine
+  dependencies: []
+- id: aura-core.platform.oidc
+  root: services/aura-core/src/aura_core/platform/oidc.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/oidc.py
+  python_modules:
+  - aura_core.platform.oidc
+  dependencies:
+  - aura-core.domains.governance.identity.application
+  - aura-core.domains.governance.identity.models
+- id: aura-core.platform.outbox.nats
+  root: services/aura-core/src/aura_core/platform/outbox/nats.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/outbox/nats.py
+  python_modules:
+  - aura_core.platform.outbox.nats
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
+  - aura-core.platform.outbox.service
+- id: aura-core.platform.outbox.persistence
+  root: services/aura-core/src/aura_core/platform/outbox/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/outbox/persistence.py
+  python_modules:
+  - aura_core.platform.outbox.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.platform.outbox.repository
+  root: services/aura-core/src/aura_core/platform/outbox/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/outbox/repository.py
+  python_modules:
+  - aura_core.platform.outbox.repository
+  dependencies:
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.platform.outbox.persistence
+  - aura-core.platform.outbox.service
+- id: aura-core.platform.outbox.service
+  root: services/aura-core/src/aura_core/platform/outbox/service.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/outbox/service.py
+  python_modules:
+  - aura_core.platform.outbox.service
+  dependencies: []
+- id: aura-core.platform.readiness
+  root: services/aura-core/src/aura_core/platform/readiness.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/readiness.py
+  python_modules:
+  - aura_core.platform.readiness
+  dependencies:
+  - aura-core.bootstrap.health
+- id: aura-core.platform.telemetry
+  root: services/aura-core/src/aura_core/platform/telemetry.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/telemetry.py
+  python_modules:
+  - aura_core.platform.telemetry
+  dependencies: []
+- id: aura-core.providers.models.ollama.adapter
+  root: services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.models.ollama.adapter
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.providers.models.ollama.fake
+  root: services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  python_modules:
+  - aura_core.providers.models.ollama.fake
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.runtime.models.capacity
+  root: services/aura-core/src/aura_core/runtime/models/capacity.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/capacity.py
+  python_modules:
+  - aura_core.runtime.models.capacity
+  dependencies: []
+- id: aura-core.runtime.models.gateway
+  root: services/aura-core/src/aura_core/runtime/models/gateway.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/gateway.py
+  python_modules:
+  - aura_core.runtime.models.gateway
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.runtime.models.ports
+  root: services/aura-core/src/aura_core/runtime/models/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/ports.py
+  python_modules:
+  - aura_core.runtime.models.ports
+  dependencies:
+  - aura-core.domains.execution.runs.ports
+- id: aura-core.runtime.models.requests
+  root: services/aura-core/src/aura_core/runtime/models/requests.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/requests.py
+  python_modules:
+  - aura_core.runtime.models.requests
+  dependencies: []
+- id: aura-core.runtime.models.router
+  root: services/aura-core/src/aura_core/runtime/models/router.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/router.py
+  python_modules:
+  - aura_core.runtime.models.router
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.runtime.models.streaming
+  root: services/aura-core/src/aura_core/runtime/models/streaming.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/models/streaming.py
+  python_modules:
+  - aura_core.runtime.models.streaming
+  dependencies:
+  - aura-core.domains.execution.runs.events
+- id: aura-core.runtime.streaming.publisher
+  root: services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  python_modules:
+  - aura_core.runtime.streaming.publisher
+  dependencies:
+  - aura-core.domains.execution.runs.events
+- id: aura-core.runtime.streaming.subscriptions
+  root: services/aura-core/src/aura_core/runtime/streaming/subscriptions.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/streaming/subscriptions.py
+  python_modules:
+  - aura_core.runtime.streaming.subscriptions
+  dependencies:
+  - aura-core.domains.execution.runs.events
+  - aura-core.runtime.streaming.publisher
+- id: aura-web.shared-ui
+  root: frontend/libs/shared/ui
+  kind: frontend-shared
+  public_api: frontend/libs/shared/ui/src/index.ts
+  dependencies: []
+- id: aura-web.api-client
+  root: frontend/libs/platform/aura-api-client
+  kind: generated-client
+  public_api: frontend/libs/platform/aura-api-client/src/index.ts
+  dependencies:
+  - aura-contract.openapi
+  - aura-contract.run-events
+- id: aura-web.interaction-conversations
+  root: frontend/libs/aura/interaction/conversations
+  kind: frontend-feature
+  public_api: frontend/libs/aura/interaction/conversations/src/index.ts
+  dependencies:
+  - aura-web.api-client
+  - aura-web.shared-ui
+- id: aura-contract.openapi
+  root: contracts/openapi/aura-v1.yaml
+  kind: openapi-contract
+  public_api: contracts/openapi/aura-v1.yaml
+  dependencies: []
+- id: aura-contract.run-events
+  root: contracts/events/runs/v1
+  kind: event-contract
+  public_api: contracts/events/runs/v1/run-events.schema.json
+  dependencies: []
