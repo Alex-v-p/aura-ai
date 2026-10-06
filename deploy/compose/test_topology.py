@@ -1,6 +1,10 @@
 """Static deployment topology checks that require no secrets or Docker daemon."""
 
+import os
 from pathlib import Path
+import stat
+import subprocess
+import tempfile
 import unittest
 
 
@@ -14,6 +18,23 @@ def service_block(compose: str, name: str, next_name: str) -> str:
     start = f"\n  {name}:\n"
     end = f"\n  {next_name}:\n"
     return compose.split(start, 1)[1].split(end, 1)[0]
+
+
+def compose_service_blocks(compose: str) -> dict[str, str]:
+    """Extract two-space service blocks without requiring a Docker daemon."""
+
+    section = compose.split("\nservices:\n", 1)[1]
+    blocks: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in section.splitlines():
+        if line and not line.startswith(" "):
+            break
+        if len(line) - len(line.lstrip()) == 2 and line.strip().endswith(":"):
+            current = line.strip()[:-1]
+            blocks[current] = []
+        elif current is not None:
+            blocks[current].append(line)
+    return {name: "\n".join(lines) for name, lines in blocks.items()}
 
 
 class ComposeTopologyTests(unittest.TestCase):
@@ -87,7 +108,7 @@ class ComposeTopologyTests(unittest.TestCase):
         api = service_block(identity, "aura-core-api", "authentik-postgres")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
 
-        self.assertIn("networks: [aura-identity]", api)
+        self.assertIn("aura-identity]", api)
         self.assertIn("networks: [aura-identity, aura-identity-db, aura-identity-cache]", identity)
         self.assertNotIn("aura-identity", worker)
 
@@ -143,6 +164,130 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn(digest, identity)
         self.assertIn(f"AUTHENTIK_IMAGE=ghcr.io/goauthentik/server@{digest}", environment)
         self.assertIn('case "$${AUTHENTIK_IMAGE}" in *@sha256:*)', identity)
+
+    def test_local_http_is_explicit_loopback_only_identity_mode(self) -> None:
+        local_http = (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8")
+        script = (ROOT / "deploy/compose/local-http.sh").read_text(encoding="utf-8")
+
+        self.assertIn("AURA_ENVIRONMENT: development", local_http)
+        self.assertIn('AURA_SECURE_COOKIES: "false"', local_http)
+        self.assertIn("AURA_PUBLIC_ORIGIN: http://aura.localhost:4200", local_http)
+        self.assertIn("AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/", local_http)
+        self.assertIn('aliases: [authentik.localhost]', local_http)
+        self.assertIn('127.0.0.1:${AUTHENTIK_PORT:-9000}:9000', local_http)
+        self.assertIn("aura-identity-edge: {}", local_http)
+        self.assertIn("authentik-owner-bootstrap:", local_http)
+        self.assertIn("profiles: [local-http-bootstrap]", local_http)
+        owner_start = local_http.index("  authentik-owner-bootstrap:\n")
+        owner_block = local_http[owner_start:].split("\nsecrets:", 1)[0]
+        self.assertNotIn("aura-identity-edge", owner_block)
+        server_start = local_http.index("  authentik-server:\n")
+        server_end = local_http.index("  authentik-owner-bootstrap:\n")
+        self.assertIn("aura-identity-edge: {}", local_http[server_start:server_end])
+        self.assertIn("ak apply_blueprint /blueprints/custom/aura-oidc.yaml", local_http)
+        self.assertIn("./deploy/authentik/bootstrap-local-owner.py:/bootstrap-local-owner.py:ro", local_http)
+        self.assertIn("./deploy/compose/local-http.sh up", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("verify-idempotency", script)
+        self.assertIn("--profile local-http-bootstrap", script)
+        for variable in (
+            "AURA_PUBLIC_ORIGIN",
+            "AURA_OIDC_ISSUER",
+            "AURA_OIDC_REDIRECT_URI",
+            "AURA_OWNER_SUBJECT",
+            "AUTHENTIK_HOST_BROWSER",
+        ):
+            self.assertIn(f"-u {variable}", script)
+        self.assertIn("Never rotate", (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8"))
+
+    def test_local_http_edge_networks_have_exact_merged_membership(self) -> None:
+        documents = [
+            (ROOT / "compose.yaml").read_text(encoding="utf-8"),
+            (ROOT / "deploy/compose/local-identity.yaml").read_text(encoding="utf-8"),
+            (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8"),
+        ]
+        merged: dict[str, str] = {}
+        for document in documents:
+            merged.update(compose_service_blocks(document))
+
+        edge_members = sorted(name for name, body in merged.items() if "aura-edge" in body)
+        identity_edge_members = sorted(
+            name for name, body in merged.items() if "aura-identity-edge" in body
+        )
+        self.assertEqual(["aura-web"], edge_members)
+        self.assertEqual(["authentik-server"], identity_edge_members)
+
+    def test_local_owner_bootstrap_does_not_emit_credentials(self) -> None:
+        bootstrap = (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8")
+
+        self.assertIn("from authentik.common.oauth.constants import SubModes", bootstrap)
+        self.assertIn("SubModes.HASHED_USER_ID", bootstrap)
+        self.assertIn("user.uid", bootstrap)
+        self.assertIn("user.check_password(password)", bootstrap)
+        self.assertIn("user.is_staff or user.is_superuser", bootstrap)
+        self.assertNotIn("user.is_staff =", bootstrap)
+        self.assertNotIn("user.is_superuser =", bootstrap)
+        self.assertIn("AURA_OWNER_SUBJECT=", bootstrap)
+        self.assertNotIn("print(password", bootstrap)
+        self.assertIn("Never rotate an existing", bootstrap)
+
+    def test_local_owner_password_file_is_exclusive_no_follow_and_preserving(self) -> None:
+        script = (ROOT / "deploy/compose/local-http.sh").read_text(encoding="utf-8")
+
+        self.assertIn("os.lstat(path)", script)
+        self.assertIn("stat.S_ISLNK(metadata.st_mode)", script)
+        self.assertIn("stat.S_ISREG(metadata.st_mode)", script)
+        self.assertIn("os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW", script)
+        self.assertIn("os.open(path, flags, 0o600)", script)
+        self.assertIn("metadata.st_mode & 0o077", script)
+        self.assertNotIn('chmod 600 "$path"', script)
+
+    def test_local_owner_password_file_preserves_existing_and_rejects_symlink(self) -> None:
+        script = (ROOT / "deploy/compose/local-http.sh").read_text(encoding="utf-8")
+        helper = script.split("die() {", 1)[1].split("\nwrite_local_environment()", 1)[0]
+        shell = (
+            "ROOT=" + str(ROOT) + "\n"
+            "ENV_FILE=/dev/null\n"
+            "LOCAL_ENV_FILE=/dev/null\n"
+            "die() { printf '%s\\n' \"$1\" >&2; exit 1; }\n"
+            "configured_value() { local key=$1 value; value=${!key-}; printf '%s' \"$value\"; }\n"
+            "absolute_path() { case $1 in /*) printf '%s' \"$1\" ;; *) printf '%s/%s' \"$ROOT\" \"$1\" ;; esac; }\n"
+            + "ensure_owner_password() {"
+            + helper.split("ensure_owner_password() {", 1)[1].split("\n}\n", 1)[0]
+            + "\n}\nensure_owner_password\n"
+        )
+
+        def run_helper(path: Path) -> subprocess.CompletedProcess[str]:
+            environment = os.environ.copy()
+            environment["AUTHENTIK_OWNER_PASSWORD_FILE"] = str(path)
+            return subprocess.run(
+                ["bash", "-c", shell],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            password = root / "owner-password"
+            created = run_helper(password)
+            self.assertEqual(0, created.returncode, created.stderr)
+            original_contents = password.read_bytes()
+            self.assertEqual(0o600, stat.S_IMODE(password.stat().st_mode))
+
+            password.chmod(0o400)
+            preserved = run_helper(password)
+            self.assertEqual(0, preserved.returncode, preserved.stderr)
+            self.assertEqual(original_contents, password.read_bytes())
+            self.assertEqual(0o400, stat.S_IMODE(password.stat().st_mode))
+
+            target = root / "target"
+            target.write_text("unchanged\n", encoding="utf-8")
+            link = root / "owner-link"
+            link.symlink_to(target)
+            rejected = run_helper(link)
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertEqual("unchanged\n", target.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

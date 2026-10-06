@@ -11,7 +11,9 @@ services:
   # The profile adds only Core's OIDC client to the Authentik control network.
   # It does not bridge Authentik to Core persistence, cache, NATS, or workers.
   aura-core-api:
-    networks: [aura-identity]
+    # Preserve Core's normal data, bus, cache, frontend, and provider paths
+    # while adding only the OIDC control network.
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
 
   authentik-postgres:
     profiles: [local-identity]

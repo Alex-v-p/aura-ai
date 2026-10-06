@@ -23,6 +23,9 @@ ownership:
   - pattern: .python-version
     roles: [platform_worker]
     architectural_owner: repository-governance
+  - pattern: README.md
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: documentation
   - pattern: .env.example
     roles: [platform_worker]
     architectural_owner: repository-governance

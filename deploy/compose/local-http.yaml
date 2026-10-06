@@ -1,0 +1,77 @@
+# Explicit, disposable Docker Desktop development mode.  The normal Compose
+# stack remains HTTPS-only; operators opt into this override through
+# deploy/compose/local-http.sh.
+
+services:
+  aura-core-api:
+    environment:
+      AURA_ENVIRONMENT: development
+      AURA_PUBLIC_ORIGIN: http://aura.localhost:4200
+      AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/
+      AURA_OIDC_AUDIENCE: aura-web
+      AURA_OIDC_CLIENT_ID: aura-web
+      AURA_OIDC_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
+      AURA_OWNER_SUBJECT: ${AURA_OWNER_SUBJECT:?local HTTP owner subject is required}
+      AURA_SECURE_COOKIES: "false"
+    # Keep all normal Core paths and add only the Authentik control network.
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
+
+  authentik-server:
+    environment:
+      AUTHENTIK_HOST_BROWSER: http://authentik.localhost:9000
+      AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/
+      AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
+    # Docker Desktop does not publish ports for containers attached only to an
+    # internal network.  This edge network is loopback-published and belongs
+    # only to Authentik Server.
+    networks:
+      aura-identity:
+        aliases: [authentik.localhost]
+      aura-identity-db: {}
+      aura-identity-cache: {}
+      aura-identity-edge: {}
+    ports: ["127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"]
+
+  authentik-owner-bootstrap:
+    # This one-shot job is enabled only by local-http.sh during bootstrap;
+    # keeping it out of the normal local-identity profile lets final
+    # `compose up --wait` cover only long-running services.
+    profiles: [local-http-bootstrap]
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export AUTHENTIK_POSTGRESQL__PASSWORD="$$(cat /run/secrets/authentik-database-password)";
+        export AUTHENTIK_SECRET_KEY="$$(cat /run/secrets/authentik-secret-key)";
+        export AUTHENTIK_REDIS__PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
+        export AURA_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/aura-oidc-client-secret)";
+        export AUTHENTIK_OWNER_PASSWORD_FILE=/run/secrets/authentik-owner-password;
+        case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        ak apply_blueprint /blueprints/custom/aura-oidc.yaml >/dev/null;
+        exec ak shell -c "exec(open('/bootstrap-local-owner.py', encoding='utf-8').read())"
+    environment:
+      AUTHENTIK_IMAGE: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRES_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRES_USER:-authentik}
+      AUTHENTIK_REDIS__HOST: authentik-valkey
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AURA_AUTHENTIK_CLIENT_ID: aura-web
+      AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
+      AUTHENTIK_OWNER_USERNAME: ${AUTHENTIK_OWNER_USERNAME:-aura-owner}
+      AUTHENTIK_OWNER_NAME: ${AUTHENTIK_OWNER_NAME:-Aura Owner}
+    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, authentik-owner-password]
+    volumes:
+      - ./deploy/authentik/blueprints:/blueprints/custom:ro
+      - ./deploy/authentik/bootstrap-local-owner.py:/bootstrap-local-owner.py:ro
+    depends_on:
+      authentik-server: {condition: service_healthy}
+    networks: [aura-identity, aura-identity-db, aura-identity-cache]
+
+secrets:
+  authentik-owner-password:
+    file: ${AUTHENTIK_OWNER_PASSWORD_FILE:-./.secrets/authentik-owner-password}
+
+networks:
+  aura-identity-edge: {}
