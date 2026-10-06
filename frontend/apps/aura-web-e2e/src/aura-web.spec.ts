@@ -1,5 +1,45 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+
+async function expectExpandedDestinationTiles(productNav: Locator): Promise<void> {
+  const metrics = await productNav.locator('a').evaluateAll((links) => {
+    const grid = links[0]?.parentElement;
+    const gridStyle = grid ? getComputedStyle(grid) : null;
+    return {
+      gridColumns: gridStyle?.gridTemplateColumns.split(' ').filter(Boolean).length ?? 0,
+      tiles: links.map((link) => {
+        const label = link.querySelector<HTMLElement>('.label');
+        const linkRect = link.getBoundingClientRect();
+        const labelRect = label?.getBoundingClientRect();
+        return {
+          left: linkRect.left,
+          top: linkRect.top,
+          width: linkRect.width,
+          right: linkRect.right,
+          labelText: label?.textContent?.trim() ?? '',
+          labelWidth: labelRect?.width ?? 0,
+          labelRight: labelRect?.right ?? 0,
+          labelClientWidth: label?.clientWidth ?? 0,
+          labelScrollWidth: label?.scrollWidth ?? 0,
+        };
+      }),
+    };
+  });
+
+  expect(metrics.gridColumns).toBe(3);
+  expect(metrics.tiles).toHaveLength(3);
+  expect(metrics.tiles.map((tile) => tile.labelText)).toEqual(['Conversations', 'Agents', 'Personas']);
+  expect(Math.max(...metrics.tiles.map((tile) => tile.top)) - Math.min(...metrics.tiles.map((tile) => tile.top))).toBeLessThanOrEqual(1);
+  expect(Math.max(...metrics.tiles.map((tile) => tile.width)) - Math.min(...metrics.tiles.map((tile) => tile.width))).toBeLessThanOrEqual(1);
+  expect(metrics.tiles[0]?.left).toBeLessThan(metrics.tiles[1]?.left ?? 0);
+  expect(metrics.tiles[1]?.left).toBeLessThan(metrics.tiles[2]?.left ?? 0);
+  for (const tile of metrics.tiles) {
+    expect(tile.width).toBeGreaterThan(0);
+    expect(tile.labelWidth).toBeGreaterThan(0);
+    expect(tile.labelClientWidth).toBeGreaterThanOrEqual(tile.labelScrollWidth);
+    expect(tile.labelRight).toBeLessThanOrEqual(tile.right + 1);
+  }
+}
 
 async function installApiFake(page: import('@playwright/test').Page): Promise<void> {
   let errorOnce = false;
@@ -115,6 +155,8 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await page.waitForTimeout(220);
     await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toBeVisible();
     await expect(navigation.locator('.wordmark-mark')).toBeVisible();
+    await expect(navigation.locator('.product-nav')).toBeVisible();
+    await expect(navigation.locator('.product-nav a')).toHaveCount(3);
     await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
     await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
     await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveCount(0);
@@ -161,6 +203,11 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/');
   await expect(navigation).toHaveCSS('flex-basis', '78px');
+  await expect(navigation.locator('.product-nav')).toBeVisible();
+  await expect(navigation.locator('.product-nav a')).toHaveCount(3);
+  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toBeVisible();
+  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Agents$/i })).toBeVisible();
+  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
@@ -178,6 +225,54 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   expect(geometry.conversationNavWidth).toBeGreaterThanOrEqual(geometry.navigationWidth - 25);
   expect(geometry.conversationLinkWidth).toBeGreaterThanOrEqual(geometry.navigationWidth - 25);
   expect(geometry.conversationLinkWidth).toBeGreaterThan(40);
+});
+
+test('keeps primary destinations structurally separate from recent conversations', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Collapsed destination accessibility runs once in the desktop project.');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const navigation = page.locator('#primary-navigation');
+  const productNav = navigation.locator('.product-nav');
+  const recentNav = navigation.locator('.conversation-nav');
+
+  await expect(productNav).toBeVisible();
+  await expect(productNav.getByRole('link')).toHaveCount(3);
+  await expect(productNav.getByRole('link', { name: /^Conversations$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
+  await expectExpandedDestinationTiles(productNav);
+  await expect(recentNav).toBeVisible();
+  await expect(recentNav.getByRole('button', { name: /A thoughtful beginning/i })).toBeVisible();
+  await expect(productNav.locator('a')).not.toHaveClass(/conversation-link/);
+  await expect(recentNav.locator('button')).toHaveClass(/conversation-link/);
+
+  await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(navigation).toHaveClass(/is-collapsed/);
+  await page.waitForTimeout(220);
+  await expect(productNav).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Conversations$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
+  await expect(productNav.getByRole('link')).toHaveCount(3);
+});
+
+test('keeps primary destinations available in the mobile drawer', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile drawer navigation runs once in the mobile project.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(navigation).toBeVisible();
+
+  const productNav = navigation.locator('.product-nav');
+  const recentNav = navigation.locator('.conversation-nav');
+  await expect(productNav).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Conversations$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
+  await expectExpandedDestinationTiles(productNav);
+  await expect(recentNav).toBeVisible();
+  await expect(recentNav.getByRole('button', { name: /A thoughtful beginning/i })).toBeVisible();
 });
 
 test('sends a local message and allows interruption', async ({ page }) => {
