@@ -145,6 +145,89 @@ describe('ConversationStore', () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(selectedPersonaRevision).toBe('persona-revision-2');
   });
+  it('applies draft agent and persona changes immediately without confirmation', async () => {
+    const draftStore = new ConversationStore(fakeApi());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.requestAgent({ profileId: 'agent-profile', revisionId: 'agent-revision-2', revision: 2, displayName: 'Researcher', status: 'active' });
+    draftStore.requestPersona({ profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher', status: 'active', newerRevisionAvailable: false });
+    expect(draftStore.pendingAgent()).toBeNull();
+    expect(draftStore.pendingPersona()).toBeNull();
+    expect(draftStore.selectedAgent().revisionId).toBe('agent-revision-2');
+    expect(draftStore.selectedPersona()?.revisionId).toBe('persona-revision-2');
+    draftStore.requestUseAgentDefaultPersona();
+    expect(draftStore.selected().personaOverride).toBe(false);
+  });
+  it('stages agent and persona together and submits one atomic configuration update', async () => {
+    const now = new Date().toISOString();
+    const currentAgent = { profileId: 'agent-profile', revisionId: 'agent-revision-1', revision: 1, displayName: 'Aura', status: 'active' as const };
+    const nextAgent = { ...currentAgent, revisionId: 'agent-revision-2', revision: 2, displayName: 'Researcher' };
+    const currentPersona = { profileId: 'persona-profile', revisionId: 'persona-revision-1', revision: 1, displayName: 'Neutral', status: 'active' as const, newerRevisionAvailable: false };
+    const nextPersona = { ...currentPersona, revisionId: 'persona-revision-2', revision: 2, displayName: 'Focused' };
+    const detail = { ...summary('combined-configuration'), agent: currentAgent, persona: currentPersona, personaOverride: false, agentAssignments: [], personaAssignments: [], messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    let updateCalls = 0;
+    let updateArgs: unknown[] = [];
+    api.updateConversation = async (...args) => { updateCalls += 1; updateArgs = args; return { ...detail, agent: nextAgent, persona: nextPersona, personaOverride: true, version: 2, updatedAt: now }; };
+    const combinedStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    combinedStore.stageConfiguration(nextAgent, nextPersona, false);
+    expect(combinedStore.pendingConfiguration()?.agentChanged).toBe(true);
+    expect(combinedStore.pendingConfiguration()?.personaChanged).toBe(true);
+    await combinedStore.confirmConfigurationChange();
+    expect(updateCalls).toBe(1);
+    expect(updateArgs[4]).toBe(nextAgent.revisionId);
+    expect(updateArgs[6]).toBe(nextPersona.revisionId);
+    expect(updateArgs[5]).toBe(true);
+  });
+  it('cancels configuration staged for conversation A when selecting conversation B', async () => {
+    const first = { ...summary('conversation-a'), agent: { profileId: 'agent-a', revisionId: 'agent-a-r1', revision: 1, displayName: 'Aura', status: 'active' as const }, messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('conversation-b'), agent: { profileId: 'agent-b', revisionId: 'agent-b-r1', revision: 1, displayName: 'Researcher', status: 'active' as const }, messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const firstAgent = first.agent;
+    if (!firstAgent) throw new Error('Expected an agent.');
+    const api = fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]);
+    let updateCalls = 0;
+    api.updateConversation = async (...args) => { updateCalls += 1; return args as never; };
+    const selectionStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    selectionStore.stageConfiguration({ ...firstAgent, revisionId: 'agent-a-r2', revision: 2, displayName: 'Aura Updated' }, null, true);
+    expect(selectionStore.pendingConfiguration()?.conversationId).toBe('conversation-a');
+    selectionStore.select('conversation-b');
+    await selectionStore.confirmConfigurationChange();
+    expect(selectionStore.pendingConfiguration()).toBeNull();
+    expect(updateCalls).toBe(0);
+    expect(selectionStore.notice()).toBeNull();
+  });
+  it('rejects a pending configuration after the origin conversation version changes', async () => {
+    const detail = { ...summary('versioned-configuration'), agent: { profileId: 'agent-profile', revisionId: 'agent-revision-1', revision: 1, displayName: 'Aura', status: 'active' as const }, messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const detailAgent = detail.agent;
+    if (!detailAgent) throw new Error('Expected an agent.');
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    let updateCalls = 0;
+    api.updateConversation = async (...args) => { updateCalls += 1; return args as never; };
+    const versionStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    versionStore.stageConfiguration({ ...detailAgent, revisionId: 'agent-revision-2', revision: 2, displayName: 'Researcher' }, null, true);
+    versionStore.conversations.update((items) => items.map((item) => item.id === detail.id ? { ...item, version: item.version + 1 } : item));
+    await versionStore.confirmConfigurationChange();
+    expect(versionStore.pendingConfiguration()).toBeNull();
+    expect(updateCalls).toBe(0);
+    expect(versionStore.notice()).toContain('changed while the configuration was waiting');
+  });
+  it('guards configuration and model changes while a run is active', async () => {
+    const detail = persistedRecoveryDetail('failed');
+    const running = { ...detail.recentRuns[0], status: 'running' as const, finishedAt: null };
+    const activeDetail = { ...detail, currentRun: running, recentRuns: [running] } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [activeDetail], nextCursor: null }), [activeDetail]);
+    let updateCalls = 0;
+    api.updateConversation = async (...args) => { updateCalls += 1; return args as never; };
+    const activeStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    activeStore.stageConfiguration(null, null, false);
+    await activeStore.selectModel(preferredModel.id);
+    expect(activeStore.pendingConfiguration()).toBeNull();
+    expect(updateCalls).toBe(0);
+    expect(activeStore.notice()).toContain('active run');
+  });
   it('confirms a persisted persona override with transcript sharing', async () => {
     const now = new Date().toISOString();
     const persona = { profileId: 'persona-profile', revisionId: 'persona-revision-1', revision: 1, displayName: 'Neutral', status: 'active' as const, newerRevisionAvailable: false };
@@ -217,7 +300,7 @@ describe('ConversationStore', () => {
   it('keeps independent drafts and does not stop a background run when selecting', () => { store.updateDraft('Keep this running'); store.send(); const workingId = store.selectedId(); store.create(); expect(store.selectedId()).not.toBe(workingId); store.select(workingId); expect(store.selected().turns[0].text).toBe('Keep this running'); });
   it('preserves user work and sends an idempotent cancellation command', async () => { store.updateDraft('Keep this visible'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().turns[0].text).toBe('Keep this visible'); expect(store.runState()).toBe('interrupted'); expect(store.notice()).toContain('stopped'); });
   it('consumes the complete accepted response when retrying a run', async () => { store.updateDraft('Retry this safely'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.retry(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().currentRun?.status).toBe('running'); expect(store.selected().currentRun?.agentRevisionId).toBe('agent-rev-1'); expect(store.selected().currentRun?.modelPolicyRevisionId).toBe('policy-1'); expect(store.selected().currentRun?.provider).toBe('ollama'); });
-  it('updates model selection for future runs', async () => { store.updateDraft('Choose a model'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); await store.selectModel('qwen2.5:7b'); expect(store.selectedModelId()).toBe('qwen2.5:7b'); });
+  it('updates model selection for future runs', async () => { await store.selectModel('qwen2.5:7b'); expect(store.selectedModelId()).toBe('qwen2.5:7b'); store.updateDraft('Choose a model'); expect(store.send()).toBe(true); });
   it('follows all conversation cursors so older conversations remain available', async () => {
     const cursors: Array<string | undefined> = [];
     const totalPages = 27;

@@ -10,6 +10,7 @@ export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error
 export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; }
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
+export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
 export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; }
 export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
 
@@ -41,6 +42,7 @@ export class ConversationStore {
   readonly pendingAgentAction = signal<'switch' | 'upgrade'>('switch');
   readonly pendingPersona = signal<PersonaReference | null>(null);
   readonly pendingPersonaReset = signal(false);
+  readonly pendingConfiguration = signal<PendingConversationConfiguration | null>(null);
   /** Signals the shell to refresh its active replacement options after a
    * server-side agent status change. */
   readonly agentRefreshRequested = signal(0);
@@ -82,15 +84,17 @@ export class ConversationStore {
   login(): void { this.api.startLogin(typeof window === 'undefined' ? '/' : window.location.pathname + window.location.search); }
   async logout(): Promise<void> { const token = this.session()?.csrfToken; if (!token) return; try { await this.api.logout(token); } finally { this.session.set(null); this.authState.set('unauthenticated'); } }
 
-  select(id: string): void { if (this.conversations().some((conversation) => conversation.id === id)) { this.selectedId.set(id); this.setNotice(id, null); if (!id.startsWith('draft-')) void this.refresh(id); } }
+  select(id: string): void { if (this.conversations().some((conversation) => conversation.id === id)) { this.cancelPendingConfigurationForSelection(id); this.selectedId.set(id); this.setNotice(id, null); if (!id.startsWith('draft-')) void this.refresh(id); } }
 
   async selectFromRoute(id: string, isCurrent: () => boolean = () => true): Promise<ConversationRouteSelection> {
+    this.cancelPendingConfigurationForSelection(id);
     if (id.startsWith('draft-')) { if (!isCurrent() || !this.find(id)) return { status: 'stale' }; this.select(id); return { status: 'selected' }; }
     try {
       const detail = await this.api.getConversation(id);
       if (!isCurrent()) return { status: 'stale' };
       const conversation = this.fromDetail(detail);
       this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== id)]);
+      this.cancelPendingConfigurationForSelection(id);
       this.selectedId.set(id);
       this.setNotice(id, null);
       if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
@@ -116,6 +120,7 @@ export class ConversationStore {
 
   create(): void {
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
+    this.cancelPendingConfigurationForSelection(id);
     const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
     this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
   }
@@ -124,17 +129,32 @@ export class ConversationStore {
 
   async selectModel(modelId: string): Promise<void> {
     const model = this.models().find((item) => item.id === modelId); if (!model || !model.selectable) return;
+    if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
+    if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     const conversation = this.selected(); const previous = conversation.modelId; this.replaceConversation({ ...conversation, modelId });
     if (conversation.id.startsWith('draft-')) return;
     try { const summary = await this.api.updateConversation(conversation.id, modelId, conversation.version, this.key()); this.replaceConversation(this.mergeSummary(summary, conversation)); }
     catch (error: unknown) { this.replaceConversation({ ...conversation, modelId: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
   }
 
-  requestAgent(agent: AgentReference): void { const current = this.selectedAgent(); if (!agent.revisionId || agent.revisionId === current.revisionId) return; this.pendingAgentAction.set(agent.profileId === current.profileId && agent.revision > current.revision ? 'upgrade' : 'switch'); this.pendingAgent.set(agent); }
+  requestAgent(agent: AgentReference): void {
+    const current = this.selectedAgent();
+    if (!agent.revisionId || agent.revisionId === current.revisionId) return;
+    if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
+    if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
+    if (this.selected().id.startsWith('draft-')) {
+      this.replaceConversation({ ...this.selected(), agent });
+      return;
+    }
+    this.pendingAgentAction.set(agent.profileId === current.profileId && agent.revision > current.revision ? 'upgrade' : 'switch');
+    this.pendingAgent.set(agent);
+  }
 
   requestPersona(persona: PersonaReference): void {
     const current = this.selected().persona;
     if (current?.revisionId === persona.revisionId && this.selected().personaOverride) return;
+    if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
+    if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), persona, personaOverride: true });
       return;
@@ -145,12 +165,79 @@ export class ConversationStore {
 
   requestUseAgentDefaultPersona(): void {
     if (!this.selected().personaOverride) return;
+    if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
+    if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), persona: null, personaOverride: false });
       return;
     }
     this.pendingPersona.set(null);
     this.pendingPersonaReset.set(true);
+  }
+
+  stageConfiguration(agent: AgentReference | null, persona: PersonaReference | null, useAgentDefaultPersona: boolean): void {
+    const conversation = this.selected();
+    if (this.authState() !== 'authenticated') { this.setNotice(conversation.id, 'Sign in before changing conversation settings.'); return; }
+    if (this.runState() === 'working') {
+      this.setNotice(conversation.id, 'Wait for the active run to finish before changing conversation settings.');
+      return;
+    }
+    const agentChanged = (agent?.revisionId ?? null) !== (conversation.agent?.revisionId ?? null);
+    const personaChanged = useAgentDefaultPersona
+      ? conversation.personaOverride
+      : (persona?.revisionId ?? null) !== (conversation.persona?.revisionId ?? null) || !conversation.personaOverride;
+    if (!agentChanged && !personaChanged) return;
+    const action = agent && conversation.agent && agent.profileId === conversation.agent.profileId && agent.revision > conversation.agent.revision ? 'upgrade' : 'switch';
+    if (conversation.id.startsWith('draft-')) {
+      this.replaceConversation({ ...conversation, agent, persona: useAgentDefaultPersona ? null : persona, personaOverride: !useAgentDefaultPersona && Boolean(persona) });
+      return;
+    }
+    this.pendingConfiguration.set({ conversationId: conversation.id, expectedVersion: conversation.version, agent, persona, useAgentDefaultPersona, agentChanged, personaChanged, action });
+  }
+
+  cancelPendingConfiguration(): void { this.pendingConfiguration.set(null); }
+
+  async confirmConfigurationChange(): Promise<void> {
+    const pending = this.pendingConfiguration();
+    if (!pending) return;
+    const selectedId = this.selectedId();
+    if (selectedId !== pending.conversationId) {
+      this.pendingConfiguration.set(null);
+      this.setNotice(selectedId, 'The pending configuration change was canceled after navigating to another conversation.');
+      return;
+    }
+    const conversation = this.find(pending.conversationId);
+    if (!conversation) {
+      this.pendingConfiguration.set(null);
+      this.setNotice(selectedId, 'The pending configuration change is no longer available.');
+      return;
+    }
+    if (conversation.version !== pending.expectedVersion) {
+      this.pendingConfiguration.set(null);
+      this.setNotice(conversation.id, 'This conversation changed while the configuration was waiting. Review and try again.');
+      return;
+    }
+    if (this.authState() !== 'authenticated' || this.runStates()[conversation.id] === 'working') {
+      this.setNotice(conversation.id, this.authState() !== 'authenticated' ? 'Sign in before changing conversation settings.' : 'Wait for the active run to finish before changing conversation settings.');
+      this.pendingConfiguration.set(null);
+      return;
+    }
+    this.pendingConfiguration.set(null);
+    try {
+      const summary = await this.api.updateConversation(
+        conversation.id,
+        conversation.modelId,
+        conversation.version,
+        this.key(),
+        pending.agentChanged ? pending.agent?.revisionId : undefined,
+        true,
+        pending.personaChanged && !pending.useAgentDefaultPersona ? pending.persona?.revisionId : undefined,
+        pending.personaChanged && pending.useAgentDefaultPersona,
+      );
+      this.replaceConversation(this.mergeSummary(summary, conversation));
+    } catch (error: unknown) {
+      this.setNotice(conversation.id, this.toApiError(error).message);
+    }
   }
 
   transitionMarkerFor(messageId: string): string | null {
@@ -380,6 +467,8 @@ export class ConversationStore {
   }
 
   private handleError(id: string, error: unknown): void { this.setRunState(id, 'error'); this.setNotice(id, this.toApiError(error).message || 'We could not complete this request. Your message is still here.'); }
+
+  private cancelPendingConfigurationForSelection(id: string): void { if (this.pendingConfiguration()?.conversationId !== id) this.pendingConfiguration.set(null); }
 
   private fromSummary(summary: ConversationSummary): Conversation {
     const raw = summary as ConversationSummary & { agent?: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; agentAssignments?: ReadonlyArray<{ id: string; agent: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; reason: ConversationAssignment['reason']; effectiveAfterMessageId: string | null; createdAt: string }> };

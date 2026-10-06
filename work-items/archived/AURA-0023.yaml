@@ -1,6 +1,6 @@
 id: AURA-0023
 title: Add conversation persona overrides and compact composer controls
-status: approved
+status: integrated
 change_class: contract
 intent: >
   Let the configured owner independently select a reusable persona for a
