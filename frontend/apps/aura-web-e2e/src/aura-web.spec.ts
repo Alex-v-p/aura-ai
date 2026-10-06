@@ -52,19 +52,37 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
   let activeRun: Record<string, unknown> | null = null;
   const now = (): string => new Date().toISOString();
   const summary = (): Record<string, unknown> => ({ id: 'welcome', title: 'A thoughtful beginning', agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: selectedModel, version, createdAt: now(), updatedAt: now(), currentRun: activeRun });
+  const isLongSidebarFixture = (): boolean => page.url().includes('fixture=long-sidebar');
+  const recentConversationSummaries = (): Array<Record<string, unknown>> => isLongSidebarFixture()
+    ? Array.from({ length: 48 }, (_, index) => ({ ...summary(), id: index === 0 ? 'welcome' : `recent-${index}`, title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`, active: index === 0 }))
+    : [summary()];
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf', idleExpiresAt: now(), absoluteExpiresAt: now() } });
     if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'embed-only', displayName: 'Embeddings only', provider: 'ollama', capabilities: ['embedding'], availability: 'available', selectable: false, disabledReason: 'This model does not support chat.' }], defaultModelId: 'qwen2.5:7b', observedAt: now() } });
-    if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: [summary()], nextCursor: null } });
+    if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: recentConversationSummaries(), nextCursor: null } });
     if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'PATCH') {
       const body = JSON.parse(request.postData() ?? '{}') as { modelId?: string; version?: number };
       if (body.modelId) selectedModel = body.modelId;
       version = (body.version ?? version) + 1;
       return route.fulfill({ json: summary() });
     }
-    if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'GET') return route.fulfill({ json: { ...summary(), messages, recentRuns: activeRun ? [activeRun] : [] } });
+    if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'GET') {
+      if (isLongSidebarFixture() && messages.length === 0) {
+        messages = Array.from({ length: 80 }, (_, index) => ({
+          id: `fixture-message-${index}`,
+          conversationId: 'welcome',
+          role: index % 2 === 0 ? 'user' : 'assistant',
+          content: `Long conversation fixture message ${index}. `.repeat(3),
+          state: 'complete',
+          runId: null,
+          createdAt: now(),
+          updatedAt: now(),
+        }));
+      }
+      return route.fulfill({ json: { ...summary(), messages, recentRuns: activeRun ? [activeRun] : [] } });
+    }
     if (url.pathname.endsWith('/runs') && request.method() === 'POST') {
       // Use the current document URL as a second source so the fixture does
       // not depend on the relative ordering of `framenavigated` and the
@@ -273,6 +291,84 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expectExpandedDestinationTiles(productNav);
   await expect(recentNav).toBeVisible();
   await expect(recentNav.getByRole('button', { name: /A thoughtful beginning/i })).toBeVisible();
+});
+
+test('keeps the sidebar viewport-stable while long conversation content scrolls', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet', 'Viewport-stable sidebar coverage runs on desktop and tablet projects.');
+  await page.goto('/?fixture=long-sidebar');
+  const navigation = page.locator('#primary-navigation');
+  const recentNav = navigation.locator('.conversation-nav');
+  const mainContent = page.locator('#main-content');
+  await expect(recentNav.getByRole('button')).toHaveCount(48);
+  await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
+
+  const beforeScroll = await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
+    const main = document.querySelector<HTMLElement>('#main-content');
+    const recent = document.querySelector<HTMLElement>('.conversation-nav');
+    const rect = (selector: string): { top: number; bottom: number; height: number } => {
+      const element = document.querySelector<HTMLElement>(selector);
+      const bounds = element?.getBoundingClientRect();
+      return { top: bounds?.top ?? 0, bottom: bounds?.bottom ?? 0, height: bounds?.height ?? 0 };
+    };
+    const sidebarScrollableDescendants = sidebar
+      ? [sidebar, ...Array.from(sidebar.querySelectorAll<HTMLElement>('*'))]
+        .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY))
+        .map((element) => element.className || element.tagName.toLowerCase())
+      : [];
+    return {
+      viewportHeight: window.innerHeight,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      bodyScrollHeight: document.body.scrollHeight,
+      sidebar: rect('#primary-navigation'),
+      sidebarTop: rect('.sidebar-top'),
+      productNav: rect('.product-nav'),
+      sidebarBottom: rect('.sidebar-bottom'),
+      mainClientHeight: main?.clientHeight ?? 0,
+      mainScrollHeight: main?.scrollHeight ?? 0,
+      recentClientHeight: recent?.clientHeight ?? 0,
+      recentScrollHeight: recent?.scrollHeight ?? 0,
+      recentOverflowY: recent ? getComputedStyle(recent).overflowY : 'visible',
+      sidebarScrollableDescendants,
+    };
+  });
+
+  expect(beforeScroll.sidebar.top).toBeGreaterThanOrEqual(-1);
+  expect(beforeScroll.sidebar.bottom).toBeLessThanOrEqual(beforeScroll.viewportHeight + 1);
+  expect(beforeScroll.sidebar.height).toBeLessThanOrEqual(beforeScroll.viewportHeight + 1);
+  expect(beforeScroll.documentScrollHeight).toBeLessThanOrEqual(beforeScroll.viewportHeight + 1);
+  expect(beforeScroll.bodyScrollHeight).toBeLessThanOrEqual(beforeScroll.viewportHeight + 1);
+  expect(beforeScroll.mainScrollHeight).toBeGreaterThan(beforeScroll.mainClientHeight);
+  expect(beforeScroll.recentScrollHeight).toBeGreaterThan(beforeScroll.recentClientHeight);
+  expect(['auto', 'scroll']).toContain(beforeScroll.recentOverflowY);
+  expect(beforeScroll.sidebarScrollableDescendants).toEqual(['conversation-nav']);
+
+  await mainContent.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await recentNav.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const afterScroll = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('#main-content');
+    const recent = document.querySelector<HTMLElement>('.conversation-nav');
+    const bounds = (selector: string): { top: number; bottom: number } => {
+      const rect = document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+      return { top: rect?.top ?? 0, bottom: rect?.bottom ?? 0 };
+    };
+    return {
+      mainScrollTop: main?.scrollTop ?? 0,
+      recentScrollTop: recent?.scrollTop ?? 0,
+      sidebarTop: bounds('.sidebar-top'),
+      productNav: bounds('.product-nav'),
+      sidebarBottom: bounds('.sidebar-bottom'),
+    };
+  });
+
+  expect(afterScroll.mainScrollTop).toBeGreaterThan(0);
+  expect(afterScroll.recentScrollTop).toBeGreaterThan(0);
+  expect(afterScroll.sidebarTop.top).toBeCloseTo(beforeScroll.sidebarTop.top, 0);
+  expect(afterScroll.sidebarTop.bottom).toBeCloseTo(beforeScroll.sidebarTop.bottom, 0);
+  expect(afterScroll.productNav.top).toBeCloseTo(beforeScroll.productNav.top, 0);
+  expect(afterScroll.productNav.bottom).toBeCloseTo(beforeScroll.productNav.bottom, 0);
+  expect(afterScroll.sidebarBottom.top).toBeCloseTo(beforeScroll.sidebarBottom.top, 0);
+  expect(afterScroll.sidebarBottom.bottom).toBeCloseTo(beforeScroll.sidebarBottom.bottom, 0);
 });
 
 test('sends a local message and allows interruption', async ({ page }) => {
