@@ -187,6 +187,7 @@ modules:
   - aura-core.domains.interaction.agents.adapters
   - aura-core.domains.interaction.agents.adapters.postgres
   - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.database.base
   - aura-core.runtime.models.capacity
@@ -200,6 +201,7 @@ modules:
   - services/aura-core/src/aura_core/domains/interaction/agents/adapters/__init__.py
   dependencies:
   - aura-core.domains.interaction.agents.adapters.postgres
+  - aura-core.domains.interaction.agents.adapters.sql-store
   - aura-core.domains.interaction.agents.persistence
   - aura-core.domains.interaction.conversations.public
   - aura-core.runtime.models.capacity
@@ -362,10 +364,12 @@ modules:
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.audit.public
   - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.outbox
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
+  - aura-core.runtime.prompting.public
 - id: aura-core.bootstrap.database
   root: services/aura-core/src/aura_core/bootstrap/database.py
   kind: python
@@ -383,6 +387,8 @@ modules:
   - aura-core.domains.interaction.agents.persistence
   - aura-core.domains.interaction.conversations
   - aura-core.domains.interaction.conversations.persistence
+  - aura-core.domains.interaction.personas
+  - aura-core.domains.interaction.personas.persistence
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
@@ -531,8 +537,22 @@ modules:
   - aura_core.domains.interaction.agents.adapters.postgres
   dependencies:
   - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
   - aura-core.runtime.models.capacity
+- id: aura-core.domains.interaction.agents.adapters.sql-store
+  root: services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  python_modules:
+  - aura_core.domains.interaction.agents.adapters.sql_store
+  dependencies:
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.agents.persistence
+  - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.personas.public
+  - aura-core.runtime.prompting.public
 - id: aura-core.domains.interaction.agents.persistence
   root: services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
   kind: python
@@ -549,6 +569,75 @@ modules:
   - aura_core.domains.interaction.agents.public
   dependencies:
   - aura-core.domains.interaction.agents.adapters
+  - aura-core.domains.interaction.personas.public
+  - aura-core.runtime.prompting.public
+- id: aura-core.domains.interaction.personas
+  root: services/aura-core/src/aura_core/domains/interaction/personas
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/public.py
+  python_modules:
+  - aura_core.domains.interaction.personas
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/personas/__init__.py
+  dependencies:
+  - aura-core.domains.interaction.personas.public
+  - aura-core.domains.interaction.personas.adapters
+  - aura-core.domains.interaction.personas.adapters.postgres
+  - aura-core.domains.interaction.personas.adapters.sql-store
+- id: aura-core.domains.interaction.personas.adapters
+  root: services/aura-core/src/aura_core/domains/interaction/personas/adapters
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/adapters/__init__.py
+  python_modules:
+  - aura_core.domains.interaction.personas.adapters
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/personas/adapters/__init__.py
+  dependencies:
+  - aura-core.domains.interaction.personas.adapters.postgres
+  - aura-core.domains.interaction.personas.adapters.sql-store
+- id: aura-core.domains.interaction.personas.adapters.postgres
+  root: services/aura-core/src/aura_core/domains/interaction/personas/adapters/postgres.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/adapters/postgres.py
+  python_modules:
+  - aura_core.domains.interaction.personas.adapters.postgres
+  dependencies:
+  - aura-core.domains.interaction.personas.persistence
+  - aura-core.domains.interaction.personas.public
+- id: aura-core.domains.interaction.personas.adapters.sql-store
+  root: services/aura-core/src/aura_core/domains/interaction/personas/adapters/sql_store.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/adapters/sql_store.py
+  python_modules:
+  - aura_core.domains.interaction.personas.adapters.sql_store
+  dependencies:
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.personas.persistence
+  - aura-core.domains.interaction.personas.public
+- id: aura-core.domains.interaction.personas.persistence
+  root: services/aura-core/src/aura_core/domains/interaction/personas/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/persistence.py
+  python_modules:
+  - aura_core.domains.interaction.personas.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.interaction.personas.ports
+  root: services/aura-core/src/aura_core/domains/interaction/personas/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/ports.py
+  python_modules:
+  - aura_core.domains.interaction.personas.ports
+  dependencies:
+  - aura-core.domains.interaction.personas.public
+- id: aura-core.domains.interaction.personas.public
+  root: services/aura-core/src/aura_core/domains/interaction/personas/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/personas/public.py
+  python_modules:
+  - aura_core.domains.interaction.personas.public
+  dependencies: []
 - id: aura-core.domains.interaction.conversations.context
   root: services/aura-core/src/aura_core/domains/interaction/conversations/context.py
   kind: python
@@ -602,10 +691,12 @@ modules:
   - aura_core.domains.interaction.conversations.store
   dependencies:
   - aura-core.domains.execution.runs.dto
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
+  - aura-core.runtime.prompting.public
 - id: aura-core.entrypoints.api.app
   root: services/aura-core/src/aura_core/entrypoints/api/app.py
   kind: python
@@ -615,10 +706,12 @@ modules:
   dependencies:
   - aura-core.entrypoints.api.errors
   - aura-core.entrypoints.api.routes
+  - aura-core.entrypoints.api.routes.agents
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.health
   - aura-core.entrypoints.api.routes.models
+  - aura-core.entrypoints.api.routes.personas
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
@@ -648,12 +741,37 @@ modules:
   - aura_core.entrypoints.api.routes.conversations
   dependencies:
   - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
   - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.api.routes.agents
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.agents
+  dependencies:
+  - aura-core.domains.interaction.agents.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
+- id: aura-core.entrypoints.api.routes.personas
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/personas.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/personas.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.personas
+  dependencies:
+  - aura-core.domains.interaction.personas.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.api.routes.dependencies
   root: services/aura-core/src/aura_core/entrypoints/api/routes/dependencies.py
   kind: python
@@ -706,7 +824,11 @@ modules:
   - aura-core.bootstrap.health
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.identity.application
+  - aura-core.domains.interaction.agents.adapters
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.personas.adapters
+  - aura-core.domains.interaction.personas.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.oidc
@@ -726,6 +848,7 @@ modules:
   - aura_core.entrypoints.cli
   dependencies:
   - aura-core.domains.interaction.agents.adapters
+  - aura-core.domains.interaction.personas.adapters
   - aura-core.platform.auth
   - aura-core.platform.database.engine
 - id: aura-core.entrypoints.worker.app
@@ -737,6 +860,10 @@ modules:
   dependencies:
   - aura-core.bootstrap.conversation-uow
   - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.agents.adapters
+  - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.personas.adapters
+  - aura-core.domains.interaction.personas.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
@@ -848,6 +975,25 @@ modules:
   python_modules:
   - aura_core.runtime.models.capacity
   dependencies: []
+- id: aura-core.runtime.prompting
+  root: services/aura-core/src/aura_core/runtime/prompting
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/prompting/public.py
+  python_modules:
+  - aura_core.runtime.prompting
+  source_files:
+  - services/aura-core/src/aura_core/runtime/prompting/__init__.py
+  dependencies:
+  - aura-core.runtime.prompting.public
+- id: aura-core.runtime.prompting.public
+  root: services/aura-core/src/aura_core/runtime/prompting/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/prompting/public.py
+  python_modules:
+  - aura_core.runtime.prompting.public
+  dependencies:
+  - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.personas.public
 - id: aura-core.runtime.models.gateway
   root: services/aura-core/src/aura_core/runtime/models/gateway.py
   kind: python
@@ -922,7 +1068,21 @@ modules:
   public_api: frontend/libs/aura/interaction/conversations/src/index.ts
   dependencies:
   - aura-web.api-client
+  - aura-web.interaction-agents
   - aura-web.shared-ui
+- id: aura-web.interaction-agents
+  root: frontend/libs/aura/interaction/agents
+  kind: frontend-feature
+  public_api: frontend/libs/aura/interaction/agents/src/index.ts
+  dependencies:
+  - aura-web.api-client
+  - aura-web.interaction-personas
+- id: aura-web.interaction-personas
+  root: frontend/libs/aura/interaction/personas
+  kind: frontend-feature
+  public_api: frontend/libs/aura/interaction/personas/src/index.ts
+  dependencies:
+  - aura-web.api-client
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract

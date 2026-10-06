@@ -27,11 +27,16 @@ new product behavior.
 | `aura-core.package` and namespace packages (`aura-core.domains`, `aura-core.entrypoints`, `aura-core.platform`, `aura-core.providers`, `aura-core.runtime`, and their registered subpackages) | `services/aura-core/src/aura_core/**` | Concrete public file selected per package | Registered file modules and deliberate public surfaces |
 | `aura-core.bootstrap` and `aura-core.bootstrap.*` | `services/aura-core/src/aura_core/bootstrap` | `conversation_uow.py`, `database.py`, `health.py` | Core public domain, platform, and runtime modules |
 | `aura-core.domains.*` | `services/aura-core/src/aura_core/domains/**` | Each domain's `public.py` plus registered file modules | Platform, runtime, and deliberate public domain surfaces |
+| `aura-core.domains.interaction.agents` | `services/aura-core/src/aura_core/domains/interaction/agents` | `agents/public.py`; SQL and provider adapters remain persistence implementations | Persona public API, runtime capacity and prompting, conversation public API, database primitives |
+| `aura-core.domains.interaction.personas` | `services/aura-core/src/aura_core/domains/interaction/personas` | `personas/public.py`; persistence and adapters remain private | Audit and identity public APIs, database primitives |
 | `aura-core.platform.*` | `services/aura-core/src/aura_core/platform/{auth,database,oidc,outbox,readiness,telemetry}` | Component file or outbox package exports | Core public types and persistence primitives |
 | `aura-core.runtime.*` | `services/aura-core/src/aura_core/runtime/{models,streaming}` | Model ports and stream publisher | Execution event/types and platform primitives |
+| `aura-core.runtime.prompting` | `services/aura-core/src/aura_core/runtime/prompting` | `prompting/public.py` | Agent and persona public APIs |
 | `aura-core.providers.models.ollama.*` | `services/aura-core/src/aura_core/providers/models/ollama` | `adapter.py` | Runtime model ports only |
-| `aura-core.entrypoints.*` | `services/aura-core/src/aura_core/entrypoints/**` | API app, worker app, CLI, and route modules | Bootstrap, public APIs, platform adapters, Ollama adapter |
-| `aura-web.interaction-conversations` | `frontend/libs/aura/interaction/conversations` | `src/index.ts` | Transport client, shared UI |
+| `aura-core.entrypoints.*` | `services/aura-core/src/aura_core/entrypoints/**` | API app, worker app, CLI, and route modules, including the agents and personas routes | Bootstrap, public APIs, platform adapters, Ollama adapter |
+| `aura-web.interaction-conversations` | `frontend/libs/aura/interaction/conversations` | `src/index.ts` | Transport client, agents feature, shared UI |
+| `aura-web.interaction-agents` | `frontend/libs/aura/interaction/agents` | `src/index.ts` | Transport client, personas feature |
+| `aura-web.interaction-personas` | `frontend/libs/aura/interaction/personas` | `src/index.ts` | Transport client |
 | `aura-web.api-client` | `frontend/libs/platform/aura-api-client` | `src/index.ts` | OpenAPI and run-event contracts |
 | `aura-contract.openapi` | `contracts/openapi/aura-v1.yaml` | Versioned OpenAPI document | — |
 | `aura-contract.run-events` | `contracts/events/runs/v1` | Versioned JSON Schema | — |
