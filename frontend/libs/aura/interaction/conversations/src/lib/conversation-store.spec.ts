@@ -7,7 +7,7 @@ const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', c
 const preferredModel = { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const session: Session = { principal: { issuer: 'https://authentik.test', subject: 'owner' }, csrfToken: 'csrf', idleExpiresAt: '2026-10-05T20:00:00Z', absoluteExpiresAt: '2026-10-06T12:00:00Z' };
 
-function fakeApi(listConversations: ConversationApi['listConversations'] = async () => ({ items: [], nextCursor: null }), initialDetails: ReadonlyArray<ConversationDetail> = [], initialRuns: ReadonlyArray<Run> = [], streamRunEvents?: ConversationApi['streamRunEvents'], getConversation?: ConversationApi['getConversation'], modelCatalog?: ModelCatalog): ConversationApi {
+function fakeApi(listConversations: ConversationApi['listConversations'] = async () => ({ items: [], nextCursor: null }), initialDetails: ReadonlyArray<ConversationDetail> = [], initialRuns: ReadonlyArray<Run> = [], streamRunEvents?: ConversationApi['streamRunEvents'], getConversation?: ConversationApi['getConversation'], modelCatalog?: ModelCatalog, createConversationOverride?: ConversationApi['createConversation']): ConversationApi {
   let sequence = 0;
   const runs = new Map<string, Run>();
   const details = new Map<string, ConversationDetail>();
@@ -20,7 +20,7 @@ function fakeApi(listConversations: ConversationApi['listConversations'] = async
     listModels: async (): Promise<ModelCatalog> => modelCatalog ?? ({ models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() }),
     listConversations,
     getConversation: getConversation ?? (async (id) => { const detail = details.get(id); if (!detail) throw new Error('missing detail'); return detail; }),
-    createConversation: async (message, modelId) => accepted(`conversation-${++sequence}`, message, modelId),
+    createConversation: createConversationOverride ?? (async (message, modelId) => accepted(`conversation-${++sequence}`, message, modelId)),
     updateConversation: async (id, modelId, version) => { const detail = details.get(id); if (!detail) throw new Error('missing detail'); return { ...detail, modelId, version }; },
     createRun: async (id, message, version) => accepted(id, message, details.get(id)?.modelId ?? model.id, version),
     cancelRun: async (id) => { const current = runs.get(id); if (!current) throw new Error('missing run'); const run = { ...current, status: 'canceled' as const, finishedAt: new Date().toISOString() }; runs.set(id, run); return run; },
@@ -53,6 +53,38 @@ describe('ConversationStore', () => {
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); });
 
   it('keeps drafts in memory and validates empty sends', () => { store.updateDraft(''); expect(store.send()).toBe(false); expect(store.notice()).toContain('Write a message'); });
+  it('blocks keyboard-style sends while the current agent is disabled', async () => {
+    const disabled = { profileId: 'agent-profile', revisionId: 'agent-revision-1', revision: 1, displayName: 'Aura', status: 'disabled' as const };
+    const detail = { ...summary('disabled-conversation'), agent: disabled, agentAssignments: [], messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const disabledStore = new ConversationStore(fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    disabledStore.updateDraft('  Keep this exact draft  ');
+
+    expect(disabledStore.send()).toBe(false);
+    expect(disabledStore.draft()).toBe('  Keep this exact draft  ');
+    expect(disabledStore.notice()).toContain('disabled');
+  });
+  it('restores the draft and refreshes agent state when disablement races submission', async () => {
+    const active = { profileId: 'agent-profile', revisionId: 'agent-revision-1', revision: 1, displayName: 'Aura', status: 'active' as const };
+    const disabled = { ...active, status: 'disabled' as const };
+    let serverDetail = { ...summary('race-conversation'), agent: active, agentAssignments: [], messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [serverDetail], nextCursor: null }), [serverDetail], [], undefined, async () => serverDetail);
+    api.createRun = async () => {
+      serverDetail = { ...serverDetail, agent: disabled };
+      throw { status: 409, code: 'AGENT_DISABLED', message: 'agent is disabled', retryable: false };
+    };
+    const raceStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    raceStore.updateDraft('  Preserve this exact text  \n');
+
+    expect(raceStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(raceStore.draft()).toBe('  Preserve this exact text  \n');
+    expect(raceStore.selected().turns).toHaveLength(0);
+    expect(raceStore.selectedAgent().status).toBe('disabled');
+    expect(raceStore.notice()).toContain('disabled');
+  });
   it('uses the server model catalog default for new drafts', () => { expect(store.selectedModelId()).toBe(preferredModel.id); store.create(); expect(store.selectedModelId()).toBe(preferredModel.id); });
   it.each([
     { name: 'missing', defaultModelId: null },
@@ -71,6 +103,47 @@ describe('ConversationStore', () => {
     expect(degradedStore.send()).toBe(true);
   });
   it('creates a persisted conversation only on first send', async () => { expect(store.selected().id).toMatch(/^draft-/); store.updateDraft('A small thought'); expect(store.send()).toBe(true); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().id).toMatch(/^conversation-/); expect(store.selected().turns[0].text).toBe('A small thought'); });
+  it('omits an agent identifier for an unconfigured draft', async () => {
+    let selectedAgentRevision: string | undefined = 'unexpected';
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId, _idempotencyKey, agentRevisionId) => {
+      selectedAgentRevision = agentRevisionId;
+      return fakeApi().createConversation(message, modelId, 'test');
+    });
+    const draftStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.updateDraft('Use the seeded default');
+    draftStore.send();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(selectedAgentRevision).toBeUndefined();
+  });
+  it('sends an explicitly selected UUID agent revision for a draft', async () => {
+    let selectedAgentRevision: string | undefined;
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId, _idempotencyKey, agentRevisionId) => {
+      selectedAgentRevision = agentRevisionId;
+      return fakeApi().createConversation(message, modelId, 'test');
+    });
+    const draftStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.requestAgent({ profileId: '4d8b3df7-7ea0-4b31-95c7-4de2dcb5c80a', revisionId: '89a7ab75-124f-4f33-b0ea-85bcfb04d201', revision: 2, displayName: 'Researcher', status: 'active' });
+    await draftStore.confirmAgentSwitch();
+    draftStore.updateDraft('Use this explicit revision');
+    draftStore.send();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(selectedAgentRevision).toBe('89a7ab75-124f-4f33-b0ea-85bcfb04d201');
+  });
+  it('uses assignment boundaries and run provenance for historical metadata', async () => {
+    const now = new Date().toISOString();
+    const aura = { profileId: 'aura-profile', revisionId: 'aura-revision-1', revision: 1, displayName: 'Aura', status: 'active' as const, newerRevisionAvailable: false };
+    const researcher = { profileId: 'research-profile', revisionId: 'research-revision-1', revision: 1, displayName: 'Researcher', status: 'active' as const, newerRevisionAvailable: false };
+    const run: Run = { id: 'history-run', conversationId: 'history', userMessageId: 'message-one', assistantMessageId: 'message-two', status: 'completed', agentRevisionId: researcher.revisionId, modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const detail = { ...summary('history'), agent: researcher, agentAssignments: [{ id: 'assignment-initial', agent: aura, reason: 'initial' as const, effectiveAfterMessageId: null, createdAt: now }, { id: 'assignment-switch', agent: researcher, reason: 'manual_switch' as const, effectiveAfterMessageId: 'message-one', createdAt: now }], messages: [{ id: 'message-one', conversationId: 'history', role: 'user' as const, content: 'Question', state: 'complete' as const, runId: null, createdAt: now, updatedAt: now }, { id: 'message-two', conversationId: 'history', role: 'assistant' as const, content: 'Answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+    const historyStore = new ConversationStore(fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(historyStore.agentForTurn(historyStore.selected().turns[0]).displayName).toBe('Aura');
+    expect(historyStore.agentForTurn(historyStore.selected().turns[1]).displayName).toBe('Researcher');
+    expect(historyStore.transitionMarkerFor('message-one')).toContain('Aura r1 to Researcher r1');
+    expect(historyStore.transitionMarkerFor('message-two')).toBeNull();
+  });
   it('keeps independent drafts and does not stop a background run when selecting', () => { store.updateDraft('Keep this running'); store.send(); const workingId = store.selectedId(); store.create(); expect(store.selectedId()).not.toBe(workingId); store.select(workingId); expect(store.selected().turns[0].text).toBe('Keep this running'); });
   it('preserves user work and sends an idempotent cancellation command', async () => { store.updateDraft('Keep this visible'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().turns[0].text).toBe('Keep this visible'); expect(store.runState()).toBe('interrupted'); expect(store.notice()).toContain('stopped'); });
   it('consumes the complete accepted response when retrying a run', async () => { store.updateDraft('Retry this safely'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.retry(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().currentRun?.status).toBe('running'); expect(store.selected().currentRun?.agentRevisionId).toBe('agent-rev-1'); expect(store.selected().currentRun?.modelPolicyRevisionId).toBe('policy-1'); expect(store.selected().currentRun?.provider).toBe('ollama'); });

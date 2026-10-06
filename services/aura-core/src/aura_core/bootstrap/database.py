@@ -7,6 +7,7 @@ from aura_core.domains.governance.audit import persistence as audit_persistence
 from aura_core.domains.governance.identity import persistence as identity_persistence
 from aura_core.domains.interaction.agents import persistence as agent_persistence
 from aura_core.domains.interaction.conversations import persistence as conversation_persistence
+from aura_core.domains.interaction.personas import persistence as persona_persistence
 from aura_core.platform.database.base import Base
 from aura_core.platform.outbox import persistence as outbox_persistence
 
@@ -15,6 +16,7 @@ _MAPPING_MODULES = (
     audit_persistence,
     identity_persistence,
     agent_persistence,
+    persona_persistence,
     conversation_persistence,
     outbox_persistence,
 )

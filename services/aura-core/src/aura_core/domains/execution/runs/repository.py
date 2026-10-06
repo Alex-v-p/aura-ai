@@ -35,22 +35,27 @@ class SqlRunRepository:
             row.attempt_id,
             row.attempt_count,
             row.lease_expires_at,
+            row.persona_revision_id,
+            row.prompt_bundle_revision_id,
+            row.prompt_hash,
         )
 
-    async def get(
-        self, session: AsyncSession, run_id: UUID, *, lock: bool = False
-    ) -> Run | None:
+    async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
         row = await session.get(RunRow, run_id, with_for_update=lock)
         return self._run(row) if row else None
 
     async def list(self, session: AsyncSession, conversation_id: UUID) -> list[Run]:
         rows = (
-            await session.execute(
-                select(RunRow)
-                .where(RunRow.conversation_id == conversation_id)
-                .order_by(RunRow.created_at)
+            (
+                await session.execute(
+                    select(RunRow)
+                    .where(RunRow.conversation_id == conversation_id)
+                    .order_by(RunRow.created_at)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [self._run(row) for row in rows]
 
     async def active(
@@ -67,16 +72,20 @@ class SqlRunRepository:
 
     async def expired(self, session: AsyncSession, cutoff: datetime) -> list[Run]:
         rows = (
-            await session.execute(
-                select(RunRow)
-                .where(
-                    RunRow.status == "running",
-                    RunRow.lease_expires_at.is_not(None),
-                    RunRow.lease_expires_at <= cutoff,
+            (
+                await session.execute(
+                    select(RunRow)
+                    .where(
+                        RunRow.status == "running",
+                        RunRow.lease_expires_at.is_not(None),
+                        RunRow.lease_expires_at <= cutoff,
+                    )
+                    .with_for_update(skip_locked=True)
                 )
-                .with_for_update(skip_locked=True)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [self._run(row) for row in rows]
 
     def stage(self, session: AsyncSession, run: Run) -> None:
@@ -88,6 +97,9 @@ class SqlRunRepository:
                 assistant_message_id=run.assistant_message_id,
                 agent_revision_id=run.agent_revision_id,
                 model_policy_revision_id=run.model_policy_revision_id,
+                persona_revision_id=run.persona_revision_id,
+                prompt_bundle_revision_id=run.prompt_bundle_revision_id,
+                prompt_hash=run.prompt_hash,
                 provider=run.provider,
                 model_id=run.model_id,
                 retry_of_run_id=run.retry_of_run_id,
@@ -142,17 +154,19 @@ class SqlRunRepository:
 
     async def event_history(self, session: AsyncSession, run_id: UUID) -> list[RunEvent]:
         rows = (
-            await session.execute(
-                select(RunEventRow)
-                .where(RunEventRow.run_id == run_id)
-                .order_by(RunEventRow.sequence)
+            (
+                await session.execute(
+                    select(RunEventRow)
+                    .where(RunEventRow.run_id == run_id)
+                    .order_by(RunEventRow.sequence)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [self._event(row) for row in rows]
 
-    async def event(
-        self, session: AsyncSession, event_id: UUID, run_id: UUID
-    ) -> RunEvent | None:
+    async def event(self, session: AsyncSession, event_id: UUID, run_id: UUID) -> RunEvent | None:
         row = await session.get(RunEventRow, event_id)
         return self._event(row) if row is not None and row.run_id == run_id else None
 

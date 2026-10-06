@@ -38,13 +38,17 @@ class SqlOutboxRepository:
 
     async def pending(self, session: AsyncSession, limit: int) -> list[OutboxCommand]:
         rows = (
-            await session.execute(
-                select(OutboxRow)
-                .where(OutboxRow.published_at.is_(None))
-                .order_by(OutboxRow.created_at)
-                .limit(limit)
+            (
+                await session.execute(
+                    select(OutboxRow)
+                    .where(OutboxRow.published_at.is_(None))
+                    .order_by(OutboxRow.created_at)
+                    .limit(limit)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [
             OutboxCommand.from_record(row.id, row.topic, row.payload, row.created_at or now())
             for row in rows

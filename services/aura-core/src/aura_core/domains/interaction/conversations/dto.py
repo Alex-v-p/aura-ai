@@ -8,6 +8,31 @@ from uuid import UUID, uuid4
 from aura_core.domains.execution.runs.dto import Run, RunStatus
 
 
+class AssignmentReason(StrEnum):
+    """Why an immutable agent assignment became effective."""
+
+    INITIAL = "initial"
+    MANUAL_SWITCH = "manual_switch"
+    REVISION_UPGRADE = "revision_upgrade"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAssignment:
+    """Conversation-owned assignment history record.
+
+    Assignment history is deliberately owned by conversations.  Agent
+    configuration owns revisions, but must not own the user-visible timeline
+    that records when a conversation started using one.
+    """
+
+    agent_profile_id: UUID
+    agent_revision_id: UUID
+    reason: AssignmentReason
+    effective_after_message_id: UUID | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    id: UUID = field(default_factory=uuid4)
+
+
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -50,6 +75,7 @@ class Conversation:
     updated_at: datetime = field(default_factory=now)
     messages: list[Message] = field(default_factory=list[Message])
     runs: list[Run] = field(default_factory=list[Run])
+    assignments: list[AgentAssignment] = field(default_factory=list[AgentAssignment])
 
     @property
     def current_run(self) -> Run | None:

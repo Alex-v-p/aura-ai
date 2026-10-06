@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 9c6f1decb9e67bf12898a03182208caea4d5392d6f00e8c761e20e6d4177439a
+// Contract SHA-256: 777c41bd5616dc3c6d6f0a71ab07b88c60979d6b11a5fc3027d2ee74e1cb7914
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -9,21 +9,55 @@ export type ModelCatalog = { readonly "models": ReadonlyArray<Model>; readonly "
 
 export type Model = { readonly "id": string; readonly "displayName": string; readonly "provider": string; readonly "capabilities": ReadonlyArray<"chat" | "completion" | "embedding" | "vision" | "tools" | "structured_output">; readonly "availability": "available" | "unavailable" | "unknown"; readonly "selectable": boolean; readonly "disabledReason": string | null; };
 
-export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; };
+export type ProfileStatus = "active" | "disabled";
 
-export type UpdateConversationRequest = { readonly "modelId": string; readonly "version": number; };
+export type AgentCollection = { readonly "items": ReadonlyArray<AgentProfile>; };
+
+export type AgentProfile = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": AgentRevision; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type AgentDetail = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": AgentRevision; readonly "revisions": ReadonlyArray<AgentRevision>; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type AgentRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "promptBundleRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "createdAt": string; };
+
+export type CreateAgentRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; };
+
+export type CreateAgentRevisionRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "expectedVersion": number; };
+
+export type UpdateAgentStatusRequest = { readonly "status": ProfileStatus; readonly "expectedVersion": number; };
+
+export type PersonaCollection = { readonly "items": ReadonlyArray<PersonaProfile>; };
+
+export type PersonaProfile = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type PersonaDetail = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "revisions": ReadonlyArray<PersonaRevision>; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type PersonaRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "description": string; readonly "instructions": string; readonly "createdAt": string; };
+
+export type CreatePersonaRequest = { readonly "displayName": string; readonly "description": string; readonly "instructions": string; };
+
+export type CreatePersonaRevisionRequest = { readonly "displayName": string; readonly "description": string; readonly "instructions": string; readonly "expectedVersion": number; };
+
+export type UpdatePersonaStatusRequest = { readonly "status": ProfileStatus; readonly "expectedVersion": number; };
+
+export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; };
+
+export type UpdateConversationRequest = { readonly "modelId"?: string; readonly "agentRevisionId"?: string; readonly "transcriptSharingConfirmed"?: boolean; readonly "version": number; };
 
 export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; };
 
 export type ConversationPage = { readonly "items": ReadonlyArray<ConversationSummary>; readonly "nextCursor": string | null; };
 
-export type ConversationSummary = { readonly "id": string; readonly "title": string; readonly "agentProfileId": string; readonly "agentRevisionId": string; readonly "modelId": string; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "currentRun": Run | null; };
+export type ConversationSummary = { readonly "id": string; readonly "title": string; readonly "agentProfileId": string; readonly "agentRevisionId": string; readonly "agent"?: AgentReference; readonly "agentAssignments"?: ReadonlyArray<AgentAssignment>; readonly "modelId": string; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "currentRun": Run | null; };
+
+export type AgentReference = { readonly "profileId": string; readonly "revisionId": string; readonly "displayName": string; readonly "revision": number; readonly "status": ProfileStatus; readonly "newerRevisionAvailable": boolean; };
+
+export type AgentAssignment = { readonly "id": string; readonly "agent": AgentReference; readonly "reason": "initial" | "manual_switch" | "revision_upgrade"; readonly "effectiveAfterMessageId": string | null; readonly "createdAt": string; };
 
 export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; };
 
 export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -71,6 +105,16 @@ export interface AuraApiOperations {
   readonly completeLogin: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "code": string; readonly "state": string; }; readonly headers: Readonly<Record<string, never>>; };
   readonly logout: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; }; };
   readonly listModels: { readonly response: ModelCatalog; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listAgents: { readonly response: AgentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly createAgent: { readonly response: AgentDetail; readonly body: CreateAgentRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getAgent: { readonly response: AgentDetail; readonly body: never; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly updateAgentStatus: { readonly response: AgentDetail; readonly body: UpdateAgentStatusRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly createAgentRevision: { readonly response: AgentDetail; readonly body: CreateAgentRevisionRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listPersonas: { readonly response: PersonaCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly createPersona: { readonly response: PersonaDetail; readonly body: CreatePersonaRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getPersona: { readonly response: PersonaDetail; readonly body: never; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly updatePersonaStatus: { readonly response: PersonaDetail; readonly body: UpdatePersonaStatusRequest; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly createPersonaRevision: { readonly response: PersonaDetail; readonly body: CreatePersonaRevisionRequest; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly listConversations: { readonly response: ConversationPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly createConversation: { readonly response: ConversationRunAccepted; readonly body: CreateConversationRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getConversation: { readonly response: ConversationDetail; readonly body: never; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -104,6 +148,16 @@ export const AURA_API_OPERATIONS = {
   completeLogin: { method: 'GET', pathTemplate: '/api/v1/auth/callback', responseMode: 'json' },
   logout: { method: 'POST', pathTemplate: '/api/v1/auth/logout', responseMode: 'json' },
   listModels: { method: 'GET', pathTemplate: '/api/v1/models', responseMode: 'json' },
+  listAgents: { method: 'GET', pathTemplate: '/api/v1/agents', responseMode: 'json' },
+  createAgent: { method: 'POST', pathTemplate: '/api/v1/agents', responseMode: 'json' },
+  getAgent: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}', responseMode: 'json' },
+  updateAgentStatus: { method: 'PATCH', pathTemplate: '/api/v1/agents/{agent_profile_id}', responseMode: 'json' },
+  createAgentRevision: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/revisions', responseMode: 'json' },
+  listPersonas: { method: 'GET', pathTemplate: '/api/v1/personas', responseMode: 'json' },
+  createPersona: { method: 'POST', pathTemplate: '/api/v1/personas', responseMode: 'json' },
+  getPersona: { method: 'GET', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
+  updatePersonaStatus: { method: 'PATCH', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
+  createPersonaRevision: { method: 'POST', pathTemplate: '/api/v1/personas/{persona_profile_id}/revisions', responseMode: 'json' },
   listConversations: { method: 'GET', pathTemplate: '/api/v1/conversations', responseMode: 'json' },
   createConversation: { method: 'POST', pathTemplate: '/api/v1/conversations', responseMode: 'json' },
   getConversation: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}', responseMode: 'json' },

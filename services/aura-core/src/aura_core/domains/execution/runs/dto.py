@@ -51,6 +51,9 @@ class Run:
     attempt_id: UUID | None = None
     attempt_count: int = 0
     lease_expires_at: datetime | None = None
+    persona_revision_id: UUID | None = None
+    prompt_bundle_revision_id: UUID | None = None
+    prompt_hash: str | None = None
 
 
 class RunClaim(NamedTuple):

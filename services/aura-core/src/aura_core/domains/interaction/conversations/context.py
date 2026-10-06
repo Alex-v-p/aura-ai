@@ -23,12 +23,9 @@ def build_context(
             (run for run in reversed(conversation.runs) if run.status.value != "completed"),
             None,
         )
-    current_prompt = (
-        messages.get(current_run.user_message_id) if current_run is not None else None
-    )
+    current_prompt = messages.get(current_run.user_message_id) if current_run is not None else None
     if current_prompt is not None and (
-        current_prompt.role != MessageRole.USER
-        or current_prompt.state != MessageState.COMPLETE
+        current_prompt.role != MessageRole.USER or current_prompt.state != MessageState.COMPLETE
     ):
         current_prompt = None
 
@@ -44,9 +41,7 @@ def build_context(
             continue
         user = messages.get(run.user_message_id)
         assistant = (
-            messages.get(run.assistant_message_id)
-            if run.assistant_message_id is not None
-            else None
+            messages.get(run.assistant_message_id) if run.assistant_message_id is not None else None
         )
         if (
             user is None

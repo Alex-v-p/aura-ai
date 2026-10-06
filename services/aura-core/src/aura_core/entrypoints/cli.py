@@ -13,6 +13,7 @@ from alembic import command
 from alembic.config import Config
 
 from aura_core.domains.interaction.agents.adapters import SqlAgentSeeder
+from aura_core.domains.interaction.personas.adapters import SqlPersonaSeeder
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 
@@ -43,7 +44,9 @@ def migrate(revision: str = "head") -> None:
 async def _seed_async(settings: Settings) -> None:
     engine = make_engine(settings.database_url)
     try:
-        await SqlAgentSeeder(session_factory(engine)).seed()
+        sessions = session_factory(engine)
+        await SqlPersonaSeeder(sessions).seed()
+        await SqlAgentSeeder(sessions).seed()
     finally:
         await engine.dispose()
 

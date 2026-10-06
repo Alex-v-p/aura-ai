@@ -2,6 +2,8 @@
 
 from aura_core.domains.interaction.conversations.context import build_context
 from aura_core.domains.interaction.conversations.dto import (
+    AgentAssignment,
+    AssignmentReason,
     Conversation,
     Message,
     MessageRole,
@@ -16,6 +18,8 @@ from aura_core.domains.interaction.conversations.repository import (
 from aura_core.domains.interaction.conversations.store import (
     GENERAL_AGENT,
     ActiveRunConflict,
+    AgentSwitchConfirmationRequired,
+    AgentUnavailable,
     ConversationNotFound,
     ConversationStore,
     IdempotencyConflict,
@@ -25,7 +29,11 @@ from aura_core.domains.interaction.conversations.store import (
 
 __all__ = [
     "GENERAL_AGENT",
+    "AgentAssignment",
+    "AssignmentReason",
     "ActiveRunConflict",
+    "AgentSwitchConfirmationRequired",
+    "AgentUnavailable",
     "Conversation",
     "ConversationNotFound",
     "ConversationRecord",

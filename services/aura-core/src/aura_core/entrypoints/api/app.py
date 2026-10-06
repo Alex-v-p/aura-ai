@@ -5,7 +5,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from aura_core.entrypoints.api.errors import install_error_handlers
-from aura_core.entrypoints.api.routes import auth, conversations, health, models, runs
+from aura_core.entrypoints.api.routes import (
+    agents,
+    auth,
+    conversations,
+    health,
+    models,
+    personas,
+    runs,
+)
 from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Settings
 
@@ -34,6 +42,8 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.state.aura = state
     app.include_router(auth.router)
     app.include_router(models.router)
+    app.include_router(agents.router)
+    app.include_router(personas.router)
     app.include_router(conversations.router)
     app.include_router(runs.router)
     app.include_router(health.router)

@@ -396,6 +396,42 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
     assert not _contains_uuid(dict(span.dimensions))
 
 
+def test_prompt_compilation_telemetry_keeps_provenance_metadata_without_prompt_content() -> None:
+    lines: list[str] = []
+    exporter = StructuredContainerLogExporter(lines.append)
+    metrics = MetadataMetrics(exporter=exporter)
+    run_id, conversation_id = uuid4(), uuid4()
+    metrics.record_span(
+        "aura.runtime.prompt_compilation",
+        "prompt.compile",
+        2.5,
+        trace_id=run_id.hex,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="model_policy",
+        outcome="ok",
+        run_id=str(run_id),
+        conversation_id=str(conversation_id),
+        agent_revision_id=str(uuid4()),
+        persona_revision_id=str(uuid4()),
+        prompt_bundle_revision_id=str(uuid4()),
+        prompt_hash="a" * 64,
+        prompt_component_count="4",
+        compiled_prompt_size="123",
+    )
+
+    measurement = metrics.snapshot()[0]
+    assert measurement.component_id == "aura.runtime.prompt_compilation"
+    assert measurement.metric == "prompt_compile_duration_ms"
+    assert dict(measurement.trace_attributes)["prompt_hash"] == "a" * 64
+    assert dict(measurement.trace_attributes)["prompt_component_count"] == "4"
+    assert dict(measurement.trace_attributes)["compiled_prompt_size"] == "123"
+    assert asyncio.run(metrics.flush())
+    rendered = "\n".join(lines)
+    assert "instructions" not in rendered
+    assert "rendered prompt" not in rendered
+
+
 @pytest.mark.asyncio
 async def test_nats_readiness_recovers_after_stream_subject_is_restored() -> None:
     class Config:

@@ -17,9 +17,7 @@ async def require_session(request: Request) -> Session:
     state = app_state(request)
     if not state.settings.oidc_issuer or not state.settings.owner_subject:
         raise HTTPException(status_code=503, detail="identity authorization is not configured")
-    session = await state.sessions.get(
-        request.cookies.get(state.settings.session_cookie.name)
-    )
+    session = await state.sessions.get(request.cookies.get(state.settings.session_cookie.name))
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required"

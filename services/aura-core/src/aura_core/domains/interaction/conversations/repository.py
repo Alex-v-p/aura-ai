@@ -9,12 +9,15 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aura_core.domains.interaction.conversations.dto import (
+    AgentAssignment,
+    AssignmentReason,
     Message,
     MessageRole,
     MessageState,
     now,
 )
 from aura_core.domains.interaction.conversations.persistence import (
+    ConversationAgentAssignmentRow,
     ConversationRow,
     IdempotencyRow,
     MessageRow,
@@ -115,13 +118,53 @@ class SqlConversationRepository:
 
     async def messages(self, session: AsyncSession, conversation_id: UUID) -> list[Message]:
         rows = (
+            (
+                await session.execute(
+                    select(MessageRow)
+                    .where(MessageRow.conversation_id == conversation_id)
+                    .order_by(MessageRow.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [self._message(row) for row in rows]
+
+    async def assignments(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[AgentAssignment]:
+        rows = (
             await session.execute(
-                select(MessageRow)
-                .where(MessageRow.conversation_id == conversation_id)
-                .order_by(MessageRow.created_at)
+                select(ConversationAgentAssignmentRow)
+                .where(ConversationAgentAssignmentRow.conversation_id == conversation_id)
+                .order_by(
+                    ConversationAgentAssignmentRow.created_at,
+                    ConversationAgentAssignmentRow.id,
+                )
             )
         ).scalars().all()
-        return [self._message(row) for row in rows]
+        return [
+            AgentAssignment(
+                row.agent_profile_id,
+                row.agent_revision_id,
+                AssignmentReason(row.reason),
+                row.effective_after_message_id,
+                row.created_at or now(),
+                row.id,
+            )
+            for row in rows
+        ]
+
+    async def latest_message_id(self, session: AsyncSession, conversation_id: UUID) -> UUID | None:
+        row = (
+            await session.execute(
+                select(MessageRow.id)
+                .where(MessageRow.conversation_id == conversation_id)
+                .order_by(MessageRow.created_at.desc(), MessageRow.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return row
 
     async def message(self, session: AsyncSession, message_id: UUID) -> Message | None:
         row = await session.get(MessageRow, message_id)
@@ -156,6 +199,21 @@ class SqlConversationRepository:
             )
         )
 
+    def stage_assignment(
+        self, session: AsyncSession, assignment: AgentAssignment, conversation_id: UUID
+    ) -> None:
+        session.add(
+            ConversationAgentAssignmentRow(
+                id=assignment.id,
+                conversation_id=conversation_id,
+                agent_profile_id=assignment.agent_profile_id,
+                agent_revision_id=assignment.agent_revision_id,
+                reason=assignment.reason.value,
+                effective_after_message_id=assignment.effective_after_message_id,
+                created_at=assignment.created_at,
+            )
+        )
+
     async def update(
         self,
         session: AsyncSession,
@@ -165,6 +223,8 @@ class SqlConversationRepository:
         if row is None:
             return
         row.model_id = record.model_id
+        row.agent_profile_id = record.agent_profile_id
+        row.agent_revision_id = record.agent_revision_id
         row.version = record.version
         row.updated_at = record.updated_at
 

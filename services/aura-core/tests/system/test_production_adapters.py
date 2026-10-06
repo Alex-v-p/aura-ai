@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -22,11 +22,11 @@ import pytest_asyncio
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.database import metadata
 from aura_core.domains.execution.runs.events import new_event
-from aura_core.domains.execution.runs.public import RunStatus
+from aura_core.domains.execution.runs.public import RunCoordinator, RunStatus
 from aura_core.domains.interaction.agents.adapters import SqlAgentSeeder
-from aura_core.domains.interaction.conversations.public import GENERAL_AGENT
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import (
+    MemorySessionBackend,
     Principal,
     RedisSessionBackend,
     Session,
@@ -35,16 +35,38 @@ from aura_core.platform.auth import (
 )
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.oidc import OIDCValidationError, exchange_code
+from aura_core.platform.outbox import InMemoryOutbox
 from aura_core.platform.outbox.nats import NatsOutbox, NatsRunConsumer
 from aura_core.platform.outbox.service import OutboxCommand
 from aura_core.runtime.models.capacity import estimate_tokens
-from aura_core.runtime.models.ports import ModelDescriptor
+from aura_core.runtime.models.ports import ChatMessage, ModelDescriptor
+from aura_core.runtime.streaming.publisher import EventPublisher
 from authlib.jose import JsonWebKey, JsonWebToken
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from conftest import owner_client
+
 pytestmark = pytest.mark.integration
 MODELS = (ModelDescriptor("chat", "Chat", "ollama", ("chat", "completion")),)
+
+
+class PromptCaptureProvider:
+    def __init__(self) -> None:
+        self.messages: tuple[ChatMessage, ...] = ()
+
+    async def list_models(self) -> tuple[ModelDescriptor, ...]:
+        return MODELS
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        return model_id in (None, "chat")
+
+    async def stream_chat(
+        self, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[str]:
+        assert model_id == "chat"
+        self.messages = tuple(messages)
+        yield "captured"
 
 
 def _url(name: str) -> str | None:
@@ -79,6 +101,245 @@ async def sql_store() -> AsyncIterator[SqlConversationStore]:
         async with engine.begin() as connection:
             await connection.run_sync(metadata().drop_all)
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays(
+    sql_store: SqlConversationStore,
+) -> None:
+    """Configuration commands must use SQL persistence, not process-local state."""
+
+    del sql_store
+    database_url = _url("AURA_TEST_DATABASE_URL")
+    assert database_url is not None
+    settings = Settings(
+        database_url=database_url,
+        public_origin="https://aura.dev.example",
+        oidc_issuer="https://authentik.dev.example",
+        owner_subject="owner-subject",
+        default_model="chat",
+        secure_cookies=False,
+    )
+    applications: list[Any] = []
+
+    async def fresh_app() -> Any:
+        application = create_app(settings, testing=False)
+        application.state.aura.sessions = SessionService(MemorySessionBackend(), settings)
+        applications.append(application)
+        return application
+
+    try:
+        first_app = await fresh_app()
+        first_client, first_session = await owner_client(first_app)
+        persona_payload = {
+            "displayName": "Research style",
+            "description": "Research-oriented answers.",
+            "instructions": "Cite sources and separate facts from hypotheses.",
+        }
+        persona_key = "sql-persona-create"
+        created_persona = await first_client.post(
+            "/api/v1/personas",
+            headers={"X-CSRF-Token": first_session.csrf_token, "Idempotency-Key": persona_key},
+            json=persona_payload,
+        )
+        assert created_persona.status_code == 201
+        persona = created_persona.json()
+        persona_id = persona["id"]
+        await first_client.aclose()
+
+        second_app = await fresh_app()
+        second_client, second_session = await owner_client(second_app)
+        persisted_persona = await second_client.get(f"/api/v1/personas/{persona_id}")
+        assert persisted_persona.status_code == 200
+        assert persisted_persona.json() == persona
+        replay_persona = await second_client.post(
+            "/api/v1/personas",
+            headers={"X-CSRF-Token": second_session.csrf_token, "Idempotency-Key": persona_key},
+            json=persona_payload,
+        )
+        assert replay_persona.status_code == 201
+        assert replay_persona.json() == persona
+        conflict_persona = await second_client.post(
+            "/api/v1/personas",
+            headers={"X-CSRF-Token": second_session.csrf_token, "Idempotency-Key": persona_key},
+            json={**persona_payload, "instructions": "conflicting replay"},
+        )
+        assert conflict_persona.status_code == 409
+
+        persona_revision_payload = {
+            "displayName": "Research style",
+            "description": "Research-oriented answers with evidence.",
+            "instructions": persona_payload["instructions"],
+            "expectedVersion": persona["version"],
+        }
+        persona_revision_key = "sql-persona-revision"
+        revised_persona = await second_client.post(
+            f"/api/v1/personas/{persona_id}/revisions",
+            headers={
+                "X-CSRF-Token": second_session.csrf_token,
+                "Idempotency-Key": persona_revision_key,
+            },
+            json=persona_revision_payload,
+        )
+        assert revised_persona.status_code == 201
+        persona = revised_persona.json()
+        await second_client.aclose()
+
+        third_app = await fresh_app()
+        third_client, third_session = await owner_client(third_app)
+        replay_revision = await third_client.post(
+            f"/api/v1/personas/{persona_id}/revisions",
+            headers={
+                "X-CSRF-Token": third_session.csrf_token,
+                "Idempotency-Key": persona_revision_key,
+            },
+            json=persona_revision_payload,
+        )
+        assert replay_revision.status_code == 201
+        assert replay_revision.json() == persona
+        conflict_revision = await third_client.post(
+            f"/api/v1/personas/{persona_id}/revisions",
+            headers={
+                "X-CSRF-Token": third_session.csrf_token,
+                "Idempotency-Key": persona_revision_key,
+            },
+            json={**persona_revision_payload, "description": "conflicting replay"},
+        )
+        assert conflict_revision.status_code == 409
+
+        agent_payload = {
+            "displayName": "Researcher",
+            "purpose": "Research carefully.",
+            "instructions": "Cite sources.",
+            "personaRevisionId": persona["currentRevision"]["id"],
+        }
+        agent_key = "sql-agent-create"
+        created_agent = await third_client.post(
+            "/api/v1/agents",
+            headers={"X-CSRF-Token": third_session.csrf_token, "Idempotency-Key": agent_key},
+            json=agent_payload,
+        )
+        assert created_agent.status_code == 201
+        agent = created_agent.json()
+        agent_id = agent["id"]
+        await third_client.aclose()
+
+        fourth_app = await fresh_app()
+        fourth_client, fourth_session = await owner_client(fourth_app)
+        persisted_agent = await fourth_client.get(f"/api/v1/agents/{agent_id}")
+        assert persisted_agent.status_code == 200
+        assert persisted_agent.json() == agent
+        replay_agent = await fourth_client.post(
+            "/api/v1/agents",
+            headers={"X-CSRF-Token": fourth_session.csrf_token, "Idempotency-Key": agent_key},
+            json=agent_payload,
+        )
+        assert replay_agent.status_code == 201
+        assert replay_agent.json() == agent
+        conflict_agent = await fourth_client.post(
+            "/api/v1/agents",
+            headers={"X-CSRF-Token": fourth_session.csrf_token, "Idempotency-Key": agent_key},
+            json={**agent_payload, "purpose": "conflicting replay"},
+        )
+        assert conflict_agent.status_code == 409
+
+        agent_revision_payload = {
+            "displayName": "Researcher",
+            "purpose": "Research carefully and transparently.",
+            "instructions": agent_payload["instructions"],
+            "personaRevisionId": agent["currentRevision"]["personaRevisionId"],
+            "expectedVersion": agent["version"],
+        }
+        agent_revision_key = "sql-agent-revision"
+        revised_agent = await fourth_client.post(
+            f"/api/v1/agents/{agent_id}/revisions",
+            headers={
+                "X-CSRF-Token": fourth_session.csrf_token,
+                "Idempotency-Key": agent_revision_key,
+            },
+            json=agent_revision_payload,
+        )
+        assert revised_agent.status_code == 201
+        agent = revised_agent.json()
+        await fourth_client.aclose()
+
+        fifth_app = await fresh_app()
+        fifth_client, fifth_session = await owner_client(fifth_app)
+        replay_agent_revision = await fifth_client.post(
+            f"/api/v1/agents/{agent_id}/revisions",
+            headers={
+                "X-CSRF-Token": fifth_session.csrf_token,
+                "Idempotency-Key": agent_revision_key,
+            },
+            json=agent_revision_payload,
+        )
+        assert replay_agent_revision.status_code == 201
+        assert replay_agent_revision.json() == agent
+        conflict_agent_revision = await fifth_client.post(
+            f"/api/v1/agents/{agent_id}/revisions",
+            headers={
+                "X-CSRF-Token": fifth_session.csrf_token,
+                "Idempotency-Key": agent_revision_key,
+            },
+            json={**agent_revision_payload, "purpose": "conflicting replay"},
+        )
+        assert conflict_agent_revision.status_code == 409
+
+        status_payload = {"status": "disabled", "expectedVersion": agent["version"]}
+        status_key = "sql-agent-status"
+        disabled_agent = await fifth_client.patch(
+            f"/api/v1/agents/{agent_id}",
+            headers={"X-CSRF-Token": fifth_session.csrf_token, "Idempotency-Key": status_key},
+            json=status_payload,
+        )
+        assert disabled_agent.status_code == 200
+        await fifth_client.aclose()
+
+        sixth_app = await fresh_app()
+        sixth_client, sixth_session = await owner_client(sixth_app)
+        replay_status = await sixth_client.patch(
+            f"/api/v1/agents/{agent_id}",
+            headers={"X-CSRF-Token": sixth_session.csrf_token, "Idempotency-Key": status_key},
+            json=status_payload,
+        )
+        assert replay_status.status_code == 200
+        assert replay_status.json() == disabled_agent.json()
+        conflict_status = await sixth_client.patch(
+            f"/api/v1/agents/{agent_id}",
+            headers={"X-CSRF-Token": sixth_session.csrf_token, "Idempotency-Key": status_key},
+            json={**status_payload, "status": "active"},
+        )
+        assert conflict_status.status_code == 409
+        await sixth_client.aclose()
+    finally:
+        for application in applications:
+            engine = application.state.aura.engine
+            if engine is not None:
+                await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sql_run_sends_compiled_prompt_and_persists_matching_provenance(
+    sql_store: SqlConversationStore,
+) -> None:
+    provider = PromptCaptureProvider()
+    _, _, run = await sql_store.create(
+        "https://identity.integration.example",
+        "owner",
+        "verify compiled prompt",
+        "chat",
+        MODELS,
+        str(uuid4()),
+    )
+    coordinator = RunCoordinator(sql_store, EventPublisher(), InMemoryOutbox())
+    await coordinator.execute(run.id, provider)
+    _, completed = await sql_store.find_run_any(run.id)
+    expected = sql_store.agents.compilation(run.agent_revision_id)
+
+    assert provider.messages
+    assert provider.messages[0].role == "system"
+    assert provider.messages[0].content == expected.text
+    assert completed.prompt_hash == expected.prompt_hash
 
 
 @pytest_asyncio.fixture
@@ -316,6 +577,8 @@ async def test_sql_context_never_includes_orphan_assistant_when_pair_exceeds_bud
     await sql_store.start_run(prior_run.id)
     await sql_store.append_assistant(prior_run.id, prior_assistant)
     await sql_store.finish_run(prior_run.id, RunStatus.COMPLETED)
+    compiled_prompt = sql_store.agents.compilation(prior_run.agent_revision_id)
+    assert prior_run.prompt_hash == compiled_prompt.prompt_hash
     await sql_store.add_run(
         conversation.id,
         "owner",
@@ -325,7 +588,7 @@ async def test_sql_context_never_includes_orphan_assistant_when_pair_exceeds_bud
         issuer,
     )
     budget = (
-        estimate_tokens(GENERAL_AGENT.system_prompt)
+        estimate_tokens(compiled_prompt.text)
         + estimate_tokens(current_prompt)
         + estimate_tokens(prior_assistant)
     )
@@ -333,7 +596,7 @@ async def test_sql_context_never_includes_orphan_assistant_when_pair_exceeds_bud
     context = await sql_store.context(conversation.id, "owner", issuer, budget)
 
     assert context == [
-        ("system", GENERAL_AGENT.system_prompt),
+        ("system", compiled_prompt.text),
         ("user", current_prompt),
     ]
 

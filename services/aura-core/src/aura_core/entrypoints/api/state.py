@@ -8,7 +8,19 @@ from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.domains.execution.runs.public import RunCoordinator
 from aura_core.domains.governance.identity.application import LoginConfiguration, LoginService
+from aura_core.domains.interaction.agents.adapters import SqlAgentStore
+from aura_core.domains.interaction.agents.public import (
+    AgentCatalog,
+    AgentConfigurationService,
+    AgentMemoryRepository,
+)
 from aura_core.domains.interaction.conversations.public import ConversationStore
+from aura_core.domains.interaction.personas.adapters import SqlPersonaStore
+from aura_core.domains.interaction.personas.public import (
+    PersonaCatalog,
+    PersonaConfigurationService,
+    PersonaMemoryRepository,
+)
 from aura_core.platform.auth import (
     MemoryLoginStateBackend,
     MemorySessionBackend,
@@ -59,6 +71,10 @@ class AppState:
         self.engine = None
         self.sessions_factory = None
         self.sql_store = None
+        self.agent_store = None
+        self.persona_store = None
+        self.agent_service: AgentConfigurationService
+        self.persona_service: PersonaConfigurationService
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.startup_errors: dict[str, str] = {}
@@ -66,9 +82,19 @@ class AppState:
             exporter=None if testing else StructuredContainerLogExporter()
         )
         self.telemetry = TelemetryLifecycle(self.metrics)
+        self.persona_catalog = PersonaCatalog()
+        self.agents = AgentCatalog(self.persona_catalog)
         if self.testing:
             self.oidc_states = MemoryLoginStateBackend()
-            self.store = ConversationStore(self.settings.default_model or None)
+            self.store = ConversationStore(self.settings.default_model or None, self.agents)
+            self.persona_repository = PersonaMemoryRepository(self.persona_catalog)
+            self.persona_service = PersonaConfigurationService(self.persona_repository)
+            self.agent_repository = AgentMemoryRepository(self.agents)
+            self.agent_service = AgentConfigurationService(
+                self.agent_repository, self.persona_service
+            )
+            self.persona_service.audit = self.store.record_auth_audit
+            self.agent_service.audit = self.store.record_auth_audit
             self.publisher = EventPublisher()
             self.outbox = InMemoryOutbox()
             self.sessions = SessionService(MemorySessionBackend(), self.settings)
@@ -90,7 +116,14 @@ class AppState:
         else:
             self.engine = make_engine(self.settings.database_url)
             self.sessions_factory = session_factory(self.engine)
-            self.sql_store = SqlConversationStore(self.sessions_factory)
+            self.sql_store = SqlConversationStore(self.sessions_factory, self.agents)
+            self.persona_store = SqlPersonaStore(self.sessions_factory)
+            self.persona_service = PersonaConfigurationService(self.persona_store)
+            self.agent_store = SqlAgentStore(
+                self.sessions_factory, self.agents, self.persona_service  # type: ignore[arg-type]
+            )
+            self.agent_service = AgentConfigurationService(self.agent_store, self.persona_service)
+            self.sql_store.agent_store = self.agent_store
             self.store = self.sql_store
             self.nats = NatsOutbox(self.settings.nats_url)
             self.outbox = TransactionalOutboxTransport()
@@ -159,6 +192,10 @@ class AppState:
             return
         await self.telemetry.start()
         try:
+            if self.agent_store is not None:
+                if self.persona_store is not None:
+                    await self.persona_store.refresh()
+                await self.agent_store.refresh()
             assert self.nats is not None
             await self.nats.connect()
             await self.nats.subscribe_events(self._ingest_event_wakeup)

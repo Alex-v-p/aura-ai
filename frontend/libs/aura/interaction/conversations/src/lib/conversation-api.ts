@@ -58,8 +58,8 @@ export interface ConversationApi {
   listModels(): Promise<ModelCatalog>;
   listConversations(cursor?: string): Promise<ConversationPage>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
-  createConversation(message: string, modelId: string, idempotencyKey: string): Promise<ConversationRunAccepted>;
-  updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey: string): Promise<ConversationSummary>;
+  createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string): Promise<ConversationRunAccepted>;
+  updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey: string, agentRevisionId?: string, transcriptSharingConfirmed?: boolean): Promise<ConversationSummary>;
   createRun(conversationId: string, message: string, version: number, idempotencyKey: string): Promise<ConversationRunAccepted>;
   cancelRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<Run>;
   retryRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<ConversationRunAccepted>;
@@ -107,12 +107,12 @@ export class AuraConversationApi implements ConversationApi {
     return this.client.execute('getConversation', { ...emptyInput(), path: { conversation_id: conversationId } });
   }
 
-  createConversation(message: string, modelId: string, idempotencyKey = randomKey()): Promise<ConversationRunAccepted> {
-    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId } });
+  createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string): Promise<ConversationRunAccepted> {
+    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId, ...(agentRevisionId ? { agentRevisionId } : {}) } as never });
   }
 
-  updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey = randomKey()): Promise<ConversationSummary> {
-    return this.client.execute('updateConversation', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { modelId, version } });
+  updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey = randomKey(), agentRevisionId?: string, transcriptSharingConfirmed?: boolean): Promise<ConversationSummary> {
+    return this.client.execute('updateConversation', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { modelId, version, ...(agentRevisionId ? { agentRevisionId } : {}), ...(transcriptSharingConfirmed ? { transcriptSharingConfirmed } : {}) } as never });
   }
 
   createRun(conversationId: string, message: string, version: number, idempotencyKey = randomKey()): Promise<ConversationRunAccepted> {

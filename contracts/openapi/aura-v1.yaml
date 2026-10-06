@@ -2,14 +2,16 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.0.0",
-    "description": "Owner-authenticated conversation and run transport contract. Provider endpoints and credentials are never exposed by this API."
+    "version": "1.1.0",
+    "description": "Owner-authenticated agent, persona, conversation, and run transport contract. Provider endpoints and credentials are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
   "tags": [
     { "name": "Authentication" },
     { "name": "Models" },
+    { "name": "Agents" },
+    { "name": "Personas" },
     { "name": "Conversations" },
     { "name": "Runs" },
     { "name": "Health" }
@@ -76,6 +78,146 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/agents": {
+      "get": {
+        "operationId": "listAgents",
+        "tags": ["Agents"],
+        "responses": {
+          "200": { "description": "Owner-visible agent profiles and their current immutable revisions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "operationId": "createAgent",
+        "tags": ["Agents"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentRequest" } } } },
+        "responses": {
+          "201": { "description": "Agent profile and first immutable revision created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }],
+      "get": {
+        "operationId": "getAgent",
+        "tags": ["Agents"],
+        "responses": {
+          "200": { "description": "Agent profile and immutable revision history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "operationId": "updateAgentStatus",
+        "tags": ["Agents"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateAgentStatusRequest" } } } },
+        "responses": {
+          "200": { "description": "Agent lifecycle status updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}/revisions": {
+      "post": {
+        "operationId": "createAgentRevision",
+        "tags": ["Agents"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentRevisionRequest" } } } },
+        "responses": {
+          "201": { "description": "Immutable agent revision created and made current for the profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/personas": {
+      "get": {
+        "operationId": "listPersonas",
+        "tags": ["Personas"],
+        "responses": {
+          "200": { "description": "Owner-visible persona profiles and their current immutable revisions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "operationId": "createPersona",
+        "tags": ["Personas"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatePersonaRequest" } } } },
+        "responses": {
+          "201": { "description": "Persona profile and first immutable revision created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/personas/{persona_profile_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/PersonaProfileId" }],
+      "get": {
+        "operationId": "getPersona",
+        "tags": ["Personas"],
+        "responses": {
+          "200": { "description": "Persona profile and immutable revision history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "operationId": "updatePersonaStatus",
+        "tags": ["Personas"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdatePersonaStatusRequest" } } } },
+        "responses": {
+          "200": { "description": "Persona lifecycle status updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/personas/{persona_profile_id}/revisions": {
+      "post": {
+        "operationId": "createPersonaRevision",
+        "tags": ["Personas"],
+        "parameters": [{ "$ref": "#/components/parameters/PersonaProfileId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatePersonaRevisionRequest" } } } },
+        "responses": {
+          "201": { "description": "Immutable persona revision created and made current for the profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
         }
       }
     },
@@ -230,6 +372,8 @@
       "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "__Host-aura_session", "description": "Opaque, rotated, Secure, HttpOnly, SameSite=Lax BFF session cookie." }
     },
     "parameters": {
+      "AgentProfileId": { "name": "agent_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "PersonaProfileId": { "name": "persona_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ConversationId": { "name": "conversation_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 512 }, "description": "Session-bound anti-CSRF token returned by getSession." },
@@ -286,19 +430,172 @@
           "disabledReason": { "type": ["string", "null"], "maxLength": 500 }
         }
       },
+      "ProfileStatus": { "type": "string", "enum": ["active", "disabled"] },
+      "AgentCollection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AgentProfile" } } }
+      },
+      "AgentProfile": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "version", "currentRevision", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "currentRevision": { "$ref": "#/components/schemas/AgentRevision" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AgentDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "version", "currentRevision", "revisions", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "currentRevision": { "$ref": "#/components/schemas/AgentRevision" },
+          "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/AgentRevision" } },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AgentRevision": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "profileId", "revision", "displayName", "purpose", "instructions", "personaRevisionId", "promptBundleRevisionId", "modelPolicyRevisionId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "profileId": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "personaRevisionId": { "type": "string", "format": "uuid" },
+          "promptBundleRevisionId": { "type": "string", "format": "uuid" },
+          "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateAgentRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "purpose", "instructions", "personaRevisionId"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "personaRevisionId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CreateAgentRevisionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "purpose", "instructions", "personaRevisionId", "expectedVersion"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "personaRevisionId": { "type": "string", "format": "uuid" },
+          "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
+        }
+      },
+      "UpdateAgentStatusRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "expectedVersion"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
+        }
+      },
+      "PersonaCollection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaProfile" } } }
+      },
+      "PersonaProfile": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "version", "currentRevision", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PersonaDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "status", "version", "currentRevision", "revisions", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
+          "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaRevision" } },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PersonaRevision": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "profileId", "revision", "displayName", "description", "instructions", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "profileId": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreatePersonaRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "description", "instructions"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 }
+        }
+      },
+      "CreatePersonaRevisionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "description", "instructions", "expectedVersion"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
+        }
+      },
+      "UpdatePersonaStatusRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["status", "expectedVersion"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
+        }
+      },
       "CreateConversationRequest": {
         "type": "object", "additionalProperties": false,
         "required": ["message", "modelId"],
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
-          "modelId": { "type": "string", "minLength": 1, "maxLength": 255 }
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "agentRevisionId": { "type": "string", "format": "uuid" }
         }
       },
       "UpdateConversationRequest": {
         "type": "object", "additionalProperties": false,
-        "required": ["modelId", "version"],
+        "required": ["version"],
+        "anyOf": [
+          { "required": ["modelId"] },
+          { "required": ["agentRevisionId"] }
+        ],
         "properties": {
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "transcriptSharingConfirmed": { "type": "boolean", "description": "Affirms the owner's explicit confirmation before an agent switch or revision upgrade shares the completed transcript." },
           "version": { "type": "integer", "minimum": 1 }
         }
       },
@@ -326,11 +623,36 @@
           "title": { "type": "string", "minLength": 1, "maxLength": 255 },
           "agentProfileId": { "type": "string", "format": "uuid" },
           "agentRevisionId": { "type": "string", "format": "uuid" },
+          "agent": { "$ref": "#/components/schemas/AgentReference" },
+          "agentAssignments": { "type": "array", "items": { "$ref": "#/components/schemas/AgentAssignment" } },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "version": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
           "currentRun": { "oneOf": [{ "$ref": "#/components/schemas/Run" }, { "type": "null" }] }
+        }
+      },
+      "AgentReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["profileId", "revisionId", "displayName", "revision", "status", "newerRevisionAvailable"],
+        "properties": {
+          "profileId": { "type": "string", "format": "uuid" },
+          "revisionId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "revision": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "newerRevisionAvailable": { "type": "boolean" }
+        }
+      },
+      "AgentAssignment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "agent", "reason", "effectiveAfterMessageId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "agent": { "$ref": "#/components/schemas/AgentReference" },
+          "reason": { "type": "string", "enum": ["initial", "manual_switch", "revision_upgrade"] },
+          "effectiveAfterMessageId": { "type": ["string", "null"], "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" }
         }
       },
       "ConversationDetail": {
@@ -371,6 +693,9 @@
           "status": { "$ref": "#/components/schemas/RunStatus" },
           "agentRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "personaRevisionId": { "type": "string", "format": "uuid" },
+          "promptBundleRevisionId": { "type": "string", "format": "uuid" },
+          "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "retryOfRunId": { "type": ["string", "null"], "format": "uuid" },

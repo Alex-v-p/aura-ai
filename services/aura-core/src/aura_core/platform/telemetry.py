@@ -28,14 +28,19 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
+    "aura.interaction.agent_configuration": "1.0.0",
     "aura.execution.run_coordinator": "1.2.0",
     "aura.interaction.conversation_persistence": "1.2.0",
     "aura.runtime.model_inference": "1.2.0",
     "aura.runtime.model_routing": "1.2.0",
+    "aura.runtime.prompt_compilation": "1.0.0",
     "aura.runtime.stream_delivery": "1.2.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
+    "aura.interaction.agent_configuration": frozenset(
+        {"configuration_outcome", "operation_duration_ms"}
+    ),
     "aura.execution.run_coordinator": frozenset(
         {
             "cancellations",
@@ -73,6 +78,14 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.runtime.model_routing": frozenset(
         {"errors", "model_routed", "model_routing_duration_ms", "model_selection_persisted"}
     ),
+    "aura.runtime.prompt_compilation": frozenset(
+        {
+            "compiled_prompt_size",
+            "operation_duration_ms",
+            "prompt_compile_duration_ms",
+            "prompt_component_count",
+        }
+    ),
     "aura.runtime.stream_delivery": frozenset(
         {
             "errors",
@@ -85,6 +98,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "aura.interaction.agent_configuration": frozenset({"agent.configure"}),
     "aura.execution.run_coordinator": frozenset(
         {
             "consumer.delivery",
@@ -101,16 +115,19 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     ),
     "aura.runtime.model_inference": frozenset({"model.infer"}),
     "aura.runtime.model_routing": frozenset({"model.route", "model.selection.persist"}),
+    "aura.runtime.prompt_compilation": frozenset({"prompt.compile"}),
     "aura.runtime.stream_delivery": frozenset(
         {"event.publish", "sse.connect", "sse.deliver", "sse.reconnect"}
     ),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
+    "aura.interaction.agent_configuration": "operation_duration_ms",
     "aura.execution.run_coordinator": "operation_duration_ms",
     "aura.interaction.conversation_persistence": "persistence_duration_ms",
     "aura.runtime.model_inference": "inference_duration_ms",
     "aura.runtime.model_routing": "model_routing_duration_ms",
+    "aura.runtime.prompt_compilation": "prompt_compile_duration_ms",
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
 }
 
@@ -122,6 +139,16 @@ _DIMENSION_KEYS = frozenset(
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
         "agent_revision_id",
+        "agent_revision_number",
+        "profile_id",
+        "persona_revision_number",
+        "persona_revision_id",
+        "prompt_bundle_revision_id",
+        "prompt_hash",
+        "prompt_component_count",
+        "compiled_prompt_size",
+        "configuration_outcome",
+        "operation_duration_ms",
         "attempt_count",
         "causation_id",
         "command_id",
@@ -137,6 +164,9 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
 _UUID_TRACE_ATTRIBUTES = frozenset(
     {
         "agent_revision_id",
+        "profile_id",
+        "persona_revision_id",
+        "prompt_bundle_revision_id",
         "causation_id",
         "command_id",
         "conversation_id",
@@ -146,7 +176,17 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "run_id",
     }
 )
-_COUNT_TRACE_ATTRIBUTES = frozenset({"attempt_count", "delivery_count"})
+_COUNT_TRACE_ATTRIBUTES = frozenset(
+    {
+        "attempt_count",
+        "delivery_count",
+        "prompt_component_count",
+        "compiled_prompt_size",
+        "operation_duration_ms",
+        "agent_revision_number",
+        "persona_revision_number",
+    }
+)
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     "dependency": frozenset(
         {
@@ -157,10 +197,24 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "nats_jetstream",
             "postgresql",
             "sse_client",
+            "configuration_store",
+            "prompt_compiler",
         }
     ),
     "error_class": frozenset(
-        {"cancel", "delivery", "persistence", "provider", "queue", "timeout"}
+        {
+            "cancel",
+            "conflict",
+            "delivery",
+            "disabled",
+            "idempotency",
+            "not_found",
+            "persistence",
+            "provider",
+            "queue",
+            "timeout",
+            "validation",
+        }
     ),
     "outcome": frozenset({"canceled", "duplicate", "error", "ok", "skipped"}),
     "status": frozenset(
@@ -365,6 +419,8 @@ class MetadataMetrics:
         if operation not in _SPAN_OPERATIONS.get(component, frozenset()):
             self._rejected += 1
             return
+        if component == "aura.runtime.prompt_compilation":
+            dependency = "prompt_compiler"
         dimensions = {"dependency": dependency, "outcome": outcome}
         if error_class is not None:
             dimensions["error_class"] = error_class
@@ -401,6 +457,23 @@ class MetadataMetrics:
                 trace_attributes=(("operation", operation), *normalized[1]),
             )
         )
+        if component == "aura.runtime.prompt_compilation":
+            trace_values = dict(normalized[1])
+            for metric, attribute in (
+                ("prompt_component_count", "prompt_component_count"),
+                ("compiled_prompt_size", "compiled_prompt_size"),
+            ):
+                value = trace_values.get(attribute)
+                if value is not None:
+                    self._record_metric(
+                        component,
+                        metric,
+                        float(value),
+                        trace_id=trace_id,
+                        run_id=run_id,
+                        conversation_id=conversation_id,
+                        attributes={},
+                    )
 
     def _record_metric(
         self,
@@ -484,9 +557,17 @@ class MetadataMetrics:
                 return None
             if key in _UUID_TRACE_ATTRIBUTES and not _valid_uuid(value):
                 return None
-            if key in _COUNT_TRACE_ATTRIBUTES and (
+            if key in _COUNT_TRACE_ATTRIBUTES and key != "operation_duration_ms" and (
                 not value.isascii() or not value.isdecimal()
             ):
+                return None
+            if key == "operation_duration_ms":
+                try:
+                    if not math.isfinite(float(value)) or float(value) < 0:
+                        return None
+                except ValueError:
+                    return None
+            if key == "configuration_outcome" and value not in {"ok", "error"}:
                 return None
             if key == "model_id" and (
                 _SAFE_NAME.fullmatch(value) is None or "://" in value or "@" in value
@@ -591,7 +672,7 @@ def _write_stdout(line: str) -> None:
 def _valid_uuid(value: str) -> bool:
     try:
         UUID(value)
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return False
     return True
 

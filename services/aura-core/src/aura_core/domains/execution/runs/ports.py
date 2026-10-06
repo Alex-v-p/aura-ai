@@ -32,7 +32,13 @@ class RunRepository(Protocol):
         self, run_id: UUID, *, worker_id: UUID | None = None, lease_seconds: float = 300.0
     ) -> RunClaim: ...
     async def context(
-        self, conversation_id: UUID, subject: str, issuer: str, budget: int
+        self,
+        conversation_id: UUID,
+        subject: str,
+        issuer: str,
+        budget: int,
+        agent_revision_id: UUID | None = None,
+        trace_id: str | None = None,
     ) -> list[tuple[str, str]]: ...
     async def find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]: ...
     async def append_assistant(

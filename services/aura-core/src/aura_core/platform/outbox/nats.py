@@ -186,7 +186,7 @@ class NatsRunConsumer:
                 UUID(payload["correlationId"]),
                 UUID(payload.get("causationId", payload["runId"])),
             )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except KeyError, TypeError, ValueError, json.JSONDecodeError:
             self.metrics.increment(
                 "aura.execution.run_coordinator",
                 "errors",

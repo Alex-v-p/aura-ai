@@ -1,0 +1,36 @@
+component:
+  id: aura.interaction.agent_configuration
+  version: 1.0.0
+  owner: interaction.agents
+  category: configuration
+input:
+  schema: agent-configuration-command-v1
+  replayable: false
+  replay_reason: Configuration mutations are durable side effects without a replay hook.
+output:
+  schema: agent-configuration-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - configuration_store
+  - postgresql
+metrics:
+  - operation_duration_ms
+  - configuration_outcome
+metric_semantics:
+  operation_duration_ms: Owner configuration operation duration at the application boundary.
+  configuration_outcome: Identifier-only mutation outcome.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, agent_revision_id, agent_revision_number, persona_revision_number]
+  prohibited: [prompt, response, payload, purpose, instructions, description, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

@@ -96,9 +96,7 @@ class Settings(BaseSettings):
         if self.environment.casefold() in {"prod", "production"} and self.role == "api":
             validate_stable_https_url(self.oidc_issuer, "OIDC issuer")
             validate_stable_https_url(self.public_origin, "public origin", origin_only=True)
-            expected_redirect = (
-                f"{self.public_origin.rstrip('/')}/api/v1/auth/callback"
-            )
+            expected_redirect = f"{self.public_origin.rstrip('/')}/api/v1/auth/callback"
             if self.oidc_redirect_uri != expected_redirect:
                 raise ValueError("OIDC redirect URI must match the public callback URL")
             if not self.secure_cookies:

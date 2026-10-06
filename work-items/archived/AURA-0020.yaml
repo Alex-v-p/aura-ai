@@ -1,0 +1,200 @@
+id: AURA-0020
+title: Add versioned agents personas and conversation assignment
+status: integrated
+change_class: contract
+intent: >
+  Let the configured Aura owner create and revise agents and reusable personas,
+  select an immutable agent revision for a conversation, explicitly switch or
+  upgrade that assignment with full-transcript confirmation, and preserve
+  prompt provenance without exposing prompt content.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Versioned Agents and Personas Workstream
+    - Guided configuration exposes display name purpose instructions persona and enabled state only
+    - Existing conversations adopt revisions only through an explicit switch or upgrade
+    - Agent switching is permitted when no run is active and shares the full completed transcript after confirmation
+    - Disabled agents retain readable history and block new runs and retries until replacement or re-enable
+    - Model selection remains explicit per conversation with no silent fallback
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AGT-001
+  - AGT-002
+  - AGT-004
+  - AGT-005
+  - AGT-006
+  - AGT-007
+  - AGT-014
+  - AGT-017
+  - AGT-019
+  - CTX-001
+  - CTX-002
+  - CTX-003
+  - AUI-005
+  - AUI-008
+  - AUI-009
+  - CMP-006
+  - GOV-013
+ownership_zones:
+  - contracts.aura.v1
+  - aura-core.interaction.agents
+  - aura-core.interaction.personas
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.prompting
+  - aura-core.governance.audit
+  - aura-core.bootstrap
+  - frontend.platform.aura-api-client
+  - frontend.aura.interaction.agents
+  - frontend.aura.interaction.personas
+  - frontend.aura.interaction.conversations
+allowed_paths:
+  - work-items/active/AURA-0020.yaml
+  - work-items/archived/AURA-0020.yaml
+  - services/aura-core/**
+  - contracts/openapi/aura-v1.yaml
+  - frontend/README.md
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/personas/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/platform/aura-api-client/**
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - aura-openapi-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.agents-personas-and-conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.interaction.agent_configuration
+    - aura.runtime.prompt_compilation
+    - aura.execution.run_coordinator
+    - aura.interaction.conversation_persistence
+  required_metrics:
+    - operation_duration_ms
+    - prompt_compile_duration_ms
+    - prompt_component_count
+    - compiled_prompt_size
+    - configuration_outcome
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - All configuration remains restricted to the configured owner authorization boundary
+    - Agent and persona instructions are private configuration and must not enter logs telemetry audit metadata or error payloads
+    - Platform and governance prompt components remain immutable and non-user-editable
+    - A persona must not grant permissions or override deterministic governance
+    - Agent switching requires explicit confirmation before the full completed transcript is transferred to the selected configuration
+    - Disabled agents cannot start or retry runs while already committed queued or running work retains its pinned revision
+    - Idempotency CSRF optimistic versioning and audit apply to every mutation
+  data_classes:
+    - private agent instructions and purpose
+    - private persona instructions and description
+    - conversation assignment history
+    - prompt revision identifiers and hashes
+    - authenticated principal identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura and Neutral are deterministically seeded as immutable revisioned records and existing conversations and runs retain their identifiers and behavior after migration.
+  - The configured owner can list create inspect revise enable and disable agents and personas through authenticated CSRF-protected idempotent APIs.
+  - Agent and persona revisions are immutable and existing conversations never adopt a newer revision automatically.
+  - New conversations may select an active agent revision while omitted selection remains compatible and defaults to Aura revision 1.
+  - A conversation can explicitly switch to any active agent revision or upgrade revisions only while no run is active and the change creates ordered assignment history.
+  - The web UI confirms that the full completed transcript will be shared before a switch and shows a trusted transition marker at the recorded boundary.
+  - A disabled current agent leaves history and drafts readable but blocks new runs and retries until it is re-enabled or an active replacement is selected.
+  - Already queued or running work completes using its pinned revision and a historical retry uses its original revision when that agent remains active.
+  - Prompt compilation uses the fixed platform governance agent and persona order and records stable component revisions and SHA-256 provenance without exporting prompt content.
+  - Model selection remains explicit per conversation and no model tool memory execution delegation household or deletion policy editor is introduced.
+  - The Angular shell exposes accessible Conversations Agents and Personas routes with responsive selectors forms status controls revision history and failure recovery.
+  - Configuration changes switches and upgrades emit identifier-only audit and metadata-only telemetry for the declared components and metrics.
+  - The OpenAPI additions remain backward compatible and the generated TypeScript client is synchronized from the contract.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0020.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0020.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0020.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0020.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0020.yaml
+  - docker compose config --quiet
+  - AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

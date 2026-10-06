@@ -7,8 +7,10 @@ imports or manipulates another domain's ORM mapping.
 
 import base64
 import hashlib
+import json
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -25,9 +27,18 @@ from aura_core.domains.execution.runs.public import (
 )
 from aura_core.domains.governance.audit.public import SqlAuditRepository
 from aura_core.domains.governance.identity.public import SqlIdentityRepository
+from aura_core.domains.interaction.agents.public import (
+    AgentCatalog,
+    ConfigurationDisabled,
+    ConfigurationNotFound,
+)
 from aura_core.domains.interaction.conversations.public import (
     GENERAL_AGENT,
     ActiveRunConflict,
+    AgentAssignment,
+    AgentSwitchConfirmationRequired,
+    AgentUnavailable,
+    AssignmentReason,
     Conversation,
     ConversationNotFound,
     ConversationRecord,
@@ -44,16 +55,48 @@ from aura_core.domains.interaction.conversations.public import (
 from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
 from aura_core.runtime.models.ports import ModelDescriptor
+from aura_core.runtime.prompting.public import PromptCompilation, PromptMetricsPort
 
 
 class SqlConversationStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], agents: AgentCatalog | None = None
+    ) -> None:
         self.sessions = sessions
         self.identities = SqlIdentityRepository()
         self.audit = SqlAuditRepository()
         self.conversations = SqlConversationRepository()
         self.runs = SqlRunRepository()
         self.outbox = SqlOutboxRepository()
+        self.agents = agents or AgentCatalog()
+        self.agent_store: Any = None
+        self.prompt_metrics: PromptMetricsPort | None = None
+
+    def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
+        """Attach the application metadata-only prompt telemetry sink."""
+
+        self.prompt_metrics = metrics
+
+    def _provenance(self, revision_id: UUID) -> tuple[UUID, UUID, str]:
+        revision = self.agents.resolve_revision_unchecked(revision_id)
+        compilation = self._compile_prompt(revision_id, instrument=False)
+        return (
+            revision.persona_revision_id,
+            revision.prompt_bundle_revision_id,
+            compilation.prompt_hash,
+        )
+
+    def prompt_provenance(self, revision_id: UUID) -> dict[str, str]:
+        revision = self.agents.resolve_revision_unchecked(revision_id)
+        compilation = self._compile_prompt(revision_id, instrument=False)
+        return {
+            "agent_revision_id": str(revision_id),
+            "persona_revision_id": str(revision.persona_revision_id),
+            "prompt_bundle_revision_id": str(revision.prompt_bundle_revision_id),
+            "prompt_hash": compilation.prompt_hash,
+            "prompt_component_count": str(compilation.component_count),
+            "compiled_prompt_size": str(len(compilation.text)),
+        }
 
     async def record_audit(
         self,
@@ -150,6 +193,7 @@ class SqlConversationStore:
         )
         conversation.messages = messages
         conversation.runs = runs
+        conversation.assignments = await self.conversations.assignments(session, row.id)
         return conversation
 
     async def _row(
@@ -172,9 +216,7 @@ class SqlConversationStore:
         return row
 
     @staticmethod
-    async def _lock_command(
-        session: AsyncSession, issuer: str, subject: str, key: str
-    ) -> None:
+    async def _lock_command(session: AsyncSession, issuer: str, subject: str, key: str) -> None:
         digest = int.from_bytes(
             hashlib.sha256(f"{issuer}:{subject}:{key}".encode()).digest()[:8], "big"
         )
@@ -198,14 +240,13 @@ class SqlConversationStore:
         model_id: str,
         models: Iterable[ModelDescriptor],
         idempotency_key: str,
+        agent_revision_id: UUID | None = None,
     ) -> tuple[Conversation, Message, Run]:
         self._validate_model(model_id, models)
-        fingerprint = hashlib.sha256(f"create:{message}:{model_id}".encode()).hexdigest()
+        fingerprint = _fingerprint("create", message, model_id, agent_revision_id)
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
-            prior = await self.conversations.idempotency(
-                session, issuer, subject, idempotency_key
-            )
+            prior = await self.conversations.idempotency(session, issuer, subject, idempotency_key)
             if prior is not None:
                 if prior.fingerprint != fingerprint:
                     raise IdempotencyConflict
@@ -217,6 +258,9 @@ class SqlConversationStore:
                 )
                 run = next(item for item in loaded.runs if item.id == UUID(response["runId"]))
                 return loaded, user, run
+            revision = await self._resolve_active_agent_for_run(
+                session, agent_revision_id or GENERAL_AGENT.revision_id
+            )
             principal = await self.identities.resolve(session, issuer, subject)
             conversation_id = UUID(
                 int=UUID(
@@ -235,8 +279,8 @@ class SqlConversationStore:
                 id=conversation_id,
                 principal_id=principal.id,
                 title=" ".join(message.split())[:255],
-                agent_profile_id=GENERAL_AGENT.profile_id,
-                agent_revision_id=GENERAL_AGENT.revision_id,
+                agent_profile_id=revision.profile_id,
+                agent_revision_id=revision.id,
                 model_id=model_id,
                 version=1,
                 created_at=created,
@@ -255,15 +299,29 @@ class SqlConversationStore:
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
-                agent_revision_id=GENERAL_AGENT.revision_id,
-                model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+                agent_revision_id=revision.id,
+                model_policy_revision_id=revision.model_policy_revision_id,
                 provider="ollama",
                 model_id=model_id,
                 id=run_id,
                 created_at=created,
             )
+            run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
+                self._provenance(run.agent_revision_id)
+            )
             self.conversations.stage_conversation(session, conversation_row)
             await session.flush()
+            self.conversations.stage_assignment(
+                session,
+                AgentAssignment(
+                    revision.profile_id,
+                    revision.id,
+                    AssignmentReason.INITIAL,
+                    None,
+                    created,
+                ),
+                conversation_id,
+            )
             self.conversations.stage_message(session, user_message)
             await session.flush()
             self.runs.stage(session, run)
@@ -330,9 +388,7 @@ class SqlConversationStore:
             )
             has_more = len(rows) > limit
             rows = rows[:limit]
-            next_cursor = (
-                encode_cursor(rows[-1].updated_at, rows[-1].id) if has_more else None
-            )
+            next_cursor = encode_cursor(rows[-1].updated_at, rows[-1].id) if has_more else None
             return [await self._load(session, row) for row in rows], next_cursor
 
     async def update_model(
@@ -344,13 +400,15 @@ class SqlConversationStore:
         models: Iterable[ModelDescriptor],
         idempotency_key: str,
         issuer: str | None = None,
+        agent_revision_id: UUID | None = None,
+        confirmation: bool = False,
     ) -> Conversation:
         self._validate_model(model_id, models)
         if issuer is None:
             raise ValueError("issuer is required")
         identity_issuer = issuer
         fingerprint = hashlib.sha256(
-            f"model:{conversation_id}:{model_id}:{version}".encode()
+            f"model:{conversation_id}:{model_id}:{version}:{agent_revision_id}:{confirmation}".encode()
         ).hexdigest()
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, identity_issuer, subject, idempotency_key)
@@ -366,6 +424,30 @@ class SqlConversationStore:
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
             if row.version != version:
                 raise VersionConflict
+            if agent_revision_id is not None:
+                if await self.runs.active(session, conversation_id, lock=True) is not None:
+                    raise ActiveRunConflict
+                if not confirmation:
+                    raise AgentSwitchConfirmationRequired
+                revision = await self._resolve_active_agent_for_run(session, agent_revision_id)
+                reason = (
+                    AssignmentReason.REVISION_UPGRADE
+                    if row.agent_profile_id == revision.profile_id
+                    else AssignmentReason.MANUAL_SWITCH
+                )
+                row.agent_profile_id = revision.profile_id
+                row.agent_revision_id = revision.id
+                self.conversations.stage_assignment(
+                    session,
+                    AgentAssignment(
+                        revision.profile_id,
+                        revision.id,
+                        reason,
+                        await self.conversations.latest_message_id(session, row.id),
+                        now(),
+                    ),
+                    row.id,
+                )
             row.model_id, row.version, row.updated_at = model_id, version + 1, now()
             await self.conversations.update(session, row)
             self.conversations.stage_idempotency(
@@ -394,6 +476,8 @@ class SqlConversationStore:
         idempotency_key: str,
         issuer: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
+        if self.agent_store is not None:
+            await self.agent_store.refresh()
         fingerprint = hashlib.sha256(
             f"run:{conversation_id}:{message}:{expected_version}".encode()
         ).hexdigest()
@@ -420,6 +504,11 @@ class SqlConversationStore:
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
                 raise VersionConflict if row.version != expected_version else ActiveRunConflict
+            # Resolve the assignment while the conversation row is locked.  A
+            # SQL-backed configuration port may perform its active-status
+            # check in this same transaction; the in-memory fallback keeps the
+            # test seam deterministic.
+            revision = await self._resolve_active_agent_for_run(session, row.agent_revision_id)
             user_id, run_id = uuid4(), uuid4()
             created = now()
             user_message = Message(
@@ -436,11 +525,14 @@ class SqlConversationStore:
                 conversation_id=conversation_id,
                 user_message_id=user_id,
                 agent_revision_id=row.agent_revision_id,
-                model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+                model_policy_revision_id=revision.model_policy_revision_id,
                 provider="ollama",
                 model_id=row.model_id,
                 id=run_id,
                 created_at=created,
+            )
+            run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
+                self._provenance(run.agent_revision_id)
             )
             self.conversations.stage_message(session, user_message)
             await session.flush()
@@ -495,9 +587,7 @@ class SqlConversationStore:
         fingerprint = hashlib.sha256(f"cancel:{run_id}".encode()).hexdigest()
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
-            prior = await self.conversations.idempotency(
-                session, issuer, subject, idempotency_key
-            )
+            prior = await self.conversations.idempotency(session, issuer, subject, idempotency_key)
             if prior is not None and prior.fingerprint != fingerprint:
                 raise IdempotencyConflict
             run = await self.runs.get(session, run_id, lock=True)
@@ -558,7 +648,21 @@ class SqlConversationStore:
             active = await self.runs.active(session, prior.conversation_id)
             if active is not None:
                 raise ActiveRunConflict
+            # Retry keeps the historical revision and model policy, but the
+            # profile must be active at the atomic admission boundary.
+            await self._resolve_active_agent_for_run(session, prior.agent_revision_id)
             user_id, new_id = prior.user_message_id, uuid4()
+            persona_revision_id = prior.persona_revision_id
+            prompt_bundle_revision_id = prior.prompt_bundle_revision_id
+            prompt_hash = prior.prompt_hash
+            if (
+                persona_revision_id is None
+                or prompt_bundle_revision_id is None
+                or prompt_hash is None
+            ):
+                persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
+                    prior.agent_revision_id
+                )
             retried = Run(
                 conversation_id=prior.conversation_id,
                 user_message_id=user_id,
@@ -568,6 +672,9 @@ class SqlConversationStore:
                 model_id=prior.model_id,
                 retry_of_run_id=prior.id,
                 id=new_id,
+                persona_revision_id=persona_revision_id,
+                prompt_bundle_revision_id=prompt_bundle_revision_id,
+                prompt_hash=prompt_hash,
             )
             self.runs.stage(session, retried)
             await session.flush()
@@ -608,6 +715,30 @@ class SqlConversationStore:
                 next(item for item in loaded.messages if item.id == user_id),
                 next(item for item in loaded.runs if item.id == new_id),
             )
+
+    def _resolve_agent(self, identifier: UUID | None):
+        try:
+            return self.agents.resolve_revision(identifier or GENERAL_AGENT.revision_id)
+        except (ConfigurationDisabled, ConfigurationNotFound) as exc:
+            raise AgentUnavailable(str(exc)) from exc
+
+    async def _resolve_active_agent_for_run(self, session: AsyncSession, identifier: UUID):
+        """Resolve the pinned revision through the configuration public port.
+
+        The SQL configuration adapter can implement
+        ``require_active_revision_in_transaction`` to lock and validate its
+        owned profile row using this session.  Keeping this call behind a
+        capability check lets the in-memory adapter and older composition
+        fixtures continue to use the deterministic catalog seam.
+        """
+
+        resolver = getattr(self.agent_store, "require_active_revision_in_transaction", None)
+        if resolver is not None:
+            try:
+                return await resolver(session, identifier)
+            except (ConfigurationDisabled, ConfigurationNotFound) as exc:
+                raise AgentUnavailable(str(exc)) from exc
+        return self._resolve_agent(identifier)
 
     async def find_run(
         self, run_id: UUID, subject: str, issuer: str | None = None
@@ -791,9 +922,52 @@ class SqlConversationStore:
         subject: str,
         issuer: str,
         budget: int = DEFAULT_CONTEXT_TOKENS,
+        agent_revision_id: UUID | None = None,
+        trace_id: str | None = None,
     ) -> list[tuple[str, str]]:
+        if self.agent_store is not None:
+            await self.agent_store.refresh()
         conversation = await self.get(conversation_id, subject, issuer)
-        return build_context(conversation, GENERAL_AGENT.system_prompt, budget)
+        # A conversation may have switched since this run was admitted.  The
+        # execution worker must compile the immutable revision pinned on the
+        # run, never the conversation's current assignment.
+        revision = self._revision_unchecked(
+            agent_revision_id or conversation.agent_revision_id
+        )
+        return build_context(
+            conversation,
+            self._compile_prompt(
+                revision.id,
+                trace_id=trace_id,
+                run_id=trace_id,
+                conversation_id=str(conversation.id),
+            ).text,
+            budget,
+        )
+
+    def _compile_prompt(
+        self,
+        revision_id: UUID,
+        *,
+        trace_id: str | None = None,
+        run_id: str | None = None,
+        conversation_id: str | None = None,
+        instrument: bool = True,
+    ) -> PromptCompilation:
+        metrics = self.prompt_metrics if instrument else None
+        return self.agents.compile_prompt(
+            revision_id,
+            metrics=metrics,
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+        )
+
+    def _revision_unchecked(self, identifier: UUID):
+        try:
+            return self.agents.resolve_revision_unchecked(identifier)
+        except Exception as exc:
+            raise AgentUnavailable("agent revision not found") from exc
 
 
 def encode_cursor(updated_at: datetime, conversation_id: UUID) -> str:
@@ -811,3 +985,14 @@ def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
         return parsed, UUID(identifier)
     except (ValueError, UnicodeDecodeError) as exc:
         raise ValueError("invalid conversation cursor") from exc
+
+
+def _fingerprint(*parts: object) -> str:
+    """Hash structured command fields without delimiter-collision ambiguity."""
+
+    canonical = json.dumps(
+        [str(part) if part is not None else None for part in parts],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()

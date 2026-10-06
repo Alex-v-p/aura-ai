@@ -41,9 +41,7 @@ class SessionPort(Protocol):
 
 class OidcProviderPort(Protocol):
     async def authorization_url(self, *, state: str, nonce: str) -> str: ...
-    async def exchange(
-        self, *, code: str, expected_nonce: str
-    ) -> ValidatedIdentity: ...
+    async def exchange(self, *, code: str, expected_nonce: str) -> ValidatedIdentity: ...
 
 
 class AuthenticationAuditPort(Protocol):

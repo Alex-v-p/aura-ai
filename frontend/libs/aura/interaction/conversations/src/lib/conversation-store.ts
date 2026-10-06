@@ -1,15 +1,18 @@
 import { Inject, Injectable, computed, signal } from '@angular/core';
 import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, Message, Model, Run, RunEvent, Session } from '@aura/aura-api-client';
+import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 
 export type TurnRole = 'user' | 'assistant';
 export type RunState = 'idle' | 'working' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; }
-export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; }
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; }
+export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
+export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly runs: ReadonlyArray<Run>; }
 
-const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, currentRun: null, retryableRun: null };
+const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
+const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], runs: [] };
 
 @Injectable({ providedIn: 'root' })
 export class ConversationStore {
@@ -28,12 +31,20 @@ export class ConversationStore {
   readonly notice = computed(() => this.notices()[this.selectedId()] ?? null);
   readonly runState = computed<RunState>(() => this.runStates()[this.selectedId()] ?? this.statusToState(this.selected().currentRun?.status));
   readonly selectedModelId = computed(() => this.selected().modelId);
+  readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
+  readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && this.modelFor(this.selectedId()) && this.runState() !== 'working' && this.canRunWithSelectedAgent(this.selectedId())));
+  readonly pendingAgent = signal<AgentReference | null>(null);
+  readonly pendingAgentAction = signal<'switch' | 'upgrade'>('switch');
+  /** Signals the shell to refresh its active replacement options after a
+   * server-side agent status change. */
+  readonly agentRefreshRequested = signal(0);
   readonly authenticated = computed(() => this.authState() === 'authenticated');
 
   private readonly subscriptions = new Map<string, RunEventSubscription>();
   private readonly lastEventIds = new Map<string, string>();
   private readonly expiredCursorRecoveries = new Set<string>();
   private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingSubmissions = new Map<string, { readonly draft: string; readonly pendingTurnId: string }>();
   private draftCounter = 0;
   private conversationListWarning = false;
   private readonly api: ConversationApi;
@@ -69,7 +80,7 @@ export class ConversationStore {
 
   create(): void {
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
-    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, currentRun: null, retryableRun: null };
+    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], runs: [] };
     this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
   }
 
@@ -83,12 +94,57 @@ export class ConversationStore {
     catch (error: unknown) { this.replaceConversation({ ...conversation, modelId: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
   }
 
+  requestAgent(agent: AgentReference): void { const current = this.selectedAgent(); if (!agent.revisionId || agent.revisionId === current.revisionId) return; this.pendingAgentAction.set(agent.profileId === current.profileId && agent.revision > current.revision ? 'upgrade' : 'switch'); this.pendingAgent.set(agent); }
+
+  transitionMarkerFor(messageId: string): string | null {
+    const assignments = this.selected().assignments;
+    const index = assignments.findIndex((item) => item.afterMessageId === messageId);
+    if (index < 0) return null;
+    const assignment = assignments[index];
+    if (assignment.reason === 'initial') return null;
+    const previous = assignments[index - 1]?.agent ?? this.selected().agent;
+    return previous ? `Agent changed from ${previous.displayName} r${previous.revision} to ${assignment.agent.displayName} r${assignment.agent.revision}` : `Agent changed to ${assignment.agent.displayName} r${assignment.agent.revision}`;
+  }
+
+  agentForTurn(turn: ConversationTurn): AgentReference {
+    const run = turn.runId ? this.selected().runs.find((item) => item.id === turn.runId) : undefined;
+    const byRun = run ? this.selected().assignments.find((item) => item.agent.revisionId === run.agentRevisionId)?.agent : undefined;
+    if (byRun) return byRun;
+    const turnIndex = this.selected().turns.findIndex((item) => item.id === turn.id);
+    const applicable = this.selected().assignments.filter((item) => {
+      if (!item.afterMessageId) return turnIndex >= 0;
+      const boundaryIndex = this.selected().turns.findIndex((itemInTurn) => itemInTurn.id === item.afterMessageId);
+      return boundaryIndex >= 0 && turnIndex > boundaryIndex;
+    }).at(-1)?.agent;
+    return applicable ?? this.selectedAgent();
+  }
+
+  async confirmAgentSwitch(): Promise<void> {
+    const replacement = this.pendingAgent(); const conversation = this.selected();
+    if (!replacement) return;
+    if (this.runState() === 'working') { this.setNotice(conversation.id, 'Wait for the active run to finish before changing agents.'); this.pendingAgent.set(null); return; }
+    const previous = conversation.agent; this.pendingAgent.set(null);
+    if (!conversation.id.startsWith('draft-')) {
+      try { const summary = await this.api.updateConversation(conversation.id, conversation.modelId, conversation.version, this.key(), replacement.revisionId, true); this.replaceConversation({ ...this.fromSummary(summary), turns: this.find(conversation.id)?.turns ?? conversation.turns }); }
+      catch (error: unknown) { this.replaceConversation({ ...conversation, agent: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
+    } else {
+      this.replaceConversation({ ...conversation, agent: replacement });
+    }
+  }
+
   send(): boolean {
-    const text = this.draft().trim(); const id = this.selectedId();
+    const draft = this.draft(); const text = draft.trim(); const id = this.selectedId();
     if (!text) { this.setNotice(id, 'Write a message before sending.'); return false; }
     if (this.runState() === 'working') return false;
     if (!this.modelFor(id)) { this.setNotice(id, 'Choose an available model before sending.'); return false; }
-    this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.appendTurn(id, { id: `pending-user-${Date.now()}`, role: 'user', text }); this.setRunState(id, 'working'); this.setNotice(id, null);
+    if (!this.canRunWithSelectedAgent(id)) { this.setNotice(id, this.selected().agent ? 'This agent is disabled. Select an active replacement before sending.' : 'Select an active agent before sending.'); return false; }
+    const pendingTurnId = `pending-user-${Date.now()}`;
+    this.appendTurn(id, { id: pendingTurnId, role: 'user', text });
+    this.pendingSubmissions.set(id, { draft, pendingTurnId });
+    // Keep the exact composer value until Core accepts the command. This
+    // preserves whitespace and user edits across conflicts and network
+    // failures; acceptance clears it only if it has not changed meanwhile.
+    this.setRunState(id, 'working'); this.setNotice(id, null);
     void (id.startsWith('draft-') ? this.createPersisted(id, text) : this.createRun(id, text)); return true;
   }
 
@@ -100,6 +156,7 @@ export class ConversationStore {
   retry(): void {
     const conversation = this.selected(); const run = conversation.currentRun ?? conversation.retryableRun;
     if (!run || !['error', 'interrupted', 'canceled', 'failed'].includes(run.status)) { this.setNotice(conversation.id, null); return; }
+    if (!this.canRunWithSelectedAgent(conversation.id)) { this.setNotice(conversation.id, conversation.agent ? 'This agent is disabled. Select an active replacement before retrying.' : 'Select an active agent before retrying.'); return; }
     this.setRunState(conversation.id, 'working'); this.setNotice(conversation.id, null);
     void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => this.acceptRun(conversation.id, accepted)).catch((error: unknown) => this.handleError(conversation.id, error));
   }
@@ -109,18 +166,20 @@ export class ConversationStore {
 
   private async createPersisted(draftId: string, text: string): Promise<void> {
     try {
-      const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key()); const draft = this.find(draftId); const persisted = this.fromSummary(accepted.conversation);
-      this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]); this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = ''; return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.selectedId.set(persisted.id);
-      if (draft) this.replaceConversation({ ...persisted, turns: draft.turns }); this.acceptRun(persisted.id, accepted);
-    } catch (error: unknown) { this.handleError(draftId, error); }
+      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
+      const submission = this.pendingSubmissions.get(draftId);
+      this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
+      this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.selectedId.set(persisted.id);
+      if (draft) this.replaceConversation({ ...persisted, turns: draft.turns }); this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
+    } catch (error: unknown) { this.rejectSubmission(draftId, error); }
   }
 
-  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key())); } catch (error: unknown) { this.handleError(id, error); } }
+  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key()), submission?.pendingTurnId); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
 
-  private acceptRun(id: string, accepted: ConversationRunAccepted): void {
+  private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
-    const turns = existing.turns.map((turn) => turn.id.startsWith('pending-user-') ? this.fromMessage(accepted.userMessage) : turn);
-    this.replaceConversation({ ...this.fromSummary(accepted.conversation), turns }); this.setRunState(id, this.statusToState(accepted.run.status)); this.subscribe(accepted.run);
+    const turns = existing.turns.map((turn) => !pendingTurnId || turn.id === pendingTurnId ? (turn.id.startsWith('pending-user-') ? this.fromMessage(accepted.userMessage) : turn) : turn);
+    this.replaceConversation({ ...this.fromSummary(accepted.conversation), turns, runs: [...this.find(id)?.runs ?? [], accepted.run] }); this.setRunState(id, this.statusToState(accepted.run.status)); this.subscribe(accepted.run);
   }
 
   private subscribe(run: Run, attempt = 0): void {
@@ -205,22 +264,58 @@ export class ConversationStore {
     }
     return summaries;
   }
+  private rejectSubmission(id: string, error: unknown): void {
+    const submission = this.pendingSubmissions.get(id);
+    this.pendingSubmissions.delete(id);
+    if (submission) this.removeTurn(id, submission.pendingTurnId);
+    const apiError = this.toApiError(error);
+    this.setRunState(id, 'error');
+    if (apiError.status === 409 && /agent[\s_-]*disabled|disabled[\s_-]*agent/i.test(`${apiError.code ?? ''} ${apiError.message}`)) {
+      this.agentRefreshRequested.update((value) => value + 1);
+      this.setNotice(id, 'This agent was disabled before the request was accepted. Select an active replacement to continue.');
+      void this.refresh(id);
+      return;
+    }
+    this.setNotice(id, apiError.message || 'We could not complete this request. Your message is still here.');
+  }
+
   private handleError(id: string, error: unknown): void { this.setRunState(id, 'error'); this.setNotice(id, this.toApiError(error).message || 'We could not complete this request. Your message is still here.'); }
 
-  private fromSummary(summary: ConversationSummary): Conversation { return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, currentRun: summary.currentRun, retryableRun: null }; }
-  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); return { id: detail.id, title: detail.title, turns: detail.messages.map((message) => this.fromMessage(message)), updatedAt: Date.parse(detail.updatedAt), modelId: detail.modelId, version: detail.version, currentRun: detail.currentRun, retryableRun }; }
+  private fromSummary(summary: ConversationSummary): Conversation {
+    const raw = summary as ConversationSummary & { agent?: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; agentAssignments?: ReadonlyArray<{ id: string; agent: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; reason: ConversationAssignment['reason']; effectiveAfterMessageId: string | null; createdAt: string }> };
+    const agent = raw.agent ? { profileId: raw.agent.profileId, revisionId: raw.agent.revisionId, revision: raw.agent.revision, displayName: raw.agent.displayName, status: raw.agent.status, newerRevisionAvailable: raw.agent.newerRevisionAvailable } : summary.agentRevisionId ? { profileId: summary.agentProfileId, revisionId: summary.agentRevisionId, revision: 1, displayName: 'Aura', status: 'active' as const } : null;
+    const assignments = (raw.agentAssignments ?? []).map((item) => ({ id: item.id, agent: { profileId: item.agent.profileId, revisionId: item.agent.revisionId, revision: item.agent.revision, displayName: item.agent.displayName, status: item.agent.status, newerRevisionAvailable: item.agent.newerRevisionAvailable }, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
+    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, currentRun: summary.currentRun, retryableRun: null, agent, assignments, runs: summary.currentRun ? [summary.currentRun] : [] };
+  }
+  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); return { ...base, turns: detail.messages.map((message) => this.fromMessage(message)), currentRun: detail.currentRun, retryableRun, runs: [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])] }; }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
   private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
   private find(id: string): Conversation | undefined { return this.conversations().find((conversation) => conversation.id === id); }
   private replaceConversation(conversation: Conversation): void { this.conversations.update((items) => items.map((item) => item.id === conversation.id ? { ...conversation, updatedAt: conversation.updatedAt || Date.now() } : item)); }
   private replaceRun(id: string, run: Run): void { this.replaceConversationRun(id, () => run); }
-  private replaceConversationRun(id: string, update: (run: Run | null) => Run | null): void { const conversation = this.find(id); if (conversation) { const run = update(conversation.currentRun); this.replaceConversation({ ...conversation, currentRun: run, retryableRun: run && this.isRetryable(run.status) ? run : conversation.retryableRun }); } }
+  private replaceConversationRun(id: string, update: (run: Run | null) => Run | null): void { const conversation = this.find(id); if (conversation) { const run = update(conversation.currentRun); const runs = run && !conversation.runs.some((item) => item.id === run.id) ? [...conversation.runs, run] : conversation.runs.map((item) => item.id === run?.id ? run : item).filter((item): item is Run => Boolean(item)); this.replaceConversation({ ...conversation, currentRun: run, runs, retryableRun: run && this.isRetryable(run.status) ? run : conversation.retryableRun }); } }
   private appendTurn(id: string, turn: ConversationTurn): void { const conversation = this.find(id); if (conversation) this.replaceConversation({ ...conversation, turns: [...conversation.turns, turn], updatedAt: Date.now(), title: conversation.turns.length === 0 ? this.makeTitle(turn.text) : conversation.title }); }
+  private removeTurn(id: string, turnId: string): void { const conversation = this.find(id); if (conversation) this.replaceConversation({ ...conversation, turns: conversation.turns.filter((turn) => turn.id !== turnId) }); }
   private upsertTurn(id: string, turn: ConversationTurn): void { const conversation = this.find(id); if (!conversation) return; const exists = conversation.turns.some((item) => item.id === turn.id); this.replaceConversation({ ...conversation, turns: exists ? conversation.turns.map((item) => item.id === turn.id ? turn : item) : [...conversation.turns, turn], updatedAt: Date.now() }); }
   private appendAssistantDelta(id: string, messageId: string, offset: number, text: string, runId: string): void { const conversation = this.find(id); if (!conversation) return; const existing = conversation.turns.find((turn) => turn.id === messageId); const content = existing?.text ?? ''; const next = offset <= content.length ? `${content.slice(0, offset)}${text}` : `${content}${text}`; this.upsertTurn(id, { id: messageId, role: 'assistant', text: next, state: 'partial', runId }); }
   private setRunState(id: string, state: RunState): void { this.runStates.update((states) => ({ ...states, [id]: state })); }
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
   private ensureDraftModel(): void { const modelId = this.defaultModelId(); const current = this.find(emptyDraft.id); if (current) { this.replaceConversation({ ...current, modelId }); if (!modelId) this.setNotice(emptyDraft.id, 'The configured default model is unavailable. Choose an available model to continue.'); } }
+  private canRunWithSelectedAgent(id: string): boolean {
+    const conversation = this.find(id);
+    // A brand-new draft intentionally omits an agent reference for backward
+    // compatibility; Core resolves that omission to seeded Aura revision 1.
+    if (conversation?.id.startsWith('draft-') && !conversation.agent) return true;
+    return Boolean(conversation?.agent?.revisionId && conversation.agent.status === 'active');
+  }
+  private clearDraftAfterAcceptance(id: string, submittedDraft: string | undefined): void {
+    if (submittedDraft === undefined) return;
+    this.drafts.update((drafts) => drafts[id] === submittedDraft ? { ...drafts, [id]: '' } : drafts);
+  }
+  private draftValueAfterAcceptance(id: string, submittedDraft: string | undefined): string {
+    const current = this.drafts()[id] ?? '';
+    return submittedDraft !== undefined && current === submittedDraft ? '' : current;
+  }
   private modelFor(id: string): string { return this.find(id)?.modelId || this.defaultModelId(); }
   private defaultModelId(): string { const configured = this.modelCatalogDefaultId(); const configuredModel = this.models().find((model) => model.id === configured); return configuredModel?.selectable ? configuredModel.id : ''; }
   private statusToState(status: Run['status'] | undefined): RunState { return status === 'queued' || status === 'running' || status === 'cancel_requested' ? 'working' : status === 'failed' ? 'error' : status === 'canceled' || status === 'interrupted' ? 'interrupted' : 'idle'; }

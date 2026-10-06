@@ -12,6 +12,8 @@
 .new-conversation:hover { background: var(--accent-hover); }
 .sidebar.is-collapsed .new-conversation { border-radius: .65rem; font-size: 1.2rem; width: 2.75rem; }
 .conversation-nav { margin-top: 2rem; overflow: auto; }
+.product-nav { border-bottom: 1px solid var(--border); display: grid; gap: .2rem; padding-bottom: .8rem; }
+.product-nav .quiet-link.is-active { background: var(--surface-subtle); box-shadow: inset 3px 0 var(--accent); color: var(--text); }
 .nav-label { color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .09em; margin: 0 .6rem .5rem; text-transform: uppercase; }
 .nav-empty { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .75rem .6rem; }
 .conversation-link, .quiet-link { align-items: center; background: transparent; border: 0; border-radius: .6rem; color: var(--text-muted); cursor: pointer; display: flex; font: inherit; font-size: .82rem; gap: .55rem; min-height: 2.5rem; overflow: hidden; padding: .45rem .6rem; text-align: left; text-decoration: none; width: 100%; }

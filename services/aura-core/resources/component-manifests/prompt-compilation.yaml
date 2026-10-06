@@ -1,0 +1,37 @@
+component:
+  id: aura.runtime.prompt_compilation
+  version: 1.0.0
+  owner: runtime.prompting
+  category: compilation
+input:
+  schema: prompt-compilation-command-v1
+  replayable: false
+  replay_reason: Compilation has no replay hook and must not re-export private prompt content.
+output:
+  schema: prompt-provenance-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - prompt_compiler
+metrics:
+  - prompt_compile_duration_ms
+  - prompt_component_count
+  - compiled_prompt_size
+metric_semantics:
+  prompt_compile_duration_ms: Monotonic prompt compilation duration.
+  prompt_component_count: Number of ordered immutable components compiled.
+  compiled_prompt_size: Rendered prompt size measured without exporting prompt content.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, agent_revision_id, persona_revision_id, prompt_bundle_revision_id, prompt_hash, prompt_component_count, compiled_prompt_size]
+  prohibited: [rendered_prompt, instructions, response_content, prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

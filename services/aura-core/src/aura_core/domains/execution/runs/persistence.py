@@ -18,12 +18,11 @@ class RunRow(Base):
     )
     user_message_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     assistant_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    agent_revision_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    model_policy_revision_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    agent_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    model_policy_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    persona_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    prompt_bundle_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    prompt_hash: Mapped[str | None] = mapped_column(String(64))
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     retry_of_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -41,9 +40,7 @@ class RunEventRow(Base):
     __tablename__ = "run_events"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

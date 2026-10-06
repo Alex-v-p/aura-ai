@@ -3,7 +3,6 @@ from uuid import uuid4
 import pytest
 from aura_core.domains.execution.runs.public import RunStatus
 from aura_core.domains.interaction.conversations.public import (
-    GENERAL_AGENT,
     ActiveRunConflict,
     ConversationStore,
     MessageState,
@@ -101,6 +100,8 @@ async def test_context_budgets_completed_turns_atomically_and_keeps_current_prom
     await store.start_run(prior_run.id)
     await store.append_assistant(prior_run.id, prior_assistant)
     await store.finish_run(prior_run.id, RunStatus.COMPLETED)
+    compiled_prompt = store.agents.compilation(prior_run.agent_revision_id)
+    assert prior_run.prompt_hash == compiled_prompt.prompt_hash
     await store.add_run(
         conversation.id,
         "owner",
@@ -110,7 +111,7 @@ async def test_context_budgets_completed_turns_atomically_and_keeps_current_prom
         "https://issuer",
     )
     budget = (
-        estimate_tokens(GENERAL_AGENT.system_prompt)
+        estimate_tokens(compiled_prompt.text)
         + estimate_tokens(current_prompt)
         + estimate_tokens(prior_assistant)
     )
@@ -120,7 +121,7 @@ async def test_context_budgets_completed_turns_atomically_and_keeps_current_prom
     )
 
     assert context == [
-        ("system", GENERAL_AGENT.system_prompt),
+        ("system", compiled_prompt.text),
         ("user", current_prompt),
     ]
     assert sum(content == current_prompt for _, content in context) == 1

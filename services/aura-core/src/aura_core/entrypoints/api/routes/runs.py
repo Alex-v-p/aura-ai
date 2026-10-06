@@ -15,6 +15,7 @@ from aura_core.domains.execution.runs.events import new_event
 from aura_core.domains.execution.runs.public import message_payload, run_payload
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
+    AgentUnavailable,
     ConversationNotFound,
     IdempotencyConflict,
 )
@@ -94,7 +95,7 @@ async def retry_run(
     except ConversationNotFound as exc:
         _record_command_error(request, run_id, "run.retry", persistence_timer.elapsed_ms())
         raise HTTPException(status_code=404, detail="run not found") from exc
-    except (ActiveRunConflict, IdempotencyConflict) as exc:
+    except (ActiveRunConflict, IdempotencyConflict, AgentUnavailable) as exc:
         _record_command_error(request, run_id, "run.retry", persistence_timer.elapsed_ms())
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     metadata = {
@@ -126,7 +127,7 @@ async def retry_run(
     )
     await state(request).coordinator.enqueue(run)
     return {
-        "conversation": conversation_payload(conversation),
+        "conversation": conversation_payload(conversation, state(request).agents),
         "userMessage": message_payload(message),
         "run": run_payload(run),
     }

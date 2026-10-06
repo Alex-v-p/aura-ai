@@ -2,6 +2,10 @@
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.domains.execution.runs.public import ChatCompletionPort, RunCoordinator
+from aura_core.domains.interaction.agents.adapters import SqlAgentStore
+from aura_core.domains.interaction.agents.public import AgentCatalog, AgentConfigurationService
+from aura_core.domains.interaction.personas.adapters import SqlPersonaStore
+from aura_core.domains.interaction.personas.public import PersonaConfigurationService
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.outbox import TransactionalOutboxTransport
@@ -40,7 +44,16 @@ async def run_forever(settings: Settings | None = None) -> None:
     config = settings or Settings()
     engine = make_engine(config.database_url)
     sessions = session_factory(engine)
-    store = SqlConversationStore(sessions)
+    catalog = AgentCatalog()
+    persona_store = SqlPersonaStore(sessions)
+    persona_service = PersonaConfigurationService(persona_store)
+    agent_store = SqlAgentStore(sessions, catalog, persona_service)  # type: ignore[arg-type]
+    agent_service = AgentConfigurationService(agent_store, persona_service)
+    await persona_store.refresh()
+    await agent_store.refresh()
+    store = SqlConversationStore(sessions, catalog)
+    store.agent_store = agent_store
+    store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry()
     consumer = NatsRunConsumer(config.nats_url, metrics=metrics)
     event_transport = NatsOutbox(config.nats_url)

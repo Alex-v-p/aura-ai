@@ -8,6 +8,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import cast
@@ -20,8 +21,19 @@ from aura_core.domains.execution.runs.dto import (
     RunError,
     RunStatus,
 )
+from aura_core.domains.interaction.agents.public import (
+    GENERAL_POLICY_ID,
+    GENERAL_PROFILE_ID,
+    GENERAL_REVISION_ID,
+    AgentCatalog,
+    AgentRevision,
+    ConfigurationDisabled,
+    ConfigurationNotFound,
+)
 from aura_core.domains.interaction.conversations.context import build_context
 from aura_core.domains.interaction.conversations.dto import (
+    AgentAssignment,
+    AssignmentReason,
     Conversation,
     Message,
     MessageRole,
@@ -31,13 +43,14 @@ from aura_core.domains.interaction.conversations.dto import (
 )
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
 from aura_core.runtime.models.ports import ModelDescriptor
+from aura_core.runtime.prompting.public import PromptCompilation, PromptMetricsPort
 
 NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 type CommandResult = tuple[Conversation, Message, Run]
 GENERAL_AGENT = SeededAgent(
-    profile_id=uuid5(NAMESPACE, "general-assistant"),
-    revision_id=uuid5(NAMESPACE, "general-assistant-revision-1"),
-    policy_revision_id=uuid5(NAMESPACE, "ollama-model-policy-1"),
+    profile_id=GENERAL_PROFILE_ID,
+    revision_id=GENERAL_REVISION_ID,
+    policy_revision_id=GENERAL_POLICY_ID,
     system_prompt="You are Aura, a helpful local-first household assistant.",
 )
 
@@ -62,15 +75,32 @@ class ModelUnavailable(ValueError):
     pass
 
 
+class AgentUnavailable(ValueError):
+    pass
+
+
+class AgentSwitchConfirmationRequired(ValueError):
+    pass
+
+
 class ConversationStore:
-    def __init__(self, default_model: str | None = None) -> None:
+    def __init__(
+        self, default_model: str | None = None, agents: AgentCatalog | None = None
+    ) -> None:
         self.default_model = default_model
+        self.agents = agents or AgentCatalog()
         self._conversations: dict[UUID, Conversation] = {}
         self._idempotency: dict[tuple[str, str, str], object] = {}
         self._idempotency_fingerprints: dict[tuple[str, str, str], str] = {}
         self._locks: dict[UUID, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
         self.auth_audit: list[dict[str, object]] = []
+        self.prompt_metrics: PromptMetricsPort | None = None
+
+    def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
+        """Attach the application metadata-only prompt telemetry sink."""
+
+        self.prompt_metrics = metrics
 
     async def record_auth_audit(
         self,
@@ -121,8 +151,7 @@ class ConversationStore:
         values = [
             item
             for item in self._conversations.values()
-            if item.principal_subject == subject
-            and item.principal_issuer == issuer
+            if item.principal_subject == subject and item.principal_issuer == issuer
         ]
         values.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         if cursor:
@@ -154,9 +183,10 @@ class ConversationStore:
         model_id: str,
         models: Iterable[ModelDescriptor],
         idempotency_key: str,
+        agent_revision_id: UUID | None = None,
     ) -> tuple[Conversation, Message, Run]:
         key = (issuer, subject, idempotency_key)
-        fingerprint = hashlib.sha256(f"create:{message}:{model_id}".encode()).hexdigest()
+        fingerprint = _fingerprint("create", message, model_id, agent_revision_id)
         existing = self._idempotency.get(key)
         if existing is not None:
             if self._idempotency_fingerprints.get(key) != fingerprint:
@@ -165,26 +195,33 @@ class ConversationStore:
                 raise IdempotencyConflict
             return cast(CommandResult, existing)
         self._validate_model(model_id, models)
+        revision = self._resolve_agent(agent_revision_id)
         conversation = Conversation(
             principal_issuer=issuer,
             principal_subject=subject,
             title=make_title(message),
-            agent_profile_id=GENERAL_AGENT.profile_id,
-            agent_revision_id=GENERAL_AGENT.revision_id,
+            agent_profile_id=revision.profile_id,
+            agent_revision_id=revision.id,
             model_id=model_id,
         )
         user_message = Message(conversation.id, MessageRole.USER, message)
         run = Run(
             conversation_id=conversation.id,
             user_message_id=user_message.id,
-            agent_revision_id=GENERAL_AGENT.revision_id,
-            model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+            agent_revision_id=revision.id,
+            model_policy_revision_id=revision.model_policy_revision_id,
             provider="ollama",
             model_id=model_id,
+            persona_revision_id=revision.persona_revision_id,
+            prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
+            prompt_hash=self.agents.compilation(revision.id).prompt_hash,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
         conversation.runs.append(run)
+        conversation.assignments.append(
+            AgentAssignment(revision.profile_id, revision.id, AssignmentReason.INITIAL, None, now())
+        )
         self._conversations[conversation.id] = conversation
         result = (conversation, user_message, run)
         self._idempotency[key] = result
@@ -200,6 +237,8 @@ class ConversationStore:
         models: Iterable[ModelDescriptor],
         idempotency_key: str,
         issuer: str | None = None,
+        agent_revision_id: UUID | None = None,
+        confirmation: bool = False,
     ) -> Conversation:
         if issuer is None:
             raise ValueError("issuer is required")
@@ -208,7 +247,7 @@ class ConversationStore:
         existing = self._idempotency.get(key)
         if existing is not None:
             fingerprint = hashlib.sha256(
-                f"update:{conversation_id}:{model_id}:{version}".encode()
+                f"update:{conversation_id}:{model_id}:{version}:{agent_revision_id}:{confirmation}".encode()
             ).hexdigest()
             if self._idempotency_fingerprints.get(key) != fingerprint:
                 raise IdempotencyConflict
@@ -218,14 +257,68 @@ class ConversationStore:
         async with await self._lock_for(conversation_id):
             if conversation.version != version:
                 raise VersionConflict
+            if agent_revision_id is not None and conversation.current_run is not None:
+                raise ActiveRunConflict
             self._validate_model(model_id, models)
+            if agent_revision_id is not None:
+                if not confirmation:
+                    raise AgentSwitchConfirmationRequired
+                self._assign_agent(
+                    conversation, agent_revision_id, AssignmentReason.MANUAL_SWITCH
+                )
             conversation.model_id = model_id
             conversation.version += 1
             conversation.updated_at = now()
         self._idempotency[key] = conversation
         self._idempotency_fingerprints[key] = hashlib.sha256(
-            f"update:{conversation_id}:{model_id}:{version}".encode()
+                f"update:{conversation_id}:{model_id}:{version}:{agent_revision_id}:{confirmation}".encode()
         ).hexdigest()
+        return conversation
+
+    async def switch_agent(
+        self,
+        conversation_id: UUID,
+        subject: str,
+        agent_revision_id: UUID,
+        version: int,
+        idempotency_key: str,
+        issuer: str | None = None,
+        *,
+        confirmation: bool = False,
+        upgrade: bool = False,
+    ) -> Conversation:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        if not confirmation:
+            raise AgentSwitchConfirmationRequired
+        conversation = await self.get(conversation_id, subject, issuer)
+        key = (issuer, subject, idempotency_key)
+        fingerprint = hashlib.sha256(
+            f"agent:{conversation_id}:{agent_revision_id}:{version}:{upgrade}".encode()
+        ).hexdigest()
+        existing = self._idempotency.get(key)
+        if existing is not None:
+            if self._idempotency_fingerprints.get(key) != fingerprint or not isinstance(
+                existing, Conversation
+            ):
+                raise IdempotencyConflict
+            return existing
+        async with await self._lock_for(conversation_id):
+            if conversation.version != version:
+                raise VersionConflict
+            if conversation.current_run is not None:
+                raise ActiveRunConflict
+            self._assign_agent(
+                conversation,
+                agent_revision_id,
+                AssignmentReason.REVISION_UPGRADE
+                if upgrade
+                else AssignmentReason.MANUAL_SWITCH,
+            )
+            conversation.version += 1
+            conversation.updated_at = now()
+        self._idempotency[key] = conversation
+        self._idempotency_fingerprints[key] = fingerprint
         return conversation
 
     async def add_run(
@@ -256,14 +349,18 @@ class ConversationStore:
                 raise VersionConflict
             if conversation.current_run is not None:
                 raise ActiveRunConflict
+            current_revision = self._resolve_agent(conversation.agent_revision_id)
             user_message = Message(conversation.id, MessageRole.USER, message)
             run = Run(
                 conversation_id=conversation.id,
                 user_message_id=user_message.id,
                 agent_revision_id=conversation.agent_revision_id,
-                model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+                model_policy_revision_id=current_revision.model_policy_revision_id,
                 provider="ollama",
                 model_id=conversation.model_id,
+                persona_revision_id=current_revision.persona_revision_id,
+                prompt_bundle_revision_id=current_revision.prompt_bundle_revision_id,
+                prompt_hash=self.agents.compilation(current_revision.id).prompt_hash,
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -306,6 +403,21 @@ class ConversationStore:
         ):
             raise ConversationNotFound
         prior = next(run for run in conversation.runs if run.id == run_id)
+        self._resolve_agent(prior.agent_revision_id)
+        # Legacy runs may predate persisted prompt provenance.  Retry remains
+        # pinned to the historical revision/model policy, while the new run
+        # receives freshly derived provenance for provider verification.
+        persona_revision_id = prior.persona_revision_id
+        prompt_bundle_revision_id = prior.prompt_bundle_revision_id
+        prompt_hash = prior.prompt_hash
+        if (
+            persona_revision_id is None
+            or prompt_bundle_revision_id is None
+            or prompt_hash is None
+        ):
+            persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
+                prior.agent_revision_id
+            )
         async with await self._lock_for(conversation.id):
             if conversation.current_run is not None:
                 raise ActiveRunConflict
@@ -315,10 +427,13 @@ class ConversationStore:
             run = Run(
                 conversation_id=conversation.id,
                 user_message_id=user_message.id,
-                agent_revision_id=conversation.agent_revision_id,
-                model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+                agent_revision_id=prior.agent_revision_id,
+                model_policy_revision_id=prior.model_policy_revision_id,
                 provider="ollama",
                 model_id=conversation.model_id,
+                persona_revision_id=persona_revision_id,
+                prompt_bundle_revision_id=prompt_bundle_revision_id,
+                prompt_hash=prompt_hash,
                 retry_of_run_id=prior.id,
             )
             conversation.runs.append(run)
@@ -326,9 +441,7 @@ class ConversationStore:
             conversation.updated_at = now()
         result = (conversation, user_message, run)
         self._idempotency[key] = result
-        self._idempotency_fingerprints[key] = hashlib.sha256(
-            f"retry:{run_id}".encode()
-        ).hexdigest()
+        self._idempotency_fingerprints[key] = hashlib.sha256(f"retry:{run_id}".encode()).hexdigest()
         return result
 
     async def request_cancel(
@@ -357,14 +470,9 @@ class ConversationStore:
         self._idempotency_fingerprints[key] = fingerprint
         return run
 
-    async def _find_run(
-        self, run_id: UUID, subject: str, issuer: str
-    ) -> tuple[Conversation, Run]:
+    async def _find_run(self, run_id: UUID, subject: str, issuer: str) -> tuple[Conversation, Run]:
         for conversation in self._conversations.values():
-            if (
-                conversation.principal_subject != subject
-                or conversation.principal_issuer != issuer
-            ):
+            if conversation.principal_subject != subject or conversation.principal_issuer != issuer:
                 continue
             for run in conversation.runs:
                 if run.id == run_id:
@@ -498,9 +606,99 @@ class ConversationStore:
         subject: str,
         issuer: str,
         budget: int = DEFAULT_CONTEXT_TOKENS,
+        agent_revision_id: UUID | None = None,
+        trace_id: str | None = None,
     ) -> list[tuple[str, str]]:
         conversation = await self.get(conversation_id, subject, issuer)
-        return build_context(conversation, GENERAL_AGENT.system_prompt, budget)
+        # The conversation assignment is mutable.  A queued run is not: its
+        # pinned revision is the only authority for provider context.
+        revision = self._revision_unchecked(
+            agent_revision_id or conversation.agent_revision_id
+        )
+        prompt = self._compile_prompt(
+            revision.id,
+            trace_id=trace_id,
+            run_id=trace_id,
+            conversation_id=str(conversation.id),
+        ).text
+        return build_context(conversation, prompt, budget)
+
+    def prompt_provenance(self, revision_id: UUID) -> dict[str, str]:
+        revision = self._revision_unchecked(revision_id)
+        compilation = self._compile_prompt(revision_id, instrument=False)
+        return {
+            "agent_revision_id": str(revision.id),
+            "persona_revision_id": str(revision.persona_revision_id),
+            "prompt_bundle_revision_id": str(revision.prompt_bundle_revision_id),
+            "prompt_hash": compilation.prompt_hash,
+            "prompt_component_count": str(compilation.component_count),
+            "compiled_prompt_size": str(len(compilation.text)),
+        }
+
+    def _resolve_agent(self, identifier: UUID | None) -> AgentRevision:
+        try:
+            return self.agents.resolve_revision(identifier or GENERAL_AGENT.revision_id)
+        except (ConfigurationDisabled, ConfigurationNotFound) as exc:
+            raise AgentUnavailable(str(exc)) from exc
+
+    def _compile_prompt(
+        self,
+        revision_id: UUID,
+        *,
+        trace_id: str | None = None,
+        run_id: str | None = None,
+        conversation_id: str | None = None,
+        instrument: bool = True,
+    ) -> PromptCompilation:
+        metrics = self.prompt_metrics if instrument else None
+        return self.agents.compile_prompt(
+            revision_id,
+            metrics=metrics,
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+        )
+
+    def _provenance(self, revision_id: UUID) -> tuple[UUID, UUID, str]:
+        revision = self._revision_unchecked(revision_id)
+        compilation = self._compile_prompt(revision_id, instrument=False)
+        return (
+            revision.persona_revision_id,
+            revision.prompt_bundle_revision_id,
+            compilation.prompt_hash,
+        )
+
+    def _revision_unchecked(self, identifier: UUID) -> AgentRevision:
+        try:
+            return self.agents.resolve_revision_unchecked(identifier)
+        except ConfigurationNotFound as exc:
+            raise AgentUnavailable(str(exc)) from exc
+
+    def _assign_agent(
+        self, conversation: Conversation, identifier: UUID, reason: AssignmentReason
+    ) -> None:
+        revision = self._resolve_agent(identifier)
+        if (
+            conversation.agent_profile_id == revision.profile_id
+            and conversation.agent_revision_id != revision.id
+            and reason in {AssignmentReason.MANUAL_SWITCH}
+        ):
+            reason = AssignmentReason.REVISION_UPGRADE
+        conversation.agent_profile_id = revision.profile_id
+        conversation.agent_revision_id = revision.id
+        conversation.assignments.append(
+            AgentAssignment(
+                revision.profile_id,
+                revision.id,
+                reason,
+                self._latest_message_id(conversation),
+                now(),
+            )
+        )
+
+    @staticmethod
+    def _latest_message_id(conversation: Conversation) -> UUID | None:
+        return conversation.messages[-1].id if conversation.messages else None
 
     @staticmethod
     def _validate_model(model_id: str, models: Iterable[ModelDescriptor]) -> None:
@@ -515,3 +713,14 @@ class ConversationStore:
 def make_title(message: str) -> str:
     normalized = " ".join(message.split())
     return normalized[:252] + "..." if len(normalized) > 255 else normalized
+
+
+def _fingerprint(*parts: object) -> str:
+    """Hash structured command fields without delimiter-collision ambiguity."""
+
+    canonical = json.dumps(
+        [str(part) if part is not None else None for part in parts],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()

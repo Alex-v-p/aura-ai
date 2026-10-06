@@ -3,6 +3,7 @@
 import asyncio
 import secrets
 from time import perf_counter
+from typing import cast
 from uuid import UUID, uuid4
 
 from aura_core.domains.execution.runs.dto import (
@@ -58,6 +59,9 @@ class RunCoordinator:
         self.timeout_seconds = timeout_seconds
         self.cancellation_poll_seconds = cancellation_poll_seconds
         self.context_token_budget = context_token_budget
+        configure_prompt_metrics = getattr(self.store, "set_prompt_metrics", None)
+        if callable(configure_prompt_metrics):
+            configure_prompt_metrics(self.metrics)
 
     async def enqueue(self, run: Run) -> None:
         try:
@@ -66,9 +70,7 @@ class RunCoordinator:
             self._error(run, "queue")
             raise
 
-    async def cancel(
-        self, run_id: UUID, subject: str, issuer: str, idempotency_key: str
-    ) -> Run:
+    async def cancel(self, run_id: UUID, subject: str, issuer: str, idempotency_key: str) -> Run:
         run = await self.store.request_cancel(run_id, subject, idempotency_key, issuer)
         return run
 
@@ -324,9 +326,7 @@ class RunCoordinator:
             self.metrics.observe(
                 "aura.runtime.model_inference",
                 "output_tokens",
-                0
-                if output_characters[0] == 0
-                else (output_characters[0] + 3) // 4,
+                0 if output_characters[0] == 0 else (output_characters[0] + 3) // 4,
                 token_estimator="chars_div_4_ceil",
                 provider=run.provider,
                 model_id=run.model_id,
@@ -349,9 +349,31 @@ class RunCoordinator:
                 conversation.principal_subject,
                 conversation.principal_issuer,
                 self.context_token_budget,
+                run.agent_revision_id,
+                run.id.hex,
             )
         except Exception as exc:
             raise RunExecutionFailure("persistence") from exc
+        provenance_getter = getattr(self.store, "prompt_provenance", None)
+        provenance = (
+            cast(dict[str, str], provenance_getter(run.agent_revision_id))
+            if provenance_getter
+            else {}
+        )
+        # Provenance is part of the execution input, not a best-effort label.
+        # Refuse to invoke a provider if the immutable revision now compiles to
+        # anything other than the metadata persisted at admission.
+        if provenance_getter is None and any(
+            value is not None
+            for value in (
+                run.persona_revision_id,
+                run.prompt_bundle_revision_id,
+                run.prompt_hash,
+            )
+        ):
+            raise RunExecutionFailure("persistence")
+        if provenance_getter is not None and not _provenance_matches(run, provenance):
+            raise RunExecutionFailure("persistence")
         messages = [ChatMessage(role, content) for role, content in context]
         inference_started = perf_counter()
         inference_span_id = secrets.token_hex(8)
@@ -410,10 +432,7 @@ class RunCoordinator:
                     inference_error_class = None
                     await self._finish_cancellation(run, attempt_id, started)
                     return False
-                if (
-                    current[1].status != RunStatus.RUNNING
-                    or current[1].attempt_id != attempt_id
-                ):
+                if current[1].status != RunStatus.RUNNING or current[1].attempt_id != attempt_id:
                     inference_outcome = "skipped"
                     inference_error_class = None
                     raise RunClaimLost
@@ -495,9 +514,7 @@ class RunCoordinator:
             if current.status != RunStatus.RUNNING or current.attempt_id != attempt_id:
                 return False
 
-    async def _finish_cancellation(
-        self, run: Run, attempt_id: UUID, started: float
-    ) -> None:
+    async def _finish_cancellation(self, run: Run, attempt_id: UUID, started: float) -> None:
         try:
             canceled_conversation, canceled_run, _ = await self.store.finish_run(
                 run.id, RunStatus.CANCELED, attempt_id=attempt_id
@@ -589,7 +606,7 @@ def message_payload(message: Message) -> dict[str, object]:
 
 
 def run_payload(run: Run) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "id": str(run.id),
         "conversationId": str(run.conversation_id),
         "userMessageId": str(run.user_message_id),
@@ -612,3 +629,42 @@ def run_payload(run: Run) -> dict[str, object]:
         if run.error
         else None,
     }
+    # These fields were added after the original run schema.  Omitting them
+    # for legacy rows preserves the backward-compatible response shape and
+    # avoids presenting a false null provenance value as a resolved reference.
+    if run.persona_revision_id is not None:
+        payload["personaRevisionId"] = str(run.persona_revision_id)
+    if run.prompt_bundle_revision_id is not None:
+        payload["promptBundleRevisionId"] = str(run.prompt_bundle_revision_id)
+    if run.prompt_hash is not None:
+        payload["promptHash"] = run.prompt_hash
+    return payload
+
+
+def _provenance_matches(run: Run, provenance: dict[str, str]) -> bool:
+    """Return whether compiled prompt metadata matches the run admission record.
+
+    Runs created before prompt provenance was introduced have all three optional
+    fields unset.  They are allowed to execute against the deterministically
+    derived current compilation; any partially populated record is malformed
+    and therefore fails closed.
+    """
+
+    stored = (
+        run.persona_revision_id,
+        run.prompt_bundle_revision_id,
+        run.prompt_hash,
+    )
+    if all(value is None for value in stored):
+        return all(
+            key in provenance
+            for key in ("persona_revision_id", "prompt_bundle_revision_id", "prompt_hash")
+        )
+    if any(value is None for value in stored):
+        return False
+    return (
+        provenance.get("persona_revision_id") == str(run.persona_revision_id)
+        and provenance.get("prompt_bundle_revision_id")
+        == str(run.prompt_bundle_revision_id)
+        and provenance.get("prompt_hash") == run.prompt_hash
+    )

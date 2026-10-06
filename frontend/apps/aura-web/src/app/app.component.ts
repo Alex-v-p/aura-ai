@@ -1,14 +1,15 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
 import { AuraShellComponent } from './shell/aura-shell.component';
 import { ThemePreference } from '@aura/shared/ui';
-import { ConversationPanelComponent, ConversationStore } from '@aura/aura/interaction/conversations';
+import { ConversationStore } from '@aura/aura/interaction/conversations';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [AuraShellComponent, ConversationPanelComponent],
+  imports: [AuraShellComponent, RouterOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<aura-shell [conversations]="conversationSummaries()" [theme]="theme()" [collapsed]="navCollapsed()" [mobileOpen]="mobileNavigationOpen()" (newConversation)="store.create()" (conversationSelected)="store.select($event)" (collapseChange)="navCollapsed.set($event)" (mobileOpenChange)="mobileNavigationOpen.set($event)" (themeChange)="setTheme($event)"><aura-conversation-panel /></aura-shell>`,
+  template: `<aura-shell [conversations]="conversationSummaries()" [theme]="theme()" [collapsed]="navCollapsed()" [mobileOpen]="mobileNavigationOpen()" (newConversation)="store.create()" (conversationSelected)="store.select($event)" (collapseChange)="navCollapsed.set($event)" (mobileOpenChange)="mobileNavigationOpen.set($event)" (themeChange)="setTheme($event)"><router-outlet /></aura-shell>`,
 })
 export class AppComponent implements OnDestroy {
   readonly store = inject(ConversationStore);
