@@ -28,12 +28,12 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.interaction.agent_configuration": "1.0.0",
-    "aura.execution.run_coordinator": "1.2.0",
-    "aura.interaction.conversation_persistence": "1.2.0",
+    "aura.interaction.agent_configuration": "1.1.0",
+    "aura.execution.run_coordinator": "1.3.0",
+    "aura.interaction.conversation_persistence": "1.3.0",
     "aura.runtime.model_inference": "1.2.0",
     "aura.runtime.model_routing": "1.2.0",
-    "aura.runtime.prompt_compilation": "1.0.0",
+    "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
 }
 
@@ -148,6 +148,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "prompt_component_count",
         "compiled_prompt_size",
         "configuration_outcome",
+        "configuration_source",
+        "configuration_reason",
         "operation_duration_ms",
         "attempt_count",
         "causation_id",

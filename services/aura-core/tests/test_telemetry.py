@@ -388,7 +388,7 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
 
     span = metrics.snapshot()[0]
     assert span.kind == "span"
-    assert span.component_version == "1.2.0"
+    assert span.component_version == "1.3.0"
     assert span.span_id == child_id
     assert span.parent_span_id == root_span_id(run_id.hex)
     assert dict(span.dimensions) == {"dependency": "postgresql", "outcome": "ok"}

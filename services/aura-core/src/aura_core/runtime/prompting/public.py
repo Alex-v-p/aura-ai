@@ -73,6 +73,7 @@ class PromptCompiler:
         parent_span_id: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
+        allow_persona_override: bool = False,
     ) -> None:
         self.bundle = bundle
         self.metrics = metrics
@@ -86,13 +87,14 @@ class PromptCompiler:
         self.parent_span_id = parent_span_id
         self.run_id = run_id
         self.conversation_id = conversation_id
+        self.allow_persona_override = allow_persona_override
 
     def compile(self, revision: AgentRevision, persona: PersonaRevision) -> PromptCompilation:
         started = perf_counter()
         # A revision is immutable provenance.  Never silently compile it with
         # a mutable/current persona or prompt bundle from another revision.
         try:
-            if revision.persona_revision_id != persona.id:
+            if not self.allow_persona_override and revision.persona_revision_id != persona.id:
                 raise ValueError("agent revision references a different persona revision")
             if revision.prompt_bundle_revision_id != self.bundle.id:
                 raise ValueError("agent revision references a different prompt bundle revision")
@@ -124,6 +126,7 @@ class PromptCompiler:
         except Exception:
             self._record(
                 revision,
+                persona,
                 duration_ms=(perf_counter() - started) * 1000,
                 outcome="error",
                 component_count=0,
@@ -133,6 +136,7 @@ class PromptCompiler:
             raise
         self._record(
             revision,
+            persona,
             duration_ms=(perf_counter() - started) * 1000,
             outcome="ok",
             component_count=compilation.component_count,
@@ -144,6 +148,7 @@ class PromptCompiler:
     def _record(
         self,
         revision: AgentRevision,
+        persona: PersonaRevision,
         *,
         duration_ms: float,
         outcome: str,
@@ -157,7 +162,7 @@ class PromptCompiler:
         attributes = {
             "agent_revision_id": str(revision.id),
             "agent_revision_number": str(revision.revision),
-            "persona_revision_id": str(revision.persona_revision_id),
+            "persona_revision_id": str(persona.id),
             "prompt_bundle_revision_id": str(revision.prompt_bundle_revision_id),
             "prompt_component_count": str(component_count),
             "compiled_prompt_size": str(compiled_prompt_size),

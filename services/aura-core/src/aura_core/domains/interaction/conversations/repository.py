@@ -14,10 +14,14 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
     MessageState,
+    PersonaAssignment,
+    PersonaAssignmentReason,
+    PersonaAssignmentSource,
     now,
 )
 from aura_core.domains.interaction.conversations.persistence import (
     ConversationAgentAssignmentRow,
+    ConversationPersonaAssignmentRow,
     ConversationRow,
     IdempotencyRow,
     MessageRow,
@@ -31,6 +35,7 @@ class ConversationRecord:
     title: str
     agent_profile_id: UUID
     agent_revision_id: UUID
+    persona_override_revision_id: UUID | None
     model_id: str
     version: int
     created_at: datetime
@@ -52,6 +57,7 @@ class SqlConversationRepository:
             row.title,
             row.agent_profile_id,
             row.agent_revision_id,
+            row.persona_override_revision_id,
             row.model_id,
             row.version,
             row.created_at or now(),
@@ -155,6 +161,31 @@ class SqlConversationRepository:
             for row in rows
         ]
 
+    async def persona_assignments(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[PersonaAssignment]:
+        rows = (
+            await session.execute(
+                select(ConversationPersonaAssignmentRow)
+                .where(ConversationPersonaAssignmentRow.conversation_id == conversation_id)
+                .order_by(
+                    ConversationPersonaAssignmentRow.created_at,
+                    ConversationPersonaAssignmentRow.id,
+                )
+            )
+        ).scalars().all()
+        return [
+            PersonaAssignment(
+                row.persona_revision_id,
+                PersonaAssignmentSource(row.source),
+                PersonaAssignmentReason(row.reason),
+                row.effective_after_message_id,
+                row.created_at or now(),
+                row.id,
+            )
+            for row in rows
+        ]
+
     async def latest_message_id(self, session: AsyncSession, conversation_id: UUID) -> UUID | None:
         row = (
             await session.execute(
@@ -178,6 +209,7 @@ class SqlConversationRepository:
                 title=record.title,
                 agent_profile_id=record.agent_profile_id,
                 agent_revision_id=record.agent_revision_id,
+                persona_override_revision_id=record.persona_override_revision_id,
                 model_id=record.model_id,
                 version=record.version,
                 created_at=record.created_at,
@@ -214,6 +246,21 @@ class SqlConversationRepository:
             )
         )
 
+    def stage_persona_assignment(
+        self, session: AsyncSession, assignment: PersonaAssignment, conversation_id: UUID
+    ) -> None:
+        session.add(
+            ConversationPersonaAssignmentRow(
+                id=assignment.id,
+                conversation_id=conversation_id,
+                persona_revision_id=assignment.persona_revision_id,
+                source=assignment.source.value,
+                reason=assignment.reason.value,
+                effective_after_message_id=assignment.effective_after_message_id,
+                created_at=assignment.created_at,
+            )
+        )
+
     async def update(
         self,
         session: AsyncSession,
@@ -225,6 +272,7 @@ class SqlConversationRepository:
         row.model_id = record.model_id
         row.agent_profile_id = record.agent_profile_id
         row.agent_revision_id = record.agent_revision_id
+        row.persona_override_revision_id = record.persona_override_revision_id
         row.version = record.version
         row.updated_at = record.updated_at
 

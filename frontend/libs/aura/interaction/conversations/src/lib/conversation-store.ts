@@ -1,5 +1,5 @@
 import { Inject, Injectable, computed, signal } from '@angular/core';
-import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, Message, Model, Run, RunEvent, Session } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, Session } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 
@@ -9,11 +9,12 @@ export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error
 
 export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; }
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
-export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly runs: ReadonlyArray<Run>; }
+export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
+export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; }
 export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
 
 const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
-const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], runs: [] };
+const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
 
 @Injectable({ providedIn: 'root' })
 export class ConversationStore {
@@ -34,9 +35,12 @@ export class ConversationStore {
   readonly runState = computed<RunState>(() => this.runStates()[this.selectedId()] ?? this.statusToState(this.selected().currentRun?.status));
   readonly selectedModelId = computed(() => this.selected().modelId);
   readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
+  readonly selectedPersona = computed(() => this.selected().persona);
   readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && this.modelFor(this.selectedId()) && this.runState() !== 'working' && this.canRunWithSelectedAgent(this.selectedId())));
   readonly pendingAgent = signal<AgentReference | null>(null);
   readonly pendingAgentAction = signal<'switch' | 'upgrade'>('switch');
+  readonly pendingPersona = signal<PersonaReference | null>(null);
+  readonly pendingPersonaReset = signal(false);
   /** Signals the shell to refresh its active replacement options after a
    * server-side agent status change. */
   readonly agentRefreshRequested = signal(0);
@@ -112,7 +116,7 @@ export class ConversationStore {
 
   create(): void {
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
-    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], runs: [] };
+    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
     this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
   }
 
@@ -122,20 +126,50 @@ export class ConversationStore {
     const model = this.models().find((item) => item.id === modelId); if (!model || !model.selectable) return;
     const conversation = this.selected(); const previous = conversation.modelId; this.replaceConversation({ ...conversation, modelId });
     if (conversation.id.startsWith('draft-')) return;
-    try { const summary = await this.api.updateConversation(conversation.id, modelId, conversation.version, this.key()); this.replaceConversation({ ...this.fromSummary(summary), turns: this.find(conversation.id)?.turns ?? conversation.turns }); }
+    try { const summary = await this.api.updateConversation(conversation.id, modelId, conversation.version, this.key()); this.replaceConversation(this.mergeSummary(summary, conversation)); }
     catch (error: unknown) { this.replaceConversation({ ...conversation, modelId: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
   }
 
   requestAgent(agent: AgentReference): void { const current = this.selectedAgent(); if (!agent.revisionId || agent.revisionId === current.revisionId) return; this.pendingAgentAction.set(agent.profileId === current.profileId && agent.revision > current.revision ? 'upgrade' : 'switch'); this.pendingAgent.set(agent); }
 
+  requestPersona(persona: PersonaReference): void {
+    const current = this.selected().persona;
+    if (current?.revisionId === persona.revisionId && this.selected().personaOverride) return;
+    if (this.selected().id.startsWith('draft-')) {
+      this.replaceConversation({ ...this.selected(), persona, personaOverride: true });
+      return;
+    }
+    this.pendingPersonaReset.set(false);
+    this.pendingPersona.set(persona);
+  }
+
+  requestUseAgentDefaultPersona(): void {
+    if (!this.selected().personaOverride) return;
+    if (this.selected().id.startsWith('draft-')) {
+      this.replaceConversation({ ...this.selected(), persona: null, personaOverride: false });
+      return;
+    }
+    this.pendingPersona.set(null);
+    this.pendingPersonaReset.set(true);
+  }
+
   transitionMarkerFor(messageId: string): string | null {
     const assignments = this.selected().assignments;
+    const personaAssignments = this.selected().personaAssignments;
     const index = assignments.findIndex((item) => item.afterMessageId === messageId);
-    if (index < 0) return null;
-    const assignment = assignments[index];
-    if (assignment.reason === 'initial') return null;
-    const previous = assignments[index - 1]?.agent ?? this.selected().agent;
-    return previous ? `Agent changed from ${previous.displayName} r${previous.revision} to ${assignment.agent.displayName} r${assignment.agent.revision}` : `Agent changed to ${assignment.agent.displayName} r${assignment.agent.revision}`;
+    const personaIndex = personaAssignments.findIndex((item) => item.afterMessageId === messageId);
+    if (index < 0 && personaIndex < 0) return null;
+    const assignment = index >= 0 ? assignments[index] : undefined;
+    const personaAssignment = personaIndex >= 0 ? personaAssignments[personaIndex] : undefined;
+    if (assignment?.reason === 'initial' && !personaAssignment) return null;
+    const previous = index >= 0 ? assignments[index - 1]?.agent ?? this.selected().agent : undefined;
+    const agentMarker = assignment && assignment.reason !== 'initial'
+      ? previous ? `Agent changed from ${previous.displayName} r${previous.revision} to ${assignment.agent.displayName} r${assignment.agent.revision}` : `Agent changed to ${assignment.agent.displayName} r${assignment.agent.revision}`
+      : '';
+    const personaMarker = personaAssignment && personaAssignment.reason !== 'initial'
+      ? `Persona changed to ${personaAssignment.persona.displayName} r${personaAssignment.persona.revision}`
+      : '';
+    return [agentMarker, personaMarker].filter(Boolean).join(' · ') || null;
   }
 
   agentForTurn(turn: ConversationTurn): AgentReference {
@@ -157,10 +191,44 @@ export class ConversationStore {
     if (this.runState() === 'working') { this.setNotice(conversation.id, 'Wait for the active run to finish before changing agents.'); this.pendingAgent.set(null); return; }
     const previous = conversation.agent; this.pendingAgent.set(null);
     if (!conversation.id.startsWith('draft-')) {
-      try { const summary = await this.api.updateConversation(conversation.id, conversation.modelId, conversation.version, this.key(), replacement.revisionId, true); this.replaceConversation({ ...this.fromSummary(summary), turns: this.find(conversation.id)?.turns ?? conversation.turns }); }
+      try { const summary = await this.api.updateConversation(conversation.id, conversation.modelId, conversation.version, this.key(), replacement.revisionId, true); this.replaceConversation(this.mergeSummary(summary, conversation)); }
       catch (error: unknown) { this.replaceConversation({ ...conversation, agent: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
     } else {
       this.replaceConversation({ ...conversation, agent: replacement });
+    }
+  }
+
+  async confirmPersonaChange(): Promise<void> {
+    const persona = this.pendingPersona();
+    const reset = this.pendingPersonaReset();
+    const conversation = this.selected();
+    if (!persona && !reset) return;
+    if (this.runState() === 'working') {
+      this.setNotice(conversation.id, 'Wait for the active run to finish before changing personas.');
+      this.pendingPersona.set(null);
+      this.pendingPersonaReset.set(false);
+      return;
+    }
+    this.pendingPersona.set(null);
+    this.pendingPersonaReset.set(false);
+    if (conversation.id.startsWith('draft-')) {
+      this.replaceConversation({ ...conversation, persona: reset ? null : persona, personaOverride: !reset });
+      return;
+    }
+    try {
+      const summary = await this.api.updateConversation(
+        conversation.id,
+        conversation.modelId,
+        conversation.version,
+        this.key(),
+        undefined,
+        true,
+        persona?.revisionId,
+        reset,
+      );
+      this.replaceConversation(this.mergeSummary(summary, conversation));
+    } catch (error: unknown) {
+      this.setNotice(conversation.id, this.toApiError(error).message);
     }
   }
 
@@ -198,7 +266,7 @@ export class ConversationStore {
 
   private async createPersisted(draftId: string, text: string): Promise<void> {
     try {
-      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
+      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
       this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
@@ -317,7 +385,17 @@ export class ConversationStore {
     const raw = summary as ConversationSummary & { agent?: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; agentAssignments?: ReadonlyArray<{ id: string; agent: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; reason: ConversationAssignment['reason']; effectiveAfterMessageId: string | null; createdAt: string }> };
     const agent = raw.agent ? { profileId: raw.agent.profileId, revisionId: raw.agent.revisionId, revision: raw.agent.revision, displayName: raw.agent.displayName, status: raw.agent.status, newerRevisionAvailable: raw.agent.newerRevisionAvailable } : summary.agentRevisionId ? { profileId: summary.agentProfileId, revisionId: summary.agentRevisionId, revision: 1, displayName: 'Aura', status: 'active' as const } : null;
     const assignments = (raw.agentAssignments ?? []).map((item) => ({ id: item.id, agent: { profileId: item.agent.profileId, revisionId: item.agent.revisionId, revision: item.agent.revision, displayName: item.agent.displayName, status: item.agent.status, newerRevisionAvailable: item.agent.newerRevisionAvailable }, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
-    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, currentRun: summary.currentRun, retryableRun: null, agent, assignments, runs: summary.currentRun ? [summary.currentRun] : [] };
+    const persona = summary.persona ?? null;
+    const personaAssignments = (summary.personaAssignments ?? []).map((item) => ({ id: item.id, persona: item.persona, source: item.source, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
+    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, currentRun: summary.currentRun, retryableRun: null, agent, assignments, persona, personaOverride: summary.personaOverride ?? false, personaAssignments, runs: summary.currentRun ? [summary.currentRun] : [] };
+  }
+  private mergeSummary(summary: ConversationSummary, existing: Conversation): Conversation {
+    const mapped = this.fromSummary(summary);
+    const runsById = new Map(existing.runs.map((run) => [run.id, run]));
+    for (const run of mapped.runs) runsById.set(run.id, run);
+    const currentRun = mapped.currentRun;
+    const retryableRun = currentRun && this.isRetryable(currentRun.status) ? currentRun : existing.retryableRun;
+    return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()] };
   }
   private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); return { ...base, turns: detail.messages.map((message) => this.fromMessage(message)), currentRun: detail.currentRun, retryableRun, runs: [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])] }; }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }

@@ -118,13 +118,16 @@ class AgentConfigurationRepository(Protocol):
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         metrics: PromptMetricsPort | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
     ) -> PromptCompilation: ...
-    def compilation(self, revision_id: UUID) -> PromptCompilation: ...
+    def compilation(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> PromptCompilation: ...
 
 
 def _canonical_fingerprint(operation: str, payload: dict[str, object]) -> str:
@@ -322,6 +325,7 @@ class AgentCatalog:
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         metrics: PromptMetricsPort | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -331,7 +335,9 @@ class AgentCatalog:
         """Compile one immutable agent revision with its exact provenance."""
 
         revision = self.resolve_revision_unchecked(revision_id)
-        _, persona = self.persona_query.find_revision(revision.persona_revision_id)
+        _, persona = self.persona_query.find_revision(
+            persona_revision_id or revision.persona_revision_id
+        )
         try:
             bundle = self.bundles[revision.prompt_bundle_revision_id]
         except KeyError as exc:
@@ -343,12 +349,15 @@ class AgentCatalog:
             parent_span_id=parent_span_id,
             run_id=run_id,
             conversation_id=conversation_id,
+            allow_persona_override=persona_revision_id is not None,
         ).compile(revision, persona)
 
-    def compilation(self, revision_id: UUID) -> PromptCompilation:
+    def compilation(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> PromptCompilation:
         """Compatibility query without telemetry side effects."""
 
-        return self.compile_prompt(revision_id)
+        return self.compile_prompt(revision_id, persona_revision_id=persona_revision_id)
 
     def replace_bundles(self, bundles: dict[UUID, PromptBundleRevision]) -> None:
         self.bundles = dict(bundles)
@@ -466,13 +475,16 @@ class AgentMemoryRepository:
     def resolve_revision(self, identifier: UUID) -> AgentRevision:
         return self.catalog.resolve_revision(identifier)
 
-    def compilation(self, revision_id: UUID) -> PromptCompilation:
-        return self.catalog.compilation(revision_id)
+    def compilation(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> PromptCompilation:
+        return self.catalog.compilation(revision_id, persona_revision_id)
 
     def compile_prompt(
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         metrics: PromptMetricsPort | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -481,6 +493,7 @@ class AgentMemoryRepository:
     ) -> PromptCompilation:
         return self.catalog.compile_prompt(
             revision_id,
+            persona_revision_id=persona_revision_id,
             metrics=metrics,
             trace_id=trace_id,
             parent_span_id=parent_span_id,
@@ -610,6 +623,7 @@ class AgentConfigurationService:
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         metrics: PromptMetricsPort | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -618,6 +632,7 @@ class AgentConfigurationService:
     ) -> PromptCompilation:
         return self.repository.compile_prompt(
             revision_id,
+            persona_revision_id=persona_revision_id,
             metrics=metrics,
             trace_id=trace_id,
             parent_span_id=parent_span_id,

@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from datetime import datetime
+from time import perf_counter
 from typing import cast
 from uuid import UUID, uuid5
 
@@ -38,9 +39,18 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
     MessageState,
+    PersonaAssignment,
+    PersonaAssignmentReason,
+    PersonaAssignmentSource,
     SeededAgent,
     now,
 )
+from aura_core.domains.interaction.personas.public import (
+    ConfigurationStatus,
+    PersonaCatalog,
+    PersonaRevisionQueryPort,
+)
+from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
 from aura_core.runtime.models.ports import ModelDescriptor
 from aura_core.runtime.prompting.public import PromptCompilation, PromptMetricsPort
@@ -79,16 +89,24 @@ class AgentUnavailable(ValueError):
     pass
 
 
+class PersonaUnavailable(ValueError):
+    pass
+
+
 class AgentSwitchConfirmationRequired(ValueError):
     pass
 
 
 class ConversationStore:
     def __init__(
-        self, default_model: str | None = None, agents: AgentCatalog | None = None
+        self,
+        default_model: str | None = None,
+        agents: AgentCatalog | None = None,
+        personas: PersonaRevisionQueryPort | None = None,
     ) -> None:
         self.default_model = default_model
         self.agents = agents or AgentCatalog()
+        self.personas = personas or PersonaCatalog()
         self._conversations: dict[UUID, Conversation] = {}
         self._idempotency: dict[tuple[str, str, str], object] = {}
         self._idempotency_fingerprints: dict[tuple[str, str, str], str] = {}
@@ -184,9 +202,12 @@ class ConversationStore:
         models: Iterable[ModelDescriptor],
         idempotency_key: str,
         agent_revision_id: UUID | None = None,
+        persona_revision_id: UUID | None = None,
     ) -> tuple[Conversation, Message, Run]:
         key = (issuer, subject, idempotency_key)
-        fingerprint = _fingerprint("create", message, model_id, agent_revision_id)
+        fingerprint = _fingerprint(
+            "create", message, model_id, agent_revision_id, persona_revision_id
+        )
         existing = self._idempotency.get(key)
         if existing is not None:
             if self._idempotency_fingerprints.get(key) != fingerprint:
@@ -196,6 +217,9 @@ class ConversationStore:
             return cast(CommandResult, existing)
         self._validate_model(model_id, models)
         revision = self._resolve_agent(agent_revision_id)
+        effective_persona = persona_revision_id or revision.persona_revision_id
+        if persona_revision_id is not None:
+            self._resolve_active_persona(persona_revision_id)
         conversation = Conversation(
             principal_issuer=issuer,
             principal_subject=subject,
@@ -203,6 +227,7 @@ class ConversationStore:
             agent_profile_id=revision.profile_id,
             agent_revision_id=revision.id,
             model_id=model_id,
+            persona_override_revision_id=persona_revision_id,
         )
         user_message = Message(conversation.id, MessageRole.USER, message)
         run = Run(
@@ -212,15 +237,26 @@ class ConversationStore:
             model_policy_revision_id=revision.model_policy_revision_id,
             provider="ollama",
             model_id=model_id,
-            persona_revision_id=revision.persona_revision_id,
+            persona_revision_id=effective_persona,
             prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
-            prompt_hash=self.agents.compilation(revision.id).prompt_hash,
+            prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
         conversation.runs.append(run)
         conversation.assignments.append(
             AgentAssignment(revision.profile_id, revision.id, AssignmentReason.INITIAL, None, now())
+        )
+        conversation.persona_assignments.append(
+            PersonaAssignment(
+                effective_persona,
+                PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                if persona_revision_id is not None
+                else PersonaAssignmentSource.AGENT_DEFAULT,
+                PersonaAssignmentReason.INITIAL,
+                None,
+                now(),
+            )
         )
         self._conversations[conversation.id] = conversation
         result = (conversation, user_message, run)
@@ -239,40 +275,228 @@ class ConversationStore:
         issuer: str | None = None,
         agent_revision_id: UUID | None = None,
         confirmation: bool = False,
+        persona_revision_id: UUID | None = None,
+        use_agent_default_persona: bool | None = None,
     ) -> Conversation:
         if issuer is None:
             raise ValueError("issuer is required")
         conversation = await self.get(conversation_id, subject, issuer)
         key = (issuer, subject, idempotency_key)
+        fingerprint = _fingerprint(
+            "update",
+            conversation_id,
+            model_id,
+            version,
+            agent_revision_id,
+            confirmation,
+            persona_revision_id,
+            use_agent_default_persona,
+        )
+        persona_change = persona_revision_id is not None or use_agent_default_persona is True
+        configuration_started = perf_counter() if persona_change else None
         existing = self._idempotency.get(key)
         if existing is not None:
-            fingerprint = hashlib.sha256(
-                f"update:{conversation_id}:{model_id}:{version}:{agent_revision_id}:{confirmation}".encode()
-            ).hexdigest()
             if self._idempotency_fingerprints.get(key) != fingerprint:
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "idempotency",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
                 raise IdempotencyConflict
             if not isinstance(existing, Conversation):
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "idempotency",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
                 raise IdempotencyConflict
             return existing
+        configuration_change = (
+            agent_revision_id is not None
+            or persona_revision_id is not None
+            or use_agent_default_persona is True
+        )
         async with await self._lock_for(conversation_id):
             if conversation.version != version:
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "version_conflict",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
                 raise VersionConflict
-            if agent_revision_id is not None and conversation.current_run is not None:
+            if configuration_change and conversation.current_run is not None:
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "active_run",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
                 raise ActiveRunConflict
-            self._validate_model(model_id, models)
+            if configuration_change and not confirmation:
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "validation",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
+                raise AgentSwitchConfirmationRequired
+            try:
+                self._validate_model(model_id, models)
+            except ModelUnavailable:
+                if persona_change:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "validation",
+                        configuration_started,
+                        source=(
+                            PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentSource.AGENT_DEFAULT
+                        ),
+                        reason=(
+                            PersonaAssignmentReason.MANUAL_OVERRIDE
+                            if persona_revision_id is not None
+                            else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT
+                        ),
+                    )
+                raise
             if agent_revision_id is not None:
-                if not confirmation:
-                    raise AgentSwitchConfirmationRequired
                 self._assign_agent(
-                    conversation, agent_revision_id, AssignmentReason.MANUAL_SWITCH
+                    conversation,
+                    agent_revision_id,
+                    AssignmentReason.MANUAL_SWITCH,
+                    assign_default_persona=persona_revision_id is None
+                    and not use_agent_default_persona,
+                )
+            if persona_revision_id is not None:
+                try:
+                    self._resolve_active_persona(persona_revision_id)
+                except PersonaUnavailable as exc:
+                    self._record_persona_configuration_rejection(
+                        conversation,
+                        persona_revision_id,
+                        "disabled" if "disabled" in str(exc) else "not_found",
+                        configuration_started,
+                        source=PersonaAssignmentSource.CONVERSATION_OVERRIDE,
+                        reason=PersonaAssignmentReason.MANUAL_OVERRIDE,
+                    )
+                    raise
+                self._assign_persona(
+                    conversation,
+                    persona_revision_id,
+                    PersonaAssignmentSource.CONVERSATION_OVERRIDE,
+                    PersonaAssignmentReason.MANUAL_OVERRIDE,
+                )
+            elif use_agent_default_persona:
+                revision = self._revision_unchecked(conversation.agent_revision_id)
+                self._assign_persona(
+                    conversation,
+                    revision.persona_revision_id,
+                    PersonaAssignmentSource.AGENT_DEFAULT,
+                    PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT,
                 )
             conversation.model_id = model_id
             conversation.version += 1
             conversation.updated_at = now()
         self._idempotency[key] = conversation
-        self._idempotency_fingerprints[key] = hashlib.sha256(
-                f"update:{conversation_id}:{model_id}:{version}:{agent_revision_id}:{confirmation}".encode()
-        ).hexdigest()
+        self._idempotency_fingerprints[key] = fingerprint
+        if persona_revision_id is not None or use_agent_default_persona:
+            effective = persona_revision_id or self._revision_unchecked(
+                conversation.agent_revision_id
+            ).persona_revision_id
+            self._record_persona_configuration(
+                conversation,
+                effective,
+                PersonaAssignmentSource.CONVERSATION_OVERRIDE
+                if persona_revision_id is not None
+                else PersonaAssignmentSource.AGENT_DEFAULT,
+                PersonaAssignmentReason.MANUAL_OVERRIDE
+                if persona_revision_id is not None
+                else PersonaAssignmentReason.RESET_TO_AGENT_DEFAULT,
+                "ok",
+                duration_ms=(perf_counter() - configuration_started) * 1000
+                if configuration_started is not None
+                else 0.0,
+            )
+            await self.record_auth_audit(
+                "conversation.persona.reset"
+                if use_agent_default_persona
+                else "conversation.persona.override",
+                "ok",
+                issuer=issuer,
+                subject=subject,
+                metadata={
+                    "conversationId": str(conversation.id),
+                    "personaProfileId": str(self.personas.find_revision(effective)[0].id),
+                    "personaRevisionId": str(effective),
+                    "revision": self.personas.find_revision(effective)[1].revision,
+                    "source": "agent_default"
+                    if use_agent_default_persona
+                    else "conversation_override",
+                    "reason": "reset_to_agent_default"
+                    if use_agent_default_persona
+                    else "manual_override",
+                },
+            )
         return conversation
 
     async def switch_agent(
@@ -350,6 +574,9 @@ class ConversationStore:
             if conversation.current_run is not None:
                 raise ActiveRunConflict
             current_revision = self._resolve_agent(conversation.agent_revision_id)
+            effective_persona = (
+                conversation.persona_override_revision_id or current_revision.persona_revision_id
+            )
             user_message = Message(conversation.id, MessageRole.USER, message)
             run = Run(
                 conversation_id=conversation.id,
@@ -358,9 +585,11 @@ class ConversationStore:
                 model_policy_revision_id=current_revision.model_policy_revision_id,
                 provider="ollama",
                 model_id=conversation.model_id,
-                persona_revision_id=current_revision.persona_revision_id,
+                persona_revision_id=effective_persona,
                 prompt_bundle_revision_id=current_revision.prompt_bundle_revision_id,
-                prompt_hash=self.agents.compilation(current_revision.id).prompt_hash,
+                prompt_hash=self.agents.compilation(
+                    current_revision.id, effective_persona
+                ).prompt_hash,
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -416,7 +645,7 @@ class ConversationStore:
             or prompt_hash is None
         ):
             persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
-                prior.agent_revision_id
+                prior.agent_revision_id, prior.persona_revision_id
             )
         async with await self._lock_for(conversation.id):
             if conversation.current_run is not None:
@@ -608,6 +837,8 @@ class ConversationStore:
         budget: int = DEFAULT_CONTEXT_TOKENS,
         agent_revision_id: UUID | None = None,
         trace_id: str | None = None,
+        persona_revision_id: UUID | None = None,
+        parent_span_id: str | None = None,
     ) -> list[tuple[str, str]]:
         conversation = await self.get(conversation_id, subject, issuer)
         # The conversation assignment is mutable.  A queued run is not: its
@@ -617,18 +848,25 @@ class ConversationStore:
         )
         prompt = self._compile_prompt(
             revision.id,
+            persona_revision_id=persona_revision_id,
             trace_id=trace_id,
+            parent_span_id=parent_span_id,
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
         return build_context(conversation, prompt, budget)
 
-    def prompt_provenance(self, revision_id: UUID) -> dict[str, str]:
+    def prompt_provenance(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> dict[str, str]:
         revision = self._revision_unchecked(revision_id)
-        compilation = self._compile_prompt(revision_id, instrument=False)
+        effective_persona = persona_revision_id or revision.persona_revision_id
+        compilation = self._compile_prompt(
+            revision_id, persona_revision_id=effective_persona, instrument=False
+        )
         return {
             "agent_revision_id": str(revision.id),
-            "persona_revision_id": str(revision.persona_revision_id),
+            "persona_revision_id": str(effective_persona),
             "prompt_bundle_revision_id": str(revision.prompt_bundle_revision_id),
             "prompt_hash": compilation.prompt_hash,
             "prompt_component_count": str(compilation.component_count),
@@ -645,25 +883,34 @@ class ConversationStore:
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         trace_id: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
+        parent_span_id: str | None = None,
         instrument: bool = True,
     ) -> PromptCompilation:
         metrics = self.prompt_metrics if instrument else None
         return self.agents.compile_prompt(
             revision_id,
+            persona_revision_id=persona_revision_id,
             metrics=metrics,
             trace_id=trace_id,
             run_id=run_id,
             conversation_id=conversation_id,
+            parent_span_id=parent_span_id,
         )
 
-    def _provenance(self, revision_id: UUID) -> tuple[UUID, UUID, str]:
+    def _provenance(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> tuple[UUID, UUID, str]:
         revision = self._revision_unchecked(revision_id)
-        compilation = self._compile_prompt(revision_id, instrument=False)
+        effective_persona = persona_revision_id or revision.persona_revision_id
+        compilation = self._compile_prompt(
+            revision_id, persona_revision_id=effective_persona, instrument=False
+        )
         return (
-            revision.persona_revision_id,
+            effective_persona,
             revision.prompt_bundle_revision_id,
             compilation.prompt_hash,
         )
@@ -675,7 +922,12 @@ class ConversationStore:
             raise AgentUnavailable(str(exc)) from exc
 
     def _assign_agent(
-        self, conversation: Conversation, identifier: UUID, reason: AssignmentReason
+        self,
+        conversation: Conversation,
+        identifier: UUID,
+        reason: AssignmentReason,
+        *,
+        assign_default_persona: bool = True,
     ) -> None:
         revision = self._resolve_agent(identifier)
         if (
@@ -694,6 +946,137 @@ class ConversationStore:
                 self._latest_message_id(conversation),
                 now(),
             )
+        )
+        if assign_default_persona and conversation.persona_override_revision_id is None:
+            self._assign_persona(
+                conversation,
+                revision.persona_revision_id,
+                PersonaAssignmentSource.AGENT_DEFAULT,
+                PersonaAssignmentReason.AGENT_REVISION_UPGRADE
+                if reason == AssignmentReason.REVISION_UPGRADE
+                else PersonaAssignmentReason.AGENT_SWITCH,
+            )
+
+    def _assign_persona(
+        self,
+        conversation: Conversation,
+        revision_id: UUID,
+        source: PersonaAssignmentSource,
+        reason: PersonaAssignmentReason,
+    ) -> None:
+        conversation.persona_override_revision_id = (
+            revision_id if source == PersonaAssignmentSource.CONVERSATION_OVERRIDE else None
+        )
+        if conversation.persona_assignments:
+            latest = conversation.persona_assignments[-1]
+            if latest.persona_revision_id == revision_id and latest.source == source:
+                return
+        conversation.persona_assignments.append(
+            PersonaAssignment(
+                revision_id,
+                source,
+                reason,
+                self._latest_message_id(conversation),
+                now(),
+            )
+        )
+
+    def _resolve_active_persona(self, identifier: UUID):
+        try:
+            profile, revision = self.personas.find_revision(identifier)
+        except Exception as exc:
+            raise PersonaUnavailable("persona revision not found") from exc
+        if profile.status != ConfigurationStatus.ACTIVE:
+            raise PersonaUnavailable("persona is disabled")
+        return revision
+
+    def _record_persona_configuration(
+        self,
+        conversation: Conversation,
+        persona_revision_id: UUID,
+        source: PersonaAssignmentSource,
+        reason: PersonaAssignmentReason,
+        outcome: str,
+        error_class: str | None = None,
+        duration_ms: float = 0.0,
+    ) -> None:
+        if self.prompt_metrics is None:
+            return
+        try:
+            bounded_error_class = {
+                "version_conflict": "conflict",
+                "active_run": "conflict",
+                "confirmation_required": "validation",
+            }.get(error_class or "", error_class)
+            attributes = {
+                "persona_revision_id": str(persona_revision_id),
+                "configuration_source": source.value,
+                "configuration_reason": reason.value,
+            }
+            try:
+                profile, revision = self.personas.find_revision(persona_revision_id)
+            except Exception:
+                profile = revision = None
+            if profile is not None and revision is not None:
+                attributes.update(
+                    {
+                        "profile_id": str(profile.id),
+                        "persona_revision_number": str(revision.revision),
+                    }
+                )
+            self.prompt_metrics.record_span(
+                "aura.interaction.agent_configuration",
+                "agent.configure",
+                max(0.0, duration_ms),
+                trace_id=conversation.id.hex,
+                span_id=new_span_id(),
+                parent_span_id=None,
+                dependency="configuration_store",
+                outcome=outcome,
+                error_class=bounded_error_class,
+                conversation_id=str(conversation.id),
+                **attributes,
+            )
+            increment = getattr(self.prompt_metrics, "increment", None)
+            if callable(increment):
+                increment(
+                    "aura.interaction.agent_configuration",
+                    "configuration_outcome",
+                    trace_id=conversation.id.hex,
+                    conversation_id=str(conversation.id),
+                    outcome=outcome,
+                )
+        except Exception:
+            return
+
+    def _record_persona_configuration_rejection(
+        self,
+        conversation: Conversation,
+        persona_revision_id: UUID | None,
+        error_class: str,
+        started: float | None,
+        *,
+        source: PersonaAssignmentSource = PersonaAssignmentSource.CONVERSATION_OVERRIDE,
+        reason: PersonaAssignmentReason = PersonaAssignmentReason.MANUAL_OVERRIDE,
+    ) -> None:
+        if started is None:
+            return
+        effective = persona_revision_id
+        if effective is None:
+            try:
+                effective = self._revision_unchecked(
+                    conversation.agent_revision_id
+                ).persona_revision_id
+            except AgentUnavailable:
+                return
+        self._record_persona_configuration(
+            conversation,
+            effective,
+            source,
+            reason,
+            "error",
+            error_class,
+            duration_ms=(perf_counter() - started) * 1000,
         )
 
     @staticmethod

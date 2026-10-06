@@ -83,10 +83,13 @@ class AppState:
         )
         self.telemetry = TelemetryLifecycle(self.metrics)
         self.persona_catalog = PersonaCatalog()
+        self.personas = self.persona_catalog
         self.agents = AgentCatalog(self.persona_catalog)
         if self.testing:
             self.oidc_states = MemoryLoginStateBackend()
-            self.store = ConversationStore(self.settings.default_model or None, self.agents)
+            self.store = ConversationStore(
+                self.settings.default_model or None, self.agents, self.personas
+            )
             self.persona_repository = PersonaMemoryRepository(self.persona_catalog)
             self.persona_service = PersonaConfigurationService(self.persona_repository)
             self.agent_repository = AgentMemoryRepository(self.agents)
@@ -116,9 +119,14 @@ class AppState:
         else:
             self.engine = make_engine(self.settings.database_url)
             self.sessions_factory = session_factory(self.engine)
-            self.sql_store = SqlConversationStore(self.sessions_factory, self.agents)
-            self.persona_store = SqlPersonaStore(self.sessions_factory)
+            self.persona_store = SqlPersonaStore(self.sessions_factory, self.persona_catalog)
             self.persona_service = PersonaConfigurationService(self.persona_store)
+            self.sql_store = SqlConversationStore(
+                self.sessions_factory,
+                self.agents,
+                persona_query=self.personas,
+                persona_admission=self.persona_service,
+            )
             self.agent_store = SqlAgentStore(
                 self.sessions_factory, self.agents, self.persona_service  # type: ignore[arg-type]
             )

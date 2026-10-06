@@ -17,6 +17,7 @@ from aura_core.domains.interaction.personas.public import (
     ConfigurationNotFound,
     ConfigurationStatus,
     ConfigurationVersionConflict,
+    PersonaCatalog,
     PersonaProfile,
     PersonaRevision,
 )
@@ -25,9 +26,13 @@ from aura_core.domains.interaction.personas.public import (
 class SqlPersonaStore:
     """SQL-authoritative persona port used by routes and other domains."""
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        catalog: PersonaCatalog | None = None,
+    ) -> None:
         self.sessions = sessions
-        self.personas: dict[UUID, PersonaProfile] = {}
+        self.catalog = catalog or PersonaCatalog()
         self.audit = SqlAuditRepository()
         self.identities = SqlIdentityRepository()
 
@@ -40,7 +45,7 @@ class SqlPersonaStore:
             revisions_by_profile.setdefault(item.persona_profile_id, []).append(
                 self._revision_dto(item)
             )
-        self.personas = {
+        profiles_by_id = {
             row.id: PersonaProfile(
                 id=row.id,
                 slug=row.slug,
@@ -54,16 +59,17 @@ class SqlPersonaStore:
             )
             for row in profiles
         }
+        self.catalog.replace(list(profiles_by_id.values()))
 
     async def list_personas(self) -> list[PersonaProfile]:
         await self.refresh()
-        return list(self.personas.values())
+        return self.catalog.list_personas()
 
     async def get_persona(self, identifier: UUID) -> PersonaProfile:
         await self.refresh()
         try:
-            return self.personas[identifier]
-        except KeyError as exc:
+            return self.catalog.get_persona(identifier)
+        except ConfigurationNotFound as exc:
             raise ConfigurationNotFound("persona not found") from exc
 
     async def require_active_revision(self, identifier: UUID) -> PersonaRevision:

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Owner-authenticated agent, persona, conversation, and run transport contract. Provider endpoints and credentials are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -582,7 +582,8 @@
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
-          "agentRevisionId": { "type": "string", "format": "uuid" }
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." }
         }
       },
       "UpdateConversationRequest": {
@@ -590,12 +591,17 @@
         "required": ["version"],
         "anyOf": [
           { "required": ["modelId"] },
-          { "required": ["agentRevisionId"] }
+          { "required": ["agentRevisionId"] },
+          { "required": ["personaRevisionId"] },
+          { "required": ["useAgentDefaultPersona"] }
         ],
+        "not": { "required": ["personaRevisionId", "useAgentDefaultPersona"] },
         "properties": {
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "agentRevisionId": { "type": "string", "format": "uuid" },
-          "transcriptSharingConfirmed": { "type": "boolean", "description": "Affirms the owner's explicit confirmation before an agent switch or revision upgrade shares the completed transcript." },
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Sets an explicit conversation persona override." },
+          "useAgentDefaultPersona": { "const": true, "description": "Clears the conversation persona override and uses the current agent revision's default persona." },
+          "transcriptSharingConfirmed": { "type": "boolean", "description": "Affirms the owner's explicit confirmation before an agent or persona configuration change shares the completed transcript." },
           "version": { "type": "integer", "minimum": 1 }
         }
       },
@@ -625,6 +631,9 @@
           "agentRevisionId": { "type": "string", "format": "uuid" },
           "agent": { "$ref": "#/components/schemas/AgentReference" },
           "agentAssignments": { "type": "array", "items": { "$ref": "#/components/schemas/AgentAssignment" } },
+          "persona": { "$ref": "#/components/schemas/PersonaReference" },
+          "personaOverride": { "type": "boolean", "description": "True when the effective persona is an explicit conversation override; false when it comes from the current agent revision." },
+          "personaAssignments": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaAssignment" } },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "version": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" },
@@ -651,6 +660,30 @@
           "id": { "type": "string", "format": "uuid" },
           "agent": { "$ref": "#/components/schemas/AgentReference" },
           "reason": { "type": "string", "enum": ["initial", "manual_switch", "revision_upgrade"] },
+          "effectiveAfterMessageId": { "type": ["string", "null"], "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PersonaReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["profileId", "revisionId", "displayName", "revision", "status", "newerRevisionAvailable"],
+        "properties": {
+          "profileId": { "type": "string", "format": "uuid" },
+          "revisionId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "revision": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "newerRevisionAvailable": { "type": "boolean" }
+        }
+      },
+      "PersonaAssignment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "persona", "source", "reason", "effectiveAfterMessageId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "persona": { "$ref": "#/components/schemas/PersonaReference" },
+          "source": { "type": "string", "enum": ["agent_default", "conversation_override"] },
+          "reason": { "type": "string", "enum": ["initial", "agent_switch", "agent_revision_upgrade", "manual_override", "reset_to_agent_default"] },
           "effectiveAfterMessageId": { "type": ["string", "null"], "format": "uuid" },
           "createdAt": { "type": "string", "format": "date-time" }
         }

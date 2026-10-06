@@ -1,14 +1,14 @@
 component:
   id: aura.runtime.prompt_compilation
-  version: 1.0.0
+  version: 1.1.0
   owner: runtime.prompting
   category: compilation
 input:
-  schema: prompt-compilation-command-v1
+  schema: prompt-compilation-command-v2
   replayable: false
   replay_reason: Compilation has no replay hook and must not re-export private prompt content.
 output:
-  schema: prompt-provenance-v1
+  schema: prompt-provenance-v2
   capture:
     content: none
     metadata: allowlisted

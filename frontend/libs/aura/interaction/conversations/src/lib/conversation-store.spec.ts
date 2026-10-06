@@ -131,6 +131,76 @@ describe('ConversationStore', () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(selectedAgentRevision).toBe('89a7ab75-124f-4f33-b0ea-85bcfb04d201');
   });
+  it('sends an explicitly selected persona revision for a draft', async () => {
+    let selectedPersonaRevision: string | undefined;
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId, _idempotencyKey, _agentRevisionId, personaRevisionId) => {
+      selectedPersonaRevision = personaRevisionId;
+      return fakeApi().createConversation(message, modelId, 'test');
+    });
+    const draftStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.requestPersona({ profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher', status: 'active', newerRevisionAvailable: false });
+    draftStore.updateDraft('Use this persona');
+    draftStore.send();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(selectedPersonaRevision).toBe('persona-revision-2');
+  });
+  it('confirms a persisted persona override with transcript sharing', async () => {
+    const now = new Date().toISOString();
+    const persona = { profileId: 'persona-profile', revisionId: 'persona-revision-1', revision: 1, displayName: 'Neutral', status: 'active' as const, newerRevisionAvailable: false };
+    const detail = { ...summary('persona-conversation'), persona, personaOverride: false, personaAssignments: [], messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    let updateArgs: unknown[] = [];
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    api.updateConversation = async (...args) => { updateArgs = args; return { ...detail, persona, personaOverride: true, updatedAt: now }; };
+    const personaStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    personaStore.requestPersona({ ...persona, revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher' });
+    await personaStore.confirmPersonaChange();
+    expect(updateArgs[5]).toBe(true);
+    expect(updateArgs[6]).toBe('persona-revision-2');
+    expect(personaStore.selected().personaOverride).toBe(true);
+  });
+  it.each(['failed', 'interrupted'] as const)('preserves %s retry recovery when applying a persona override', async (status) => {
+    const detail = { ...persistedRecoveryDetail(status), persona: { profileId: 'persona-profile', revisionId: 'persona-revision-1', revision: 1, displayName: 'Neutral', status: 'active' as const, newerRevisionAvailable: false }, personaOverride: false, personaAssignments: [] } as ConversationDetail;
+    const originalRun = detail.recentRuns[0];
+    if (!originalRun) throw new Error('Expected a retryable run.');
+    const originalPersona = detail.persona;
+    if (!originalPersona) throw new Error('Expected a persona.');
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    let retriedRunId = '';
+    api.updateConversation = async () => ({ ...detail, currentRun: null, personaOverride: true, persona: { ...originalPersona, revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher' } });
+    api.retryRun = async (runId) => { retriedRunId = runId; return { conversation: detail, userMessage: detail.messages[0] ?? { id: 'message', conversationId: detail.id, role: 'user' as const, content: 'retry', state: 'complete' as const, runId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, run: originalRun }; };
+    const recoveryStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    recoveryStore.requestPersona({ profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher', status: 'active', newerRevisionAvailable: false });
+    await recoveryStore.confirmPersonaChange();
+
+    expect(recoveryStore.selected().retryableRun?.id).toBe(originalRun.id);
+    expect(recoveryStore.selected().runs.map((run) => run.id)).toContain(originalRun.id);
+    recoveryStore.retry();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(retriedRunId).toBe(originalRun.id);
+  });
+  it.each(['failed', 'interrupted'] as const)('preserves %s retry recovery when resetting to the agent default persona', async (status) => {
+    const detail = { ...persistedRecoveryDetail(status), persona: { profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher', status: 'active' as const, newerRevisionAvailable: false }, personaOverride: true, personaAssignments: [] } as ConversationDetail;
+    const originalRun = detail.recentRuns[0];
+    if (!originalRun) throw new Error('Expected a retryable run.');
+    const originalPersona = detail.persona;
+    if (!originalPersona) throw new Error('Expected a persona.');
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    let retriedRunId = '';
+    api.updateConversation = async () => ({ ...detail, currentRun: null, personaOverride: false, persona: { ...originalPersona, revisionId: 'persona-revision-1', revision: 1, displayName: 'Neutral' } });
+    api.retryRun = async (runId) => { retriedRunId = runId; return { conversation: detail, userMessage: detail.messages[0] ?? { id: 'message', conversationId: detail.id, role: 'user' as const, content: 'retry', state: 'complete' as const, runId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, run: originalRun }; };
+    const recoveryStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    recoveryStore.requestUseAgentDefaultPersona();
+    await recoveryStore.confirmPersonaChange();
+
+    expect(recoveryStore.selected().retryableRun?.id).toBe(originalRun.id);
+    recoveryStore.retry();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(retriedRunId).toBe(originalRun.id);
+  });
   it('uses assignment boundaries and run provenance for historical metadata', async () => {
     const now = new Date().toISOString();
     const aura = { profileId: 'aura-profile', revisionId: 'aura-revision-1', revision: 1, displayName: 'Aura', status: 'active' as const, newerRevisionAvailable: false };

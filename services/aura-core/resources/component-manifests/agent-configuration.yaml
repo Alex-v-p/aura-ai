@@ -1,14 +1,14 @@
 component:
   id: aura.interaction.agent_configuration
-  version: 1.0.0
+  version: 1.1.0
   owner: interaction.agents
   category: configuration
 input:
-  schema: agent-configuration-command-v1
+  schema: agent-configuration-command-v2
   replayable: false
   replay_reason: Configuration mutations are durable side effects without a replay hook.
 output:
-  schema: agent-configuration-result-v1
+  schema: agent-configuration-result-v2
   capture:
     content: none
     metadata: allowlisted
@@ -24,7 +24,7 @@ metric_semantics:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
-  trace_only: [trace_id, span_id, parent_span_id, agent_revision_id, agent_revision_number, persona_revision_number]
+  trace_only: [trace_id, span_id, parent_span_id, agent_revision_id, agent_revision_number, profile_id, persona_revision_id, persona_revision_number, conversation_id, configuration_outcome, configuration_source, configuration_reason]
   prohibited: [prompt, response, payload, purpose, instructions, description, endpoint, token, credential]
 retention:
   process_buffer: bounded

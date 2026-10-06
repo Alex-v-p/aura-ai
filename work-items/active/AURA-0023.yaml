@@ -1,0 +1,181 @@
+id: AURA-0023
+title: Add conversation persona overrides and compact composer controls
+status: approved
+change_class: contract
+intent: >
+  Let the configured owner independently select a reusable persona for a
+  conversation while retaining each agent revision's default, preserve exact
+  persona provenance, and expose model agent and persona controls through a
+  compact accessible composer menu.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - User-approved Sidebar Conversation Navigation and Persona Override Workstream
+    - Agent revisions retain an immutable default persona while conversations may persist an explicit persona override
+    - Explicit persona overrides persist across agent switches until reset to the agent default
+    - A disabled persona cannot be newly selected but does not invalidate an existing pinned conversation agent revision run or retry
+    - Persisted configuration changes reuse only completed transcript context after explicit confirmation
+    - Each requested fix receives a separate reviewed checkpoint
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AGT-002
+  - AGT-004
+  - AGT-005
+  - AGT-015
+  - AGT-017
+  - CTX-001
+  - CTX-002
+  - CTX-003
+  - AUI-005
+  - AUI-008
+  - CMP-006
+  - GOV-013
+ownership_zones:
+  - contracts.aura.v1
+  - aura-core.interaction.agents
+  - aura-core.interaction.personas
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.prompting
+  - aura-core.governance.audit
+  - aura-core.bootstrap
+  - frontend.platform.aura-api-client
+  - frontend.aura.interaction.agents
+  - frontend.aura.interaction.personas
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0023.yaml
+  - work-items/archived/AURA-0023.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/personas/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/platform/aura-api-client/**
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - aura-openapi-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.interaction.agent_configuration
+    - aura.runtime.prompt_compilation
+    - aura.execution.run_coordinator
+    - aura.interaction.conversation_persistence
+  required_metrics:
+    - operation_duration_ms
+    - prompt_compile_duration_ms
+    - prompt_component_count
+    - compiled_prompt_size
+    - configuration_outcome
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Agent and persona instructions remain private and never enter logs telemetry audit metadata or error payloads
+    - All selection and configuration remains restricted to the configured owner
+    - Persona changes require CSRF idempotency optimistic versioning and completed-transcript confirmation
+    - A persona cannot grant permissions or alter deterministic governance
+    - Historical retries use run-pinned configuration rather than mutable conversation state
+  data_classes:
+    - private persona instructions and descriptions
+    - conversation persona assignment history
+    - prompt revision identifiers and hashes
+    - authenticated principal identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Agent revisions keep an immutable default persona and conversations may independently pin an active persona revision.
+  - An explicit conversation override persists across agent changes until the owner explicitly returns to the agent default.
+  - Persona assignment history records immutable revision source reason and effective message boundary and migration 0005 deterministically backfills existing conversations.
+  - Disabled personas cannot be newly selected while existing pinned conversations runs agent revisions and retries remain valid without fallback.
+  - New runs compile with and persist the effective persona revision while historical retries retain original run provenance.
+  - Persona changes are owner-authenticated CSRF-protected optimistic idempotent audited and rejected while a run is active.
+  - The backward-compatible contract exposes persona selection reset effective reference override state and assignment history and the generated client is synchronized.
+  - Aura Web first exposes persona selection through conversation configuration then moves all supported model agent and persona controls into a compact accessible composer menu.
+  - Configuration confirmation draft preservation disabled-agent recovery keyboard focus and responsive behavior remain correct.
+  - Telemetry and audit contain identifiers and aggregate metadata only and never prompt or instruction content.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0023.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0023.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0023.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0023.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - docker compose config --quiet
+  - AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

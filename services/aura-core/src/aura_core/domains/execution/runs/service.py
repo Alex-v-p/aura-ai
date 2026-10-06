@@ -351,12 +351,14 @@ class RunCoordinator:
                 self.context_token_budget,
                 run.agent_revision_id,
                 run.id.hex,
+                run.persona_revision_id,
+                worker_span_id,
             )
         except Exception as exc:
             raise RunExecutionFailure("persistence") from exc
         provenance_getter = getattr(self.store, "prompt_provenance", None)
         provenance = (
-            cast(dict[str, str], provenance_getter(run.agent_revision_id))
+            cast(dict[str, str], provenance_getter(run.agent_revision_id, run.persona_revision_id))
             if provenance_getter
             else {}
         )

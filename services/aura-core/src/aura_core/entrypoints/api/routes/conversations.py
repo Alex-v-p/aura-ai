@@ -3,10 +3,11 @@
 # FastAPI dependency markers are intentionally declared at the transport edge.
 # ruff: noqa: B008
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aura_core.domains.execution.runs.public import Run, message_payload, run_payload
 from aura_core.domains.interaction.agents.public import AgentCatalog
@@ -18,8 +19,10 @@ from aura_core.domains.interaction.conversations.public import (
     ConversationNotFound,
     IdempotencyConflict,
     ModelUnavailable,
+    PersonaUnavailable,
     VersionConflict,
 )
+from aura_core.domains.interaction.personas.public import PersonaRevisionQueryPort
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Session
@@ -34,14 +37,23 @@ class CreateConversationRequest(BaseModel):
     message: str = Field(min_length=1, max_length=32768)
     modelId: str | None = Field(default=None, min_length=1, max_length=255)
     agentRevisionId: UUID | None = None
+    personaRevisionId: UUID | None = None
 
 
 class UpdateConversationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     modelId: str | None = Field(default=None, min_length=1, max_length=255)
     agentRevisionId: UUID | None = None
+    personaRevisionId: UUID | None = None
+    useAgentDefaultPersona: Literal[True] | None = None
     version: int = Field(ge=1)
     transcriptSharingConfirmed: bool = False
+
+    @model_validator(mode="after")
+    def validate_persona_operation(self) -> UpdateConversationRequest:
+        if self.personaRevisionId is not None and self.useAgentDefaultPersona is True:
+            raise ValueError("personaRevisionId and useAgentDefaultPersona are mutually exclusive")
+        return self
 
 
 class CreateRunRequest(BaseModel):
@@ -55,7 +67,9 @@ def state(request: Request) -> AppState:
 
 
 def conversation_payload(
-    conversation: Conversation, agents: AgentCatalog | None = None
+    conversation: Conversation,
+    agents: AgentCatalog | None = None,
+    personas: PersonaRevisionQueryPort | None = None,
 ) -> dict[str, object]:
     current = conversation.current_run
     def agent_reference(profile_id: UUID, revision_id: UUID) -> dict[str, object] | None:
@@ -87,6 +101,41 @@ def conversation_payload(
     current_reference = agent_reference(
         conversation.agent_profile_id, conversation.agent_revision_id
     )
+    def persona_reference(identifier: UUID) -> dict[str, object] | None:
+        profiles = personas.list_personas() if personas else []
+        profile = next(
+            (
+                item
+                for item in profiles
+                if any(revision.id == identifier for revision in item.revisions)
+            ),
+            None,
+        )
+        if profile is None:
+            return None
+        revision = next(item for item in profile.revisions if item.id == identifier)
+        return {
+            "profileId": str(profile.id),
+            "revisionId": str(revision.id),
+            "displayName": revision.display_name,
+            "revision": revision.revision,
+            "status": profile.status.value,
+            "newerRevisionAvailable": any(
+                item.revision > revision.revision for item in profile.revisions
+            ),
+        }
+
+    effective_persona_id = conversation.persona_override_revision_id
+    if effective_persona_id is None:
+        try:
+            effective_persona_id = agents.resolve_revision_unchecked(
+                conversation.agent_revision_id
+            ).persona_revision_id if agents else None
+        except Exception:
+            effective_persona_id = None
+    current_persona = (
+        persona_reference(effective_persona_id) if effective_persona_id is not None else None
+    )
     payload: dict[str, object] = {
         "id": str(conversation.id),
         "title": conversation.title,
@@ -111,16 +160,35 @@ def conversation_payload(
             for reference in [agent_reference(item.agent_profile_id, item.agent_revision_id)]
             if reference is not None
         ],
+        "personaOverride": conversation.persona_override_revision_id is not None,
+        "personaAssignments": [
+            {
+                "id": str(item.id),
+                "persona": persona_reference(item.persona_revision_id),
+                "source": item.source.value,
+                "reason": item.reason.value,
+                "effectiveAfterMessageId": str(item.effective_after_message_id)
+                if item.effective_after_message_id
+                else None,
+                "createdAt": item.created_at.isoformat(),
+            }
+            for item in conversation.persona_assignments
+            if persona_reference(item.persona_revision_id) is not None
+        ],
     }
     if current_reference is not None:
         payload["agent"] = current_reference
+    if current_persona is not None:
+        payload["persona"] = current_persona
     return payload
 
 
 def detail_payload(
-    conversation: Conversation, agents: AgentCatalog | None = None
+    conversation: Conversation,
+    agents: AgentCatalog | None = None,
+    personas: PersonaRevisionQueryPort | None = None,
 ) -> dict[str, object]:
-    result = conversation_payload(conversation, agents)
+    result = conversation_payload(conversation, agents, personas)
     result["messages"] = [message_payload(message) for message in conversation.messages]
     # Retry lineage is durable history.  Do not truncate the summary and make
     # an older retry target disappear from the client-visible conversation.
@@ -147,7 +215,10 @@ async def list_conversations(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
-        "items": [conversation_payload(item, state(request).agents) for item in items],
+        "items": [
+            conversation_payload(item, state(request).agents, state(request).personas)
+            for item in items
+        ],
         "nextCursor": next_cursor,
     }
 
@@ -175,6 +246,7 @@ async def create_conversation(
             models,
             idempotency_key,
             body.agentRevisionId,
+            body.personaRevisionId,
         )
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
@@ -182,10 +254,14 @@ async def create_conversation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AgentUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PersonaUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     _record_model_persistence(request, run, persistence_timer.elapsed_ms(), routing_duration_ms)
     await state(request).coordinator.enqueue(run)
     return {
-        "conversation": conversation_payload(conversation, state(request).agents),
+        "conversation": conversation_payload(
+            conversation, state(request).agents, state(request).personas
+        ),
         "userMessage": message_payload(message),
         "run": run_payload(run),
     }
@@ -201,7 +277,7 @@ async def get_conversation(
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    return detail_payload(conversation, state(request).agents)
+    return detail_payload(conversation, state(request).agents, state(request).personas)
 
 
 @router.patch("/{conversation_id}")
@@ -214,11 +290,27 @@ async def update_conversation(
 ) -> dict[str, object]:
     routing_timer = Stopwatch()
     models = await model_descriptors(request)
-    if body.modelId is None and body.agentRevisionId is None:
-        raise HTTPException(status_code=422, detail="modelId or agentRevisionId is required")
+    if (
+        body.modelId is None
+        and body.agentRevisionId is None
+        and body.personaRevisionId is None
+        and not body.useAgentDefaultPersona
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "modelId, agentRevisionId, personaRevisionId, or "
+                "useAgentDefaultPersona is required"
+            ),
+        )
+    if body.personaRevisionId is not None and body.useAgentDefaultPersona:
+        raise HTTPException(
+            status_code=422, detail="persona override options are mutually exclusive"
+        )
     current = await state(request).store.get(
         conversation_id, session.principal.subject, session.principal.issuer
     )
+    model_changed = body.modelId is not None and body.modelId != current.model_id
     model_id = body.modelId or current.model_id
     _ = next((model for model in models if model.id == model_id), None)
     routing_duration_ms = routing_timer.elapsed_ms()
@@ -234,6 +326,8 @@ async def update_conversation(
             session.principal.issuer,
             body.agentRevisionId,
             body.transcriptSharingConfirmed,
+            body.personaRevisionId,
+            body.useAgentDefaultPersona,
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
@@ -243,14 +337,15 @@ async def update_conversation(
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
     except ModelUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (AgentUnavailable, AgentSwitchConfirmationRequired) as exc:
+    except (AgentUnavailable, AgentSwitchConfirmationRequired, PersonaUnavailable) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    _record_conversation_model_persistence(
-        request,
-        conversation,
-        persistence_timer.elapsed_ms(),
-        routing_duration_ms,
-    )
+    if model_changed:
+        _record_conversation_model_persistence(
+            request,
+            conversation,
+            persistence_timer.elapsed_ms(),
+            routing_duration_ms,
+        )
     if body.agentRevisionId is not None and conversation.assignments:
         assignment = conversation.assignments[-1]
         await state(request).store.record_auth_audit(
@@ -276,7 +371,7 @@ async def update_conversation(
                 ),
             },
         )
-    return conversation_payload(conversation, state(request).agents)
+    return conversation_payload(conversation, state(request).agents, state(request).personas)
 
 
 @router.post("/{conversation_id}/runs", status_code=status.HTTP_202_ACCEPTED)
@@ -304,7 +399,9 @@ async def create_run(
     _record_model_persistence(request, run, persistence_timer.elapsed_ms())
     await state(request).coordinator.enqueue(run)
     return {
-        "conversation": conversation_payload(conversation, state(request).agents),
+        "conversation": conversation_payload(
+            conversation, state(request).agents, state(request).personas
+        ),
         "userMessage": message_payload(message),
         "run": run_payload(run),
     }

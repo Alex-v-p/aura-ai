@@ -39,6 +39,8 @@ class RunRepository(Protocol):
         budget: int,
         agent_revision_id: UUID | None = None,
         trace_id: str | None = None,
+        persona_revision_id: UUID | None = None,
+        parent_span_id: str | None = None,
     ) -> list[tuple[str, str]]: ...
     async def find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]: ...
     async def append_assistant(

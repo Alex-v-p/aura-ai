@@ -8,6 +8,9 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
     MessageState,
+    PersonaAssignment,
+    PersonaAssignmentReason,
+    PersonaAssignmentSource,
     SeededAgent,
     now,
 )
@@ -24,6 +27,7 @@ from aura_core.domains.interaction.conversations.store import (
     ConversationStore,
     IdempotencyConflict,
     ModelUnavailable,
+    PersonaUnavailable,
     VersionConflict,
 )
 
@@ -31,9 +35,13 @@ __all__ = [
     "GENERAL_AGENT",
     "AgentAssignment",
     "AssignmentReason",
+    "PersonaAssignment",
+    "PersonaAssignmentReason",
+    "PersonaAssignmentSource",
     "ActiveRunConflict",
     "AgentSwitchConfirmationRequired",
     "AgentUnavailable",
+    "PersonaUnavailable",
     "Conversation",
     "ConversationNotFound",
     "ConversationRecord",

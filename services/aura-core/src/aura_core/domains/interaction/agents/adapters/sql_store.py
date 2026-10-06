@@ -331,15 +331,18 @@ class SqlAgentStore:
 
         return self.catalog.resolve_revision(identifier)
 
-    def compilation(self, revision_id: UUID) -> PromptCompilation:
+    def compilation(
+        self, revision_id: UUID, persona_revision_id: UUID | None = None
+    ) -> PromptCompilation:
         """Compile a pinned revision using the refreshed prompt read model."""
 
-        return self.catalog.compilation(revision_id)
+        return self.catalog.compilation(revision_id, persona_revision_id)
 
     def compile_prompt(
         self,
         revision_id: UUID,
         *,
+        persona_revision_id: UUID | None = None,
         metrics: PromptMetricsPort | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -348,6 +351,7 @@ class SqlAgentStore:
     ) -> PromptCompilation:
         return self.catalog.compile_prompt(
             revision_id,
+            persona_revision_id=persona_revision_id,
             metrics=metrics,
             trace_id=trace_id,
             parent_span_id=parent_span_id,
