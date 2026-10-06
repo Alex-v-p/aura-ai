@@ -386,6 +386,136 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   expect(geometry.conversationLinkWidth).toBeGreaterThan(40);
 });
 
+test('keeps compact destination controls fixed at breakpoint boundaries during live resize', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Breakpoint geometry runs once in the desktop project.');
+
+  const navigation = page.locator('#primary-navigation');
+  const productNav = navigation.locator('.product-nav');
+  const destinationLinks = productNav.getByRole('link');
+
+  async function waitForViewport(width: number): Promise<void> {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+  }
+
+  async function measureGeometry(): Promise<{
+    newConversation: { top: number; bottom: number; width: number; height: number };
+    productNav: { top: number; bottom: number; width: number; height: number };
+    links: Array<{ top: number; bottom: number; left: number; right: number; width: number; height: number }>;
+  }> {
+    return page.evaluate(() => {
+      const rect = (element: Element | null): { top: number; bottom: number; left: number; right: number; width: number; height: number } => {
+        const bounds = element?.getBoundingClientRect();
+        return {
+          top: bounds?.top ?? 0,
+          bottom: bounds?.bottom ?? 0,
+          left: bounds?.left ?? 0,
+          right: bounds?.right ?? 0,
+          width: bounds?.width ?? 0,
+          height: bounds?.height ?? 0,
+        };
+      };
+      return {
+        newConversation: rect(document.querySelector('button.new-conversation')),
+        productNav: rect(document.querySelector('.product-nav')),
+        links: Array.from(document.querySelectorAll<HTMLElement>('.product-nav a')).map((link) => rect(link)),
+      };
+    });
+  }
+
+  async function expectDestinationGroup(options: { compact: boolean; mobile: boolean }): Promise<void> {
+    await expect(destinationLinks).toHaveCount(3);
+    const geometry = await measureGeometry();
+    expect(geometry.productNav.top).toBeGreaterThanOrEqual(geometry.newConversation.bottom - 1);
+    expect(geometry.productNav.top - geometry.newConversation.bottom).toBeLessThanOrEqual(16);
+    expect(geometry.links.every((link) => link.width > 0 && link.height > 0)).toBe(true);
+    expect(geometry.links.every((link, index) => geometry.links.slice(index + 1).every((other) => (
+      link.right <= other.left + 1 || other.right <= link.left + 1 || link.bottom <= other.top + 1 || other.bottom <= link.top + 1
+    )))).toBe(true);
+
+    if (options.compact) {
+      for (const link of geometry.links) {
+        expect(link.width).toBeCloseTo(44, 0);
+        expect(link.height).toBeCloseTo(44, 0);
+      }
+      expect(Math.max(...geometry.links.map((link) => link.left)) - Math.min(...geometry.links.map((link) => link.left))).toBeLessThanOrEqual(1);
+      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeGreaterThan(80);
+    } else if (options.mobile) {
+      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeLessThanOrEqual(1);
+      expect(Math.max(...geometry.links.map((link) => link.width)) - Math.min(...geometry.links.map((link) => link.width))).toBeLessThanOrEqual(1);
+    } else {
+      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeLessThanOrEqual(1);
+    }
+  }
+
+  await page.goto('/');
+
+  await waitForViewport(720);
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(navigation).toBeVisible();
+  await expectDestinationGroup({ compact: false, mobile: true });
+
+  await waitForViewport(721);
+  await expect(navigation).toBeVisible();
+  await expectDestinationGroup({ compact: true, mobile: false });
+
+  await waitForViewport(1279);
+  await expectDestinationGroup({ compact: true, mobile: false });
+
+  await waitForViewport(1280);
+  await expectDestinationGroup({ compact: false, mobile: false });
+
+  await waitForViewport(1440);
+  await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(navigation).toHaveClass(/is-collapsed/);
+  await expect.poll(() => productNav.isVisible()).toBe(true);
+  await expectDestinationGroup({ compact: true, mobile: false });
+});
+
+test('keeps recent conversations as the only sidebar scroll owner while resizing', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Dynamic sidebar scroll ownership runs once in the desktop project.');
+
+  const navigation = page.locator('#primary-navigation');
+  await page.goto('/?fixture=long-sidebar');
+
+  for (const width of [1280, 1279, 721]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+    await expect(navigation.locator('.conversation-nav')).toBeVisible();
+    await expect(navigation.locator('aura-theme-select')).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
+      const recent = document.querySelector<HTMLElement>('.conversation-nav');
+      const theme = document.querySelector<HTMLElement>('.sidebar-bottom');
+      const scrollOwners = sidebar
+        ? [sidebar, ...Array.from(sidebar.querySelectorAll<HTMLElement>('*'))]
+          .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
+          .map((element) => element.className || element.tagName.toLowerCase())
+        : [];
+      const sidebarBounds = sidebar?.getBoundingClientRect();
+      const recentBounds = recent?.getBoundingClientRect();
+      const themeBounds = theme?.getBoundingClientRect();
+      return {
+        scrollOwners,
+        recentOverflow: recent ? getComputedStyle(recent).overflowY : 'visible',
+        recentScrollable: (recent?.scrollHeight ?? 0) > (recent?.clientHeight ?? 0),
+        sidebarHeight: sidebarBounds?.height ?? 0,
+        viewportHeight: window.innerHeight,
+        themeBottom: themeBounds?.bottom ?? 0,
+        recentBottom: recentBounds?.bottom ?? 0,
+      };
+    });
+
+    expect(metrics.scrollOwners).toEqual(['conversation-nav']);
+    expect(['auto', 'scroll']).toContain(metrics.recentOverflow);
+    expect(metrics.recentScrollable).toBe(true);
+    expect(metrics.sidebarHeight).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+    expect(metrics.themeBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+    expect(metrics.themeBottom).toBeGreaterThanOrEqual(metrics.recentBottom - 1);
+  }
+});
+
 test('keeps primary destinations structurally separate from recent conversations', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Collapsed destination accessibility runs once in the desktop project.');
   await page.setViewportSize({ width: 1440, height: 900 });
