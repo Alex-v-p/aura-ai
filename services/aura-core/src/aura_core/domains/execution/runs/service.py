@@ -2,6 +2,7 @@
 
 import asyncio
 import secrets
+from collections.abc import Awaitable, Callable
 from time import perf_counter
 from typing import cast
 from uuid import UUID, uuid4
@@ -14,6 +15,8 @@ from aura_core.domains.execution.runs.dto import (
 )
 from aura_core.domains.execution.runs.events import RunEvent, new_event
 from aura_core.domains.execution.runs.ports import (
+    TITLE_RESPONSE_MAX_BYTES,
+    TITLE_RESPONSE_MAX_CHARS,
     ChatCompletionPort,
     ChatMessage,
     MetricsPort,
@@ -21,11 +24,17 @@ from aura_core.domains.execution.runs.ports import (
     RunCommandPort,
     RunEventPort,
     RunRepository,
+    TitleInferencePort,
 )
 from aura_core.domains.interaction.conversations.public import (
     Conversation,
     Message,
     MessageState,
+    PendingTitle,
+    TitleState,
+    normalize_generated_title,
+    pending_title_for,
+    title_request_messages,
 )
 
 
@@ -35,6 +44,14 @@ class RunExecutionFailure(RuntimeError):
     def __init__(self, error_class: str) -> None:
         super().__init__(error_class)
         self.error_class = error_class
+
+
+class TitleSettlementRetry(RuntimeError):
+    """Retry the delivery after a completed run's title write failed.
+
+    This control signal is deliberately distinct from ``RunExecutionFailure``:
+    the assistant response and run are already complete and must remain so.
+    """
 
 
 class RunCoordinator:
@@ -49,6 +66,7 @@ class RunCoordinator:
         timeout_seconds: float = 300.0,
         cancellation_poll_seconds: float = 0.1,
         context_token_budget: int = 8192,
+        title_timeout_seconds: float = 10.0,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -59,6 +77,7 @@ class RunCoordinator:
         self.timeout_seconds = timeout_seconds
         self.cancellation_poll_seconds = cancellation_poll_seconds
         self.context_token_budget = context_token_budget
+        self.title_timeout_seconds = title_timeout_seconds
         configure_prompt_metrics = getattr(self.store, "set_prompt_metrics", None)
         if callable(configure_prompt_metrics):
             configure_prompt_metrics(self.metrics)
@@ -143,6 +162,12 @@ class RunCoordinator:
                     status=run.status.value,
                     **self._metadata(run),
                 )
+            elif run.status == RunStatus.COMPLETED:
+                # A redelivery can occur after the completed assistant
+                # snapshot but before title settlement or terminal status.
+                # Settlement is conditional and therefore safe to repeat.
+                await self._settle_title(conversation, run, provider, worker_span_id)
+                await self._status(conversation.id, run)
             return
         attempt_id = run.attempt_id
         if attempt_id is None:
@@ -238,8 +263,13 @@ class RunCoordinator:
                         {"message": message_payload(assistant)},
                     )
                 )
+                await self._settle_title(conversation, run, provider, worker_span_id)
             await self._status(conversation.id, run)
             self._terminal(run, started)
+        except TitleSettlementRetry:
+            # The run is already complete; leave it untouched so the queue can
+            # redeliver and retry the conditional title settlement.
+            raise
         except RunClaimLost:
             # A lease reaper has interrupted this attempt.  The stale worker
             # must not append, finish, or automatically restart the run.
@@ -504,6 +534,209 @@ class RunCoordinator:
                 )
         return True
 
+    async def _settle_title(
+        self,
+        conversation: Conversation,
+        run: Run,
+        provider: ChatCompletionPort,
+        parent_span_id: str,
+    ) -> None:
+        """Infer and conditionally persist a title without affecting the run."""
+
+        candidate = pending_title_for(conversation, run)
+        if candidate is None:
+            pending_lookup = cast(
+                Callable[[UUID], Awaitable[PendingTitle | None]] | None,
+                getattr(self.store, "pending_title", None),
+            )
+            if callable(pending_lookup):
+                try:
+                    candidate = await pending_lookup(run.id)
+                except Exception:
+                    self.metrics.increment(
+                        "aura.interaction.conversation_persistence",
+                        "errors",
+                        trace_id=run.id.hex,
+                        run_id=str(run.id),
+                        conversation_id=str(run.conversation_id),
+                        error_class="persistence",
+                    )
+                    # A lookup failure is not evidence that the first
+                    # completed assistant response exists.  Preserve the
+                    # pending state and redeliver instead of relaxing the
+                    # eligibility guard with an empty assistant snapshot.
+                    raise TitleSettlementRetry from None
+        if candidate is None:
+            return
+        title_infer = cast(TitleInferencePort | None, provider)
+        infer_title = getattr(title_infer, "infer_title", None)
+        title = None
+        outcome = "error"
+        error_class: str | None = "provider"
+        input_size = len(candidate.user_content) + len(candidate.assistant_content)
+        output_size = 0
+        inference_started = perf_counter()
+        if callable(infer_title):
+            try:
+                messages = [
+                    ChatMessage(role, content)
+                    for role, content in title_request_messages(candidate)
+                ]
+                raw = await asyncio.wait_for(
+                    self._collect_title(
+                        cast(Callable[[str, list[ChatMessage]], Awaitable[str]], infer_title),
+                        candidate.model_id,
+                        messages,
+                    ),
+                    timeout=self.title_timeout_seconds,
+                )
+                output_size = len(raw)
+                title = normalize_generated_title(raw)
+                if title is not None:
+                    outcome = "ok"
+                    error_class = None
+                else:
+                    error_class = "validation"
+            except TimeoutError:
+                error_class = "timeout"
+            except Exception:
+                # Title inference is presentation metadata.  Provider failures,
+                # malformed output, and unavailable capacity never fail a run.
+                error_class = "provider"
+        duration = (perf_counter() - inference_started) * 1000
+        self.metrics.observe(
+            "aura.runtime.model_inference",
+            "title_inference_duration_ms",
+            duration,
+            trace_id=run.id.hex,
+            run_id=str(run.id),
+            conversation_id=str(run.conversation_id),
+            model_id=candidate.model_id,
+        )
+        self.metrics.record_span(
+                "aura.runtime.model_inference",
+                "model.infer",
+                duration,
+                trace_id=run.id.hex,
+                span_id=secrets.token_hex(8),
+                parent_span_id=parent_span_id,
+                dependency="model_provider",
+                outcome=outcome,
+                error_class=error_class,
+                provider=run.provider,
+                run_id=str(run.id),
+                conversation_id=str(run.conversation_id),
+                model_id=candidate.model_id,
+                title_input_size=str(input_size),
+                title_output_size=str(output_size),
+        )
+        self.metrics.observe(
+            "aura.runtime.model_inference",
+            "title_input_size",
+            input_size,
+            trace_id=run.id.hex,
+            run_id=str(run.id),
+            conversation_id=str(run.conversation_id),
+            model_id=candidate.model_id,
+        )
+        self.metrics.observe(
+            "aura.runtime.model_inference",
+            "title_output_size",
+            output_size,
+            trace_id=run.id.hex,
+            run_id=str(run.id),
+            conversation_id=str(run.conversation_id),
+            model_id=candidate.model_id,
+        )
+        if title is None:
+            title = make_title_fallback(candidate.user_content)
+            state = TitleState.FALLBACK
+        else:
+            state = TitleState.GENERATED
+        persistence_started = perf_counter()
+        settled = False
+        settlement_failed = False
+        try:
+            settle = cast(
+                Callable[[UUID, str, TitleState], Awaitable[bool]] | None,
+                getattr(self.store, "settle_title", None),
+            )
+            if not callable(settle):
+                settlement_failed = True
+            else:
+                settled = bool(await settle(run.id, title, state))
+        except Exception:
+            settlement_failed = True
+            self.metrics.increment(
+                "aura.interaction.conversation_persistence",
+                "errors",
+                trace_id=run.id.hex,
+                run_id=str(run.id),
+                conversation_id=str(run.conversation_id),
+                error_class="persistence",
+            )
+        finally:
+            persistence_duration = (perf_counter() - persistence_started) * 1000
+            self.metrics.observe(
+                "aura.interaction.conversation_persistence",
+                "title_persistence_duration_ms",
+                persistence_duration,
+                trace_id=run.id.hex,
+                run_id=str(run.id),
+                conversation_id=str(run.conversation_id),
+                model_id=candidate.model_id,
+            )
+            self.metrics.record_span(
+                "aura.interaction.conversation_persistence",
+                "conversation.persist",
+                persistence_duration,
+                trace_id=run.id.hex,
+                span_id=secrets.token_hex(8),
+                parent_span_id=parent_span_id,
+                dependency="postgresql",
+                outcome="error" if settlement_failed else "ok" if settled else "skipped",
+                error_class="persistence" if settlement_failed else None,
+                run_id=str(run.id),
+                conversation_id=str(run.conversation_id),
+                model_id=candidate.model_id,
+                title_input_size=str(input_size),
+                title_output_size=str(output_size),
+            )
+        final_outcome = (
+            "error"
+            if settlement_failed
+            else "skipped"
+            if not settled
+            else "generated"
+            if state is TitleState.GENERATED
+            else "fallback"
+        )
+        self.metrics.increment(
+            "aura.runtime.model_inference",
+            "title_generation_outcome",
+            trace_id=run.id.hex,
+            run_id=str(run.id),
+            conversation_id=str(run.conversation_id),
+            model_id=candidate.model_id,
+            outcome=final_outcome,
+        )
+        if settlement_failed:
+            raise TitleSettlementRetry from None
+
+    @staticmethod
+    async def _collect_title(
+        infer_title: Callable[[str, list[ChatMessage]], Awaitable[str]],
+        model_id: str,
+        messages: list[ChatMessage],
+    ) -> str:
+        value = await infer_title(model_id, messages)
+        if (
+            len(value) > TITLE_RESPONSE_MAX_CHARS
+            or len(value.encode("utf-8")) > TITLE_RESPONSE_MAX_BYTES
+        ):
+            raise RuntimeError("title response exceeded configured limit")
+        return value
+
     async def _wait_until_attempt_stops(self, run_id: UUID, attempt_id: UUID) -> bool:
         while True:
             await asyncio.sleep(self.cancellation_poll_seconds)
@@ -670,3 +903,10 @@ def _provenance_matches(run: Run, provenance: dict[str, str]) -> bool:
         == str(run.prompt_bundle_revision_id)
         and provenance.get("prompt_hash") == run.prompt_hash
     )
+
+
+def make_title_fallback(message: str) -> str:
+    """Keep the existing deterministic first-message title behavior."""
+
+    normalized = " ".join(message.split())
+    return normalized[:252] + "..." if len(normalized) > 255 else normalized

@@ -39,12 +39,15 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
     MessageState,
+    PendingTitle,
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
     SeededAgent,
+    TitleState,
     now,
 )
+from aura_core.domains.interaction.conversations.titles import pending_title_for
 from aura_core.domains.interaction.personas.public import (
     ConfigurationStatus,
     PersonaCatalog,
@@ -228,6 +231,7 @@ class ConversationStore:
             agent_revision_id=revision.id,
             model_id=model_id,
             persona_override_revision_id=persona_revision_id,
+            title_state=TitleState.PENDING,
         )
         user_message = Message(conversation.id, MessageRole.USER, message)
         run = Run(
@@ -263,6 +267,26 @@ class ConversationStore:
         self._idempotency[key] = result
         self._idempotency_fingerprints[key] = fingerprint
         return result
+
+    async def pending_title(self, run_id: UUID) -> PendingTitle | None:
+        """Look up the first completed exchange awaiting title settlement."""
+
+        conversation, run = await self._find_run_any(run_id)
+        return pending_title_for(conversation, run)
+
+    async def settle_title(self, run_id: UUID, title: str, state: TitleState) -> bool:
+        """Atomically settle a pending derived title without a version bump."""
+
+        conversation, run = await self._find_run_any(run_id)
+        async with await self._lock_for(conversation.id):
+            # Re-check under the conversation lock so redelivery cannot
+            # overwrite a generated or fallback title.
+            if pending_title_for(conversation, run) is None:
+                return False
+            conversation.title = title
+            conversation.title_state = state
+            conversation.updated_at = now()
+            return True
 
     async def update_model(
         self,

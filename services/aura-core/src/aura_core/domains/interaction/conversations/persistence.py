@@ -15,6 +15,9 @@ class ConversationRow(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     principal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    title_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="legacy"
+    )
     agent_profile_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     agent_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     persona_override_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

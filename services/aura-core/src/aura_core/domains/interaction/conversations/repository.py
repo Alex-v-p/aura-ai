@@ -17,6 +17,7 @@ from aura_core.domains.interaction.conversations.dto import (
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
+    TitleState,
     now,
 )
 from aura_core.domains.interaction.conversations.persistence import (
@@ -40,6 +41,7 @@ class ConversationRecord:
     version: int
     created_at: datetime
     updated_at: datetime
+    title_state: TitleState = TitleState.LEGACY
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,7 @@ class SqlConversationRepository:
             row.version,
             row.created_at or now(),
             row.updated_at or now(),
+            TitleState(row.title_state or TitleState.LEGACY),
         )
 
     @staticmethod
@@ -214,6 +217,7 @@ class SqlConversationRepository:
                 version=record.version,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
+                title_state=record.title_state.value,
             )
         )
 
@@ -270,11 +274,38 @@ class SqlConversationRepository:
         if row is None:
             return
         row.model_id = record.model_id
+        row.title = record.title
+        row.title_state = record.title_state.value
         row.agent_profile_id = record.agent_profile_id
         row.agent_revision_id = record.agent_revision_id
         row.persona_override_revision_id = record.persona_override_revision_id
         row.version = record.version
         row.updated_at = record.updated_at
+
+    async def pending_title(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> ConversationRecord | None:
+        row = await session.get(ConversationRow, conversation_id)
+        if row is None or row.title_state != TitleState.PENDING.value:
+            return None
+        return self._record(row)
+
+    async def settle_title(
+        self,
+        session: AsyncSession,
+        conversation_id: UUID,
+        title: str,
+        state: TitleState,
+    ) -> bool:
+        """Conditionally settle a derived title without changing config version."""
+
+        row = await session.get(ConversationRow, conversation_id, with_for_update=True)
+        if row is None or row.title_state != TitleState.PENDING.value:
+            return False
+        row.title = title
+        row.title_state = state.value
+        row.updated_at = now()
+        return True
 
     async def append_message(
         self,

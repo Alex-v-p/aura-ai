@@ -48,14 +48,17 @@ from aura_core.domains.interaction.conversations.public import (
     MessageRole,
     MessageState,
     ModelUnavailable,
+    PendingTitle,
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
     PersonaUnavailable,
     SqlConversationRepository,
+    TitleState,
     VersionConflict,
     build_context,
     now,
+    pending_title_for,
 )
 from aura_core.domains.interaction.personas.public import (
     ConfigurationDisabled as PersonaConfigurationDisabled,
@@ -222,6 +225,7 @@ class SqlConversationStore:
             persona_override_revision_id=row.persona_override_revision_id,
             model_id=row.model_id,
             version=row.version,
+            title_state=row.title_state,
             id=row.id,
             created_at=row.created_at or now(),
             updated_at=row.updated_at or now(),
@@ -329,6 +333,7 @@ class SqlConversationStore:
                 persona_override_revision_id=persona_revision_id,
                 model_id=model_id,
                 version=1,
+                title_state=TitleState.PENDING,
                 created_at=created,
                 updated_at=created,
             )
@@ -415,6 +420,34 @@ class SqlConversationStore:
             await session.flush()
             loaded = await self._load(session, conversation_row)
             return loaded, loaded.messages[0], loaded.runs[0]
+
+    async def pending_title(self, run_id: UUID) -> PendingTitle | None:
+        """Look up the first completed exchange awaiting title settlement."""
+
+        async with self.sessions() as session:
+            run = await self.runs.get(session, run_id)
+            if run is None:
+                raise ConversationNotFound
+            row = await self.conversations.get(session, run.conversation_id)
+            if row is None:
+                raise ConversationNotFound
+            conversation = await self._load(session, row)
+            return pending_title_for(conversation, run)
+
+    async def settle_title(self, run_id: UUID, title: str, state: TitleState) -> bool:
+        """Conditionally settle a title without incrementing config version."""
+
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None:
+                raise ConversationNotFound
+            row = await self.conversations.get(session, run.conversation_id, lock=True)
+            if row is None:
+                raise ConversationNotFound
+            conversation = await self._load(session, row)
+            if pending_title_for(conversation, run) is None:
+                return False
+            return await self.conversations.settle_title(session, row.id, title, state)
 
     async def get(
         self, conversation_id: UUID, subject: str, issuer: str | None = None

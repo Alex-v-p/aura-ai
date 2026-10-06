@@ -273,9 +273,9 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
 
 test.beforeEach(async ({ page }) => { await installApiFake(page); });
 
-test('opens with a welcome-first conversation surface', async ({ page }) => {
+test('opens with a new-conversation title surface', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
 });
 

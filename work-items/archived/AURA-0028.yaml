@@ -1,0 +1,184 @@
+id: AURA-0028
+title: Generate topic-based conversation titles
+status: approved
+change_class: feature
+intent: >
+  Give newly created conversations a concise model-generated topic title after
+  their first completed assistant response while preserving exact model policy,
+  failure isolation, private-content boundaries, and stable legacy titles.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/system-context.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Responsive Navigation and AI Conversation Titles plan
+    - Title inference reuses the completed run's exact pinned model through the existing provider-neutral model port
+    - Title inference uses a neutral title-only request and never uses the selected agent or persona prompt
+    - The first completed user and assistant exchange is the only inference input and each message is capped at 2000 characters
+    - Title generation is bounded to 10 seconds with no model fallback and failure never changes the completed run to failed
+    - Existing conversations are legacy and never automatically retitled while new conversations settle exactly once from pending to generated or fallback
+    - Derived title settlement does not increment the optimistic conversation configuration version
+    - "This feature is delivered as its own reviewed commit named feat(conversations): generate topic titles for new chats"
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - GEN-001
+  - GEN-004
+  - GEN-008
+  - RUN-001
+  - RUN-002
+  - RUN-008
+  - RUN-021
+  - MOD-001
+  - MOD-015
+  - MOD-023
+  - AUI-002
+  - AUI-003
+ownership_zones:
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.models
+  - aura-core.providers.models.ollama
+  - aura-core.platform.telemetry
+  - aura-core.bootstrap
+  - aura-core.entrypoints.worker
+  - aura-core.migrations
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.shell
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0028.yaml
+  - work-items/archived/AURA-0028.yaml
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/aura/interaction/conversations/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.model_inference
+    - aura.interaction.conversation_persistence
+  required_metrics:
+    - title_inference_duration_ms
+    - title_persistence_duration_ms
+    - title_generation_outcome
+    - title_input_size
+    - title_output_size
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - The first completed user and assistant exchange is private conversation content and may only reach the already selected authorized model provider
+    - Transcript text generated title text prompts and provider payloads must never enter logs telemetry audit metadata or error payloads
+    - Title inference must not reuse agent or persona instructions or widen the run's model policy
+    - Provider failure timeout malformed output or unavailable capacity must preserve the completed response and use the deterministic first-message fallback
+    - Redelivery must conditionally settle a pending title at most once without rewriting generated or fallback titles
+  data_classes:
+    - private conversation transcript excerpts
+    - model-generated conversation titles
+    - model run and conversation identifiers
+    - title generation state
+required_agents:
+  implementation:
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Alembic revision 0006_title_generation covers upgrades from 0005 and fresh installations, adds an internal title state, and deterministically marks existing conversations legacy while fresh conversations begin pending.
+  - Drafts display New conversation and a submitted conversation exposes its existing first-message fallback until title generation settles.
+  - Only the first completed assistant response triggers title generation and failed canceled interrupted or partial responses do not settle the title.
+  - The completed assistant message and run are persisted and published before a neutral title-only request uses that run's exact pinned model.
+  - Inference input contains only the first completed user and assistant exchange capped at 2000 characters per message and is bounded to 10 seconds.
+  - Generated titles are plain text containing 3 to 8 words and at most 72 characters after whitespace quote Markdown and leading Title normalization with word-boundary trimming.
+  - Empty control-only malformed timed-out unavailable or failed generation settles to the existing first-message fallback without changing the completed run to failed or routing to another model.
+  - Generated or fallback settlement is conditional and idempotent under worker redelivery and does not increment the conversation configuration version.
+  - The in-memory and PostgreSQL conversation stores expose equivalent internal pending-title lookup and conditional-settlement behavior through registered application and runtime boundaries without importing provider adapters into the conversation domain.
+  - The conversation heading and recent-conversation sidebar refresh to the persisted title after terminal run status without losing a draft or requiring a new public endpoint.
+  - Existing legacy conversations retain their prior titles and fresh and upgrade migrations preserve message run and conversation identifiers.
+  - Telemetry records only inference and persistence duration outcome model and source identifiers and input output sizes and never transcript prompt response or title content.
+  - ConversationSummary title remains backward-compatible and no OpenAPI or generated-client shape changes are introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0028.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0028.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0028.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0028.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - docker compose config --quiet
+  - docker compose build aura-core-migrate aura-core-worker aura-core-api aura-web
+  - AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

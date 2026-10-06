@@ -10,11 +10,16 @@ from uuid import UUID
 from aura_core.domains.execution.runs.dto import Run, RunClaim, RunError, RunStatus
 from aura_core.domains.execution.runs.events import RunEvent
 
+TITLE_RESPONSE_MAX_CHARS = 4096
+TITLE_RESPONSE_MAX_BYTES = 16_384
+
 if TYPE_CHECKING:
     from aura_core.domains.interaction.conversations.public import (
         Conversation,
         Message,
         MessageState,
+        PendingTitle,
+        TitleState,
     )
 
 
@@ -25,6 +30,9 @@ class ChatMessage:
 
 
 class RunRepository(Protocol):
+    async def pending_title(self, run_id: UUID) -> PendingTitle | None: ...
+    async def settle_title(self, run_id: UUID, title: str, state: TitleState) -> bool: ...
+
     async def request_cancel(
         self, run_id: UUID, subject: str, idempotency_key: str, issuer: str | None = None
     ) -> Run: ...
@@ -63,6 +71,12 @@ class RunRepository(Protocol):
 
 class ChatCompletionPort(Protocol):
     def stream_chat(self, model_id: str, messages: Sequence[ChatMessage]) -> AsyncIterator[str]: ...
+
+
+class TitleInferencePort(Protocol):
+    """Optional provider-neutral capability for bounded title requests."""
+
+    async def infer_title(self, model_id: str, messages: Sequence[ChatMessage]) -> str: ...
 
 
 class RunEventPort(Protocol):

@@ -357,7 +357,15 @@ export class ConversationStore {
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
       this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
-      if (draft) this.replaceConversation({ ...persisted, turns: draft.turns }); this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
+      if (draft) {
+        const fallbackTitle = draft.turns.find((turn) => turn.role === 'user')?.text;
+        this.replaceConversation({
+          ...persisted,
+          turns: draft.turns,
+          title: persisted.title === 'New conversation' && fallbackTitle ? this.makeTitle(fallbackTitle) : persisted.title,
+        });
+      }
+      this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
     } catch (error: unknown) { this.rejectSubmission(draftId, error); }
   }
 
@@ -366,7 +374,12 @@ export class ConversationStore {
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
     const turns = existing.turns.map((turn) => !pendingTurnId || turn.id === pendingTurnId ? (turn.id.startsWith('pending-user-') ? this.fromMessage(accepted.userMessage) : turn) : turn);
-    this.replaceConversation({ ...this.fromSummary(accepted.conversation), turns, runs: [...this.find(id)?.runs ?? [], accepted.run] }); this.setRunState(id, this.statusToState(accepted.run.status)); this.subscribe(accepted.run);
+    const acceptedConversation = this.fromSummary(accepted.conversation);
+    // Core may still report the pending placeholder while title settlement is
+    // running. Preserve the local first-message fallback until a terminal
+    // refresh supplies the generated or deterministic fallback title.
+    const title = acceptedConversation.title === 'New conversation' ? existing.title : acceptedConversation.title;
+    this.replaceConversation({ ...acceptedConversation, title, turns, runs: [...existing.runs, accepted.run] }); this.setRunState(id, this.statusToState(accepted.run.status)); this.subscribe(accepted.run);
   }
 
   private subscribe(run: Run, attempt = 0): void {
@@ -522,5 +535,5 @@ export class ConversationStore {
   private isTerminal(status: Run['status']): boolean { return status === 'completed' || this.isRetryable(status); }
   private key(): string { return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `aura-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
   private toApiError(error: unknown): ConversationApiError { return error && typeof error === 'object' && 'message' in error ? error as ConversationApiError : { message: 'We could not connect to Aura. Your draft is still here.', retryable: true }; }
-  private makeTitle(text: string): string { return text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text; }
+  private makeTitle(text: string): string { return text.length > 32 ? `${text.slice(0, 32).trimEnd()}…` : text; }
 }

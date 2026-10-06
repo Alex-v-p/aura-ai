@@ -6,7 +6,14 @@ from typing import Any, cast
 
 import httpx
 
-from aura_core.runtime.models.ports import ChatMessage, ModelDescriptor
+from aura_core.domains.execution.runs.ports import (
+    TITLE_RESPONSE_MAX_BYTES,
+    TITLE_RESPONSE_MAX_CHARS,
+)
+from aura_core.runtime.models.ports import (
+    ChatMessage,
+    ModelDescriptor,
+)
 
 
 class OllamaUnavailable(RuntimeError):
@@ -106,3 +113,20 @@ class OllamaAdapter:
         return model_id is None or any(
             model.id == model_id and model.selectable for model in models
         )
+
+    async def infer_title(self, model_id: str, messages: Sequence[ChatMessage]) -> str:
+        """Run the bounded, neutral title request through the same model port."""
+
+        chunks: list[str] = []
+        characters = 0
+        encoded_bytes = 0
+        async for chunk in self.stream_chat(model_id, messages):
+            characters += len(chunk)
+            encoded_bytes += len(chunk.encode("utf-8"))
+            if (
+                characters > TITLE_RESPONSE_MAX_CHARS
+                or encoded_bytes > TITLE_RESPONSE_MAX_BYTES
+            ):
+                raise OllamaUnavailable("title response exceeded configured limit")
+            chunks.append(chunk)
+        return "".join(chunks)

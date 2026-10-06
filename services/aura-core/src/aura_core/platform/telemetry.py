@@ -30,8 +30,8 @@ from uuid import UUID
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.interaction.agent_configuration": "1.1.0",
     "aura.execution.run_coordinator": "1.3.0",
-    "aura.interaction.conversation_persistence": "1.3.0",
-    "aura.runtime.model_inference": "1.2.0",
+    "aura.interaction.conversation_persistence": "1.4.0",
+    "aura.runtime.model_inference": "1.3.0",
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
@@ -64,6 +64,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "errors",
             "model_selection_persisted",
             "persistence_duration_ms",
+            "title_persistence_duration_ms",
         }
     ),
     "aura.runtime.model_inference": frozenset(
@@ -72,6 +73,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "inference_duration_ms",
             "output_tokens",
             "provider_errors",
+            "title_generation_outcome",
+            "title_inference_duration_ms",
+            "title_input_size",
+            "title_output_size",
             "time_to_first_token_ms",
         }
     ),
@@ -161,6 +166,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "model_policy_revision_id",
         "retry_of_run_id",
         "run_id",
+        "title_input_size",
+        "title_output_size",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -187,6 +194,8 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "operation_duration_ms",
         "agent_revision_number",
         "persona_revision_number",
+        "title_input_size",
+        "title_output_size",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -218,7 +227,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "validation",
         }
     ),
-    "outcome": frozenset({"canceled", "duplicate", "error", "ok", "skipped"}),
+    "outcome": frozenset(
+        {"canceled", "duplicate", "error", "fallback", "generated", "ok", "skipped"}
+    ),
     "status": frozenset(
         {
             "canceled",

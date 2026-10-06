@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
-import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, ModelCatalog, Run, Session } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, ModelCatalog, Run, RunEvent, Session } from '@aura/aura-api-client';
 import { ConversationStore } from './conversation-store';
 
 const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
@@ -103,6 +103,60 @@ describe('ConversationStore', () => {
     expect(degradedStore.send()).toBe(true);
   });
   it('creates a persisted conversation only on first send', async () => { expect(store.selected().id).toMatch(/^draft-/); store.updateDraft('A small thought'); expect(store.send()).toBe(true); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().id).toMatch(/^conversation-/); expect(store.selected().turns[0].text).toBe('A small thought'); });
+  it('shows the deterministic first-message fallback when the server title is still pending', async () => {
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId) => {
+      const accepted = await fakeApi().createConversation(message, modelId, 'pending-title');
+      return { ...accepted, conversation: { ...accepted.conversation, title: 'New conversation' } };
+    });
+    const pendingTitleStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    pendingTitleStore.updateDraft('A first message about nearby observatories');
+    expect(pendingTitleStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(pendingTitleStore.selected().title).toBe('A first message about nearby obs…');
+    expect(pendingTitleStore.draft()).toBe('');
+  });
+  it('refreshes generated title and sidebar summary after terminal status without losing a draft', async () => {
+    const now = new Date().toISOString();
+    const running: Run = { id: 'run-title-refresh', conversationId: 'title-refresh', userMessageId: 'user-title-refresh', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const completed: Run = { ...running, status: 'completed', finishedAt: now, assistantMessageId: 'assistant-title-refresh' };
+    const user = { id: running.userMessageId, conversationId: running.conversationId, role: 'user' as const, content: 'A first message fallback', state: 'complete' as const, runId: running.id, createdAt: now, updatedAt: now };
+    let serverDetail = { ...summary('title-refresh'), title: 'A first message fallback', currentRun: running, messages: [user], recentRuns: [running] } as ConversationDetail;
+    let emitTerminal: (() => void) | undefined;
+    const api = fakeApi(
+      async () => ({ items: [serverDetail], nextCursor: null }),
+      [serverDetail],
+      [running],
+      (_runId, _lastEventId, onEvent) => {
+        emitTerminal = () => onEvent({ schemaVersion: 1, eventId: 'title-terminal', sequence: 1, eventType: 'run.status', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } } as RunEvent, 'title-terminal');
+        return { close: () => undefined };
+      },
+      async () => serverDetail,
+    );
+    const titleStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    titleStore.updateDraft('Keep this draft during title refresh');
+    serverDetail = { ...serverDetail, title: 'Generated observatory topic', currentRun: null, recentRuns: [completed], messages: [user, { id: completed.assistantMessageId!, conversationId: running.conversationId, role: 'assistant', content: 'The completed answer', state: 'complete', runId: running.id, createdAt: now, updatedAt: now }] } as ConversationDetail;
+    emitTerminal?.();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(titleStore.selected().title).toBe('Generated observatory topic');
+    expect(titleStore.conversations().find((item) => item.id === 'title-refresh')?.title).toBe('Generated observatory topic');
+    expect(titleStore.draft()).toBe('Keep this draft during title refresh');
+  });
+  it('loads a generated title when a persisted conversation is opened directly', async () => {
+    const detail = { ...summary('generated-route'), title: 'Generated observatory topic', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const routedStore = new ConversationStore(fakeApi(async () => ({ items: [], nextCursor: null }), [detail]));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const selection = await routedStore.selectFromRoute('generated-route');
+
+    expect(selection.status).toBe('selected');
+    expect(routedStore.selected().title).toBe('Generated observatory topic');
+    expect(routedStore.conversations().find((item) => item.id === 'generated-route')?.title).toBe('Generated observatory topic');
+  });
   it('omits an agent identifier for an unconfigured draft', async () => {
     let selectedAgentRevision: string | undefined = 'unexpected';
     const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId, _idempotencyKey, agentRevisionId) => {

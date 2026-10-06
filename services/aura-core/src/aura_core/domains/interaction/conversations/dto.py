@@ -72,6 +72,15 @@ class MessageState(StrEnum):
     FAILED = "failed"
 
 
+class TitleState(StrEnum):
+    """Internal lifecycle for model-derived conversation titles."""
+
+    LEGACY = "legacy"
+    PENDING = "pending"
+    GENERATED = "generated"
+    FALLBACK = "fallback"
+
+
 def now() -> datetime:
     return datetime.now(UTC)
 
@@ -88,6 +97,21 @@ class Message:
     updated_at: datetime = field(default_factory=now)
 
 
+@dataclass(frozen=True, slots=True)
+class PendingTitle:
+    """The first completed exchange eligible for title inference.
+
+    This value object deliberately contains only the bounded inference input
+    and the pinned model identifier.  It is never passed to telemetry.
+    """
+
+    conversation_id: UUID
+    run_id: UUID
+    model_id: str
+    user_content: str
+    assistant_content: str
+
+
 @dataclass(slots=True)
 class Conversation:
     principal_issuer: str
@@ -101,6 +125,7 @@ class Conversation:
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=now)
     updated_at: datetime = field(default_factory=now)
+    title_state: TitleState = TitleState.PENDING
     messages: list[Message] = field(default_factory=list[Message])
     runs: list[Run] = field(default_factory=list[Run])
     assignments: list[AgentAssignment] = field(default_factory=list[AgentAssignment])

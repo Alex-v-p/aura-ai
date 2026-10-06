@@ -8,10 +8,12 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
     MessageState,
+    PendingTitle,
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
     SeededAgent,
+    TitleState,
     now,
 )
 from aura_core.domains.interaction.conversations.repository import (
@@ -30,6 +32,13 @@ from aura_core.domains.interaction.conversations.store import (
     PersonaUnavailable,
     VersionConflict,
 )
+from aura_core.domains.interaction.conversations.titles import (
+    TITLE_SYSTEM_PROMPT,
+    fallback_title_candidate,
+    normalize_generated_title,
+    pending_title_for,
+    title_request_messages,
+)
 
 __all__ = [
     "GENERAL_AGENT",
@@ -38,6 +47,8 @@ __all__ = [
     "PersonaAssignment",
     "PersonaAssignmentReason",
     "PersonaAssignmentSource",
+    "PendingTitle",
+    "TitleState",
     "ActiveRunConflict",
     "AgentSwitchConfirmationRequired",
     "AgentUnavailable",
@@ -56,4 +67,9 @@ __all__ = [
     "VersionConflict",
     "build_context",
     "now",
+    "TITLE_SYSTEM_PROMPT",
+    "fallback_title_candidate",
+    "normalize_generated_title",
+    "pending_title_for",
+    "title_request_messages",
 ]
