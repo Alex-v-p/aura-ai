@@ -1,6 +1,7 @@
 """Static contract and deployment boundary checks without network dependencies."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -123,6 +124,23 @@ def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None
     assert "networks: [aura-identity, aura-identity-db, aura-identity-cache]" in identity_override
     assert "networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]" in compose
     assert "host.docker.internal:host-gateway" in compose
-    assert "networks: [aura-identity]" in identity_override
+    identity_core_block = identity_override.split("  aura-core-api:", 1)[1].split(
+        "  authentik-postgres:", 1
+    )[0]
+    identity_core_networks = next(
+        line.strip()
+        for line in identity_core_block.splitlines()
+        if line.strip().startswith("networks:")
+    )
+    network_match = re.fullmatch(r"networks:\s*\[([^\]]*)\]", identity_core_networks)
+    assert network_match is not None
+    assert {network.strip() for network in network_match.group(1).split(",")} == {
+        "aura-frontend",
+        "aura-core-db",
+        "aura-core-bus",
+        "aura-core-cache",
+        "aura-core-egress",
+        "aura-identity",
+    }
     assert "aura-valkey-password" in compose
     assert "authentik-valkey-password" in identity_override

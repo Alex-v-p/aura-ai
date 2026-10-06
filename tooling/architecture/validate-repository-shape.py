@@ -12,6 +12,10 @@ ALLOWED_TOP_LEVEL = {
     "extensions", "frontend", "infra", "justfile", "packages", "pyproject.toml", "satellites", "scripts", "services",
     "tests", "tooling", "uv.lock", "work-items",
 }
+# These are disposable, local-only runtime inputs/state. They are intentionally
+# kept outside the repository module allowlist and are ignored before shape
+# checks so that their contents cannot affect repository topology validation.
+LOCAL_RUNTIME_ARTIFACTS = {".env", ".env.local-http", ".secrets", ".local-state", ".venv"}
 DUMPING_GROUNDS = {"helpers", "managers", "models", "utils"}
 
 
@@ -19,6 +23,8 @@ def errors_for(root: Path = ROOT) -> list[str]:
     errors = []
     for child in root.iterdir():
         if child.name == ".git":
+            continue
+        if child.name in LOCAL_RUNTIME_ARTIFACTS:
             continue
         if child.name not in ALLOWED_TOP_LEVEL:
             errors.append(f"Unauthorized top-level path: {child.name}")
