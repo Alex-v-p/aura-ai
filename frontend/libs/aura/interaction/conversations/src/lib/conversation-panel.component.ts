@@ -1,3 +1,4 @@
+import { OverlayModule, CdkOverlayOrigin, type ConnectedPosition } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
@@ -9,7 +10,7 @@ import type { PersonaReference } from '@aura/aura-api-client';
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent],
+  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
@@ -21,14 +22,24 @@ export class ConversationPanelComponent {
   @ViewChild('composer') private readonly composer?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('optionsButton') private readonly optionsButton?: ElementRef<HTMLButtonElement>;
   @ViewChild('optionsMenu') private readonly optionsMenu?: ElementRef<HTMLElement>;
-  @ViewChild('firstMenuControl') private readonly firstMenuControl?: ElementRef<HTMLSelectElement>;
+  @ViewChild('menuAgent') private readonly menuAgent?: ElementRef<HTMLSelectElement>;
+  @ViewChild('menuPersona') private readonly menuPersona?: ElementRef<HTMLSelectElement>;
+  @ViewChild('menuModel') private readonly menuModel?: ElementRef<HTMLSelectElement>;
   @ViewChild('configurationCancel') private readonly configurationCancel?: ElementRef<HTMLButtonElement>;
   readonly optionsOpen = signal(false);
+  readonly connectedOrigin = signal<CdkOverlayOrigin>({} as CdkOverlayOrigin);
+  readonly optionsFocus = signal<'agent' | 'persona' | 'model'>('agent');
+  readonly overlayPositions: ConnectedPosition[] = [
+    { originX: 'end', originY: 'bottom', overlayX: 'end', overlayY: 'top', offsetY: 8 },
+    { originX: 'end', originY: 'top', overlayX: 'end', overlayY: 'bottom', offsetY: -8 },
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 8 },
+  ];
   readonly stagedAgent = signal<AgentReference | null>(null);
   readonly stagedPersona = signal<PersonaReference | null>(null);
   readonly stagedUseAgentDefaultPersona = signal(true);
   private hadPendingConfiguration = false;
   private pendingConfigurationOriginId: string | null = null;
+  private opener: HTMLButtonElement | null = null;
 
   constructor() {
     effect(() => {
@@ -51,7 +62,7 @@ export class ConversationPanelComponent {
         const originId = this.pendingConfigurationOriginId;
         this.hadPendingConfiguration = false;
         this.pendingConfigurationOriginId = null;
-        queueMicrotask(() => { if (originId && this.store.selectedId() === originId) this.optionsButton?.nativeElement.focus(); });
+        queueMicrotask(() => { if (originId && this.store.selectedId() === originId) this.opener?.focus(); });
       }
     });
   }
@@ -121,38 +132,64 @@ export class ConversationPanelComponent {
       || (this.stagedUseAgentDefaultPersona() ? conversation.personaOverride : (this.stagedPersona()?.revisionId ?? null) !== (conversation.persona?.revisionId ?? null) || !conversation.personaOverride);
   }
 
-  toggleOptions(event?: Event): void {
+  toggleOptions(event?: Event, origin?: CdkOverlayOrigin, focus: 'agent' | 'persona' | 'model' = 'agent'): void {
     event?.stopPropagation();
     if (this.controlsDisabled()) return;
-    if (this.optionsOpen()) this.closeOptions();
+    if (this.optionsOpen() && this.opener === (event?.currentTarget as HTMLButtonElement | null)) this.closeOptions();
     else {
+      this.opener = event?.currentTarget instanceof HTMLButtonElement ? event.currentTarget : this.optionsButton?.nativeElement ?? null;
+      this.connectedOrigin.set(origin ?? this.connectedOrigin());
+      this.optionsFocus.set(focus);
       this.stagedAgent.set(this.store.selected().agent);
       this.stagedPersona.set(this.store.selected().persona);
       this.stagedUseAgentDefaultPersona.set(!this.store.selected().personaOverride);
       this.optionsOpen.set(true);
-      queueMicrotask(() => this.firstMenuControl?.nativeElement.focus());
+      queueMicrotask(() => this.focusRequestedControl());
     }
   }
 
-  handleOptionsKeydown(event: KeyboardEvent): void {
+  handleOptionsKeydown(event: KeyboardEvent, origin?: CdkOverlayOrigin): void {
     if (event.key === 'Escape') { event.preventDefault(); this.closeOptions(); return; }
-    if ((event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') && !this.optionsOpen()) { event.preventDefault(); this.toggleOptions(event); }
+    if ((event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') && !this.optionsOpen()) { event.preventDefault(); this.toggleOptions(event, origin, 'agent'); }
   }
+
+  handleOptionsOverlayAttach(): void { setTimeout(() => this.focusRequestedControl(), 0); }
 
   closeOptions(returnFocus = true): void {
     if (!this.optionsOpen()) return;
     this.optionsOpen.set(false);
-    if (returnFocus) queueMicrotask(() => this.optionsButton?.nativeElement.focus());
+    if (returnFocus) queueMicrotask(() => this.opener?.focus());
   }
 
   cancelConfiguration(): void { this.store.cancelPendingConfiguration(); }
   async confirmConfiguration(): Promise<void> { await this.store.confirmConfigurationChange(); }
 
   @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
-  @HostListener('document:click', ['$event']) onDocumentClick(event: MouseEvent): void {
-    if (this.optionsOpen() && !this.triggerOrMenuContains(event.target)) this.closeOptions(false);
-  }
 
   private applyDraftConfigurationIfNeeded(): void { if (this.store.selected().id.startsWith('draft-')) this.store.stageConfiguration(this.stagedAgent(), this.stagedPersona(), this.stagedUseAgentDefaultPersona()); }
-  private triggerOrMenuContains(target: EventTarget | null): boolean { return target instanceof Node && (this.optionsButton?.nativeElement.contains(target) === true || this.optionsMenu?.nativeElement.contains(target) === true); }
+  private focusRequestedControl(): void {
+    const control = this.optionsFocus() === 'persona' ? this.menuPersona : this.optionsFocus() === 'model' ? this.menuModel : this.menuAgent;
+    control?.nativeElement.focus();
+  }
+
+  agentMetadataLabel(): string {
+    const agent = this.store.selectedAgent();
+    return `Agent ${agent.displayName} revision ${agent.revision}${agent.status === 'disabled' ? ', disabled' : ''}${this.hasNewerAgentRevision() ? ', newer revision available' : ''}`;
+  }
+
+  personaMetadataLabel(): string {
+    const persona = this.store.selectedPersona();
+    if (!persona) return 'Persona uses the selected agent default';
+    return `Persona ${persona.displayName} revision ${persona.revision}${persona.status === 'disabled' ? ', disabled' : ''}${this.hasNewerPersonaRevision() ? ', newer revision available' : ''}`;
+  }
+
+  modelMetadataLabel(): string { return `Model ${this.store.selectedModelId() || 'not selected'}`; }
+
+  metadataMarker(kind: 'agent' | 'persona'): string | null {
+    const disabled = kind === 'agent' ? this.store.selectedAgent().status === 'disabled' : this.store.selectedPersona()?.status === 'disabled';
+    const newer = kind === 'agent' ? this.hasNewerAgentRevision() : this.hasNewerPersonaRevision();
+    if (disabled) return 'Disabled';
+    if (newer) return 'Newer';
+    return null;
+  }
 }

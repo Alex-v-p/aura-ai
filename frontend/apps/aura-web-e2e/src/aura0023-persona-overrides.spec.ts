@@ -486,8 +486,9 @@ test('replaces the large configuration card with a compact conversation summary 
   await installPersonaOverrideFixture(page);
   await page.goto('/conversation/welcome');
   await expect(page.locator('.agent-context')).toHaveCount(0);
-  await expect(page.getByText(/Aura r1/i).first()).toBeVisible();
-  await expect(page.getByText(/Neutral r1/i).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Agent Aura revision 1/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Persona Neutral revision 1/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Model fixture-chat/i })).toBeVisible();
 
   const menu = await ensureConversationOptionsMenu(page);
   await expect(menu).toContainText(/model/i);
@@ -569,7 +570,7 @@ test('disables the conversation options trigger while a run is active', async ({
   await installPersonaOverrideFixture(page, { activeRun: true });
   await page.goto('/conversation/welcome');
   const options = conversationOptionsButton(page);
-  await expect(options).toBeDisabled();
+  await expect(options).toHaveAttribute('aria-disabled', 'true');
   await expect(conversationOptionsPopover(page)).toBeHidden();
 });
 
@@ -582,7 +583,7 @@ test('closes an open popover when a run starts and prevents configuration reques
   await composer.press('Enter');
   await expect.poll(() => fixture.runBodies.length).toBe(1);
   await expect(conversationOptionsPopover(page)).toBeHidden();
-  await expect(conversationOptionsButton(page)).toBeDisabled();
+  await expect(conversationOptionsButton(page)).toHaveAttribute('aria-disabled', 'true');
   expect(fixture.patchBodies).toHaveLength(0);
 });
 
@@ -622,9 +623,30 @@ test('shows a newer agent revision without adopting it automatically', async ({ 
   await expect(page.getByText(/newer revision available/i).first()).toBeVisible();
   await expect(menu).toContainText(/newer/i);
   await expect(agentPicker(menu)).toHaveValue('agent-aura-r1');
-  const summary = page.locator('.configuration-summary');
-  await expect(summary).toContainText(/Aura r1/i);
-  await expect(summary).not.toContainText(/Aura r2/i);
+  await expect(page.getByRole('button', { name: /Agent Aura revision 1/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Agent Aura revision 2/i })).toHaveCount(0);
+});
+
+test('opens the shared options overlay from each metadata control and focuses its matching selector', async ({ page }) => {
+  await installPersonaOverrideFixture(page);
+  await page.goto('/conversation/welcome');
+  const checks = [
+    { button: /Agent Aura revision 1/i, field: /agent/i },
+    { button: /Persona Neutral revision 1/i, field: /persona/i },
+    { button: /Model fixture-chat/i, field: /model/i },
+  ];
+  for (const check of checks) {
+    const trigger = page.getByRole('button', { name: check.button });
+    await trigger.focus();
+    await expect(trigger.locator('.metadata-tooltip')).toBeVisible();
+    await trigger.click();
+    const menu = conversationOptionsPopover(page);
+    await expect(menu).toBeVisible();
+    await expect(menu.getByLabel(check.field).first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(trigger).toBeFocused();
+  }
 });
 
 test('labels only a same-profile higher agent revision as newer and preserves production API mapping', async ({ page }) => {
