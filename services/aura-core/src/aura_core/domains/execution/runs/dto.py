@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
-    from aura_core.domains.interaction.conversations.public import Conversation, Message
+    from aura_core.domains.interaction.conversations.dto import Conversation, Message
 
 
 class RunStatus(StrEnum):

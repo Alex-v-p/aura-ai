@@ -408,7 +408,7 @@ modules:
   python_modules:
   - aura_core.domains.execution.runs.dto
   dependencies:
-  - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.conversations.dto
 - id: aura-core.domains.execution.runs.events
   root: services/aura-core/src/aura_core/domains/execution/runs/events.py
   kind: python
@@ -657,6 +657,15 @@ modules:
   - aura_core.domains.interaction.conversations.dto
   dependencies:
   - aura-core.domains.execution.runs.dto
+- id: aura-core.domains.interaction.conversations.titles
+  root: services/aura-core/src/aura_core/domains/interaction/conversations/titles.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/conversations/titles.py
+  python_modules:
+  - aura_core.domains.interaction.conversations.titles
+  dependencies:
+  - aura-core.domains.execution.runs.dto
+  - aura-core.domains.interaction.conversations.dto
 - id: aura-core.domains.interaction.conversations.persistence
   root: services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
   kind: python
@@ -676,6 +685,7 @@ modules:
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.repository
   - aura-core.domains.interaction.conversations.store
+  - aura-core.domains.interaction.conversations.titles
 - id: aura-core.domains.interaction.conversations.repository
   root: services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
   kind: python
@@ -697,6 +707,7 @@ modules:
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.personas.public
+  - aura-core.domains.interaction.conversations.titles
   - aura-core.platform.telemetry
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
@@ -964,6 +975,7 @@ modules:
   python_modules:
   - aura_core.providers.models.ollama.adapter
   dependencies:
+  - aura-core.domains.execution.runs.ports
   - aura-core.runtime.models.ports
 - id: aura-core.providers.models.ollama.fake
   root: services/aura-core/src/aura_core/providers/models/ollama/fake.py

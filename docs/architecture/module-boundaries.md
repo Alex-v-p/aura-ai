@@ -32,7 +32,7 @@ new product behavior.
 | `aura-core.platform.*` | `services/aura-core/src/aura_core/platform/{auth,database,oidc,outbox,readiness,telemetry}` | Component file or outbox package exports | Core public types and persistence primitives |
 | `aura-core.runtime.*` | `services/aura-core/src/aura_core/runtime/{models,streaming}` | Model ports and stream publisher | Execution event/types and platform primitives |
 | `aura-core.runtime.prompting` | `services/aura-core/src/aura_core/runtime/prompting` | `prompting/public.py` | Agent and persona public APIs |
-| `aura-core.providers.models.ollama.*` | `services/aura-core/src/aura_core/providers/models/ollama` | `adapter.py` | Runtime model ports only |
+| `aura-core.providers.models.ollama.*` | `services/aura-core/src/aura_core/providers/models/ollama` | `adapter.py` | Runtime model ports and execution run ports |
 | `aura-core.entrypoints.*` | `services/aura-core/src/aura_core/entrypoints/**` | API app, worker app, CLI, and route modules, including the agents and personas routes | Bootstrap, public APIs, platform adapters, Ollama adapter |
 | `aura-web.interaction-conversations` | `frontend/libs/aura/interaction/conversations` | `src/index.ts` | Transport client, agents feature, personas feature, shared UI |
 | `aura-web.interaction-agents` | `frontend/libs/aura/interaction/agents` | `src/index.ts` | Transport client, personas feature |
