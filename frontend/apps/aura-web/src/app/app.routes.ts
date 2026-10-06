@@ -5,6 +5,7 @@ import { PersonaCreatePageComponent, PersonaDetailPageComponent, PersonaListPage
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'conversation' },
+  { path: 'conversation/:conversationId', component: ConversationPanelComponent },
   { path: 'conversation', component: ConversationPanelComponent },
   { path: 'agents', component: AgentListPageComponent },
   { path: 'agents/new', component: AgentCreatePageComponent },

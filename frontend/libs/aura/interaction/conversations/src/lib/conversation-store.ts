@@ -10,6 +10,7 @@ export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error
 export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; }
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly runs: ReadonlyArray<Run>; }
+export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
 
 const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
 const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, currentRun: null, retryableRun: null, agent: null, assignments: [], runs: [] };
@@ -26,6 +27,7 @@ export class ConversationStore {
   readonly drafts = signal<Readonly<Record<string, string>>>({ [emptyDraft.id]: '' });
   readonly notices = signal<Readonly<Record<string, string | null>>>({});
   readonly runStates = signal<Readonly<Record<string, RunState>>>({ [emptyDraft.id]: 'idle' });
+  readonly lastPersistedDraftId = signal<string | null>(null);
   readonly selected = computed(() => this.conversations().find((conversation) => conversation.id === this.selectedId()) ?? emptyDraft);
   readonly draft = computed(() => this.drafts()[this.selectedId()] ?? '');
   readonly notice = computed(() => this.notices()[this.selectedId()] ?? null);
@@ -77,6 +79,36 @@ export class ConversationStore {
   async logout(): Promise<void> { const token = this.session()?.csrfToken; if (!token) return; try { await this.api.logout(token); } finally { this.session.set(null); this.authState.set('unauthenticated'); } }
 
   select(id: string): void { if (this.conversations().some((conversation) => conversation.id === id)) { this.selectedId.set(id); this.setNotice(id, null); if (!id.startsWith('draft-')) void this.refresh(id); } }
+
+  async selectFromRoute(id: string, isCurrent: () => boolean = () => true): Promise<ConversationRouteSelection> {
+    if (id.startsWith('draft-')) { if (!isCurrent() || !this.find(id)) return { status: 'stale' }; this.select(id); return { status: 'selected' }; }
+    try {
+      const detail = await this.api.getConversation(id);
+      if (!isCurrent()) return { status: 'stale' };
+      const conversation = this.fromDetail(detail);
+      this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== id)]);
+      this.selectedId.set(id);
+      this.setNotice(id, null);
+      if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
+      else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); }
+      return { status: 'selected' };
+    } catch (error: unknown) {
+      if (!isCurrent()) return { status: 'stale' };
+      const apiError = this.toApiError(error);
+      if (apiError.status === 404) return { status: 'not_found' };
+      if (apiError.status === 401) { this.authState.set('unauthenticated'); return { status: 'unauthorized', error: apiError }; }
+      if (apiError.status === 403) { this.authState.set('error'); return { status: 'forbidden', error: apiError }; }
+      return { status: 'error', error: apiError };
+    }
+  }
+
+  selectDraftForRoute(): void {
+    const draft = this.conversations().find((conversation) => conversation.id.startsWith('draft-'));
+    if (draft) this.select(draft.id);
+    else this.create();
+  }
+
+  showRouteNotice(message: string): void { this.setNotice(this.selectedId(), message); }
 
   create(): void {
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
@@ -169,7 +201,7 @@ export class ConversationStore {
       const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
-      this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.selectedId.set(persisted.id);
+      this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
       if (draft) this.replaceConversation({ ...persisted, turns: draft.turns }); this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
     } catch (error: unknown) { this.rejectSubmission(draftId, error); }
   }

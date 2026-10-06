@@ -21,8 +21,8 @@
 .nav-label { color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .09em; margin: 0 .6rem .5rem; text-transform: uppercase; }
 .nav-empty { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .75rem .6rem; }
 .conversation-link, .quiet-link { align-items: center; background: transparent; border: 0; border-radius: .6rem; color: var(--text-muted); cursor: pointer; display: flex; font: inherit; font-size: .82rem; gap: .55rem; min-height: 2.5rem; overflow: hidden; padding: .45rem .6rem; text-align: left; text-decoration: none; width: 100%; }
-.conversation-link:hover, .conversation-link.is-active, .quiet-link:hover { background: var(--surface-subtle); color: var(--text); }
-.conversation-link.is-active { box-shadow: inset 3px 0 var(--accent); }
+.conversation-link:hover, .conversation-link.is-active, .conversation-link.is-route-active, .quiet-link:hover { background: var(--surface-subtle); color: var(--text); }
+.conversation-link.is-active, .conversation-link.is-route-active { box-shadow: inset 3px 0 var(--accent); }
 .conversation-dot { color: var(--accent); font-size: 1.1rem; }
 .conversation-status { color: var(--text-muted); font-size: .65rem; margin-left: auto; white-space: nowrap; }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

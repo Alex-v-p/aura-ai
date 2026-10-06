@@ -1,6 +1,6 @@
 id: AURA-0022
 title: Refine Aura Web sidebar scrolling and conversation navigation
-status: approved
+status: integrated
 change_class: bugfix
 intent: >
   Make Aura Web navigation visually distinct and always reachable, keep the

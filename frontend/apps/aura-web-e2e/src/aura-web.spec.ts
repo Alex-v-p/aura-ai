@@ -50,9 +50,13 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
   let selectedModel = 'qwen2.5:7b';
   let messages: Array<Record<string, unknown>> = [];
   let activeRun: Record<string, unknown> | null = null;
+  let createdConversationId: string | null = null;
+  const deferredConversationResolvers = new Map<string, () => void>();
+  const deferredConversationPending = new Set<string>();
   const now = (): string => new Date().toISOString();
   const summary = (): Record<string, unknown> => ({ id: 'welcome', title: 'A thoughtful beginning', agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: selectedModel, version, createdAt: now(), updatedAt: now(), currentRun: activeRun });
   const isLongSidebarFixture = (): boolean => page.url().includes('fixture=long-sidebar');
+  const isRouteRaceFixture = (): boolean => page.url().includes('fixture=route-race');
   const recentConversationSummaries = (): Array<Record<string, unknown>> => isLongSidebarFixture()
     ? Array.from({ length: 48 }, (_, index) => ({ ...summary(), id: index === 0 ? 'welcome' : `recent-${index}`, title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`, active: index === 0 }))
     : [summary()];
@@ -60,8 +64,34 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf', idleExpiresAt: now(), absoluteExpiresAt: now() } });
+    if (url.pathname === '/api/v1/test/release' && request.method() === 'GET') {
+      const conversationId = url.searchParams.get('conversation');
+      deferredConversationResolvers.get(conversationId ?? '')?.();
+      deferredConversationResolvers.delete(conversationId ?? '');
+      return route.fulfill({ json: { released: conversationId } });
+    }
+    if (url.pathname === '/api/v1/test/state' && request.method() === 'GET') {
+      const conversationId = url.searchParams.get('conversation');
+      return route.fulfill({ json: { pending: deferredConversationPending.has(conversationId ?? '') } });
+    }
     if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'embed-only', displayName: 'Embeddings only', provider: 'ollama', capabilities: ['embedding'], availability: 'available', selectable: false, disabledReason: 'This model does not support chat.' }], defaultModelId: 'qwen2.5:7b', observedAt: now() } });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: recentConversationSummaries(), nextCursor: null } });
+    if (url.pathname === '/api/v1/conversations' && request.method() === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as { message?: string; modelId?: string };
+      if (page.url().includes('fixture=deferred-create')) {
+        await new Promise<void>((resolve) => {
+          deferredConversationPending.add('create');
+          deferredConversationResolvers.set('create', resolve);
+        });
+        deferredConversationPending.delete('create');
+      }
+      createdConversationId = 'created-1';
+      const runId = `run-${++runNumber}`;
+      const userMessage = { id: `user-${runId}`, conversationId: createdConversationId, role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
+      activeRun = { id: runId, conversationId: createdConversationId, userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: body.modelId ?? selectedModel, retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
+      messages = [userMessage];
+      return route.fulfill({ status: 202, json: { conversation: { ...summary(), id: createdConversationId, title: body.message?.slice(0, 30) ?? 'New conversation', version: 1 }, userMessage, run: activeRun } });
+    }
     if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'PATCH') {
       const body = JSON.parse(request.postData() ?? '{}') as { modelId?: string; version?: number };
       if (body.modelId) selectedModel = body.modelId;
@@ -83,6 +113,21 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
       }
       return route.fulfill({ json: { ...summary(), messages, recentRuns: activeRun ? [activeRun] : [] } });
     }
+    if (createdConversationId && url.pathname === `/api/v1/conversations/${createdConversationId}` && request.method() === 'GET') return route.fulfill({ json: { ...summary(), id: createdConversationId, title: 'Created conversation', messages, recentRuns: activeRun ? [activeRun] : [] } });
+    const detailMatch = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)$/);
+    if (detailMatch && request.method() === 'GET') {
+      const conversationId = decodeURIComponent(detailMatch[1]);
+      if (conversationId === 'route-one' && isRouteRaceFixture()) {
+        deferredConversationPending.add(conversationId);
+        await new Promise<void>((resolve) => deferredConversationResolvers.set(conversationId, resolve));
+        deferredConversationPending.delete(conversationId);
+        return route.fulfill({ status: 503, json: { detail: 'Stale route lookup failed.' } });
+      }
+      if (conversationId === 'route-two' && isRouteRaceFixture()) return route.fulfill({ json: { ...summary(), id: conversationId, title: 'Route two', messages: [{ id: 'route-two-message', conversationId, role: 'assistant', content: 'Route two response.', state: 'complete', runId: null, createdAt: now(), updatedAt: now() }], recentRuns: [] } });
+      if (conversationId === 'protected' && page.url().includes('fixture=route-401')) return route.fulfill({ status: 401, json: { detail: 'Please sign in to continue.' } });
+      if (conversationId === 'unavailable' && page.url().includes('fixture=route-503')) return route.fulfill({ status: 503, json: { detail: 'Conversation service temporarily unavailable.' } });
+    }
+    if (url.pathname.startsWith('/api/v1/conversations/') && request.method() === 'GET') return route.fulfill({ status: 404, json: { detail: 'Conversation not found.' } });
     if (url.pathname.endsWith('/runs') && request.method() === 'POST') {
       // Use the current document URL as a second source so the fixture does
       // not depend on the relative ordering of `framenavigated` and the
@@ -177,7 +222,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation.locator('.product-nav a')).toHaveCount(3);
     await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
     await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
-    await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveCount(0);
+    await expect(navigation.locator('.conversation-link')).toHaveCount(0);
     await expect(navigation.locator('button.new-conversation')).toHaveCSS('width', '44px');
     const compactAlignment = await navigation.evaluate((element) => {
       const rail = element.getBoundingClientRect();
@@ -210,7 +255,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation).not.toHaveClass(/is-collapsed/);
     await expect(navigation).toHaveCSS('flex-basis', '272px');
     await expect(navigation.locator('.conversation-nav')).toBeVisible();
-    await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
+    await expect(navigation.locator('.conversation-link')).toBeVisible();
     await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
     await expect(navigation.locator('.wordmark-text')).toBeVisible();
     await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
@@ -228,9 +273,9 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toBeVisible();
-  await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toBeVisible();
+  await expect(navigation.locator('.conversation-link')).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toHaveAttribute('title', 'New conversation');
-  await expect(navigation.getByRole('button', { name: 'A thoughtful beginning' })).toHaveAttribute('title', 'A thoughtful beginning');
+  await expect(navigation.locator('.conversation-link')).toHaveAttribute('title', 'A thoughtful beginning');
   const geometry = await navigation.evaluate((element) => {
     const conversationNav = element.querySelector<HTMLElement>('.conversation-nav');
     const conversationLink = element.querySelector<HTMLElement>('.conversation-link');
@@ -260,9 +305,9 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expect(recentNav).toBeVisible();
-  await expect(recentNav.getByRole('button', { name: /A thoughtful beginning/i })).toBeVisible();
+  await expect(recentNav.locator('.conversation-link')).toBeVisible();
   await expect(productNav.locator('a')).not.toHaveClass(/conversation-link/);
-  await expect(recentNav.locator('button')).toHaveClass(/conversation-link/);
+  await expect(recentNav.locator('.conversation-link')).toHaveCount(1);
 
   await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
   await expect(navigation).toHaveClass(/is-collapsed/);
@@ -290,7 +335,7 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expect(recentNav).toBeVisible();
-  await expect(recentNav.getByRole('button', { name: /A thoughtful beginning/i })).toBeVisible();
+  await expect(recentNav.locator('.conversation-link')).toBeVisible();
 });
 
 test('keeps the sidebar viewport-stable while long conversation content scrolls', async ({ page }, testInfo) => {
@@ -299,7 +344,7 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   const navigation = page.locator('#primary-navigation');
   const recentNav = navigation.locator('.conversation-nav');
   const mainContent = page.locator('#main-content');
-  await expect(recentNav.getByRole('button')).toHaveCount(48);
+  await expect(recentNav.locator('.conversation-link')).toHaveCount(48);
   await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
 
   const beforeScroll = await page.evaluate(() => {
@@ -482,6 +527,197 @@ test('keeps mobile conversation scrolling contained in the conversation panel', 
   await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
 });
 
+test('selects a recent conversation in one click from agent and persona routes', async ({ page }, testInfo) => {
+  for (const route of ['/agents', '/personas']) {
+    await page.goto(route);
+    if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+    const recentConversation = page.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' });
+    await expect(recentConversation).toBeVisible();
+    await recentConversation.click();
+    await expect(page).toHaveURL(/\/conversation\/welcome$/);
+    await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
+  }
+});
+
+test('supports direct conversation links, reload, and browser history', async ({ page }) => {
+  await page.goto('/conversation/welcome');
+  await expect(page).toHaveURL(/\/conversation\/welcome$/);
+  await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
+  await expect(page.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toHaveAttribute('aria-current', 'page');
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/conversation\/welcome$/);
+  await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
+
+  await page.goto('/agents');
+  await expect(page.getByRole('heading', { name: /agents/i })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/conversation\/welcome$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/agents$/);
+});
+
+test('starts a new conversation from configuration routes', async ({ page }, testInfo) => {
+  for (const route of ['/agents', '/personas']) {
+    await page.goto(route);
+    if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('button', { name: /new conversation/i }).click();
+    await expect(page).toHaveURL(/\/conversation$/);
+    await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
+  }
+});
+
+test('replaces a new conversation URL with its persisted identifier after acceptance', async ({ page }, testInfo) => {
+  await page.goto('/agents');
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: /new conversation/i }).click();
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Persist this new conversation.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page).toHaveURL(/\/conversation\/created-1$/);
+  await expect(page.getByRole('article', { name: 'Your message' })).toContainText('Persist this new conversation.');
+});
+
+test('keeps the conversation destination active on detail routes and usable in collapsed/mobile navigation', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'mobile', 'Detail-route navigation coverage runs on desktop and mobile projects.');
+  await page.goto('/conversation/welcome');
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const conversationsLink = navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i });
+  await expect(conversationsLink).toHaveAttribute('aria-current', 'page');
+
+  if (testInfo.project.name === 'desktop') {
+    await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+    await expect(conversationsLink).toBeVisible();
+    await expect(conversationsLink).toHaveAttribute('title', 'Conversations');
+    await conversationsLink.click();
+    await expect(page).toHaveURL(/\/conversation$/);
+    return;
+  }
+
+  await page.goto('/agents');
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  const mobileConversationsLink = page.getByRole('navigation', { name: 'Primary navigation' }).locator('.product-nav').getByRole('link', { name: /^Conversations$/i });
+  await expect(mobileConversationsLink).toBeVisible();
+  await mobileConversationsLink.click();
+  await expect(page).toHaveURL(/\/conversation$/);
+});
+
+test('applies the latest deep-link selection when an earlier route lookup resolves late', async ({ page }) => {
+  await page.goto('/conversation/route-one?fixture=route-race');
+  await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=route-one').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(true);
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/conversation/route-two?fixture=route-race');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page).toHaveURL(/\/conversation\/route-two\?fixture=route-race$/);
+  await expect(page.getByText('Route two response.')).toBeVisible();
+
+  await page.evaluate(() => { void fetch('/api/v1/test/release?conversation=route-one'); });
+  await expect(page).toHaveURL(/\/conversation\/route-two\?fixture=route-race$/);
+  await expect(page.getByText('Route two response.')).toBeVisible();
+  await expect(page.getByText('Route one response.')).toHaveCount(0);
+});
+
+test('keeps the latest routed conversation selected while a prior draft acceptance resolves', async ({ page }, testInfo) => {
+  await page.goto('/conversation?fixture=deferred-create');
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Background acceptance should not steal selection.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=create').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(true);
+
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/conversation/welcome?fixture=deferred-create');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page).toHaveURL(/\/conversation\/welcome\?fixture=deferred-create$/);
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  const welcomeLink = page.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' });
+  await expect(welcomeLink).toHaveClass(/is-route-active/);
+  await expect(welcomeLink).toHaveAttribute('aria-current', 'page');
+  await page.evaluate(() => { void fetch('/api/v1/test/release?conversation=create'); });
+  await expect(welcomeLink).toHaveClass(/is-route-active/);
+  await expect(welcomeLink).toHaveAttribute('aria-current', 'page');
+  await expect(welcomeLink).toHaveAttribute('title', 'A thoughtful beginning');
+  await expect(page).toHaveURL(/\/conversation\/welcome\?fixture=deferred-create$/);
+  await expect(page.locator('.conversation-link').filter({ hasText: 'Background acceptance' })).toBeVisible();
+});
+
+test('persists a UI-created routed draft and survives reload at its persisted URL', async ({ page }, testInfo) => {
+  await page.goto('/');
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: /new conversation/i }).click();
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  const draftLink = page.locator('.conversation-link').filter({ hasText: 'New conversation' }).first();
+  await expect(draftLink).toBeVisible();
+  const draftHref = await draftLink.getAttribute('href');
+  expect(draftHref).toMatch(/^\/conversation\/draft-/);
+  await draftLink.click();
+  await expect(page).toHaveURL(/\/conversation\/draft-[^/]+$/);
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Persist this routed draft.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page).toHaveURL(/\/conversation\/created-1$/);
+  await page.reload();
+  await expect(page).toHaveURL(/\/conversation\/created-1$/);
+  await expect(page.getByText('Persist this routed draft.')).toBeVisible();
+});
+
+test('preserves an unauthorized deep-link URL and surfaces the authentication state', async ({ page }) => {
+  await page.goto('/conversation/protected?fixture=route-401');
+  await expect(page).toHaveURL(/\/conversation\/protected\?fixture=route-401$/);
+  await expect(page.getByText(/sign in to continue/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: /sign in with authentik/i })).toBeVisible();
+});
+
+test('preserves a failed deep-link URL and surfaces the service failure notice', async ({ page }) => {
+  await page.goto('/conversation/unavailable?fixture=route-503');
+  await expect(page).toHaveURL(/\/conversation\/unavailable\?fixture=route-503$/);
+  await expect(page.getByText(/temporarily unavailable|could not load|try again/i)).toBeVisible();
+});
+
+test('marks only the exact routed destination and conversation link as current', async ({ page }) => {
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const product = (name: RegExp) => navigation.locator('.product-nav').getByRole('link', { name });
+  const recent = navigation.locator('.conversation-link');
+
+  await page.goto('/agents');
+  await expect(product(/^Agents$/i)).toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Personas$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+
+  await page.goto('/personas');
+  await expect(product(/^Personas$/i)).toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+
+  await page.goto('/conversation');
+  await expect(product(/^Conversations$/i)).toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Personas$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+
+  await page.goto('/conversation/welcome');
+  await expect(product(/^Conversations$/i)).toHaveAttribute('aria-current', 'page');
+  await expect(recent).toHaveAttribute('aria-current', 'page');
+});
+
+test('recovers an invalid conversation route without discarding an unrelated draft', async ({ page }, testInfo) => {
+  await page.goto('/agents');
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: /new conversation/i }).click();
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Keep this unrelated draft.');
+
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/conversation/does-not-exist');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(page).toHaveURL(/\/conversation$/);
+  await expect(composer).toHaveValue('Keep this unrelated draft.');
+});
+
 test('sends a local message and allows interruption', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
@@ -628,7 +864,7 @@ test('mobile conversation selection closes navigation and restores focus', async
   const trigger = page.getByRole('button', { name: 'Open navigation' });
   const navigation = page.locator('#primary-navigation');
   await trigger.click();
-  await navigation.getByRole('button', { name: /A thoughtful beginning/ }).click();
+  await navigation.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' }).click();
   await expect(navigation).not.toHaveClass(/is-mobile-open/);
   await expect(trigger).toBeFocused();
 });
