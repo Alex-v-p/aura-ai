@@ -34,7 +34,7 @@ new product behavior.
 | `aura-core.runtime.prompting` | `services/aura-core/src/aura_core/runtime/prompting` | `prompting/public.py` | Agent and persona public APIs |
 | `aura-core.providers.models.ollama.*` | `services/aura-core/src/aura_core/providers/models/ollama` | `adapter.py` | Runtime model ports only |
 | `aura-core.entrypoints.*` | `services/aura-core/src/aura_core/entrypoints/**` | API app, worker app, CLI, and route modules, including the agents and personas routes | Bootstrap, public APIs, platform adapters, Ollama adapter |
-| `aura-web.interaction-conversations` | `frontend/libs/aura/interaction/conversations` | `src/index.ts` | Transport client, agents feature, shared UI |
+| `aura-web.interaction-conversations` | `frontend/libs/aura/interaction/conversations` | `src/index.ts` | Transport client, agents feature, personas feature, shared UI |
 | `aura-web.interaction-agents` | `frontend/libs/aura/interaction/agents` | `src/index.ts` | Transport client, personas feature |
 | `aura-web.interaction-personas` | `frontend/libs/aura/interaction/personas` | `src/index.ts` | Transport client |
 | `aura-web.api-client` | `frontend/libs/platform/aura-api-client` | `src/index.ts` | OpenAPI and run-event contracts |

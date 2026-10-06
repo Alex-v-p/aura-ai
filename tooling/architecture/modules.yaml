@@ -366,7 +366,9 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.personas.public
   - aura-core.platform.outbox
+  - aura-core.platform.telemetry
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
   - aura-core.runtime.prompting.public
@@ -694,6 +696,8 @@ modules:
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.personas.public
+  - aura-core.platform.telemetry
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
   - aura-core.runtime.prompting.public
@@ -743,6 +747,7 @@ modules:
   - aura-core.domains.execution.runs.public
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.personas.public
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
@@ -1069,6 +1074,7 @@ modules:
   dependencies:
   - aura-web.api-client
   - aura-web.interaction-agents
+  - aura-web.interaction-personas
   - aura-web.shared-ui
 - id: aura-web.interaction-agents
   root: frontend/libs/aura/interaction/agents
