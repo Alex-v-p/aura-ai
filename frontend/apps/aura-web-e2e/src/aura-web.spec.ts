@@ -371,6 +371,117 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   expect(afterScroll.sidebarBottom.bottom).toBeCloseTo(beforeScroll.sidebarBottom.bottom, 0);
 });
 
+test('scrolls the desktop main canvas when the pointer is over conversation content', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop wheel ownership runs once in the desktop project.');
+  await page.goto('/?fixture=long-sidebar');
+  const conversation = page.locator('.conversation');
+  const mainContent = page.locator('#main-content');
+  const transcript = page.locator('.transcript');
+  const composer = page.locator('form.composer-wrap');
+  await expect(conversation).toBeVisible();
+  await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
+
+  const ownersBeforeWheel = await page.evaluate(() => {
+    const candidates = [
+      document.querySelector<HTMLElement>('#main-content'),
+      document.querySelector<HTMLElement>('.conversation'),
+      document.querySelector<HTMLElement>('.transcript'),
+    ];
+    return candidates
+      .filter((element): element is HTMLElement => element !== null)
+      .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
+      .map((element) => element.id || element.className);
+  });
+  expect(ownersBeforeWheel).toEqual(['main-content']);
+  await expect(mainContent).toHaveCSS('overflow-y', 'auto');
+  await expect(transcript).not.toHaveCSS('overflow-y', 'auto');
+  await expect(transcript).not.toHaveCSS('overflow-y', 'scroll');
+  await expect(composer).toHaveCSS('position', 'sticky');
+
+  await transcript.hover({ position: { x: 12, y: 120 } });
+  await page.mouse.wheel(0, 900);
+  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => transcript.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await mainContent.evaluate((element) => { element.scrollTop = 0; });
+  await mainContent.focus();
+  await expect(mainContent).toBeFocused();
+  await page.keyboard.press('PageDown');
+  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => transcript.evaluate((element) => element.scrollTop)).toBe(0);
+
+  const afterWheel = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('#main-content');
+    const composerElement = document.querySelector<HTMLElement>('form.composer-wrap');
+    const bounds = composerElement?.getBoundingClientRect();
+    return {
+      mainScrollTop: main?.scrollTop ?? 0,
+      composerTop: bounds?.top ?? 0,
+      composerBottom: bounds?.bottom ?? 0,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(afterWheel.mainScrollTop).toBeGreaterThan(0);
+  expect(afterWheel.composerTop).toBeGreaterThanOrEqual(-1);
+  expect(afterWheel.composerBottom).toBeLessThanOrEqual(afterWheel.viewportHeight + 1);
+  await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+});
+
+test('keeps mobile conversation scrolling contained in the conversation panel', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile contained scrolling runs once in the mobile project.');
+  await page.goto('/?fixture=long-sidebar');
+  const conversation = page.locator('.conversation');
+  const mainContent = page.locator('#main-content');
+  const transcript = page.locator('.transcript');
+  await expect(conversation).toBeVisible();
+  await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
+
+  const metrics = await page.evaluate(() => {
+    const conversationElement = document.querySelector<HTMLElement>('.conversation');
+    const main = document.querySelector<HTMLElement>('#main-content');
+    const transcriptElement = document.querySelector<HTMLElement>('.transcript');
+    const candidates = [main, conversationElement, transcriptElement];
+    return {
+      conversationOverflowY: conversationElement ? getComputedStyle(conversationElement).overflowY : 'visible',
+      conversationClientHeight: conversationElement?.clientHeight ?? 0,
+      conversationScrollHeight: conversationElement?.scrollHeight ?? 0,
+      mainScrollTop: main?.scrollTop ?? 0,
+      owners: candidates
+        .filter((element): element is HTMLElement => element !== null)
+        .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
+        .map((element) => element.className || element.id),
+    };
+  });
+  expect(['auto', 'scroll']).toContain(metrics.conversationOverflowY);
+  expect(metrics.conversationScrollHeight).toBeGreaterThan(metrics.conversationClientHeight);
+  expect(metrics.owners).toEqual(['conversation']);
+  expect(metrics.mainScrollTop).toBe(0);
+  await transcript.hover({ position: { x: 12, y: 120 } });
+  await page.mouse.wheel(0, 900);
+  await expect.poll(async () => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await conversation.evaluate((element) => { element.scrollTop = 0; });
+  const conversationBounds = await conversation.boundingBox();
+  if (!conversationBounds) throw new Error('Conversation panel is not measurable for touch scrolling.');
+  const touchX = conversationBounds.x + Math.min(160, conversationBounds.width / 2);
+  const touchStartY = conversationBounds.y + Math.min(280, Math.max(32, conversationBounds.height - 32));
+  const touchClient = await page.context().newCDPSession(page);
+  try {
+    await touchClient.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchStartY }] });
+    for (const offset of [100, 200, 300, 400]) {
+      await touchClient.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchX, y: touchStartY - offset }] });
+    }
+    await touchClient.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await touchClient.detach();
+  }
+  await expect.poll(async () => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
+});
+
 test('sends a local message and allows interruption', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });

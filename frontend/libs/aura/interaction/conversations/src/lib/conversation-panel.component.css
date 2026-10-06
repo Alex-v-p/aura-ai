@@ -9,7 +9,7 @@
 h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); letter-spacing: -.045em; line-height: 1.15; margin: 0; }
 .connection { align-items: center; color: var(--success-text); display: inline-flex; font-size: .78rem; gap: .4rem; padding-top: .3rem; }
 .connection-dot { background: var(--success); border-radius: 99px; height: .45rem; width: .45rem; }
-.transcript { display: flex; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.transcript { display: flex; flex: 1 0 auto; min-height: 0; overflow: visible; overscroll-behavior: auto; }
 .welcome { align-items: center; display: flex; flex-direction: column; justify-content: center; margin: auto; max-width: 40rem; padding: 4rem 1rem; text-align: center; }
 .welcome-mark { align-items: center; background: var(--accent-soft); border-radius: 1.5rem; color: var(--accent); display: flex; font-size: 1.7rem; height: 4rem; justify-content: center; margin-bottom: 1.4rem; width: 4rem; }
 .welcome h2 { font-size: clamp(1.35rem, 2.5vw, 1.75rem); letter-spacing: -.035em; margin: 0 0 .75rem; }
@@ -47,5 +47,5 @@ kbd { background: var(--surface-subtle); border: 1px solid var(--border); border
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0,0,0,0); }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0% { opacity: .7; transform: scale(.5); } 70%, 100% { opacity: 0; transform: scale(1.6); } }
-@media (max-width: 720px) { .conversation { height: 100%; min-height: 0; overflow-y: auto; padding: 1.5rem 1rem 0; } .conversation-header { margin-bottom: 1.5rem; } .conversation-header h1 { font-size: 1.55rem; } .connection { font-size: 0; } .connection-dot { height: .5rem; width: .5rem; } .welcome { padding: 2rem .25rem; } .user-turn { margin-left: .5rem; } .composer-wrap { border-radius: .85rem; margin-top: auto; padding-bottom: calc(.55rem + env(safe-area-inset-bottom)); } .privacy-note { padding-bottom: env(safe-area-inset-bottom); } .composer-hint { font-size: 0; } .hide-mobile { display: none; } }
+@media (max-width: 720px) { .conversation { height: 100%; min-height: 0; overflow-y: auto; padding: 1.5rem 1rem 0; } .conversation-header { margin-bottom: 1.5rem; } .conversation-header h1 { font-size: 1.55rem; } .connection { font-size: 0; } .connection-dot { height: .5rem; width: .5rem; } .transcript { flex: 0 0 auto; overflow: visible; overscroll-behavior: auto; } .welcome { padding: 2rem .25rem; } .user-turn { margin-left: .5rem; } .composer-wrap { border-radius: .85rem; margin-top: auto; padding-bottom: calc(.55rem + env(safe-area-inset-bottom)); } .privacy-note { padding-bottom: env(safe-area-inset-bottom); } .composer-hint { font-size: 0; } .hide-mobile { display: none; } }
 @media (prefers-reduced-motion: reduce) { .turn { animation: none; } .pulse::after { animation: none; } }
