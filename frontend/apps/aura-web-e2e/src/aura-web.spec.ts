@@ -41,6 +41,100 @@ async function expectExpandedDestinationTiles(productNav: Locator): Promise<void
   }
 }
 
+async function expectDestinationPresentation(productNav: Locator): Promise<void> {
+  const presentation = await productNav.locator('a').evaluateAll((links) => links.map((link) => {
+    const label = link.querySelector<HTMLElement>('.label');
+    const icon = link.querySelector<SVGElement>('svg');
+    const iconShapes = icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0;
+    const linkStyle = getComputedStyle(link);
+    const before = getComputedStyle(link, '::before');
+    const after = getComputedStyle(link, '::after');
+    const rect = link.getBoundingClientRect();
+    const marker = [before, after].find((style) => style.content !== 'none'
+      && style.display !== 'none'
+      && (style.content !== '""' || style.width !== 'auto' || style.height !== 'auto'
+        || style.borderTopWidth !== '0px' || style.borderRightWidth !== '0px'
+        || style.borderBottomWidth !== '0px' || style.borderLeftWidth !== '0px'));
+    return {
+      accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
+      title: link.getAttribute('title') ?? '',
+      labelText: label?.textContent?.trim() ?? '',
+      labelWhiteSpace: label ? getComputedStyle(label).whiteSpace : '',
+      labelClientWidth: label?.clientWidth ?? 0,
+      labelScrollWidth: label?.scrollWidth ?? 0,
+      iconCount: link.querySelectorAll('svg').length,
+      iconShapes,
+      iconViewBox: icon?.getAttribute('viewBox') ?? '',
+      iconDecorative: Boolean(icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]')),
+      selected: link.getAttribute('aria-current') === 'page',
+      selectedSurface: linkStyle.backgroundColor,
+      selectedBoxShadow: linkStyle.boxShadow,
+      markerVisible: Boolean(marker),
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      height: rect.height,
+      width: rect.width,
+    };
+  }));
+
+  expect(presentation).toHaveLength(3);
+  expect(presentation.map((item) => item.labelText)).toEqual(['Conversations', 'Agents', 'Personas']);
+  for (const item of presentation) {
+    expect(item.accessibleName).toMatch(/.+/);
+    expect(item.title).toMatch(/^(Conversations|Agents|Personas)$/);
+    expect(item.labelWhiteSpace).toBe('nowrap');
+    expect(item.labelClientWidth).toBeGreaterThan(0);
+    expect(item.labelClientWidth).toBeGreaterThanOrEqual(item.labelScrollWidth);
+    expect(item.iconCount).toBe(1);
+    expect(item.iconShapes).toBeGreaterThan(0);
+    expect(item.iconViewBox).toMatch(/\S+/);
+    expect(item.iconDecorative).toBe(true);
+    expect(item.width).toBeGreaterThan(0);
+    expect(item.height).toBeGreaterThan(0);
+  }
+
+  const tray = await productNav.boundingBox();
+  if (!tray) throw new Error('Destination tray is not measurable.');
+  expect(presentation[0]?.left ?? 0).toBeGreaterThan(tray.x + 7);
+  expect((tray.x + tray.width) - (presentation.at(-1)?.right ?? 0)).toBeGreaterThan(7);
+
+  const selected = presentation.find((item) => item.selected);
+  expect(selected).toBeDefined();
+  expect(selected?.selectedSurface).not.toBe('rgba(0, 0, 0, 0)');
+  expect(selected?.selectedBoxShadow).not.toMatch(/0px 0px 0px 1px/);
+  expect(selected?.markerVisible).toBe(true);
+}
+
+async function expectCompactDestinationControls(productNav: Locator): Promise<void> {
+  const controls = await productNav.locator('a').evaluateAll((links) => links.map((link) => {
+    const label = link.querySelector<HTMLElement>('.label');
+    const icon = link.querySelector<SVGElement>('svg');
+    return {
+      labelVisible: Boolean(label && getComputedStyle(label).visibility !== 'hidden' && getComputedStyle(label).display !== 'none'),
+      accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
+      title: link.getAttribute('title') ?? '',
+      iconCount: link.querySelectorAll('svg').length,
+      iconShapes: icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0,
+      iconViewBox: icon?.getAttribute('viewBox') ?? '',
+      iconDecorative: Boolean(icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]')),
+      current: link.getAttribute('aria-current') === 'page',
+    };
+  }));
+
+  expect(controls).toHaveLength(3);
+  for (const control of controls) {
+    expect(control.labelVisible).toBe(false);
+    expect(control.accessibleName).toMatch(/^(Conversations|Agents|Personas)$/);
+    expect(control.title).toMatch(/^(Conversations|Agents|Personas)$/);
+    expect(control.iconCount).toBe(1);
+    expect(control.iconShapes).toBeGreaterThan(0);
+    expect(control.iconViewBox).toMatch(/\S+/);
+    expect(control.iconDecorative).toBe(true);
+  }
+  expect(controls.filter((control) => control.current)).toHaveLength(1);
+}
+
 async function installApiFake(page: import('@playwright/test').Page): Promise<void> {
   let errorOnce = false;
   let failNextStream = false;
@@ -220,6 +314,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await expect(navigation.locator('.wordmark-mark')).toBeVisible();
     await expect(navigation.locator('.product-nav')).toBeVisible();
     await expect(navigation.locator('.product-nav a')).toHaveCount(3);
+    await expectCompactDestinationControls(navigation.locator('.product-nav'));
     await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
     await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
     await expect(navigation.locator('.conversation-link')).toHaveCount(0);
@@ -271,6 +366,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toBeVisible();
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i })).toBeVisible();
+  await expectCompactDestinationControls(navigation.locator('.product-nav'));
   await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toBeVisible();
   await expect(navigation.locator('.conversation-link')).toBeVisible();
@@ -304,6 +400,7 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
+  await expectDestinationPresentation(productNav);
   await expect(recentNav).toBeVisible();
   await expect(recentNav.locator('.conversation-link')).toBeVisible();
   await expect(productNav.locator('a')).not.toHaveClass(/conversation-link/);
@@ -317,6 +414,7 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(productNav.getByRole('link')).toHaveCount(3);
+  await expectCompactDestinationControls(productNav);
 });
 
 test('keeps primary destinations available in the mobile drawer', async ({ page }, testInfo) => {
@@ -334,6 +432,7 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
+  await expectDestinationPresentation(productNav);
   await expect(recentNav).toBeVisible();
   await expect(recentNav.locator('.conversation-link')).toBeVisible();
 });

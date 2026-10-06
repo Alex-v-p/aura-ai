@@ -17,7 +17,20 @@
         }
       </div>
       <button class="new-conversation" type="button" aria-label="New conversation" title="New conversation" (click)="startNewConversation()"><span aria-hidden="true">＋</span><span class="label">New conversation</span></button>
-      <div class="product-nav" aria-label="Aura destinations"><a class="quiet-link" routerLink="/conversation" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" title="Conversations" (click)="closeMobileNavigation(isMobileViewport())"><span class="product-icon" aria-hidden="true">✦</span><span class="label">Conversations</span></a><a class="quiet-link" routerLink="/agents" routerLinkActive="is-active" ariaCurrentWhenActive="page" title="Agents" (click)="closeMobileNavigation(isMobileViewport())"><span class="product-icon" aria-hidden="true">◇</span><span class="label">Agents</span></a><a class="quiet-link" routerLink="/personas" routerLinkActive="is-active" ariaCurrentWhenActive="page" title="Personas" (click)="closeMobileNavigation(isMobileViewport())"><span class="product-icon" aria-hidden="true">◌</span><span class="label">Personas</span></a></div>
+      <div class="product-nav" aria-label="Aura destinations">
+        <a class="product-link" routerLink="/conversation" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" aria-label="Conversations" title="Conversations" (click)="closeMobileNavigation(isMobileViewport())">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M7.5 10h9M7.5 13h5"/></svg>
+          <span class="label">Conversations</span><span class="product-current-marker" aria-hidden="true">✓</span>
+        </a>
+        <a class="product-link" routerLink="/agents" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Agents" title="Agents" (click)="closeMobileNavigation(isMobileViewport())">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M8 6V4.5h8V6M8 12h.01M16 12h.01M8 16h8M12 2v2.5"/></svg>
+          <span class="label">Agents</span><span class="product-current-marker" aria-hidden="true">✓</span>
+        </a>
+        <a class="product-link" routerLink="/personas" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Personas" title="Personas" (click)="closeMobileNavigation(isMobileViewport())">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a7 7 0 0 1 7 7v2.2a7 7 0 0 1-14 0v-2.2a7 7 0 0 1 7-7Z"/><path d="M8.5 11.5h.01M15.5 11.5h.01M9 15.5c1.8 1.2 4.2 1.2 6 0M5 12.5H3.5a1.5 1.5 0 0 1 0-3H5M19 12.5h1.5a1.5 1.5 0 0 0 0-3H19"/></svg>
+          <span class="label">Personas</span><span class="product-current-marker" aria-hidden="true">✓</span>
+        </a>
+      </div>
       @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
         <div class="conversation-nav" aria-label="Conversations">
           <p class="nav-label">Recent</p>
