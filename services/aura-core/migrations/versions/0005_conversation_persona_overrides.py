@@ -6,7 +6,7 @@ from alembic import op
 from sqlalchemy import Column, DateTime, String, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "0005_conversation_persona_overrides"
+revision = "0005_persona_overrides"
 down_revision = "0004_agent_persona_revisions"
 branch_labels = None
 depends_on = None

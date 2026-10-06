@@ -65,7 +65,7 @@ def _migration() -> Any:
 
 def test_persona_override_migration_has_one_forward_upgrade_after_0004() -> None:
     migration = _migration()
-    assert str(migration.revision).startswith("0005")
+    assert migration.revision == "0005_persona_overrides"
     assert migration.down_revision == "0004_agent_persona_revisions"
     source = next(MIGRATION_DIR.glob("0005_*.py")).read_text().lower()
     assert "downgrade is disabled" in source.lower() or "raise RuntimeError" in source

@@ -13,6 +13,8 @@ from aura_core.domains.interaction.conversations.persistence import (
 from aura_core.entrypoints.cli import alembic_config
 from aura_core.platform.auth import Settings
 
+MIGRATION_DIR = Path(__file__).parents[1] / "migrations" / "versions"
+
 
 def _migration_0004() -> Any:
     path = Path(__file__).parents[1] / "migrations" / "versions" / "0004_agent_persona_revisions.py"
@@ -78,3 +80,25 @@ def test_agent_persona_migration_has_a_single_stable_upgrade_path_and_seed_ids()
     assert "ON CONFLICT (id) DO NOTHING" in source
     assert "conversation_agent_assignments" in source
     assert "WHERE NOT EXISTS" in source
+
+
+def test_migration_revision_identifiers_fit_alembic_version_column() -> None:
+    revision_paths = sorted(MIGRATION_DIR.glob("*.py"))
+    assert revision_paths
+
+    for path in revision_paths:
+        spec = importlib.util.spec_from_file_location(
+            f"aura_migration_{path.stem}",
+            path,
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        revision = getattr(module, "revision", None)
+        assert isinstance(revision, str), path.name
+        assert len(revision) <= 32, f"{path.name}: {revision!r} exceeds Alembic's varchar(32)"
+
+        if path.name.startswith("0005_"):
+            assert revision == "0005_persona_overrides"
+            assert module.down_revision == "0004_agent_persona_revisions"
