@@ -8,7 +8,12 @@ ROOT = Path(__file__).parents[2]
 
 
 def service_block(compose: str, name: str, next_name: str) -> str:
-    return compose.split(f"  {name}:\n", 1)[1].split(f"  {next_name}:\n", 1)[0]
+    # Match service keys at the two-space indentation level.  A dependency
+    # entry such as ``aura-web.depends_on.aura-core-api`` is more deeply
+    # indented and must not be mistaken for the service declaration.
+    start = f"\n  {name}:\n"
+    end = f"\n  {next_name}:\n"
+    return compose.split(start, 1)[1].split(end, 1)[0]
 
 
 class ComposeTopologyTests(unittest.TestCase):
@@ -46,8 +51,24 @@ class ComposeTopologyTests(unittest.TestCase):
 
         self.assertIn("BASE_URL: http://aura-web:8080", e2e)
         self.assertIn("networks: [aura-frontend]", e2e)
+        self.assertNotIn("aura-edge", e2e)
         self.assertNotIn("aura-core-db", e2e)
         self.assertNotIn("aura-core-egress", e2e)
+
+    def test_only_web_uses_the_host_facing_edge_network(self) -> None:
+        web = service_block(self.compose, "aura-web", "aura-core-api")
+        for name, next_name in (
+            ("aura-core-api", "aura-core-worker"),
+            ("aura-core-worker", "aura-core-migrate"),
+            ("aura-core-migrate", "aura-core-postgres"),
+            ("aura-core-postgres", "aura-nats"),
+            ("aura-nats", "aura-valkey"),
+            ("aura-valkey", "frontend-checks"),
+        ):
+            self.assertNotIn("aura-edge", service_block(self.compose, name, next_name))
+        self.assertIn("networks: [aura-frontend, aura-edge]", web)
+        self.assertIn("aura-edge: {}", self.compose)
+        self.assertIn('"127.0.0.1:${AURA_WEB_PORT:-4200}:8080"', web)
 
     def test_normal_composition_keeps_identity_outside_core_and_internal_paths(self) -> None:
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")

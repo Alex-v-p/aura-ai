@@ -28,7 +28,7 @@ services:
       retries: 5
       start_period: 5s
     restart: unless-stopped
-    networks: [aura-frontend]
+    networks: [aura-frontend, aura-edge]
 
   aura-core-api:
     build:
@@ -228,6 +228,11 @@ secrets:
     file: ${AURA_VALKEY_PASSWORD_FILE:-./.secrets/aura-valkey-password}
 
 networks:
+  # Docker Desktop does not publish host ports for containers attached only to
+  # an internal network. Keep the browser-to-Core path on aura-frontend and
+  # give the browser-facing web process its own loopback-bound edge network.
+  # No other normal-stack service joins this network.
+  aura-edge: {}
   aura-frontend:
     internal: true
   aura-core-db:
