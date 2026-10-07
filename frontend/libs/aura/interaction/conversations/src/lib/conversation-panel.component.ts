@@ -30,7 +30,6 @@ export class ConversationPanelComponent {
   @ViewChild('menuPersona') private readonly menuPersona?: ElementRef<HTMLSelectElement>;
   @ViewChild('menuModel') private readonly menuModel?: ElementRef<HTMLSelectElement>;
   @ViewChild('configurationCancel') private readonly configurationCancel?: ElementRef<HTMLButtonElement>;
-  @ViewChild('runInspectorTrigger') private readonly runInspectorTrigger?: ElementRef<HTMLButtonElement>;
   @ViewChild('runInspectorClose') private readonly runInspectorClose?: ElementRef<HTMLButtonElement>;
   readonly optionsOpen = signal(false);
   readonly connectedOrigin = signal<CdkOverlayOrigin>({} as CdkOverlayOrigin);
@@ -181,7 +180,6 @@ export class ConversationPanelComponent {
     if (returnFocus) queueMicrotask(() => {
       const target = focusId ? document.getElementById(focusId) : null;
       if (target instanceof HTMLElement) target.focus();
-      else this.runInspectorTrigger?.nativeElement.focus();
     });
   }
   runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {

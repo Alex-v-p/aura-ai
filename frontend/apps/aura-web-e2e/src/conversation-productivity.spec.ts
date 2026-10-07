@@ -358,9 +358,10 @@ test.describe('conversation productivity', () => {
     const failedRun = run('run-failed', 'conversation-runs', 'failed', { retryOfRunId: 'run-old' });
     await installFixture(page, { conversations: [conversation('conversation-runs', 'Run inspector', { currentRun: activeRun, recentRuns: [activeRun, failedRun] })] });
     await page.goto('/conversation/conversation-runs');
-    await expect(page.getByRole('button', { name: /run details|runs/i })).toBeVisible();
-    const opener = page.getByRole('button', { name: /run details|runs/i });
+    await waitForLibrary(page);
+    const opener = page.getByRole('button', { name: 'Conversation actions for Run inspector' });
     await opener.click();
+    await page.getByRole('menuitem', { name: 'Inspect runs' }).click();
     const drawer = page.getByRole('dialog', { name: /recent runs/i });
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText('MODEL_TIMEOUT')).toBeVisible();
@@ -414,7 +415,10 @@ test.describe('conversation productivity', () => {
     const activeRun = run('run-reconcile', 'conversation-reconcile', 'running');
     const fixture = await installFixture(page, { conversations: [conversation('conversation-reconcile', 'Reconciliation', { currentRun: activeRun, recentRuns: [activeRun] })] });
     await page.goto('/conversation/conversation-reconcile');
-    await page.getByRole('button', { name: /run details|runs/i }).click();
+    await waitForLibrary(page);
+    const opener = page.getByRole('button', { name: 'Conversation actions for Reconciliation' });
+    await opener.click();
+    await page.getByRole('menuitem', { name: 'Inspect runs' }).click();
     const drawer = page.getByRole('dialog', { name: /recent runs/i });
     await expect(drawer.getByRole('button', { name: /cancel/i })).toBeVisible();
     await expect(drawer.getByRole('button', { name: /retry/i })).toHaveCount(0);

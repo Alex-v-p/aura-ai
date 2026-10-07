@@ -67,7 +67,6 @@ kbd { background: var(--surface-subtle); border: 1px solid var(--border); border
 .privacy-note { color: var(--text-muted); font-size: .68rem; margin: .7rem auto 0; text-align: center; }
 .privacy-note span { color: var(--accent); margin-right: .25rem; }
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0,0,0,0); }
-.run-inspector-trigger { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .5rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .72rem; padding: .35rem .55rem; }
 .archived-banner { align-items: center; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .75rem; display: flex; flex-wrap: wrap; gap: .65rem; margin-bottom: 1rem; padding: .7rem .85rem; }
 .archived-banner span { color: var(--text-muted); font-size: .82rem; }
 .run-inspector-backdrop { background: rgb(18 16 18 / .35); inset: 0; position: fixed; z-index: 80; }
