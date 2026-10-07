@@ -79,6 +79,44 @@ class TitleState(StrEnum):
     PENDING = "pending"
     GENERATED = "generated"
     FALLBACK = "fallback"
+    MANUAL = "manual"
+
+
+class ConversationArchiveState(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    ALL = "all"
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationListFilters:
+    """Safe, metadata-only filters for owner-scoped conversation listing."""
+
+    q: str | None = None
+    agent_profile_id: UUID | None = None
+    model_id: str | None = None
+    run_status: RunStatus | None = None
+    archive_state: ConversationArchiveState = ConversationArchiveState.ACTIVE
+    activity_from: datetime | None = None
+    activity_to: datetime | None = None
+
+    def normalized(self) -> ConversationListFilters:
+        return ConversationListFilters(
+            q=self.q.strip().casefold() if self.q and self.q.strip() else None,
+            agent_profile_id=self.agent_profile_id,
+            model_id=self.model_id.strip() if self.model_id else None,
+            run_status=self.run_status,
+            archive_state=self.archive_state,
+            activity_from=_utc(self.activity_from),
+            activity_to=_utc(self.activity_to),
+        )
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(UTC)
 
 
 def now() -> datetime:
@@ -126,6 +164,7 @@ class Conversation:
     created_at: datetime = field(default_factory=now)
     updated_at: datetime = field(default_factory=now)
     title_state: TitleState = TitleState.PENDING
+    archived_at: datetime | None = None
     messages: list[Message] = field(default_factory=list[Message])
     runs: list[Run] = field(default_factory=list[Run])
     assignments: list[AgentAssignment] = field(default_factory=list[AgentAssignment])

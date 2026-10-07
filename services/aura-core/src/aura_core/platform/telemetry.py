@@ -30,7 +30,7 @@ from uuid import UUID
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.interaction.agent_configuration": "1.1.0",
     "aura.execution.run_coordinator": "1.3.0",
-    "aura.interaction.conversation_persistence": "1.5.0",
+    "aura.interaction.conversation_persistence": "1.6.0",
     "aura.runtime.model_inference": "1.4.0",
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.1.0",
@@ -61,6 +61,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.interaction.conversation_persistence": frozenset(
         {
             "checkpoint_persisted",
+            "conversation_list_duration_ms",
+            "conversation_metadata_mutation_duration_ms",
+            "conversation_filter_outcome",
+            "conversation_archive_outcome",
             "errors",
             "model_selection_persisted",
             "persistence_duration_ms",
@@ -120,6 +124,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "checkpoint.persist",
             "conversation.list",
             "conversation.list.request",
+            "conversation.metadata.request",
             "conversation.persist",
             "run.claim",
             "run.finish",
@@ -146,7 +151,15 @@ _SPAN_METRICS: Mapping[str, str] = {
 # Dimensions are suitable for metric aggregation and intentionally exclude all
 # identifiers. Trace attributes may be high-cardinality but are never labels.
 _DIMENSION_KEYS = frozenset(
-    {"dependency", "error_class", "outcome", "provider", "status", "token_estimator"}
+    {
+        "archive_state",
+        "dependency",
+        "error_class",
+        "outcome",
+        "provider",
+        "status",
+        "token_estimator",
+    }
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
@@ -162,6 +175,7 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "configuration_outcome",
         "configuration_source",
         "configuration_reason",
+        "result_count",
         "operation_duration_ms",
         "attempt_count",
         "causation_id",
@@ -203,6 +217,7 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "persona_revision_number",
         "title_input_size",
         "title_output_size",
+        "result_count",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -219,6 +234,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "prompt_compiler",
         }
     ),
+    "archive_state": frozenset({"active", "archived", "all", "unknown"}),
     "error_class": frozenset(
         {
             "cancel",
@@ -588,6 +604,8 @@ class MetadataMetrics:
                 except ValueError:
                     return None
             if key == "configuration_outcome" and value not in {"ok", "error"}:
+                return None
+            if key == "archive_state" and value not in {"active", "archived", "all"}:
                 return None
             if key == "model_id" and (
                 _SAFE_NAME.fullmatch(value) is None or "://" in value or "@" in value

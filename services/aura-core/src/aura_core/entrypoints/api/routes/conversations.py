@@ -3,23 +3,28 @@
 # FastAPI dependency markers are intentionally declared at the transport edge.
 # ruff: noqa: B008
 
+from datetime import datetime
 from time import perf_counter
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aura_core.domains.execution.runs.public import Run, message_payload, run_payload
+from aura_core.domains.execution.runs.public import Run, RunStatus, message_payload, run_payload
 from aura_core.domains.interaction.agents.public import AgentCatalog
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     AgentSwitchConfirmationRequired,
     AgentUnavailable,
+    ArchivedConversationConflict,
     Conversation,
+    ConversationArchiveState,
+    ConversationListFilters,
     ConversationNotFound,
     IdempotencyConflict,
     InvalidConversationCursor,
+    InvalidConversationMetadata,
     ModelUnavailable,
     PersonaUnavailable,
     VersionConflict,
@@ -62,6 +67,33 @@ class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=32768)
     conversationVersion: int = Field(ge=1)
+
+
+class UpdateConversationMetadataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    archived: bool | None = None
+    version: int = Field(ge=1)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def trim_title_for_transport(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        if any(
+            ord(character) < 0x20
+            or 0x7F <= ord(character) <= 0x9F
+            or ord(character) in {0x2028, 0x2029}
+            for character in value
+        ):
+            return value
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_mutation(self) -> UpdateConversationMetadataRequest:
+        if self.title is None and self.archived is None:
+            raise ValueError("title or archived is required")
+        return self
 
 
 def state(request: Request) -> AppState:
@@ -147,6 +179,9 @@ def conversation_payload(
         "version": conversation.version,
         "createdAt": conversation.created_at.isoformat(),
         "updatedAt": conversation.updated_at.isoformat(),
+        "archivedAt": conversation.archived_at.isoformat()
+        if conversation.archived_at is not None
+        else None,
         "currentRun": run_payload(current) if current else None,
         "agentAssignments": [
             {
@@ -209,19 +244,48 @@ async def list_conversations(
     session: Session = Depends(require_session),
     cursor: str | None = Query(default=None, min_length=1, max_length=1024),
     limit: int = Query(default=30, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=200),
+    agent_profile_id: UUID | None = Query(default=None, alias="agentProfileId"),
+    model_id: str | None = Query(default=None, alias="modelId", max_length=255),
+    run_status: RunStatus | None = Query(default=None, alias="runStatus"),
+    archive_state: ConversationArchiveState = Query(
+        default=ConversationArchiveState.ACTIVE, alias="archiveState"
+    ),
+    activity_from: datetime | None = Query(default=None, alias="activityFrom"),
+    activity_to: datetime | None = Query(default=None, alias="activityTo"),
 ) -> dict[str, object]:
     trace_id = uuid4().hex
     root_span_id = new_span_id()
     started = perf_counter()
+    filters = ConversationListFilters(
+        q=q,
+        agent_profile_id=agent_profile_id,
+        model_id=model_id,
+        run_status=run_status,
+        archive_state=archive_state,
+        activity_from=activity_from,
+        activity_to=activity_to,
+    ).normalized()
     try:
-        items, next_cursor = await state(request).store.list(
-            session.principal.subject,
-            limit,
-            cursor,
-            session.principal.issuer,
-            trace_id=trace_id,
-            parent_span_id=root_span_id,
-        )
+        if filters == ConversationListFilters():
+            items, next_cursor = await state(request).store.list(
+                session.principal.subject,
+                limit,
+                cursor,
+                session.principal.issuer,
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
+        else:
+            items, next_cursor = await state(request).store.list(
+                session.principal.subject,
+                limit,
+                cursor,
+                session.principal.issuer,
+                filters=filters,
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
     except InvalidConversationCursor as exc:
         state(request).metrics.record_span(
             "aura.interaction.conversation_persistence",
@@ -375,7 +439,7 @@ async def update_conversation(
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except (VersionConflict, ActiveRunConflict) as exc:
+    except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
         raise HTTPException(status_code=409, detail="conversation version conflict") from exc
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
@@ -418,6 +482,159 @@ async def update_conversation(
     return conversation_payload(conversation, state(request).agents, state(request).personas)
 
 
+@router.patch("/{conversation_id}/metadata")
+async def update_conversation_metadata(
+    request: Request,
+    conversation_id: UUID,
+    body: UpdateConversationMetadataRequest,
+    session: Session = Depends(require_csrf),
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    started = perf_counter()
+    trace_id = uuid4().hex
+    root_span_id = new_span_id()
+    try:
+        conversation = await state(request).store.update_metadata(
+            conversation_id,
+            session.principal.subject,
+            title=body.title,
+            archived=body.archived,
+            version=body.version,
+            idempotency_key=idempotency_key,
+            issuer=session.principal.issuer,
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
+            metrics=state(request).metrics,
+        )
+    except ConversationNotFound as exc:
+        _record_metadata_mutation(
+            request,
+            trace_id,
+            root_span_id,
+            conversation_id,
+            started,
+            "unknown",
+            "error",
+            "not_found",
+            body.archived is not None,
+        )
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except InvalidConversationMetadata as exc:
+        _record_metadata_mutation(
+            request,
+            trace_id,
+            root_span_id,
+            conversation_id,
+            started,
+            "unknown",
+            "error",
+            "validation",
+            body.archived is not None,
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
+        _record_metadata_mutation(
+            request,
+            trace_id,
+            root_span_id,
+            conversation_id,
+            started,
+            "unknown",
+            "error",
+            "conflict",
+            body.archived is not None,
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IdempotencyConflict as exc:
+        _record_metadata_mutation(
+            request,
+            trace_id,
+            root_span_id,
+            conversation_id,
+            started,
+            "unknown",
+            "error",
+            "idempotency",
+            body.archived is not None,
+        )
+        raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except Exception:
+        _record_metadata_mutation(
+            request,
+            trace_id,
+            root_span_id,
+            conversation_id,
+            started,
+            "unknown",
+            "error",
+            "persistence",
+            body.archived is not None,
+        )
+        raise
+    _record_metadata_mutation(
+        request,
+        trace_id,
+        root_span_id,
+        conversation_id,
+        started,
+        "archived" if conversation.archived_at is not None else "active",
+        "ok",
+        None,
+        body.archived is not None,
+        result_count=1,
+    )
+    return conversation_payload(conversation, state(request).agents, state(request).personas)
+
+
+def _record_metadata_mutation(
+    request: Request,
+    trace_id: str,
+    root_span_id: str,
+    conversation_id: UUID,
+    started: float,
+    archive_state: str,
+    outcome: str,
+    error_class: str | None,
+    archive_operation: bool,
+    *,
+    result_count: int = 0,
+) -> None:
+    duration_ms = (perf_counter() - started) * 1000
+    state(request).metrics.record_span(
+        "aura.interaction.conversation_persistence",
+        "conversation.metadata.request",
+        duration_ms,
+        trace_id=trace_id,
+        span_id=root_span_id,
+        parent_span_id=None,
+        dependency="conversation_store",
+        outcome=outcome,
+        error_class=error_class,
+        conversation_id=str(conversation_id),
+        result_count=str(result_count),
+    )
+    state(request).metrics.observe(
+        "aura.interaction.conversation_persistence",
+        "conversation_metadata_mutation_duration_ms",
+        (perf_counter() - started) * 1000,
+        trace_id=trace_id,
+        conversation_id=str(conversation_id),
+        archive_state=archive_state,
+        result_count=str(result_count),
+        outcome=outcome,
+    )
+    if archive_operation:
+        state(request).metrics.increment(
+            "aura.interaction.conversation_persistence",
+            "conversation_archive_outcome",
+            trace_id=trace_id,
+            conversation_id=str(conversation_id),
+            archive_state=archive_state,
+            result_count=str(result_count),
+            outcome=outcome,
+        )
+
+
 @router.post("/{conversation_id}/runs", status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     request: Request,
@@ -438,7 +655,13 @@ async def create_run(
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except (VersionConflict, ActiveRunConflict, IdempotencyConflict, AgentUnavailable) as exc:
+    except (
+        VersionConflict,
+        ActiveRunConflict,
+        ArchivedConversationConflict,
+        IdempotencyConflict,
+        AgentUnavailable,
+    ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _record_model_persistence(request, run, persistence_timer.elapsed_ms())
     await state(request).coordinator.enqueue(run)

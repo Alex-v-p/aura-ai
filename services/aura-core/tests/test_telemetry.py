@@ -391,7 +391,7 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
     assert span.kind == "span"
     assert span.component_version == COMPONENT_VERSIONS[
         "aura.interaction.conversation_persistence"
-    ] == "1.5.0"
+    ] == "1.6.0"
     assert span.span_id == child_id
     assert span.parent_span_id == root_span_id(run_id.hex)
     assert dict(span.dimensions) == {"dependency": "postgresql", "outcome": "ok"}

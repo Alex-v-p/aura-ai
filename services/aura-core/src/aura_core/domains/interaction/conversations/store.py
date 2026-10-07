@@ -10,10 +10,10 @@ import binascii
 import hashlib
 import json
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import cast
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from aura_core.domains.execution.runs.dto import (
     Run,
@@ -36,6 +36,8 @@ from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
     Conversation,
+    ConversationArchiveState,
+    ConversationListFilters,
     Message,
     MessageRole,
     MessageState,
@@ -47,7 +49,10 @@ from aura_core.domains.interaction.conversations.dto import (
     TitleState,
     now,
 )
-from aura_core.domains.interaction.conversations.titles import pending_title_for
+from aura_core.domains.interaction.conversations.titles import (
+    pending_title_for,
+    validate_manual_title,
+)
 from aura_core.domains.interaction.personas.public import (
     ConfigurationStatus,
     PersonaCatalog,
@@ -97,6 +102,14 @@ class AgentUnavailable(ValueError):
 
 
 class PersonaUnavailable(ValueError):
+    pass
+
+
+class InvalidConversationMetadata(ValueError):
+    pass
+
+
+class ArchivedConversationConflict(RuntimeError):
     pass
 
 
@@ -164,6 +177,54 @@ class ConversationStore:
             raise ConversationNotFound
         return conversation
 
+    @staticmethod
+    def _activity_key(item: Conversation) -> tuple[datetime, UUID]:
+        accepted_user_messages = [
+            message
+            for message in item.messages
+            if message.role is MessageRole.USER and message.state is MessageState.COMPLETE
+        ]
+        activity_at = max(
+            (message.created_at for message in accepted_user_messages),
+            default=item.created_at,
+        )
+        return activity_at, item.id
+
+    @staticmethod
+    def _latest_run_status(item: Conversation) -> RunStatus | None:
+        return item.runs[-1].status if item.runs else None
+
+    @classmethod
+    def _matches_filters(cls, item: Conversation, filters: ConversationListFilters) -> bool:
+        filters = filters.normalized()
+        activity_at, _ = cls._activity_key(item)
+        if (
+            filters.archive_state is ConversationArchiveState.ACTIVE
+            and item.archived_at is not None
+        ):
+            return False
+        if filters.archive_state is ConversationArchiveState.ARCHIVED and item.archived_at is None:
+            return False
+        if filters.q is not None and filters.q.casefold() not in item.title.casefold():
+            return False
+        if (
+            filters.agent_profile_id is not None
+            and item.agent_profile_id != filters.agent_profile_id
+        ):
+            return False
+        if filters.model_id is not None and item.model_id != filters.model_id:
+            return False
+        if (
+            filters.run_status is not None
+            and cls._latest_run_status(item) is not filters.run_status
+        ):
+            return False
+        if filters.activity_from is not None and activity_at < filters.activity_from:
+            return False
+        if filters.activity_to is not None and activity_at >= filters.activity_to:
+            return False
+        return True
+
     async def list(
         self,
         subject: str,
@@ -171,52 +232,114 @@ class ConversationStore:
         cursor: str | None = None,
         issuer: str | None = None,
         *,
+        filters: ConversationListFilters | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
     ) -> tuple[list[Conversation], str | None]:
-        del trace_id, parent_span_id
+        started = perf_counter()
         if issuer is None:
             raise ValueError("issuer is required")
+        normalized_filters = (filters or ConversationListFilters()).normalized()
         values = [
             item
             for item in self._conversations.values()
-            if item.principal_subject == subject and item.principal_issuer == issuer
+            if item.principal_subject == subject
+            and item.principal_issuer == issuer
+            and self._matches_filters(item, normalized_filters)
         ]
         # Recent order is based only on durably accepted user messages.  Run
         # output, title settlement, configuration, and other metadata updates
         # must not move an existing conversation in the persisted list.
-        def activity_key(item: Conversation) -> tuple[datetime, UUID]:
-            accepted_user_messages = [
-                message
-                for message in item.messages
-                if message.role is MessageRole.USER and message.state is MessageState.COMPLETE
-            ]
-            activity_at = max(
-                (message.created_at for message in accepted_user_messages),
-                default=item.created_at,
-            )
-            return activity_at, item.id
-
-        values.sort(key=activity_key, reverse=True)
+        values.sort(key=self._activity_key, reverse=True)
         if cursor:
             try:
-                padded = cursor + "=" * (-len(cursor) % 4)
-                timestamp, identifier = (
-                    base64.urlsafe_b64decode(padded.encode()).decode().split("|", 1)
-                )
-                cursor_time = datetime.fromisoformat(timestamp)
-                cursor_id = UUID(identifier)
-                values = [item for item in values if activity_key(item) < (cursor_time, cursor_id)]
+                cursor_time, cursor_id, fingerprint = decode_cursor(cursor)
+                if fingerprint != filters_fingerprint(normalized_filters):
+                    raise InvalidConversationCursor("cursor does not match filters")
+                values = [
+                    item
+                    for item in values
+                    if self._activity_key(item) < (cursor_time, cursor_id)
+                ]
             except ValueError, binascii.Error, UnicodeDecodeError:
+                self._record_conversation_list(
+                    trace_id,
+                    parent_span_id,
+                    started,
+                    "error",
+                    "validation",
+                    0,
+                    normalized_filters.archive_state.value,
+                )
                 raise InvalidConversationCursor("invalid cursor") from None
         page = values[:limit]
         next_cursor = None
         if len(values) > limit:
             last = page[-1]
-            activity_at, _ = activity_key(last)
-            raw = f"{activity_at.isoformat()}|{last.id}"
-            next_cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+            activity_at, _ = self._activity_key(last)
+            next_cursor = encode_cursor(
+                activity_at, last.id, filters_fingerprint(normalized_filters)
+            )
+        self._record_conversation_list(
+            trace_id,
+            parent_span_id,
+            started,
+            "ok",
+            None,
+            len(page),
+            normalized_filters.archive_state.value,
+        )
         return page, next_cursor
+
+    def _record_conversation_list(
+        self,
+        trace_id: str | None,
+        parent_span_id: str | None,
+        started: float,
+        outcome: str,
+        error_class: str | None,
+        result_count: int,
+        archive_state: str,
+    ) -> None:
+        if self.prompt_metrics is None:
+            return
+        try:
+            trace_id = trace_id or uuid4().hex
+            self.prompt_metrics.record_span(
+                "aura.interaction.conversation_persistence",
+                "conversation.list",
+                max(0.0, (perf_counter() - started) * 1000),
+                trace_id=trace_id,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="conversation_store",
+                outcome=outcome,
+                error_class=error_class,
+                result_count=str(result_count),
+            )
+            observe = getattr(self.prompt_metrics, "observe", None)
+            if callable(observe):
+                observe(
+                    "aura.interaction.conversation_persistence",
+                    "conversation_list_duration_ms",
+                    max(0.0, (perf_counter() - started) * 1000),
+                    trace_id=trace_id,
+                    archive_state=archive_state,
+                    result_count=str(result_count),
+                    outcome=outcome,
+                )
+            increment = getattr(self.prompt_metrics, "increment", None)
+            if callable(increment):
+                increment(
+                    "aura.interaction.conversation_persistence",
+                    "conversation_filter_outcome",
+                    trace_id=trace_id,
+                    archive_state=archive_state,
+                    result_count=str(result_count),
+                    outcome=outcome,
+                )
+        except Exception:
+            return
 
     async def create(
         self,
@@ -301,6 +424,8 @@ class ConversationStore:
 
         conversation, run = await self._find_run_any(run_id)
         async with await self._lock_for(conversation.id):
+            if conversation.archived_at is not None:
+                return False
             # Re-check under the conversation lock so redelivery cannot
             # overwrite a generated or fallback title.
             if pending_title_for(conversation, run) is None:
@@ -309,6 +434,85 @@ class ConversationStore:
             conversation.title_state = state
             conversation.updated_at = now()
             return True
+
+    async def update_metadata(
+        self,
+        conversation_id: UUID,
+        subject: str,
+        *,
+        title: str | None,
+        archived: bool | None,
+        version: int,
+        idempotency_key: str,
+        issuer: str | None = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+        metrics: PromptMetricsPort | None = None,
+    ) -> Conversation:
+        del trace_id, parent_span_id, metrics
+        if issuer is None:
+            raise ValueError("issuer is required")
+        if title is None and archived is None:
+            raise InvalidConversationMetadata("at least one metadata field is required")
+        if title is not None:
+            try:
+                normalized_title = validate_manual_title(title)
+            except ValueError as exc:
+                raise InvalidConversationMetadata(str(exc)) from exc
+        else:
+            normalized_title = None
+        conversation = await self.get(conversation_id, subject, issuer)
+        was_archived = conversation.archived_at is not None
+        fingerprint = _fingerprint("metadata", conversation_id, normalized_title, archived, version)
+        key = (issuer, subject, idempotency_key)
+        existing = self._idempotency.get(key)
+        if existing is not None:
+            if self._idempotency_fingerprints.get(key) != fingerprint or not isinstance(
+                existing, Conversation
+            ):
+                raise IdempotencyConflict
+            return existing
+        async with await self._lock_for(conversation_id):
+            if conversation.version != version:
+                raise VersionConflict
+            if conversation.archived_at is not None:
+                if archived is not False or normalized_title is not None:
+                    raise ArchivedConversationConflict
+            if archived is True and conversation.current_run is not None:
+                raise ActiveRunConflict
+            if normalized_title is not None:
+                conversation.title = normalized_title
+                conversation.title_state = TitleState.MANUAL
+            if archived is True:
+                conversation.archived_at = now()
+            elif archived is False:
+                conversation.archived_at = None
+            conversation.version += 1
+            conversation.updated_at = now()
+        self._idempotency[key] = conversation
+        self._idempotency_fingerprints[key] = fingerprint
+        audit_metadata: dict[str, object] = {"conversationId": str(conversation.id)}
+        if normalized_title is not None:
+            await self.record_auth_audit(
+                "conversation.rename", "ok", issuer=issuer, subject=subject, metadata=audit_metadata
+            )
+        if archived is True:
+            await self.record_auth_audit(
+                "conversation.archive",
+                "ok",
+                issuer=issuer,
+                subject=subject,
+                metadata=audit_metadata,
+            )
+        if was_archived and archived is False:
+            await self.record_auth_audit(
+                "conversation.restore",
+                "ok",
+                issuer=issuer,
+                subject=subject,
+                metadata=audit_metadata,
+            )
+        return conversation
 
     async def update_model(
         self,
@@ -327,6 +531,8 @@ class ConversationStore:
         if issuer is None:
             raise ValueError("issuer is required")
         conversation = await self.get(conversation_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
         key = (issuer, subject, idempotency_key)
         fingerprint = _fingerprint(
             "update",
@@ -562,6 +768,8 @@ class ConversationStore:
         if not confirmation:
             raise AgentSwitchConfirmationRequired
         conversation = await self.get(conversation_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
         key = (issuer, subject, idempotency_key)
         fingerprint = hashlib.sha256(
             f"agent:{conversation_id}:{agent_revision_id}:{version}:{upgrade}".encode()
@@ -603,6 +811,8 @@ class ConversationStore:
         if issuer is None:
             raise ValueError("issuer is required")
         conversation = await self.get(conversation_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
         key = (issuer, subject, idempotency_key)
         existing = self._idempotency.get(key)
         if existing is not None:
@@ -677,6 +887,8 @@ class ConversationStore:
             or conversation.principal_issuer != issuer
         ):
             raise ConversationNotFound
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
         prior = next(run for run in conversation.runs if run.id == run_id)
         self._resolve_agent(prior.agent_revision_id)
         # Legacy runs may predate persisted prompt provenance.  Retry remains
@@ -738,6 +950,8 @@ class ConversationStore:
                 raise IdempotencyConflict
             return existing
         conversation, run = await self._find_run(run_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
         if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
             run.status = RunStatus.CANCEL_REQUESTED
             conversation.updated_at = now()
@@ -1153,3 +1367,53 @@ def _fingerprint(*parts: object) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def filters_fingerprint(filters: ConversationListFilters) -> str:
+    value = filters.normalized()
+    return _fingerprint(
+        "conversation-list-v1",
+        value.q,
+        value.agent_profile_id,
+        value.model_id,
+        value.run_status,
+        value.archive_state,
+        value.activity_from.isoformat() if value.activity_from else None,
+        value.activity_to.isoformat() if value.activity_to else None,
+    )
+
+
+def encode_cursor(activity_at: datetime, conversation_id: UUID, fingerprint: str) -> str:
+    payload = json.dumps(
+        {"v": 1, "a": activity_at.isoformat(), "i": str(conversation_id), "f": fingerprint},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, UUID, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode()).decode()
+        if decoded.startswith("{"):
+            payload = json.loads(decoded)
+            if payload.get("v") != 1:
+                raise ValueError
+            parsed = datetime.fromisoformat(str(payload["a"]))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed, UUID(str(payload["i"])), str(payload["f"])
+        timestamp, identifier = decoded.split("|", 1)
+        parsed = datetime.fromisoformat(timestamp)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed, UUID(identifier), filters_fingerprint(ConversationListFilters())
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        binascii.Error,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
+        raise InvalidConversationCursor("invalid cursor") from None

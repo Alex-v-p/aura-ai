@@ -16,6 +16,7 @@ from aura_core.domains.execution.runs.public import message_payload, run_payload
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     AgentUnavailable,
+    ArchivedConversationConflict,
     ConversationNotFound,
     IdempotencyConflict,
 )
@@ -62,6 +63,9 @@ async def cancel_run(
             error_class="cancel",
         )
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except ArchivedConversationConflict as exc:
+        _record_command_error(request, run_id, "run.cancel", persistence_timer.elapsed_ms())
+        raise HTTPException(status_code=409, detail="archived conversation is read-only") from exc
     state(request).metrics.increment(
         "aura.execution.run_coordinator",
         "cancellations",
@@ -95,7 +99,12 @@ async def retry_run(
     except ConversationNotFound as exc:
         _record_command_error(request, run_id, "run.retry", persistence_timer.elapsed_ms())
         raise HTTPException(status_code=404, detail="run not found") from exc
-    except (ActiveRunConflict, IdempotencyConflict, AgentUnavailable) as exc:
+    except (
+        ActiveRunConflict,
+        ArchivedConversationConflict,
+        IdempotencyConflict,
+        AgentUnavailable,
+    ) as exc:
         _record_command_error(request, run_id, "run.retry", persistence_timer.elapsed_ms())
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     metadata = {

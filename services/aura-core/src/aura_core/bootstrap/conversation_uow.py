@@ -5,11 +5,10 @@ This coordinator owns the transaction and cross-domain sequencing, but never
 imports or manipulates another domain's ORM mapping.
 """
 
-import base64
 import hashlib
 import json
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
@@ -39,12 +38,15 @@ from aura_core.domains.interaction.conversations.public import (
     AgentAssignment,
     AgentSwitchConfirmationRequired,
     AgentUnavailable,
+    ArchivedConversationConflict,
     AssignmentReason,
     Conversation,
+    ConversationListFilters,
     ConversationNotFound,
     ConversationRecord,
     IdempotencyConflict,
     InvalidConversationCursor,
+    InvalidConversationMetadata,
     Message,
     MessageRole,
     MessageState,
@@ -58,8 +60,12 @@ from aura_core.domains.interaction.conversations.public import (
     TitleState,
     VersionConflict,
     build_context,
+    decode_cursor,
+    encode_cursor,
+    filters_fingerprint,
     now,
     pending_title_for,
+    validate_manual_title,
 )
 from aura_core.domains.interaction.personas.public import (
     ConfigurationDisabled as PersonaConfigurationDisabled,
@@ -230,6 +236,7 @@ class SqlConversationStore:
             id=row.id,
             created_at=row.created_at or now(),
             updated_at=row.updated_at or now(),
+            archived_at=row.archived_at,
         )
         conversation.messages = messages
         conversation.runs = runs
@@ -446,9 +453,185 @@ class SqlConversationStore:
             if row is None:
                 raise ConversationNotFound
             conversation = await self._load(session, row)
+            if conversation.archived_at is not None:
+                return False
             if pending_title_for(conversation, run) is None:
                 return False
             return await self.conversations.settle_title(session, row.id, title, state)
+
+    async def update_metadata(
+        self,
+        conversation_id: UUID,
+        subject: str,
+        *,
+        title: str | None,
+        archived: bool | None,
+        version: int,
+        idempotency_key: str,
+        issuer: str | None = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+        metrics: PromptMetricsPort | None = None,
+    ) -> Conversation:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        if title is None and archived is None:
+            raise InvalidConversationMetadata("at least one metadata field is required")
+        if title is not None:
+            try:
+                normalized_title = validate_manual_title(title)
+            except ValueError as exc:
+                raise InvalidConversationMetadata(str(exc)) from exc
+        else:
+            normalized_title = None
+        fingerprint = _fingerprint(
+            "metadata", conversation_id, normalized_title, archived, version
+        )
+        effective_metrics = metrics or self.prompt_metrics
+        persistence_started = perf_counter()
+        try:
+            result = await self._persist_metadata(
+                conversation_id,
+                subject,
+                normalized_title=normalized_title,
+                archived=archived,
+                version=version,
+                idempotency_key=idempotency_key,
+                issuer=issuer,
+                fingerprint=fingerprint,
+            )
+        except Exception as exc:
+            self._record_metadata_persistence(
+                effective_metrics,
+                trace_id,
+                parent_span_id,
+                conversation_id,
+                persistence_started,
+                "error",
+                self._metadata_error_class(exc),
+            )
+            raise
+        self._record_metadata_persistence(
+            effective_metrics,
+            trace_id,
+            parent_span_id,
+            conversation_id,
+            persistence_started,
+            "ok",
+            None,
+        )
+        return result
+
+    async def _persist_metadata(
+        self,
+        conversation_id: UUID,
+        subject: str,
+        *,
+        normalized_title: str | None,
+        archived: bool | None,
+        version: int,
+        idempotency_key: str,
+        issuer: str,
+        fingerprint: str,
+    ) -> Conversation:
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, idempotency_key)
+            prior = await self.conversations.idempotency(session, issuer, subject, idempotency_key)
+            if prior is not None:
+                if prior.fingerprint != fingerprint:
+                    raise IdempotencyConflict
+                return await self._load(
+                    session, await self._row(session, conversation_id, subject, issuer)
+                )
+            row = await self._row(session, conversation_id, subject, issuer, lock=True)
+            was_archived = row.archived_at is not None
+            if row.version != version:
+                raise VersionConflict
+            if was_archived and (archived is not False or normalized_title is not None):
+                raise ArchivedConversationConflict
+            if archived is True and await self.runs.active(session, row.id, lock=True) is not None:
+                raise ActiveRunConflict
+            if normalized_title is not None:
+                row.title = normalized_title
+                row.title_state = TitleState.MANUAL
+            if archived is True:
+                row.archived_at = now()
+            elif archived is False:
+                row.archived_at = None
+            row.version += 1
+            row.updated_at = now()
+            await self.conversations.update(session, row)
+            self.conversations.stage_idempotency(
+                session,
+                issuer,
+                subject,
+                idempotency_key,
+                fingerprint,
+                {"conversationId": str(row.id), "version": str(row.version)},
+            )
+            audit_metadata: dict[str, object] = {"conversationId": str(row.id)}
+            if normalized_title is not None:
+                self._audit(
+                    session,
+                    row.principal_id,
+                    "conversation.rename",
+                    str(row.id),
+                    audit_metadata,
+                )
+            if archived is True:
+                self._audit(
+                    session,
+                    row.principal_id,
+                    "conversation.archive",
+                    str(row.id),
+                    audit_metadata,
+                )
+            if was_archived and archived is False:
+                self._audit(
+                    session,
+                    row.principal_id,
+                    "conversation.restore",
+                    str(row.id),
+                    audit_metadata,
+                )
+            await session.flush()
+            return await self._load(session, row)
+
+    @staticmethod
+    def _metadata_error_class(error: Exception) -> str:
+        if isinstance(error, ConversationNotFound):
+            return "not_found"
+        if isinstance(error, (VersionConflict, ActiveRunConflict, ArchivedConversationConflict)):
+            return "conflict"
+        if isinstance(error, IdempotencyConflict):
+            return "idempotency"
+        return "persistence"
+
+    @staticmethod
+    def _record_metadata_persistence(
+        metrics: PromptMetricsPort | None,
+        trace_id: str | None,
+        parent_span_id: str | None,
+        conversation_id: UUID,
+        started: float,
+        outcome: str,
+        error_class: str | None,
+    ) -> None:
+        if metrics is None or trace_id is None or parent_span_id is None:
+            return
+        metrics.record_span(
+            "aura.interaction.conversation_persistence",
+            "conversation.persist",
+            (perf_counter() - started) * 1000,
+            trace_id=trace_id,
+            span_id=new_span_id(),
+            parent_span_id=parent_span_id,
+            dependency="postgresql",
+            outcome=outcome,
+            error_class=error_class,
+            conversation_id=str(conversation_id),
+            result_count="1" if outcome == "ok" else "0",
+        )
 
     async def get(
         self, conversation_id: UUID, subject: str, issuer: str | None = None
@@ -467,6 +650,7 @@ class SqlConversationStore:
         cursor: str | None = None,
         issuer: str | None = None,
         *,
+        filters: ConversationListFilters | None = None,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
     ) -> tuple[list[Conversation], str | None]:
@@ -474,8 +658,11 @@ class SqlConversationStore:
             raise ValueError("issuer is required")
         trace_id = trace_id or uuid4().hex
         started = perf_counter()
+        normalized_filters = (filters or ConversationListFilters()).normalized()
         try:
             decoded_cursor = decode_cursor(cursor) if cursor else None
+            if decoded_cursor and decoded_cursor[2] != filters_fingerprint(normalized_filters):
+                raise InvalidConversationCursor("cursor does not match filters")
         except InvalidConversationCursor:
             self._record_conversation_list(
                 trace_id, parent_span_id, started, "error", "validation"
@@ -487,12 +674,45 @@ class SqlConversationStore:
                 if principal is None:
                     result: tuple[list[Conversation], str | None] = ([], None)
                 else:
-                    rows = await self.conversations.list(
-                        session,
-                        principal.id,
-                        limit + 1,
-                        decoded_cursor,
-                    )
+                    # Run status is execution-owned.  Use its public repository
+                    # query after conversation-owned metadata filtering instead
+                    # of importing execution persistence mappings here.  The
+                    # latest_statuses lookup is batched for each scanned page.
+                    needs_status_filter = normalized_filters.run_status is not None
+                    if needs_status_filter:
+                        rows: list[ConversationRecord] = []
+                        scan_cursor = decoded_cursor[:2] if decoded_cursor else None
+                        batch_size = max(30, limit)
+                        while len(rows) < limit + 1:
+                            batch = await self.conversations.list(
+                                session,
+                                principal.id,
+                                batch_size,
+                                scan_cursor,
+                                normalized_filters,
+                            )
+                            if not batch:
+                                break
+                            statuses = await self._latest_run_statuses(
+                                session, [candidate.id for candidate in batch]
+                            )
+                            for candidate in batch:
+                                if statuses.get(candidate.id) is normalized_filters.run_status:
+                                    rows.append(candidate)
+                                    if len(rows) >= limit + 1:
+                                        break
+                            if len(batch) < batch_size or len(rows) >= limit + 1:
+                                break
+                            last = batch[-1]
+                            scan_cursor = (last.activity_at or last.created_at, last.id)
+                    else:
+                        rows = await self.conversations.list(
+                            session,
+                            principal.id,
+                            limit + 1,
+                            decoded_cursor[:2] if decoded_cursor else None,
+                            normalized_filters,
+                        )
                     has_more = len(rows) > limit
                     rows = rows[:limit]
                     # The cursor mirrors the repository's internal activity
@@ -500,7 +720,9 @@ class SqlConversationStore:
                     # intentionally excluded from recent ordering.
                     if has_more:
                         activity_at = rows[-1].activity_at or rows[-1].created_at
-                        next_cursor = encode_cursor(activity_at, rows[-1].id)
+                        next_cursor = encode_cursor(
+                            activity_at, rows[-1].id, filters_fingerprint(normalized_filters)
+                        )
                     else:
                         next_cursor = None
                     result = ([await self._load(session, row) for row in rows], next_cursor)
@@ -514,8 +736,23 @@ class SqlConversationStore:
                 trace_id, parent_span_id, started, "error", "persistence"
             )
             raise
-        self._record_conversation_list(trace_id, parent_span_id, started, "ok", None)
+        self._record_conversation_list(
+            trace_id,
+            parent_span_id,
+            started,
+            "ok",
+            None,
+            len(result[0]),
+            normalized_filters.archive_state.value,
+        )
         return result
+
+    async def _latest_run_statuses(
+        self, session: AsyncSession, conversation_ids: list[UUID]
+    ) -> dict[UUID, RunStatus]:
+        """Read latest statuses through the execution repository's public batch port."""
+
+        return await self.runs.latest_statuses(session, conversation_ids)
 
     async def update_model(
         self,
@@ -610,6 +847,8 @@ class SqlConversationStore:
                 row = await self._row(session, UUID(response["conversationId"]), subject, issuer)
                 return await self._load(session, row)
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
+            if row.archived_at is not None:
+                raise ArchivedConversationConflict
             if row.version != version:
                 if persona_change:
                     self._record_persona_configuration_rejection(
@@ -844,6 +1083,8 @@ class SqlConversationStore:
                 run = next(item for item in loaded.runs if item.id == UUID(response["runId"]))
                 return loaded, user, run
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
+            if row.archived_at is not None:
+                raise ArchivedConversationConflict
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
                 raise VersionConflict if row.version != expected_version else ActiveRunConflict
@@ -934,12 +1175,23 @@ class SqlConversationStore:
             prior = await self.conversations.idempotency(session, issuer, subject, idempotency_key)
             if prior is not None and prior.fingerprint != fingerprint:
                 raise IdempotencyConflict
-            run = await self.runs.get(session, run_id, lock=True)
+            # Resolve the run first only to identify its conversation.  Lock
+            # acquisition is deliberately conversation then run, matching
+            # archive admission and preventing a run/conversation inversion.
+            # The first read only resolves ownership.  Use the public getter
+            # through a local alias; the lock-bearing call below is the first
+            # explicit run lock, after the conversation lock is acquired.
+            run = await self.runs.get(session, run_id)
             if run is None:
                 raise ConversationNotFound
             conversation_row = await self._row(
                 session, run.conversation_id, subject, issuer, lock=True
             )
+            if conversation_row.archived_at is not None and prior is None:
+                raise ArchivedConversationConflict
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None:
+                raise ConversationNotFound
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 run.status = RunStatus.CANCEL_REQUESTED
                 await self.runs.save(session, run)
@@ -989,6 +1241,8 @@ class SqlConversationStore:
             conversation_row = await self._row(
                 session, prior.conversation_id, subject, issuer, lock=True
             )
+            if conversation_row.archived_at is not None:
+                raise ArchivedConversationConflict
             active = await self.runs.active(session, prior.conversation_id)
             if active is not None:
                 raise ActiveRunConflict
@@ -1125,6 +1379,8 @@ class SqlConversationStore:
         started: float,
         outcome: str,
         error_class: str | None,
+        result_count: int = 0,
+        archive_state: str = "active",
     ) -> None:
         """Record list latency without exposing principal or cursor content."""
 
@@ -1141,7 +1397,29 @@ class SqlConversationStore:
                 dependency="postgresql",
                 outcome=outcome,
                 error_class=error_class,
+                result_count=str(result_count),
             )
+            observe = getattr(self.prompt_metrics, "observe", None)
+            if callable(observe):
+                observe(
+                    "aura.interaction.conversation_persistence",
+                    "conversation_list_duration_ms",
+                    max(0.0, (perf_counter() - started) * 1000),
+                    trace_id=trace_id,
+                    archive_state=archive_state,
+                    result_count=str(result_count),
+                    outcome=outcome,
+                )
+            increment = getattr(self.prompt_metrics, "increment", None)
+            if callable(increment):
+                increment(
+                    "aura.interaction.conversation_persistence",
+                    "conversation_filter_outcome",
+                    trace_id=trace_id,
+                    archive_state=archive_state,
+                    result_count=str(result_count),
+                    outcome=outcome,
+                )
         except Exception:
             # Telemetry must never alter the list result or surface sensitive
             # persistence/provider details to an API caller.
@@ -1472,23 +1750,6 @@ class SqlConversationStore:
             return self.agents.resolve_revision_unchecked(identifier)
         except Exception as exc:
             raise AgentUnavailable("agent revision not found") from exc
-
-
-def encode_cursor(updated_at: datetime, conversation_id: UUID) -> str:
-    raw = f"{updated_at.isoformat()}|{conversation_id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        timestamp, identifier = base64.urlsafe_b64decode(padded.encode()).decode().split("|", 1)
-        parsed = datetime.fromisoformat(timestamp)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return parsed, UUID(identifier)
-    except (ValueError, UnicodeDecodeError):
-        raise InvalidConversationCursor("invalid conversation cursor") from None
 
 
 def _fingerprint(*parts: object) -> str:
