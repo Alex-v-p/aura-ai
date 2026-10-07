@@ -2,12 +2,12 @@ import { applicationConfig } from '@storybook/angular';
 import type { Meta, StoryObj } from '@storybook/angular';
 import { signal } from '@angular/core';
 import { ConversationPanelComponent, ConversationStore } from '@aura/aura/interaction/conversations';
-import type { Model } from '@aura/aura-api-client';
+import type { Model, Run } from '@aura/aura-api-client';
 import type { ConversationTurn, RunState } from '@aura/aura/interaction/conversations';
 
-type FixtureState = 'empty' | 'loading' | 'working' | 'interrupted' | 'recoverable-error' | 'completed';
+type FixtureState = 'empty' | 'loading' | 'working' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
 
-const turns: Record<Exclude<FixtureState, 'empty' | 'loading' | 'working' | 'interrupted' | 'recoverable-error'>, ReadonlyArray<ConversationTurn>> = {
+const turns: Record<'completed', ReadonlyArray<ConversationTurn>> = {
   completed: [
     { id: 'fixture-user', role: 'user', text: 'Help me find a small next step.' },
     { id: 'fixture-assistant', role: 'assistant', text: 'Start with one kind, concrete action you can finish today.' },
@@ -20,9 +20,14 @@ function fixtureStore(state: FixtureState): ConversationStore {
   const notice = signal<string | null>(state === 'interrupted' ? 'Generation stopped. Your message is still in the conversation.' : state === 'recoverable-error' ? 'We could not complete that local preview. Your message is still here. Try again when you are ready.' : null);
   const authState = signal<'authenticated'>('authenticated');
   const models = signal<ReadonlyArray<Model>>([{ id: 'fixture-model', displayName: 'Fixture model', provider: 'fake', capabilities: ['chat'] as const, availability: 'available', selectable: true, disabledReason: null }]);
+  const now = '2026-10-06T12:00:00.000Z';
+  const fixtureRun: Run = { id: 'fixture-run', conversationId: 'fixture', userMessageId: 'fixture-user', assistantMessageId: null, status: 'failed', agentRevisionId: 'fixture-agent-r1', modelPolicyRevisionId: 'fixture-policy', provider: 'fake', modelId: 'fixture-model', retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: '2026-10-06T12:00:01.000Z', error: { code: 'PROVIDER_ERROR', message: 'Private provider payload', retryable: true, traceId: '0123456789abcdef0123456789abcdef' } };
+  const selected = signal({ id: 'fixture', title: state === 'archived' ? 'Archived fixture conversation' : 'Fixture conversation', turns: conversationTurns, updatedAt: 0, archivedAt: state === 'archived' ? now : null, currentRun: null, retryableRun: state === 'run-inspector' ? fixtureRun : null, runs: state === 'run-inspector' ? [fixtureRun] : [] });
+  const selectedId = signal('fixture');
   return {
     loading: signal(state === 'loading'),
-    selected: signal({ id: 'fixture', title: 'Fixture conversation', turns: conversationTurns, updatedAt: 0 }),
+    selected,
+    selectedId,
     runState,
     notice,
     authState,
@@ -37,6 +42,11 @@ function fixtureStore(state: FixtureState): ConversationStore {
     stop: () => runState.set('interrupted'),
     retry: () => { runState.set('idle'); notice.set(null); },
     updateDraft: () => undefined,
+    restoreConversation: async () => { selected.update((conversation) => ({ ...conversation, archivedAt: null })); return true; },
+    runInspectorRequested: signal(state === 'run-inspector' ? 1 : 0),
+    runInspectorFocusId: signal<string | null>(null),
+    cancelRunById: () => undefined,
+    retryRunById: () => undefined,
   } as unknown as ConversationStore;
 }
 
@@ -60,3 +70,5 @@ export const Working: Story = { ...story('working'), name: 'Working' };
 export const Interrupted: Story = { ...story('interrupted'), name: 'Interrupted' };
 export const RecoverableError: Story = { ...story('recoverable-error'), name: 'Recoverable error' };
 export const Completed: Story = { ...story('completed'), name: 'Completed' };
+export const ArchivedRecovery: Story = { ...story('archived'), name: 'Archived recovery' };
+export const RunInspector: Story = { ...story('run-inspector'), name: 'Run inspector' };

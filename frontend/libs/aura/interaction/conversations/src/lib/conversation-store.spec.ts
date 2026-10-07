@@ -483,7 +483,7 @@ describe('ConversationStore', () => {
 
     expect(submittedModelId).toBe(model.id);
   });
-  it('follows all conversation cursors so older conversations remain available', async () => {
+  it('loads older conversation pages only after an explicit request', async () => {
     const cursors: Array<string | undefined> = [];
     const totalPages = 27;
     const pagedApi = fakeApi(async (cursor) => {
@@ -494,17 +494,22 @@ describe('ConversationStore', () => {
     const pagedStore = new ConversationStore(pagedApi);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+    expect(cursors).toEqual([undefined]);
+    expect(pagedStore.conversations()).toHaveLength(1);
+    while (pagedStore.hasMoreConversations()) await pagedStore.loadMoreConversations();
     expect(cursors).toHaveLength(totalPages);
     expect(pagedStore.conversations()).toHaveLength(totalPages);
     expect(pagedStore.conversations().at(-1)?.id).toBe('older-26');
   });
-  it('guards repeated conversation cursors and surfaces a safe loading notice', async () => {
+  it('deduplicates repeated items when a Load more cursor is replayed', async () => {
     const cycleApi = fakeApi(async (cursor) => ({ items: [summary(cursor ? 'cycle-older' : 'cycle-newest')], nextCursor: 'cycle' }));
     const cycleStore = new ConversationStore(cycleApi);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+    expect(cycleStore.conversations().map((conversation) => conversation.id)).toEqual(['cycle-newest']);
+    await cycleStore.loadMoreConversations();
+    await cycleStore.loadMoreConversations();
     expect(cycleStore.conversations().map((conversation) => conversation.id)).toEqual(['cycle-newest', 'cycle-older']);
-    expect(cycleStore.notice()).toContain('Some older conversations could not be loaded');
   });
   it.each(['canceled', 'failed'] as const)('retains a persisted %s run for retry after refresh', async (status) => {
     const detail = persistedRecoveryDetail(status);
@@ -578,5 +583,155 @@ describe('ConversationStore', () => {
     expect(recoveryStore.selected().currentRun?.id).toBe(run.id);
     expect(recoveryStore.runState()).toBe('working');
     vi.useRealTimers();
+  });
+  it('keeps library pagination explicit and preserves selection and drafts while loading more', async () => {
+    const first = { ...summary('library-first'), title: 'First library item', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('library-second'), title: 'Second library item', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const third = { ...summary('library-third'), title: 'Third library item', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const cursors: Array<string | undefined> = [];
+    const api = fakeApi(async (cursor) => {
+      cursors.push(cursor);
+      return cursor ? { items: [third], nextCursor: null } : { items: [first, second], nextCursor: 'library-cursor' };
+    }, [first, second, third]);
+    const libraryStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    libraryStore.select(second.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    libraryStore.updateDraft('Keep this draft while loading another page');
+
+    expect(cursors).toEqual([undefined]);
+    expect(libraryStore.hasMoreConversations()).toBe(true);
+    await libraryStore.loadMoreConversations();
+
+    expect(cursors).toEqual([undefined, 'library-cursor']);
+    expect(libraryStore.conversations().map((item) => item.id)).toEqual([first.id, second.id, third.id]);
+    expect(libraryStore.selectedId()).toBe(second.id);
+    expect(libraryStore.draft()).toBe('Keep this draft while loading another page');
+    expect(libraryStore.hasMoreConversations()).toBe(false);
+  });
+  it('debounces and normalizes session-only library filters without changing selection', async () => {
+    const item = { ...summary('filter-item'), title: 'Filter item', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const filters: Array<Record<string, unknown> | undefined> = [];
+    const api = fakeApi(async (_cursor, requestedFilters) => {
+      filters.push(requestedFilters as Record<string, unknown> | undefined);
+      return { items: [item], nextCursor: null };
+    }, [item]);
+    const filterStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    filterStore.updateDraft('A draft must survive filter refresh');
+    filterStore.setLibraryFilters({ q: '  title fragment  ', archiveState: 'archived', activityFrom: '2026-10-01T00:00:00Z' });
+
+    expect(filters).toHaveLength(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 275));
+
+    expect(filters).toHaveLength(2);
+    expect(filters[1]).toEqual({ q: 'title fragment', archiveState: 'archived', activityFrom: '2026-10-01T00:00:00Z' });
+    expect(filterStore.libraryFilters()).toEqual(filters[1]);
+    expect(filterStore.selectedId()).toBe(item.id);
+    expect(filterStore.draft()).toBe('A draft must survive filter refresh');
+  });
+  it('retains a selected conversation when a new filter excludes it from the library page', async () => {
+    const first = { ...summary('filter-first'), title: 'First result', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('filter-second'), title: 'Second result', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async (_cursor, requestedFilters) => {
+      const q = requestedFilters?.q?.toLocaleLowerCase() ?? '';
+      return { items: [first, second].filter((item) => item.title.toLocaleLowerCase().includes(q)), nextCursor: null };
+    }, [first, second]);
+    const filterStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    filterStore.select(second.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    filterStore.updateDraft('Keep selected draft visible while filtered');
+    filterStore.setLibraryFilters({ q: 'first' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 275));
+
+    expect(filterStore.selectedId()).toBe(second.id);
+    expect(filterStore.draft()).toBe('Keep selected draft visible while filtered');
+  });
+  it('keeps rejected archive and rename mutations non-destructive to the current draft', async () => {
+    const item = { ...summary('rejected-metadata'), title: 'Original title', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [item], nextCursor: null }), [item]);
+    api.updateConversationMetadata = async () => { throw { status: 409, message: 'The conversation changed while you were editing.', retryable: false }; };
+    const mutationStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    mutationStore.updateDraft('Draft remains after rejected metadata');
+
+    await expect(mutationStore.renameConversation(item.id, 'Rejected title')).resolves.toBe(false);
+    expect(mutationStore.selectedId()).toBe(item.id);
+    expect(mutationStore.draft()).toBe('Draft remains after rejected metadata');
+    expect(mutationStore.selected().title).toBe('Original title');
+    expect(mutationStore.notice()).toContain('changed');
+  });
+  it('makes archived conversations read-only and restores them without losing selection', async () => {
+    const archived = { ...summary('archived-library-item'), title: 'Archived item', archivedAt: '2026-10-05T12:00:00Z', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [archived], nextCursor: null }), [archived]);
+    let metadataCalls = 0;
+    api.updateConversationMetadata = async (id, metadata) => { metadataCalls += 1; return { ...summary(id), title: archived.title, archivedAt: metadata.archived === false ? null : archived.archivedAt, version: archived.version + 1 }; };
+    const archivedStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    archivedStore.updateDraft('Draft on archived conversation');
+
+    expect(archivedStore.selected().archivedAt).toBeTruthy();
+    expect(archivedStore.send()).toBe(false);
+    expect(archivedStore.draft()).toBe('Draft on archived conversation');
+    await expect(archivedStore.renameConversation(archived.id, 'Should not rename')).resolves.toBe(false);
+    expect(metadataCalls).toBe(0);
+    expect(archivedStore.selected().title).toBe('Archived item');
+    await expect(archivedStore.restoreConversation(archived.id)).resolves.toBe(true);
+    expect(metadataCalls).toBe(1);
+    expect(archivedStore.selected().archivedAt).toBeNull();
+    expect(archivedStore.selectedId()).toBe(archived.id);
+    expect(archivedStore.draft()).toBe('Draft on archived conversation');
+  });
+  it('ignores stale filter responses after a newer filter request starts', async () => {
+    const initial = { ...summary('initial-filter-item'), title: 'Initial', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const latest = { ...summary('latest-filter-item'), title: 'Latest', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    let requestCount = 0;
+    let resolveStale: ((page: { items: ReadonlyArray<ConversationSummary>; nextCursor: string | null }) => void) | undefined;
+    const stalePage = new Promise<{ items: ReadonlyArray<ConversationSummary>; nextCursor: string | null }>((resolve) => { resolveStale = resolve; });
+    const api = fakeApi(async (_cursor, filters) => {
+      requestCount += 1;
+      if (requestCount === 2) return stalePage;
+      return { items: filters?.q === 'latest' ? [latest] : [initial], nextCursor: null };
+    }, [initial]);
+    const filterStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    filterStore.setLibraryFilters({ q: 'stale' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 275));
+    filterStore.setLibraryFilters({ q: 'latest' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 275));
+    expect(filterStore.conversations().some((item) => item.id === latest.id)).toBe(true);
+    resolveStale?.({ items: [{ ...summary('stale-filter-item'), title: 'Stale', currentRun: null }], nextCursor: null });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(filterStore.conversations().some((item) => item.id === 'stale-filter-item')).toBe(false);
+  });
+  it('reconciles archive visibility while preserving an intentionally selected conversation', async () => {
+    const first = { ...summary('archive-first'), title: 'First', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('archive-second'), title: 'Second', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [first, second], nextCursor: 'cursor' }), [first, second]);
+    api.updateConversationMetadata = async (id, metadata) => ({ ...summary(id), title: id === first.id ? first.title : second.title, archivedAt: metadata.archived ? '2026-10-06T12:00:00Z' : null, version: 2 });
+    const archiveStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(archiveStore.selectedId()).toBe(first.id);
+    await expect(archiveStore.archiveConversation(second.id)).resolves.toBe(true);
+    expect(archiveStore.conversations().map((item) => item.id)).toEqual([first.id]);
+    await expect(archiveStore.archiveConversation(first.id)).resolves.toBe(true);
+    expect(archiveStore.conversations().map((item) => item.id)).toEqual([first.id]);
+  });
+
+  it('removes a restored nonselected row from the Archived view', async () => {
+    const archived = { ...summary('restore-archived'), title: 'Archived', archivedAt: '2026-10-06T12:00:00Z', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const other = { ...summary('restore-other'), title: 'Other', archivedAt: '2026-10-06T11:00:00Z', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [archived, other], nextCursor: null }), [archived, other]);
+    api.updateConversationMetadata = async (id, metadata) => ({ ...summary(id), title: id === archived.id ? archived.title : other.title, archivedAt: metadata.archived === false ? null : '2026-10-06T12:00:00Z', version: 2 });
+    const restoreStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    restoreStore.setLibraryFilters({ archiveState: 'archived' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    restoreStore.select(other.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(restoreStore.conversations().map((item) => [item.id, item.archivedAt])).toEqual([[archived.id, archived.archivedAt], [other.id, other.archivedAt]]);
+    await expect(restoreStore.restoreConversation(archived.id)).resolves.toBe(true);
+    expect(restoreStore.conversations().map((item) => item.id)).toEqual([other.id]);
   });
 });
