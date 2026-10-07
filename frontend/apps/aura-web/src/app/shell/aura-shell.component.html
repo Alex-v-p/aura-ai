@@ -33,11 +33,33 @@
       </div>
       @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
         <div class="conversation-nav" aria-label="Conversations">
-          <p class="nav-label">Recent</p>
+          <div class="library-heading"><p class="nav-label">Conversation library</p><button #filterTrigger cdkOverlayOrigin #filterOrigin="cdkOverlayOrigin" class="library-filter-toggle" type="button" aria-haspopup="dialog" aria-controls="conversation-filters" [attr.aria-expanded]="filterPanelOpen()" (click)="toggleFilterPanel($event, filterOrigin)">Filter</button></div>
+          <label class="library-search"><span class="sr-only">Search conversation titles</span><span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><input type="search" maxlength="200" placeholder="Search titles" [value]="libraryFilters().q ?? ''" (input)="setQuery($any($event.target).value)" /></label>
+          <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="filterOverlayOrigin()" [cdkConnectedOverlayOpen]="filterPanelOpen()" [cdkConnectedOverlayPositions]="filterOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handleFilterOverlayAttach()" (overlayOutsideClick)="closeFilterPanel()">
+            <div #filterPanel id="conversation-filters" class="conversation-filters" role="dialog" aria-labelledby="conversation-filters-heading" tabindex="-1">
+              <h2 id="conversation-filters-heading" class="sr-only">Conversation filters</h2>
+              <label><span>Agent</span><select [value]="libraryFilters().agentProfileId ?? ''" (change)="setFilter('agentProfileId', $any($event.target).value)"><option value="">All agents</option>@for (agent of agentOptions; track agent.id) { <option [value]="agent.id">{{ agent.label }}</option> }</select></label>
+              <label><span>Model</span><select [value]="libraryFilters().modelId ?? ''" (change)="setFilter('modelId', $any($event.target).value)"><option value="">All models</option>@for (model of modelOptions; track model.id) { <option [value]="model.id">{{ model.label }}</option> }</select></label>
+              <label><span>Latest run</span><select [value]="libraryFilters().runStatus ?? ''" (change)="setFilter('runStatus', $any($event.target).value)"><option value="">Any status</option><option value="queued">Queued</option><option value="running">Running</option><option value="cancel_requested">Cancel requested</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="canceled">Canceled</option><option value="interrupted">Interrupted</option></select></label>
+              <label><span>View</span><select [value]="libraryFilters().archiveState" (change)="setArchiveState($any($event.target).value)"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All conversations</option></select></label>
+              <label><span>Activity from</span><input type="date" [value]="activityFromInput()" (change)="setFilter('activityFrom', $any($event.target).value)" /></label>
+              <label><span>Activity to</span><input type="date" [value]="activityToInput()" (change)="setFilter('activityTo', $any($event.target).value)" /></label>
+              <button class="filter-clear" type="button" (click)="clearFilters()">Clear filters</button>
+            </div>
+          </ng-template>
           @if (conversations.length === 0) { <p class="nav-empty">Your conversations will appear here.</p> }
           @for (conversation of conversations; track conversation.id) {
-            <a class="conversation-link" [routerLink]="['/conversation', conversation.id]" routerLinkActive="is-route-active" [routerLinkActiveOptions]="{ exact: true }" ariaCurrentWhenActive="page" [attr.aria-label]="conversation.status ? conversation.title + ', ' + conversation.status : conversation.title" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span>@if (conversation.status) { <span class="conversation-status" aria-hidden="true">{{ conversation.status }}</span> }</a>
+            <div class="conversation-row" [class.is-archived]="conversation.archived">
+              @if (renamingId() === conversation.id) {
+                <form class="rename-form" (submit)="commitRename(conversation.id, $event)"><label class="sr-only" [for]="'rename-' + conversation.id">Conversation title</label><input [id]="'rename-' + conversation.id" maxlength="255" [value]="renameValue()" (input)="updateRename($any($event.target).value)" /><button type="submit" aria-label="Save conversation name">Save</button><button type="button" aria-label="Cancel rename" (click)="cancelRename()">Cancel</button></form>
+              } @else {
+                <a class="conversation-link" [routerLink]="['/conversation', conversation.id]" routerLinkActive="is-route-active" [routerLinkActiveOptions]="{ exact: true }" ariaCurrentWhenActive="page" [attr.aria-label]="conversation.status ? conversation.title + ', ' + conversation.status : conversation.title" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span>@if (conversation.archived) { <span class="conversation-status" aria-hidden="true">Archived</span> } @else if (conversation.status) { <span class="conversation-status" aria-hidden="true">{{ conversation.status }}</span> }</a>
+                <button class="row-menu-trigger" type="button" [id]="'conversation-actions-' + conversation.id" [attr.aria-label]="'Conversation actions for ' + conversation.title" [attr.aria-expanded]="rowMenuId() === conversation.id" (click)="toggleRowMenu(conversation.id, $event)">•••</button>
+                @if (rowMenuId() === conversation.id) { <div class="row-menu" role="menu">@if (!conversation.archived) { <button type="button" role="menuitem" (click)="beginRename(conversation, $event)">Rename</button> } @if (conversation.archived) { <button type="button" role="menuitem" (click)="rowAction(conversation.id, 'restore', $event)">Restore</button> } @else { <button type="button" role="menuitem" (click)="rowAction(conversation.id, 'archive', $event)">Archive</button> }<button type="button" role="menuitem" (click)="rowAction(conversation.id, 'inspect', $event)">Inspect runs</button></div> }
+              }
+            </div>
           }
+          @if (hasMoreConversations) { <button class="load-more" type="button" [disabled]="loadingMoreConversations" (click)="loadMore.emit()">{{ loadingMoreConversations ? 'Loading…' : 'Load more conversations' }}</button> }
         </div>
         <div class="sidebar-bottom"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
       }

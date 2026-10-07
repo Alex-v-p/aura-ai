@@ -1,10 +1,11 @@
 """Session-scoped PostgreSQL run repository."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aura_core.domains.execution.runs.dto import Run, RunError, RunStatus
@@ -57,6 +58,34 @@ class SqlRunRepository:
             .all()
         )
         return [self._run(row) for row in rows]
+
+    async def latest_statuses(
+        self, session: AsyncSession, conversation_ids: Sequence[UUID]
+    ) -> dict[UUID, RunStatus]:
+        """Return latest durable run status for many conversations in one query."""
+
+        if not conversation_ids:
+            return {}
+        ranked = (
+            select(
+                RunRow.conversation_id,
+                RunRow.status,
+                func.row_number()
+                .over(
+                    partition_by=RunRow.conversation_id,
+                    order_by=(RunRow.created_at.desc(), RunRow.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(RunRow.conversation_id.in_(conversation_ids))
+            .subquery()
+        )
+        rows = (
+            await session.execute(
+                select(ranked.c.conversation_id, ranked.c.status).where(ranked.c.rank == 1)
+            )
+        ).all()
+        return {conversation_id: RunStatus(status) for conversation_id, status in rows}
 
     async def active(
         self, session: AsyncSession, conversation_id: UUID, *, lock: bool = False

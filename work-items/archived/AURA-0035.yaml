@@ -1,0 +1,124 @@
+id: AURA-0035
+title: Refine conversation filters and transient drafts
+status: integrated
+change_class: bugfix
+intent: >
+  Keep conversation filters compact and accessible, clarify the title-search
+  affordance, and prevent unsent local drafts from cluttering the conversation
+  library while preserving draft content until the first message is accepted.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/clients-and-voice.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved AURA-0035 Conversation Sidebar Polish plan
+    - Filters apply live from a connected popup and retain their session state
+    - New conversation reuses one transient draft until its first message is accepted
+  contracts: []
+feature_references: [AUI-003, RUN-009]
+ownership_zones:
+  - frontend.aura-web.shell
+  - frontend.aura-web.app
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0035.yaml
+  - work-items/archived/AURA-0035.yaml
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/app/app.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - contracts/**
+  - services/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: frontend.aura.interaction.conversations
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: none
+security_privacy:
+  applicable: true
+  concerns:
+    - Private title search terms remain in session memory and outside URLs
+    - Transient conversation drafts remain local and absent from library summaries
+    - Popup controls preserve keyboard focus and do not expose draft content
+  data_classes:
+    - private conversation title search terms
+    - private unsent conversation drafts
+required_agents:
+  implementation: [frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, security_privacy_reviewer]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The Filter button opens a viewport-aware connected popup without expanding or clipping the sidebar.
+  - Filter changes apply live and Clear filters resets all library filters while the popup remains usable.
+  - The popup closes on outside click Escape sidebar collapse and mobile navigation close, then restores trigger focus when appropriate.
+  - The title-search field has a decorative magnifying-glass icon without changing its accessible name or debounce behavior.
+  - Local draft conversations are omitted from library summaries until the first user message is accepted.
+  - New conversation reuses the existing transient draft, preserving its text and configuration and avoiding hidden duplicates.
+  - A rejected first send preserves the local draft outside the library, while an accepted send adds one durable conversation and route.
+  - Unit and browser tests cover the popup, keyboard behavior, draft reuse, rejection recovery, and durable transition.
+  - All required checks pass and the reviewed change is committed without pushing.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0035.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0035.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/conversation-productivity.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts --config playwright.config.ts --project=desktop
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0035.yaml
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

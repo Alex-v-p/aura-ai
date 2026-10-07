@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
+    ConversationArchiveState,
+    ConversationListFilters,
     Message,
     MessageRole,
     MessageState,
@@ -46,6 +48,7 @@ class ConversationRecord:
     # conversation response DTO: updated_at remains ordinary metadata while
     # recent activity is the latest durably accepted user message.
     activity_at: datetime | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +75,7 @@ class SqlConversationRepository:
             row.updated_at or now(),
             TitleState(row.title_state or TitleState.LEGACY),
             activity_at,
+            row.archived_at,
         )
 
     @staticmethod
@@ -112,7 +116,9 @@ class SqlConversationRepository:
         principal_id: UUID,
         limit: int,
         cursor: tuple[datetime, UUID] | None,
+        filters: ConversationListFilters | None = None,
     ) -> list[ConversationRecord]:
+        filters = (filters or ConversationListFilters()).normalized()
         accepted_user_activity = (
             select(func.max(MessageRow.created_at))
             .where(
@@ -129,6 +135,20 @@ class SqlConversationRepository:
             .where(ConversationRow.principal_id == principal_id)
             .order_by(activity_key.desc(), ConversationRow.id.desc())
         )
+        if filters.archive_state is ConversationArchiveState.ACTIVE:
+            query = query.where(ConversationRow.archived_at.is_(None))
+        elif filters.archive_state is ConversationArchiveState.ARCHIVED:
+            query = query.where(ConversationRow.archived_at.is_not(None))
+        if filters.q is not None:
+            query = query.where(ConversationRow.title.icontains(filters.q, autoescape=True))
+        if filters.agent_profile_id is not None:
+            query = query.where(ConversationRow.agent_profile_id == filters.agent_profile_id)
+        if filters.model_id is not None:
+            query = query.where(ConversationRow.model_id == filters.model_id)
+        if filters.activity_from is not None:
+            query = query.where(activity_key >= filters.activity_from)
+        if filters.activity_to is not None:
+            query = query.where(activity_key < filters.activity_to)
         if cursor:
             cursor_time, cursor_id = cursor
             query = query.where(
@@ -236,6 +256,7 @@ class SqlConversationRepository:
                 created_at=record.created_at,
                 updated_at=record.updated_at,
                 title_state=record.title_state.value,
+                archived_at=record.archived_at,
             )
         )
 
@@ -299,6 +320,7 @@ class SqlConversationRepository:
         row.persona_override_revision_id = record.persona_override_revision_id
         row.version = record.version
         row.updated_at = record.updated_at
+        row.archived_at = record.archived_at
 
     async def pending_title(
         self, session: AsyncSession, conversation_id: UUID

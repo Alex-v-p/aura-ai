@@ -12,6 +12,32 @@
 .new-conversation:hover { background: var(--accent-hover); }
 .sidebar.is-collapsed .new-conversation { border-radius: .65rem; font-size: 1.2rem; width: 2.75rem; }
 .conversation-nav { display: flex; flex: 1 1 auto; flex-direction: column; margin-top: 2rem; min-height: 0; overflow: auto; }
+.library-heading { align-items: center; display: flex; justify-content: space-between; margin: 0 .6rem .45rem; }
+.library-heading .nav-label { margin: 0; }
+.library-filter-toggle, .load-more { background: transparent; border: 1px solid var(--border); border-radius: .45rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .7rem; padding: .25rem .45rem; }
+.library-filter-toggle:hover, .load-more:hover { color: var(--text); }
+.library-search { display: block; margin: 0 .35rem .45rem; position: relative; }
+.library-search input, .conversation-filters select, .conversation-filters input, .rename-form input { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .45rem; color: var(--text); font: inherit; font-size: .75rem; min-height: 2rem; padding: .35rem .5rem; width: 100%; }
+.library-search input { padding-left: 2rem; }
+.search-icon { align-items: center; color: var(--text-muted); display: flex; height: 2rem; left: .55rem; pointer-events: none; position: absolute; top: 0; }
+.search-icon svg { height: 1rem; width: 1rem; }
+.conversation-filters { background: var(--surface); border: 1px solid var(--border); border-radius: .6rem; box-shadow: 0 .8rem 2rem rgb(0 0 0 / .18); display: grid; gap: .45rem; min-width: min(16rem, calc(100vw - 1.5rem)); padding: .7rem; }
+.conversation-filters label { color: var(--text-muted); display: grid; font-size: .68rem; gap: .15rem; }
+.conversation-filters select { min-height: 1.8rem; }
+.filter-clear { background: transparent; border: 1px solid var(--border); border-radius: .4rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .7rem; margin-top: .15rem; padding: .4rem .5rem; }
+.filter-clear:hover { color: var(--text); }
+.conversation-row { align-items: center; display: flex; min-height: 2.5rem; position: relative; }
+.conversation-row .conversation-link { min-width: 0; padding-right: .2rem; }
+.row-menu-trigger { background: transparent; border: 0; border-radius: .4rem; color: var(--text-muted); cursor: pointer; flex: 0 0 1.8rem; font: inherit; font-size: .75rem; height: 1.8rem; margin-right: .15rem; opacity: .65; }
+.row-menu-trigger:hover, .row-menu-trigger:focus-visible { background: var(--surface-subtle); color: var(--text); opacity: 1; }
+.row-menu { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; box-shadow: 0 .6rem 1.5rem rgb(0 0 0 / .16); display: grid; gap: .15rem; min-width: 9rem; padding: .3rem; position: absolute; right: .2rem; top: calc(100% - .1rem); z-index: 5; }
+.row-menu button { background: transparent; border: 0; border-radius: .3rem; color: var(--text); cursor: pointer; font: inherit; font-size: .75rem; padding: .45rem .55rem; text-align: left; }
+.row-menu button:hover, .row-menu button:focus-visible { background: var(--surface-subtle); }
+.rename-form { align-items: center; display: flex; gap: .25rem; padding: .2rem .35rem; width: 100%; }
+.rename-form input { min-width: 0; }
+.rename-form button { background: transparent; border: 1px solid var(--border); border-radius: .35rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .65rem; padding: .35rem; }
+.load-more { margin: .45rem .35rem; }
+.sr-only { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
 .product-nav { display: grid; flex: 0 0 auto; gap: .3rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: .9rem; padding: 0; }
 .product-link { align-items: center; border: 0; border-radius: .7rem; color: var(--text-muted); display: flex; flex-direction: column; gap: .25rem; justify-content: center; min-height: 2.75rem; min-width: 0; padding: 0; position: relative; text-align: center; text-decoration: none; transition: color .15s; }
 .product-link:hover { color: var(--text); }

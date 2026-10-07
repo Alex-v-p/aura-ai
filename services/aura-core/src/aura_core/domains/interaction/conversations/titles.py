@@ -31,6 +31,22 @@ _LEADING_TITLE = re.compile(r"^title\s*:\s*", re.IGNORECASE)
 _LEADING_MARKDOWN = re.compile(r"^(?:[#>*_`~]|[-+])\s*")
 
 
+def validate_manual_title(value: str) -> str:
+    """Trim and validate a user-provided title at the domain boundary."""
+
+    if any(
+        ord(character) < 0x20
+        or 0x7F <= ord(character) <= 0x9F
+        or ord(character) in {0x2028, 0x2029}
+        for character in value
+    ):
+        raise ValueError("title contains forbidden control characters")
+    title = value.strip()
+    if not 1 <= len(title) <= 255:
+        raise ValueError("title must be 1 to 255 characters")
+    return title
+
+
 def pending_title_for(conversation: Conversation, run: Run) -> PendingTitle | None:
     """Return the first completed exchange eligible for title settlement.
 

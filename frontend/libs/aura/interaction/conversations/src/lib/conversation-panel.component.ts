@@ -1,4 +1,6 @@
 import { OverlayModule, CdkOverlayOrigin, type ConnectedPosition } from '@angular/cdk/overlay';
+import { A11yModule } from '@angular/cdk/a11y';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
@@ -6,11 +8,13 @@ import { ConversationStore } from './conversation-store';
 import { AgentStore, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
+import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
+import { SafeMarkdownComponent } from './safe-markdown.component';
 
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule],
+  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, SafeMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
@@ -26,6 +30,7 @@ export class ConversationPanelComponent {
   @ViewChild('menuPersona') private readonly menuPersona?: ElementRef<HTMLSelectElement>;
   @ViewChild('menuModel') private readonly menuModel?: ElementRef<HTMLSelectElement>;
   @ViewChild('configurationCancel') private readonly configurationCancel?: ElementRef<HTMLButtonElement>;
+  @ViewChild('runInspectorClose') private readonly runInspectorClose?: ElementRef<HTMLButtonElement>;
   readonly optionsOpen = signal(false);
   readonly connectedOrigin = signal<CdkOverlayOrigin>({} as CdkOverlayOrigin);
   readonly optionsFocus = signal<'agent' | 'persona' | 'model'>('agent');
@@ -37,11 +42,16 @@ export class ConversationPanelComponent {
   readonly stagedAgent = signal<AgentReference | null>(null);
   readonly stagedPersona = signal<PersonaReference | null>(null);
   readonly stagedUseAgentDefaultPersona = signal(true);
+  readonly runInspectorOpen = signal(false);
   private hadPendingConfiguration = false;
   private pendingConfigurationOriginId: string | null = null;
   private opener: HTMLButtonElement | null = null;
 
   constructor() {
+    effect(() => {
+      const request = this.store.runInspectorRequested();
+      if (request > 0) queueMicrotask(() => this.openRunInspector());
+    });
     effect(() => {
       const refreshRequest = this.store.agentRefreshRequested();
       if (refreshRequest > 0) void this.agentStore.load();
@@ -49,7 +59,8 @@ export class ConversationPanelComponent {
     effect(() => {
       const runState = this.store.runState();
       const authState = this.store.authState();
-      if (runState === 'working' || authState !== 'authenticated') this.optionsOpen.set(false);
+      const archived = this.store.selected().archivedAt;
+      if (runState === 'working' || authState !== 'authenticated' || archived) this.optionsOpen.set(false);
     });
     effect(() => {
       const pending = this.store.pendingConfiguration();
@@ -125,7 +136,7 @@ export class ConversationPanelComponent {
 
   hasNewerAgentRevision(): boolean { return this.agentOptions().some((item) => item.newerRevisionAvailable); }
   hasNewerPersonaRevision(): boolean { return this.personaOptions().some((item) => item.newerRevisionAvailable); }
-  controlsDisabled(): boolean { return this.store.runState() === 'working' || this.store.authState() !== 'authenticated'; }
+  controlsDisabled(): boolean { return this.store.runState() === 'working' || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt); }
   stagedConfigurationChanged(): boolean {
     const conversation = this.store.selected();
     return (this.stagedAgent()?.revisionId ?? null) !== (conversation.agent?.revisionId ?? null)
@@ -161,10 +172,31 @@ export class ConversationPanelComponent {
     if (returnFocus) queueMicrotask(() => this.opener?.focus());
   }
 
+  openRunInspector(): void { this.runInspectorOpen.set(true); queueMicrotask(() => this.runInspectorClose?.nativeElement.focus()); }
+  closeRunInspector(returnFocus = true): void {
+    const focusId = this.store.runInspectorFocusId();
+    this.store.runInspectorFocusId.set(null);
+    this.runInspectorOpen.set(false);
+    if (returnFocus) queueMicrotask(() => {
+      const target = focusId ? document.getElementById(focusId) : null;
+      if (target instanceof HTMLElement) target.focus();
+    });
+  }
+  runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {
+    if (!run.startedAt || !run.finishedAt) return '—';
+    const milliseconds = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt));
+    return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
+  }
+  sortedRuns(): ReadonlyArray<import('@aura/aura-api-client').Run> { return this.store.selected().runs.slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)); }
+  safeRunError(run: { readonly error: { readonly code: string; readonly message: string } | null }): string | null {
+    return safeRunErrorDisplay(run.error);
+  }
+  safeTraceReference(run: { readonly error: { readonly traceId: string } | null }): string | null { return safeTraceReference(run.error?.traceId); }
+
   cancelConfiguration(): void { this.store.cancelPendingConfiguration(); }
   async confirmConfiguration(): Promise<void> { await this.store.confirmConfigurationChange(); }
 
-  @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
+  @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.runInspectorOpen()) this.closeRunInspector(); else if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
 
   private applyDraftConfigurationIfNeeded(): void { if (this.store.selected().id.startsWith('draft-')) this.store.stageConfiguration(this.stagedAgent(), this.stagedPersona(), this.stagedUseAgentDefaultPersona()); }
   private focusRequestedControl(): void {

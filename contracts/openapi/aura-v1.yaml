@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "Owner-authenticated agent, persona, conversation, and run transport contract. Provider endpoints and credentials are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -226,8 +226,15 @@
         "operationId": "listConversations",
         "tags": ["Conversations"],
         "parameters": [
-          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
-          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque pagination cursor. Versioned cursors are bound to the normalized filters used to create them; legacy cursors are accepted only with default filters." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 200 }, "description": "Trimmed, case-insensitive literal title substring. Message content is never searched." },
+          { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Matches conversations using any revision of the agent profile." },
+          { "name": "modelId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 255 }, "description": "Exact conversation model identifier." },
+          { "name": "runStatus", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/RunStatus" }, "description": "Matches the latest durable run status." },
+          { "name": "archiveState", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ConversationArchiveState", "default": "active" } },
+          { "name": "activityFrom", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" }, "description": "Inclusive lower UTC bound for latest accepted user-message activity." },
+          { "name": "activityTo", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" }, "description": "Exclusive upper UTC bound for latest accepted user-message activity." }
         ],
         "responses": {
           "200": { "description": "Conversations ordered by latest durably accepted user message, with conversation ID as a deterministic tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationPage" } } } },
@@ -295,6 +302,23 @@
           "409": { "$ref": "#/components/responses/Conflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/metadata": {
+      "patch": {
+        "operationId": "updateConversationMetadata",
+        "tags": ["Conversations"],
+        "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateConversationMetadataRequest" } } } },
+        "responses": {
+          "200": { "description": "Conversation title or archive lifecycle metadata updated without changing activity ordering", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationSummary" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
         }
       }
     },
@@ -605,6 +629,19 @@
           "version": { "type": "integer", "minimum": 1 }
         }
       },
+      "UpdateConversationMetadataRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["version"],
+        "anyOf": [
+          { "required": ["title"] },
+          { "required": ["archived"] }
+        ],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029]+$", "description": "Manual title after trimming. C0 and C1 control characters, newlines, and Unicode line or paragraph separators are rejected." },
+          "archived": { "type": "boolean", "description": "True archives an active conversation; false restores an archived conversation." },
+          "version": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." }
+        }
+      },
       "CreateRunRequest": {
         "type": "object", "additionalProperties": false,
         "required": ["message", "conversationVersion"],
@@ -638,6 +675,7 @@
           "version": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
+          "archivedAt": { "type": ["string", "null"], "format": "date-time", "description": "Archive timestamp when available. Producers in contract version 1.3.0 and later include this property." },
           "currentRun": { "oneOf": [{ "$ref": "#/components/schemas/Run" }, { "type": "null" }] }
         }
       },
@@ -739,6 +777,7 @@
         }
       },
       "RunStatus": { "type": "string", "enum": ["queued", "running", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+      "ConversationArchiveState": { "type": "string", "enum": ["active", "archived", "all"] },
       "RunError": {
         "type": "object", "additionalProperties": false,
         "required": ["code", "message", "retryable", "traceId"],

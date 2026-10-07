@@ -2,22 +2,36 @@ import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, 
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { AuraShellComponent } from './shell/aura-shell.component';
 import { ThemePreference } from '@aura/shared/ui';
-import { ConversationStore } from '@aura/aura/interaction/conversations';
+import { ConversationStore, type ConversationListFilters } from '@aura/aura/interaction/conversations';
+import { AgentStore } from '@aura/aura/interaction/agents';
+import type { ShellConversationAction, ShellConversationFilters, ShellConversationSummary } from './shell/aura-shell.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
   imports: [AuraShellComponent, RouterOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<aura-shell [conversations]="conversationSummaries()" [theme]="theme()" [collapsed]="navCollapsed()" [mobileOpen]="mobileNavigationOpen()" (newConversation)="createConversation()" (collapseChange)="navCollapsed.set($event)" (mobileOpenChange)="mobileNavigationOpen.set($event)" (themeChange)="setTheme($event)"><router-outlet /></aura-shell>`,
+  template: `<aura-shell [conversations]="conversationSummaries()" [agentOptions]="agentOptions()" [modelOptions]="modelOptions()" [hasMoreConversations]="store.hasMoreConversations()" [loadingMoreConversations]="store.libraryLoadingMore()" [theme]="theme()" [collapsed]="navCollapsed()" [mobileOpen]="mobileNavigationOpen()" (newConversation)="createConversation()" (collapseChange)="navCollapsed.set($event)" (mobileOpenChange)="mobileNavigationOpen.set($event)" (themeChange)="setTheme($event)" (filtersChange)="applyLibraryFilters($event)" (loadMore)="store.loadMoreConversations()" (conversationAction)="handleConversationAction($event)"><router-outlet /></aura-shell>`,
 })
 export class AppComponent implements OnDestroy {
   readonly store = inject(ConversationStore);
+  readonly agentStore = inject(AgentStore);
   private readonly router = inject(Router);
   readonly theme = signal<ThemePreference>(this.readTheme());
   readonly navCollapsed = signal(false);
   readonly mobileNavigationOpen = signal(false);
-  readonly conversationSummaries = () => this.store.conversations().map((conversation) => ({ id: conversation.id, title: conversation.title, active: conversation.id === this.store.selectedId(), status: this.store.runStates()[conversation.id] === 'working' ? 'Working' : this.store.runStates()[conversation.id] === 'error' ? 'Needs attention' : undefined }));
+  readonly conversationSummaries = (): ReadonlyArray<ShellConversationSummary> => this.store.conversations().filter((conversation) => !conversation.id.startsWith('draft-')).map((conversation) => ({
+    id: conversation.id,
+    title: conversation.title,
+    active: conversation.id === this.store.selectedId(),
+    archived: Boolean(conversation.archivedAt),
+    agentProfileId: conversation.agent?.profileId,
+    modelId: conversation.modelId,
+    latestRunStatus: conversation.currentRun?.status ?? conversation.retryableRun?.status,
+    status: this.store.runStates()[conversation.id] === 'working' ? 'Working' : this.store.runStates()[conversation.id] === 'error' ? 'Needs attention' : undefined,
+  }));
+  readonly agentOptions = () => this.agentStore.activeAgents().map((agent) => ({ id: agent.id, label: agent.displayName }));
+  readonly modelOptions = () => this.store.models().map((model) => ({ id: model.id, label: model.displayName }));
   private readonly routedConversationId = signal<string | null | undefined>(this.conversationIdFromUrl(this.router.url));
   private readonly routeSyncReady = signal(false);
   private routeSyncSequence = 0;
@@ -36,6 +50,15 @@ export class AppComponent implements OnDestroy {
   }
   setTheme(preference: ThemePreference): void { this.theme.set(preference); if (preference === 'system') localStorage.removeItem('aura-theme'); else localStorage.setItem('aura-theme', preference); }
   createConversation(): void { this.store.create(); void this.router.navigateByUrl('/conversation'); }
+  applyLibraryFilters(filters: ShellConversationFilters): void { this.store.setLibraryFilters(filters as ConversationListFilters); }
+  handleConversationAction(action: ShellConversationAction): void {
+    if (action.action === 'rename' && action.title) void this.store.renameConversation(action.id, action.title);
+    else if (action.action === 'archive') void this.store.archiveConversation(action.id);
+    else if (action.action === 'restore') void this.store.restoreConversation(action.id);
+    else if (action.action === 'inspect') {
+      void this.router.navigate(['/conversation', action.id]).then(() => this.store.openRunInspector(action.id, action.focusId ?? null));
+    }
+  }
   ngOnDestroy(): void { this.mediaQuery?.removeEventListener('change', this.mediaListener); this.routeSubscription.unsubscribe(); this.themeEffect.destroy(); this.routeEffect.destroy(); this.persistedRouteEffect.destroy(); }
   private readTheme(): ThemePreference { if (typeof localStorage === 'undefined') return 'system'; const value = localStorage.getItem('aura-theme'); return value === 'light' || value === 'dark' ? value : 'system'; }
   private applyTheme(preference: ThemePreference): void { if (typeof document === 'undefined') return; const mode = preference === 'system' ? (this.mediaQuery?.matches ? 'dark' : 'light') : preference; document.documentElement.dataset['theme'] = mode; document.documentElement.style.colorScheme = mode; }

@@ -8,6 +8,7 @@ import {
   type AuraOperationDescriptor,
   type ConversationDetail,
   type ConversationPage,
+  type ConversationArchiveState,
   type ConversationRunAccepted,
   type ConversationSummary,
   type ModelCatalog,
@@ -44,6 +45,16 @@ export interface RunEventSubscription {
   readonly close: () => void;
 }
 
+export interface ConversationListFilters {
+  readonly q?: string;
+  readonly agentProfileId?: string;
+  readonly modelId?: string;
+  readonly runStatus?: Run['status'];
+  readonly archiveState?: ConversationArchiveState;
+  readonly activityFrom?: string;
+  readonly activityTo?: string;
+}
+
 /**
  * A parsed SSE payload and its transport cursor.  The cursor comes from the
  * SSE `id` field, not from the JSON payload: liveness heartbeats deliberately
@@ -56,8 +67,9 @@ export interface ConversationApi {
   startLogin(returnTo?: string): void;
   logout(csrfToken: string): Promise<void>;
   listModels(): Promise<ModelCatalog>;
-  listConversations(cursor?: string): Promise<ConversationPage>;
+  listConversations(cursor?: string, filters?: ConversationListFilters): Promise<ConversationPage>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
+  updateConversationMetadata?(conversationId: string, metadata: { readonly title?: string; readonly archived?: boolean; readonly version: number }, idempotencyKey: string): Promise<ConversationSummary>;
   createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string, personaRevisionId?: string): Promise<ConversationRunAccepted>;
   updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey: string, agentRevisionId?: string, transcriptSharingConfirmed?: boolean, personaRevisionId?: string, useAgentDefaultPersona?: boolean): Promise<ConversationSummary>;
   createRun(conversationId: string, message: string, version: number, idempotencyKey: string): Promise<ConversationRunAccepted>;
@@ -99,12 +111,16 @@ export class AuraConversationApi implements ConversationApi {
 
   listModels(): Promise<ModelCatalog> { return this.client.execute('listModels', emptyInput()); }
 
-  listConversations(cursor?: string): Promise<ConversationPage> {
-    return this.client.execute('listConversations', { ...emptyInput(), query: cursor ? { cursor } : {} });
+  listConversations(cursor?: string, filters: ConversationListFilters = {}): Promise<ConversationPage> {
+    return this.client.execute('listConversations', { ...emptyInput(), query: { ...(cursor ? { cursor } : {}), limit: 30, ...filters } });
   }
 
   getConversation(conversationId: string): Promise<ConversationDetail> {
     return this.client.execute('getConversation', { ...emptyInput(), path: { conversation_id: conversationId } });
+  }
+
+  updateConversationMetadata(conversationId: string, metadata: { readonly title?: string; readonly archived?: boolean; readonly version: number }, idempotencyKey = randomKey()): Promise<ConversationSummary> {
+    return this.client.execute('updateConversationMetadata', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: metadata });
   }
 
   createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string, personaRevisionId?: string): Promise<ConversationRunAccepted> {
