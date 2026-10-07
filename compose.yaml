@@ -143,7 +143,10 @@ services:
     restart: "no"
 
   aura-core-postgres:
-    image: ${AURA_CORE_POSTGRES_IMAGE:-postgres:17.6-alpine}
+    # Core needs PostgreSQL 17 with the pgvector extension available for its
+    # service-owned memory embeddings. Keep the image overrideable so
+    # operators can pin a locally mirrored digest without changing topology.
+    image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}
     environment:
       POSTGRES_DB: ${AURA_CORE_DATABASE_NAME:-aura}
       POSTGRES_USER: ${AURA_CORE_DATABASE_USER:-aura}

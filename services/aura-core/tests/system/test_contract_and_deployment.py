@@ -49,6 +49,84 @@ def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> No
         assert "#/components/parameters/IdempotencyKey" in refs
 
 
+def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.4.0"
+    paths = cast(dict[str, dict[str, Any]], contract["paths"])
+    mutation_operations = {
+        ("/api/v1/memories", "post"),
+        ("/api/v1/memories/{memory_id}/revisions", "post"),
+        ("/api/v1/memories/{memory_id}/status", "patch"),
+        ("/api/v1/memories/{memory_id}/pin", "patch"),
+        ("/api/v1/memories/{memory_id}/purge", "post"),
+    }
+    assert {
+        "/api/v1/memories",
+        "/api/v1/memories/{memory_id}",
+        *(path for path, _ in mutation_operations),
+    } <= paths.keys()
+    for path, method in mutation_operations:
+        parameters = cast(list[dict[str, Any]], paths[path][method]["parameters"])
+        refs = {cast(str, parameter["$ref"]) for parameter in parameters}
+        assert "#/components/parameters/CsrfToken" in refs
+        assert "#/components/parameters/IdempotencyKey" in refs
+        if path != "/api/v1/memories":
+            assert "#/components/parameters/MemoryReadScopeType" in refs
+            assert "#/components/parameters/MemoryReadAgentProfileId" in refs
+
+    list_parameters = cast(list[dict[str, Any]], paths["/api/v1/memories"]["get"]["parameters"])
+    list_refs = {
+        cast(str, parameter["$ref"]) for parameter in list_parameters if "$ref" in parameter
+    }
+    detail_parameters = cast(
+        list[dict[str, Any]], paths["/api/v1/memories/{memory_id}"]["get"]["parameters"]
+    )
+    detail_refs = {cast(str, parameter["$ref"]) for parameter in detail_parameters}
+    required_read_scope_refs = {
+        "#/components/parameters/MemoryReadScopeType",
+        "#/components/parameters/MemoryReadAgentProfileId",
+    }
+    assert required_read_scope_refs <= list_refs
+    assert required_read_scope_refs <= detail_refs
+    query = next(parameter for parameter in list_parameters if parameter.get("name") == "q")
+    assert query["schema"]["maxLength"] == 500
+
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    assert schemas["MemoryScopeType"]["enum"] == ["user", "agent"]
+    assert schemas["MemoryKind"]["enum"] == [
+        "episodic",
+        "semantic",
+        "procedural",
+        "preference",
+        "system",
+    ]
+    assert schemas["MemoryLifecycleStatus"]["enum"] == [
+        "active",
+        "dormant",
+        "archived",
+        "disabled",
+        "disputed",
+        "superseded",
+    ]
+    half_life = schemas["MemoryRevision"]["properties"]["halfLifeDays"]
+    assert (half_life["minimum"], half_life["maximum"]) == (0.25, 3650)
+    assert "correctionReason" in schemas["MemoryRevision"]["required"]
+    assert "evidence" in schemas["MemoryProvenance"]["required"]
+    assert "embeddingGenerations" in schemas["MemoryDetail"]["required"]
+    assert schemas["MemoryEmbeddingGeneration"]["properties"]["status"]["$ref"].endswith(
+        "/MemoryEmbeddingGenerationStatus"
+    )
+    assert schemas["PurgeMemoryRequest"]["properties"]["confirmation"]["const"] == (
+        "PURGE MEMORY"
+    )
+    assert "vector" not in schemas["MemoryEmbedding"]["properties"]
+    assert {"generationId", "generation", "modelRevision", "digest"} <= set(
+        schemas["MemoryEmbedding"]["required"]
+    )
+
+
 def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
     schema = cast(
         dict[str, Any],

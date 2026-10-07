@@ -6,6 +6,7 @@ from uuid import UUID
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
+from aura_core.bootstrap.memory_uow import memory_repository
 from aura_core.domains.execution.runs.public import RunCoordinator
 from aura_core.domains.governance.identity.application import LoginConfiguration, LoginService
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
@@ -21,6 +22,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationService,
     PersonaMemoryRepository,
 )
+from aura_core.domains.knowledge.memory.public import MemoryRepository
 from aura_core.platform.auth import (
     MemoryLoginStateBackend,
     MemorySessionBackend,
@@ -75,6 +77,7 @@ class AppState:
         self.persona_store = None
         self.agent_service: AgentConfigurationService
         self.persona_service: PersonaConfigurationService
+        self.memory_repository: MemoryRepository
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.startup_errors: dict[str, str] = {}
@@ -101,6 +104,7 @@ class AppState:
             self.publisher = EventPublisher()
             self.outbox = InMemoryOutbox()
             self.sessions = SessionService(MemorySessionBackend(), self.settings)
+            self.memory_repository = memory_repository(None, testing=True, metrics=self.metrics)
             probes = {
                 "postgres": UnknownProbe(),
                 "nats": UnknownProbe(),
@@ -146,6 +150,7 @@ class AppState:
             redis_client = redis_factory(self.settings.valkey_url, decode_responses=True)
             self.sessions = SessionService(RedisSessionBackend(redis_client), self.settings)
             self.oidc_states = RedisLoginStateBackend(redis_client)
+            self.memory_repository = memory_repository(self.sessions_factory, metrics=self.metrics)
             probes = {
                 "postgres": DatabaseProbe(self.engine),
                 "nats": DiagnosticProbe(self._nats_readiness, "transport unavailable"),

@@ -35,6 +35,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
+    "aura.knowledge.memory_persistence": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -104,6 +105,14 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "stream_delivery_duration_ms",
         }
     ),
+    "aura.knowledge.memory_persistence": frozenset(
+        {
+            "memory_operation_duration_ms",
+            "memory_operation_outcome",
+            "memory_lifecycle_status",
+            "memory_scope_type",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -136,6 +145,21 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.runtime.stream_delivery": frozenset(
         {"event.publish", "sse.connect", "sse.deliver", "sse.reconnect"}
     ),
+    "aura.knowledge.memory_persistence": frozenset(
+        {
+            "memory.persist",
+            "memory.list",
+            "memory.get",
+            "memory.create",
+            "memory.revise",
+            "memory.status",
+            "memory.pin",
+            "memory.purge",
+            "memory.embedding.register",
+            "memory.embedding.activate",
+            "memory.embedding.attach",
+        }
+    ),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -146,6 +170,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.model_routing": "model_routing_duration_ms",
     "aura.runtime.prompt_compilation": "prompt_compile_duration_ms",
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
+    "aura.knowledge.memory_persistence": "memory_operation_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -159,6 +184,7 @@ _DIMENSION_KEYS = frozenset(
         "provider",
         "status",
         "token_estimator",
+        "scope_type",
     }
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
@@ -176,6 +202,9 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "configuration_source",
         "configuration_reason",
         "result_count",
+        "memory_id",
+        "memory_revision_id",
+        "generation_id",
         "operation_duration_ms",
         "attempt_count",
         "causation_id",
@@ -201,6 +230,9 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "command_id",
         "conversation_id",
         "correlation_id",
+        "memory_id",
+        "memory_revision_id",
+        "generation_id",
         "model_policy_revision_id",
         "retry_of_run_id",
         "run_id",
@@ -232,11 +264,13 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "sse_client",
             "configuration_store",
             "prompt_compiler",
+            "memory_store",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
     "error_class": frozenset(
         {
+            "authorization",
             "cancel",
             "conflict",
             "delivery",
@@ -262,9 +296,17 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "interrupted",
             "queued",
             "running",
+            "active",
+            "dormant",
+            "archived",
+            "disabled",
+            "disputed",
+            "superseded",
+            "unknown",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
+    "scope_type": frozenset({"user", "agent", "owner", "unknown"}),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
@@ -733,3 +775,55 @@ class Stopwatch:
 
     def elapsed_ms(self) -> float:
         return (monotonic() - self.started) * 1000
+
+
+def record_memory_operation(
+    metrics: MetadataMetrics,
+    timer: Stopwatch,
+    *,
+    outcome: str,
+    scope_type: str,
+    lifecycle_status: str,
+    dependency: str,
+    trace_id: str,
+    memory_id: str | None = None,
+    memory_revision_id: str | None = None,
+    generation_id: str | None = None,
+    error_class: str | None = None,
+    operation: str = "memory.persist",
+) -> None:
+    """Emit the complete memory measurement set under one trace correlation."""
+
+    bounded_scope = scope_type if scope_type in {"user", "agent"} else "unknown"
+    bounded_status = lifecycle_status if lifecycle_status in {
+        "active", "dormant", "archived", "disabled", "disputed", "superseded"
+    } else "unknown"
+    identifiers: dict[str, str] = {}
+    if memory_id is not None:
+        identifiers["memory_id"] = memory_id
+    if memory_revision_id is not None:
+        identifiers["memory_revision_id"] = memory_revision_id
+    if generation_id is not None:
+        identifiers["generation_id"] = generation_id
+    metrics.record_span(
+        "aura.knowledge.memory_persistence", operation, timer.elapsed_ms(),
+        trace_id=trace_id, span_id=new_span_id(), parent_span_id=None,
+        dependency=dependency, outcome=outcome, error_class=error_class, **identifiers,
+    )
+    common = {"trace_id": trace_id, **identifiers}
+    metrics.observe(
+        "aura.knowledge.memory_persistence", "memory_operation_duration_ms",
+        timer.elapsed_ms(), outcome=outcome, dependency=dependency, **common,
+    )
+    metrics.increment(
+        "aura.knowledge.memory_persistence", "memory_operation_outcome",
+        outcome=outcome, dependency=dependency, **common,
+    )
+    metrics.increment(
+        "aura.knowledge.memory_persistence", "memory_lifecycle_status",
+        status=bounded_status, **common,
+    )
+    metrics.increment(
+        "aura.knowledge.memory_persistence", "memory_scope_type",
+        scope_type=bounded_scope, **common,
+    )

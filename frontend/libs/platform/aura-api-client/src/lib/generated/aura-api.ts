@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: b3dfed18d0c005c0e2ab1c2e93a82e4d4c4add03423a3e96c3a64101eca40e9a
+// Contract SHA-256: 233453d940ec91bbdb818e16c0c19c30e651c7ce487dd6dc3832876ef83ed33c
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -8,6 +8,52 @@ export type Principal = { readonly "issuer": string; readonly "subject": string;
 export type ModelCatalog = { readonly "models": ReadonlyArray<Model>; readonly "defaultModelId": string | null; readonly "observedAt": string; };
 
 export type Model = { readonly "id": string; readonly "displayName": string; readonly "provider": string; readonly "capabilities": ReadonlyArray<"chat" | "completion" | "embedding" | "vision" | "tools" | "structured_output">; readonly "availability": "available" | "unavailable" | "unknown"; readonly "selectable": boolean; readonly "disabledReason": string | null; };
+
+export type MemoryKind = "episodic" | "semantic" | "procedural" | "preference" | "system";
+
+export type MemoryScopeType = "user" | "agent";
+
+export type MemoryLifecycleStatus = "active" | "dormant" | "archived" | "disabled" | "disputed" | "superseded";
+
+export type MemoryProvenanceType = "manual" | "conversation_message" | "run" | "system" | "import";
+
+export type MemoryRelationType = "supersedes" | "superseded_by" | "disputes" | "disputed_by";
+
+export type MemoryEmbeddingGenerationStatus = "building" | "active" | "retired" | "failed";
+
+export type MemoryScope = MemoryUserScope | MemoryAgentScope;
+
+export type MemoryUserScope = { readonly "type": "user"; };
+
+export type MemoryAgentScope = { readonly "type": "agent"; readonly "agentProfileId": string; };
+
+export type MemoryPage = { readonly "items": ReadonlyArray<MemorySummary>; readonly "nextCursor": string | null; };
+
+export type MemorySummary = { readonly "id": string; readonly "scope": MemoryScope; readonly "status": MemoryLifecycleStatus; readonly "pinned": boolean; readonly "version": number; readonly "currentRevision": MemoryRevision; readonly "reinforcedAt": string | null; readonly "dormantAt": string | null; readonly "archivedAt": string | null; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type MemoryDetail = { readonly "id": string; readonly "scope": MemoryScope; readonly "status": MemoryLifecycleStatus; readonly "pinned": boolean; readonly "version": number; readonly "currentRevision": MemoryRevision; readonly "reinforcedAt": string | null; readonly "dormantAt": string | null; readonly "archivedAt": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "revisions": ReadonlyArray<MemoryRevision>; readonly "provenance": ReadonlyArray<MemoryProvenance>; readonly "embeddingGenerations": ReadonlyArray<MemoryEmbeddingGeneration>; readonly "embeddings": ReadonlyArray<MemoryEmbedding>; readonly "relations": ReadonlyArray<MemoryRelation>; };
+
+export type MemoryRevision = { readonly "id": string; readonly "memoryId": string; readonly "revision": number; readonly "kind": MemoryKind; readonly "content": string; readonly "correctionReason": string | null; readonly "confidence": number; readonly "importance": number; readonly "halfLifeDays": number; readonly "observedAt": string | null; readonly "validFrom": string | null; readonly "validTo": string | null; readonly "createdAt": string; };
+
+export type MemoryProvenance = { readonly "id": string; readonly "memoryRevisionId": string; readonly "type": MemoryProvenanceType; readonly "sourceId": string | null; readonly "sourceContentDigest": string | null; readonly "evidence": string | null; readonly "observedAt": string | null; readonly "createdAt": string; };
+
+export type MemoryEmbeddingGeneration = { readonly "id": string; readonly "generation": number; readonly "modelId": string; readonly "modelRevision": string | null; readonly "dimension": number; readonly "status": MemoryEmbeddingGenerationStatus; readonly "createdAt": string; readonly "activatedAt": string | null; };
+
+export type MemoryEmbedding = { readonly "id": string; readonly "memoryRevisionId": string; readonly "generationId": string; readonly "generation": number; readonly "modelId": string; readonly "modelRevision": string | null; readonly "digest": string; readonly "dimension": number; readonly "createdAt": string; };
+
+export type MemoryRelation = { readonly "type": MemoryRelationType; readonly "memoryId": string; readonly "createdAt": string; };
+
+export type CreateMemoryRequest = { readonly "content": string; readonly "kind": MemoryKind; readonly "scope": MemoryScope; readonly "confidence": number; readonly "importance": number; readonly "halfLifeDays": number; readonly "observedAt"?: string | null; readonly "validFrom"?: string | null; readonly "validTo"?: string | null; };
+
+export type CorrectMemoryRequest = { readonly "content": string; readonly "reason": string; readonly "kind"?: MemoryKind; readonly "confidence"?: number; readonly "importance"?: number; readonly "halfLifeDays"?: number; readonly "observedAt"?: string | null; readonly "validFrom"?: string | null; readonly "validTo"?: string | null; readonly "expectedVersion": number; };
+
+export type UpdateMemoryStatusRequest = { readonly "status": MemoryLifecycleStatus; readonly "relatedMemoryId"?: string | null; readonly "expectedVersion": number; };
+
+export type UpdateMemoryPinRequest = { readonly "pinned": boolean; readonly "expectedVersion": number; };
+
+export type PurgeMemoryRequest = { readonly "confirmation": "PURGE MEMORY"; readonly "expectedVersion": number; };
+
+export type MemoryPurgeReceipt = { readonly "memoryId": string; readonly "auditId": string; readonly "purgedAt": string; };
 
 export type ProfileStatus = "active" | "disabled";
 
@@ -132,6 +178,13 @@ export interface AuraApiOperations {
   readonly cancelRun: { readonly response: Run; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly retryRun: { readonly response: ConversationRunAccepted; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamRunEvents: { readonly response: RunEvent; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly listMemories: { readonly response: MemoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "limit"?: number; readonly "q"?: string; readonly "kind"?: MemoryKind; readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; readonly "status"?: MemoryLifecycleStatus; readonly "includeHistorical"?: boolean; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createMemory: { readonly response: MemoryDetail; readonly body: CreateMemoryRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getMemory: { readonly response: MemoryDetail; readonly body: never; readonly path: { readonly "memory_id": string; }; readonly query: { readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly correctMemory: { readonly response: MemoryDetail; readonly body: CorrectMemoryRequest; readonly path: { readonly "memory_id": string; }; readonly query: { readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; }; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly updateMemoryStatus: { readonly response: MemoryDetail; readonly body: UpdateMemoryStatusRequest; readonly path: { readonly "memory_id": string; }; readonly query: { readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; }; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly updateMemoryPin: { readonly response: MemoryDetail; readonly body: UpdateMemoryPinRequest; readonly path: { readonly "memory_id": string; }; readonly query: { readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; }; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly purgeMemory: { readonly response: MemoryPurgeReceipt; readonly body: PurgeMemoryRequest; readonly path: { readonly "memory_id": string; }; readonly query: { readonly "scopeType"?: MemoryScopeType; readonly "agentProfileId"?: string; }; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -176,6 +229,13 @@ export const AURA_API_OPERATIONS = {
   cancelRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/cancel', responseMode: 'json' },
   retryRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/retry', responseMode: 'json' },
   streamRunEvents: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/events', responseMode: 'event-stream' },
+  listMemories: { method: 'GET', pathTemplate: '/api/v1/memories', responseMode: 'json' },
+  createMemory: { method: 'POST', pathTemplate: '/api/v1/memories', responseMode: 'json' },
+  getMemory: { method: 'GET', pathTemplate: '/api/v1/memories/{memory_id}', responseMode: 'json' },
+  correctMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/revisions', responseMode: 'json' },
+  updateMemoryStatus: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/status', responseMode: 'json' },
+  updateMemoryPin: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/pin', responseMode: 'json' },
+  purgeMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/purge', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

@@ -58,6 +58,26 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/domains/interaction/__init__.py
   dependencies: []
+- id: aura-core.domains.knowledge
+  root: services/aura-core/src/aura_core/domains/knowledge
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  python_modules:
+  - aura_core.domains.knowledge
+  source_files:
+  - services/aura-core/src/aura_core/domains/knowledge/__init__.py
+  dependencies:
+  - aura-core.domains.knowledge.memory.public
+- id: aura-core.domains.knowledge.memory
+  root: services/aura-core/src/aura_core/domains/knowledge/memory
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  python_modules:
+  - aura_core.domains.knowledge.memory
+  source_files:
+  - services/aura-core/src/aura_core/domains/knowledge/memory/__init__.py
+  dependencies:
+  - aura-core.domains.knowledge.memory.public
 - id: aura-core.entrypoints
   root: services/aura-core/src/aura_core/entrypoints
   kind: package
@@ -244,6 +264,7 @@ modules:
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.routes.health
+  - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.state
@@ -273,6 +294,7 @@ modules:
   - aura-core.domains.interaction.conversations.public
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
@@ -401,6 +423,42 @@ modules:
   python_modules:
   - aura_core.bootstrap.health
   dependencies: []
+- id: aura-core.bootstrap.memory-uow
+  root: services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  python_modules:
+  - aura_core.bootstrap.memory_uow
+  dependencies:
+  - aura-core.domains.knowledge.memory
+  - aura-core.domains.knowledge.memory.persistence
+  - aura-core.domains.knowledge.memory.public
+  - aura-core.domains.knowledge.memory.repository
+  - aura-core.platform.telemetry
+- id: aura-core.domains.knowledge.memory.persistence
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.knowledge.memory.public
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.public
+  dependencies: []
+- id: aura-core.domains.knowledge.memory.repository
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.repository
+  dependencies:
+  - aura-core.domains.knowledge.memory.persistence
+  - aura-core.domains.knowledge.memory.public
 - id: aura-core.domains.execution.runs.dto
   root: services/aura-core/src/aura_core/domains/execution/runs/dto.py
   kind: python
@@ -725,6 +783,7 @@ modules:
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.health
+  - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
   - aura-core.entrypoints.api.routes.personas
   - aura-core.entrypoints.api.routes.runs
@@ -805,6 +864,18 @@ modules:
   - aura_core.entrypoints.api.routes.health
   dependencies:
   - aura-core.entrypoints.api.routes.conversations
+- id: aura-core.entrypoints.api.routes.memories
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/memories.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/memories.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.memories
+  dependencies:
+  - aura-core.domains.knowledge.memory.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.api.routes.models
   root: services/aura-core/src/aura_core/entrypoints/api/routes/models.py
   kind: python
@@ -845,6 +916,8 @@ modules:
   - aura-core.domains.interaction.conversations.public
   - aura-core.domains.interaction.personas.adapters
   - aura-core.domains.interaction.personas.public
+  - aura-core.bootstrap.memory-uow
+  - aura-core.domains.knowledge.memory.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.oidc

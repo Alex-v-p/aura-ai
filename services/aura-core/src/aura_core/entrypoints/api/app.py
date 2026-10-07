@@ -10,6 +10,7 @@ from aura_core.entrypoints.api.routes import (
     auth,
     conversations,
     health,
+    memories,
     models,
     personas,
     runs,
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.state.aura = state
     app.include_router(auth.router)
     app.include_router(models.router)
+    app.include_router(memories.router)
     app.include_router(agents.router)
     app.include_router(personas.router)
     app.include_router(conversations.router)

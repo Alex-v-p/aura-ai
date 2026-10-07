@@ -1,0 +1,40 @@
+component:
+  id: aura.knowledge.memory_persistence
+  version: 1.0.0
+  owner: knowledge.memory
+  category: persistence
+input:
+  schema: aura-memory-command-v1
+  replayable: false
+  replay_reason: Memory mutations include private content and require an explicit owner-scoped replay boundary.
+output:
+  schema: aura-memory-record-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - memory_store
+metrics:
+  - memory_operation_duration_ms
+  - memory_operation_outcome
+  - memory_lifecycle_status
+  - memory_scope_type
+metric_semantics:
+  memory_operation_duration_ms: Owner-scoped memory persistence operation duration.
+  memory_operation_outcome: Metadata-only memory operation outcome.
+  memory_lifecycle_status: Lifecycle status transition metadata.
+  memory_scope_type: Memory scope classification metadata.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, scope_type]
+  trace_only: [trace_id, span_id, parent_span_id, memory_id, memory_revision_id, generation_id, operation_duration_ms]
+  prohibited: [content, evidence, provenance, vector, payload, prompt, response, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

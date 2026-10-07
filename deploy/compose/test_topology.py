@@ -141,6 +141,34 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("/app/.venv/bin/python -m aura_core.entrypoints.cli seed", migrate_script)
         self.assertNotIn("uv run", migrate_script)
 
+    def test_core_postgres_uses_pgvector_postgresql_17_without_new_exposure(self) -> None:
+        postgres = service_block(self.compose, "aura-core-postgres", "aura-nats")
+
+        self.assertIn("image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}", postgres)
+        self.assertIn("aura-core-database-password", postgres)
+        self.assertIn(
+            "${AURA_STATE_ROOT:?encrypted state root is required}/aura-core-postgres:/var/lib/postgresql/data",
+            postgres,
+        )
+        self.assertIn("networks: [aura-core-db]", postgres)
+        self.assertIn("healthcheck:", postgres)
+        self.assertNotIn("ports:", postgres)
+        self.assertNotIn("expose:", postgres)
+
+    def test_core_postgres_image_is_inherited_by_local_and_e2e_overlays(self) -> None:
+        postgres = service_block(self.compose, "aura-core-postgres", "aura-nats")
+        expected_image = "image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}"
+
+        self.assertIn(expected_image, postgres)
+        for path in (
+            ROOT / "deploy/compose/local-http.yaml",
+            ROOT / "deploy/compose/e2e/external-aura.yaml",
+            ROOT / "deploy/compose/e2e/local-aura.yaml",
+        ):
+            overlay = path.read_text(encoding="utf-8")
+            self.assertNotIn("  aura-core-postgres:\n", overlay)
+            self.assertNotIn("postgres:", overlay)
+
     def test_full_stack_fixture_keeps_external_provider_outside_aura_project(self) -> None:
         external = (ROOT / "deploy/compose/e2e/external-aura.yaml").read_text(encoding="utf-8")
         provider = (ROOT / "deploy/compose/e2e/provider.yaml").read_text(encoding="utf-8")
