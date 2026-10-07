@@ -1,9 +1,11 @@
 # Aura Web
 
-The Aura Web workspace contains the responsive, presentation-only Aura shell.
-It uses in-memory conversation fixtures and a deterministic local reply until
-service-owned contracts and generated clients exist.
+Aura Web is the authenticated, persistent Aura client. The responsive shell
+composes feature libraries for conversations, versioned agents, and reusable
+personas; transport remains behind the service-owned contract and generated
+client.
 
 Run `pnpm start` for local development or use the repository root Compose
-preview. Conversations and drafts intentionally never leave the page; only
-the selected theme preference is stored locally.
+environment. Conversation history is stored by Aura Core for the authenticated
+owner. Unsent drafts remain in the current browser session and are not sent
+until the user submits them.

@@ -1,0 +1,104 @@
+id: AURA-0017
+title: Restore the Aura Web host port on Docker Desktop
+status: integrated
+change_class: infrastructure
+intent: >
+  Restore the configured loopback-only Aura Web port on Docker Desktop while
+  preserving the internal web-to-Core path and all existing Core, stateful
+  service, provider-egress, and identity-provider isolation boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications: []
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0015 integrated same-origin Aura Web and Core deployment topology
+    - User report that the successfully built stack does not expose its web port
+    - A disposable Docker Desktop probe confirmed that a dedicated non-internal edge network restores loopback host publishing
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deployment.aura-stack
+allowed_paths:
+  - work-items/active/AURA-0017.yaml
+  - work-items/archived/AURA-0017.yaml
+  - compose.yaml
+  - deploy/compose/test_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - docs/**
+  - tooling/architecture/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - .env
+  - .env.example
+  - .secrets/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Only Aura Web may join the host-facing edge network or publish a host port
+    - The published port remains bound to loopback rather than all host interfaces
+    - Aura Web retains its internal network path to Core and no Core or stateful service becomes host-accessible
+    - Provider-egress and optional Authentik control networks remain separate from the edge network
+  data_classes: []
+required_agents:
+  implementation:
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura Web publishes container port 8080 on the configured loopback-only AURA_WEB_PORT under Docker Desktop.
+  - Aura Web is the only normal-stack service attached to a dedicated non-internal edge network.
+  - Aura Web retains its internal aura-frontend attachment for Core proxying and browser end-to-end checks.
+  - Aura Core API, worker, PostgreSQL, NATS, and Valkey publish no host ports and are not attached to the edge network.
+  - Existing internal frontend, Core data, bus, cache, provider-egress, and identity-provider network boundaries remain unchanged.
+  - The running web health endpoint is reachable from the host at http://127.0.0.1:4200/healthz with the repository development configuration.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0017.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0017.yaml
+  - python3 -m unittest deploy.compose.test_topology -v
+  - docker compose config --quiet
+  - docker compose up --detach --wait aura-web
+  - docker compose port aura-web 8080
+  - curl --fail --silent --show-error http://127.0.0.1:4200/healthz
+  - python3 tooling/architecture/validate-service-isolation.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

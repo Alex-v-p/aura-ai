@@ -14,6 +14,21 @@ ownership:
   - pattern: compose.yaml
     roles: [platform_worker]
     architectural_owner: deployment
+  - pattern: pyproject.toml
+    roles: [platform_worker]
+    architectural_owner: repository-governance
+  - pattern: uv.lock
+    roles: [platform_worker]
+    architectural_owner: repository-governance
+  - pattern: .python-version
+    roles: [platform_worker]
+    architectural_owner: repository-governance
+  - pattern: README.md
+    roles: [delivery_lead, platform_worker]
+    architectural_owner: documentation
+  - pattern: .env.example
+    roles: [platform_worker]
+    architectural_owner: repository-governance
   - pattern: tooling/architecture/**
     roles: [platform_worker]
     architectural_owner: repository-governance
@@ -32,6 +47,9 @@ ownership:
   - pattern: frontend/**
     roles: [frontend_worker, test_evaluation_engineer]
     architectural_owner: frontend
+  - pattern: frontend/libs/platform/aura-api-client/**
+    roles: [contract_steward]
+    architectural_owner: contracts
   - pattern: contracts/**
     roles: [contract_steward]
     architectural_owner: contracts

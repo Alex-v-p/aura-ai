@@ -9,6 +9,9 @@ services:
     init: true
     ports:
       - "127.0.0.1:${AURA_WEB_PORT:-4200}:8080"
+    depends_on:
+      aura-core-api:
+        condition: service_healthy
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -19,40 +22,226 @@ services:
       - /var/cache/nginx:rw,noexec,nosuid,nodev
       - /var/run:rw,noexec,nosuid,nodev
     healthcheck:
-      test:
-        - CMD-SHELL
-        - wget --quiet --output-document=- http://127.0.0.1:8080/healthz | grep -q '^ok$'
+      test: [CMD-SHELL, "wget --quiet --output-document=- http://127.0.0.1:8080/healthz | grep -q '^ok$'"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
     restart: unless-stopped
+    networks: [aura-frontend, aura-edge]
+
+  aura-core-api:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-api.Dockerfile
+      target: runtime
+    init: true
+    environment:
+      AURA_ENVIRONMENT: production
+      AURA_ROLE: api
+      AURA_DATABASE_HOST: aura-core-postgres
+      AURA_DATABASE_PORT: "5432"
+      AURA_DATABASE_NAME: ${AURA_CORE_DATABASE_NAME:-aura}
+      AURA_DATABASE_USER: ${AURA_CORE_DATABASE_USER:-aura}
+      AURA_DATABASE_PASSWORD_FILE: /run/secrets/aura-core-database-password
+      AURA_NATS_URL: nats://aura-nats:4222
+      AURA_NATS_USER: aura
+      AURA_NATS_PASSWORD_FILE: /run/secrets/aura-nats-password
+      AURA_VALKEY_URL: redis://aura-valkey:6379/0
+      AURA_VALKEY_PASSWORD_FILE: /run/secrets/aura-valkey-password
+      AURA_OLLAMA_URL: ${AURA_OLLAMA_URL:-http://host.docker.internal:11434}
+      AURA_DEFAULT_MODEL: ${AURA_DEFAULT_MODEL:-}
+      AURA_CONTEXT_TOKEN_BUDGET: ${AURA_CONTEXT_TOKEN_BUDGET:-8192}
+      AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be a stable non-localhost HTTPS issuer}
+      AURA_OIDC_AUDIENCE: ${AURA_OIDC_AUDIENCE:-aura-web}
+      AURA_OIDC_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:-aura-web}
+      AURA_OIDC_CLIENT_SECRET_FILE: /run/secrets/aura-oidc-client-secret
+      AURA_OIDC_REDIRECT_URI: ${AURA_OIDC_REDIRECT_URI:?AURA_OIDC_REDIRECT_URI must match the configured Aura public origin}
+      AURA_OWNER_SUBJECT: ${AURA_OWNER_SUBJECT:?AURA_OWNER_SUBJECT must be configured for owner authorization}
+      AURA_PUBLIC_ORIGIN: ${AURA_PUBLIC_ORIGIN:?AURA_PUBLIC_ORIGIN must be a stable HTTPS origin}
+      AURA_SECURE_COOKIES: "true"
+    secrets: [aura-core-database-password, aura-oidc-client-secret, aura-nats-password, aura-valkey-password]
+    # Only Core entrypoints need to contact configured external providers.
+    # Keep all browser-facing and stateful service paths on internal networks.
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]
+    # Docker Desktop provides this name automatically; Linux Engine needs the
+    # explicit gateway mapping for the local Ollama development default.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      aura-core-migrate: {condition: service_completed_successfully}
+      aura-core-postgres: {condition: service_healthy}
+      aura-nats: {condition: service_started}
+      aura-valkey: {condition: service_healthy}
+    expose: ["8000"]
+    healthcheck:
+      # The Core runtime image is Python slim and intentionally does not
+      # include a shell HTTP client. Keep this aligned with its Dockerfile
+      # healthcheck rather than adding a package solely for probing.
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  aura-core-worker:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-worker.Dockerfile
+      target: runtime
+    init: true
+    environment:
+      AURA_ROLE: worker
+      AURA_DATABASE_HOST: aura-core-postgres
+      AURA_DATABASE_PORT: "5432"
+      AURA_DATABASE_NAME: ${AURA_CORE_DATABASE_NAME:-aura}
+      AURA_DATABASE_USER: ${AURA_CORE_DATABASE_USER:-aura}
+      AURA_DATABASE_PASSWORD_FILE: /run/secrets/aura-core-database-password
+      AURA_NATS_URL: nats://aura-nats:4222
+      AURA_NATS_USER: aura
+      AURA_NATS_PASSWORD_FILE: /run/secrets/aura-nats-password
+      AURA_VALKEY_URL: redis://aura-valkey:6379/0
+      AURA_VALKEY_PASSWORD_FILE: /run/secrets/aura-valkey-password
+      AURA_OLLAMA_URL: ${AURA_OLLAMA_URL:-http://host.docker.internal:11434}
+      AURA_DEFAULT_MODEL: ${AURA_DEFAULT_MODEL:-}
+      AURA_CONTEXT_TOKEN_BUDGET: ${AURA_CONTEXT_TOKEN_BUDGET:-8192}
+      AURA_OLLAMA_RUN_TIMEOUT_SECONDS: ${AURA_OLLAMA_RUN_TIMEOUT_SECONDS:-300}
+    secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password]
+    # The worker invokes Ollama, but has no browser-facing network attachment.
+    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      aura-core-migrate: {condition: service_completed_successfully}
+      aura-core-postgres: {condition: service_healthy}
+      aura-nats: {condition: service_started}
+      aura-valkey: {condition: service_healthy}
+    restart: unless-stopped
+
+  aura-core-migrate:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-api.Dockerfile
+      target: runtime
+    init: true
+    command: [/usr/local/bin/aura-core-migrate]
+    environment:
+      AURA_ROLE: migrate
+      AURA_DATABASE_HOST: aura-core-postgres
+      AURA_DATABASE_PORT: "5432"
+      AURA_DATABASE_NAME: ${AURA_CORE_DATABASE_NAME:-aura}
+      AURA_DATABASE_USER: ${AURA_CORE_DATABASE_USER:-aura}
+      AURA_DATABASE_PASSWORD_FILE: /run/secrets/aura-core-database-password
+      AURA_DEFAULT_MODEL: ${AURA_DEFAULT_MODEL:-}
+    secrets: [aura-core-database-password]
+    networks: [aura-core-db]
+    # This is a short-lived CLI job, not the API process whose inherited image
+    # healthcheck probes port 8000. Completion is its readiness signal.
+    healthcheck:
+      disable: true
+    depends_on:
+      aura-core-postgres: {condition: service_healthy}
+    restart: "no"
+
+  aura-core-postgres:
+    image: ${AURA_CORE_POSTGRES_IMAGE:-postgres:17.6-alpine}
+    environment:
+      POSTGRES_DB: ${AURA_CORE_DATABASE_NAME:-aura}
+      POSTGRES_USER: ${AURA_CORE_DATABASE_USER:-aura}
+      POSTGRES_PASSWORD_FILE: /run/secrets/aura-core-database-password
+    secrets: [aura-core-database-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-core-postgres:/var/lib/postgresql/data
+    networks: [aura-core-db]
+    healthcheck:
+      # The official image briefly starts a temporary PostgreSQL server while
+      # initializing a new data directory.  pg_isready alone reports that
+      # server as ready and can race the migration job; PID 1 is `postgres`
+      # only after the entrypoint has switched to the final server.
+      test: [CMD-SHELL, "test \"$$(tr -d '\\000' </proc/1/cmdline)\" = postgres && pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  aura-nats:
+    image: ${AURA_NATS_IMAGE:-nats:2.10.22-alpine}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export NATS_PASSWORD="$$(cat /run/secrets/aura-nats-password)";
+        exec nats-server --jetstream --store_dir=/data --user "$${AURA_NATS_USER:-aura}" --pass "$$NATS_PASSWORD"
+    secrets: [aura-nats-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-nats:/data
+    expose: ["4222", "8222"]
+    networks: [aura-core-bus]
+    restart: unless-stopped
+
+  aura-valkey:
+    image: ${AURA_VALKEY_IMAGE:-valkey/valkey:8.1-alpine}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export VALKEY_PASSWORD="$$(cat /run/secrets/aura-valkey-password)";
+        exec valkey-server --save "" --appendonly no --requirepass "$$VALKEY_PASSWORD"
+    secrets: [aura-valkey-password]
+    healthcheck:
+      test: [CMD-SHELL, "valkey-cli -a \"$$(cat /run/secrets/aura-valkey-password)\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [aura-core-cache]
+    restart: unless-stopped
 
   frontend-checks:
-    profiles:
-      - checks
+    profiles: [checks]
     build:
       context: .
       dockerfile: deploy/docker/aura-web.Dockerfile
       target: frontend-checks
-    command:
-      - sh
-      - -c
-      - pnpm --dir frontend run lint && pnpm --dir frontend run test && pnpm --dir frontend run build:production && pnpm --dir frontend run pwa:inject && pnpm --dir frontend run build-storybook
+    command: [sh, -c, "pnpm --dir frontend run lint && pnpm --dir frontend run test && pnpm --dir frontend run build:production && pnpm --dir frontend run pwa:inject && pnpm --dir frontend run build-storybook"]
 
   frontend-e2e:
-    profiles:
-      - checks
+    profiles: [checks]
     build:
       context: .
       dockerfile: deploy/docker/aura-web.Dockerfile
       target: frontend-e2e
     depends_on:
-      aura-web:
-        condition: service_healthy
+      aura-web: {condition: service_healthy}
     environment:
       BASE_URL: http://aura-web:8080
-    command:
-      - sh
-      - -c
-      - pnpm --dir frontend exec playwright test --config=/workspace/playwright.compose.config.ts
+    # Browser checks exercise the published web origin, not Core or provider
+    # internals. Compose otherwise places a profile-only service on its
+    # implicit default network, where aura-web is deliberately unreachable.
+    networks: [aura-frontend]
+    command: [sh, -c, "pnpm --dir frontend exec playwright test --config=/workspace/playwright.compose.config.ts"]
+
+secrets:
+  aura-core-database-password:
+    file: ${AURA_CORE_DATABASE_PASSWORD_FILE:-./.secrets/aura-core-database-password}
+  aura-oidc-client-secret:
+    file: ${AURA_OIDC_CLIENT_SECRET_FILE:-./.secrets/aura-oidc-client-secret}
+  aura-nats-password:
+    file: ${AURA_NATS_PASSWORD_FILE:-./.secrets/aura-nats-password}
+  aura-valkey-password:
+    file: ${AURA_VALKEY_PASSWORD_FILE:-./.secrets/aura-valkey-password}
+
+networks:
+  # Docker Desktop does not publish host ports for containers attached only to
+  # an internal network. Keep the browser-to-Core path on aura-frontend and
+  # give the browser-facing web process its own loopback-bound edge network.
+  # No other normal-stack service joins this network.
+  aura-edge: {}
+  aura-frontend:
+    internal: true
+  aura-core-db:
+    internal: true
+  aura-core-bus:
+    internal: true
+  aura-core-cache:
+    internal: true
+  # Intentionally non-internal: API reaches the configured OIDC discovery/JWKS
+  # endpoint and API/worker reach their configured Ollama provider. No service
+  # on this network publishes a host port.
+  aura-core-egress: {}

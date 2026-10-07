@@ -1,0 +1,189 @@
+id: AURA-0031
+title: Correct conversation activity ordering navigation styling and title reliability
+status: integrated
+change_class: contract
+intent: >
+  Order recent conversations only by newly accepted user messages, simplify the
+  primary destination presentation, and make pinned-model title generation
+  reliable without changing public response shapes or existing fallback titles.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved AURA-0031 Conversation Ordering Navigation Styling and Title Reliability plan
+    - Only a newly accepted user message advances recent-conversation activity ordering
+    - Opening refreshing configuring retrying assistant output and title settlement do not reorder conversations
+    - Ollama title inference uses the exact pinned model in bounded non-streaming non-thinking mode
+    - Existing fallback titles remain unchanged and future pending titles settle once
+    - "All behavior tests and governance evidence are delivered in one reviewed commit named fix(conversations): correct chat ordering, navigation, and titles"
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - GEN-001
+  - GEN-004
+  - RUN-001
+  - RUN-002
+  - AUI-002
+  - AUI-003
+ownership_zones:
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.providers.models.ollama
+  - aura-core.bootstrap
+  - aura-core.entrypoints.api
+  - aura-core.platform.telemetry
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.shell
+  - frontend.aura-web.e2e
+  - contracts.openapi.aura-v1
+  - aura-web.api-client
+allowed_paths:
+  - work-items/active/AURA-0031.yaml
+  - work-items/archived/AURA-0031.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/conversation-persistence.yaml
+  - services/aura-core/resources/component-manifests/model-inference.yaml
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_title_generation.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.model_inference
+    - aura.interaction.conversation_persistence
+  required_metrics:
+    - title_inference_duration_ms
+    - title_persistence_duration_ms
+    - title_generation_outcome
+    - title_input_size
+    - title_output_size
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Title inference may send only the already authorized first completed exchange to the run's exact pinned provider model
+    - Transcript prompt provider response and generated title text must never enter logs telemetry audit metadata or errors
+    - The optimized Ollama request must not introduce model fallback a new routing policy or an additional provider
+    - Owner isolation and opaque cursor behavior must remain intact when ordering uses message activity
+  data_classes:
+    - private conversation transcript excerpts
+    - model-generated conversation titles
+    - conversation message run and model identifiers
+required_agents:
+  implementation:
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+    - contract_steward
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Core orders conversation pages and cursors by the latest durably accepted user message with a deterministic conversation-id tie break.
+  - Opening refreshing configuring retrying receiving assistant output and settling a title do not change recent-conversation order.
+  - Aura Web promotes an existing conversation only after Core accepts a newly submitted user message and preserves order after rejected submissions.
+  - Unsent drafts remain local and the first accepted message makes a newly persisted conversation the newest item.
+  - The primary destination group has no enclosing tray active tile border background dot or check marker while retaining stable sizing representative icons accessible names aria-current and keyboard focus visibility.
+  - Ollama title inference uses the run's exact pinned model with stream false think false and a bounded output budget through the existing provider port.
+  - Successful future title inference replaces the first-message fallback after terminal refresh while provider timeout failure malformed output and invalid titles retain deterministic fallback behavior.
+  - Existing generated legacy and fallback title states are never reopened or rewritten.
+  - Title telemetry contains only allowed identifiers sizes outcomes and durations and never conversation title prompt transcript or provider response text.
+  - Conversation listing emits a component-local metadata-only persistence span with PostgreSQL dependency outcome latency and trace correlation, and affected component versions identify this rollout.
+  - The OpenAPI list description documents latest accepted user-message order with no request response or generated-client shape change.
+  - Browser inspection confirms the navigation presentation in light and dark themes at expanded collapsed tablet boundary and mobile drawer widths.
+  - All required checks pass and the complete reviewed change is committed once without pushing.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0031.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0031.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0031.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0031.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0031.yaml
+  - docker compose config --quiet
+  - docker compose build aura-core-worker aura-core-api aura-web
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

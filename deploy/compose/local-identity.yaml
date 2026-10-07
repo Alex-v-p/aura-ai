@@ -1,0 +1,158 @@
+# Optional local Authentik deployment. Include this file only when the
+# temporary identity provider is explicitly requested:
+#
+#   docker compose -f compose.yaml -f deploy/compose/local-identity.yaml \
+#     --profile local-identity up --build --detach --wait authentik-server authentik-worker
+#
+# Keeping this override separate means a normal Aura config/start does not
+# interpolate or require any Authentik image, host, or secret inputs.
+
+services:
+  # The profile adds only Core's OIDC client to the Authentik control network.
+  # It does not bridge Authentik to Core persistence, cache, NATS, or workers.
+  aura-core-api:
+    # Preserve Core's normal data, bus, cache, frontend, and provider paths
+    # while adding only the OIDC control network.
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
+
+  authentik-postgres:
+    profiles: [local-identity]
+    # Authentik's supported Compose deployment uses PostgreSQL 16. Keep its
+    # database version independent from Core's PostgreSQL lifecycle.
+    image: ${AUTHENTIK_POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: ${AUTHENTIK_POSTGRES_DB:-authentik}
+      POSTGRES_USER: ${AUTHENTIK_POSTGRES_USER:-authentik}
+      POSTGRES_PASSWORD_FILE: /run/secrets/authentik-database-password
+    secrets: [authentik-database-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/authentik-postgres:/var/lib/postgresql/data
+    networks: [aura-identity-db]
+    healthcheck:
+      # Do not report the temporary initdb server as ready.  The Authentik
+      # server owns its migration and must connect only after PID 1 has
+      # switched to the final PostgreSQL server.
+      test: [CMD-SHELL, "test \"$$(tr -d '\\000' </proc/1/cmdline)\" = postgres && pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  authentik-server:
+    profiles: [local-identity]
+    # Operators must supply an immutable, digest-qualified image reference.
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export AUTHENTIK_POSTGRESQL__PASSWORD="$$(cat /run/secrets/authentik-database-password)";
+        export AUTHENTIK_SECRET_KEY="$$(cat /run/secrets/authentik-secret-key)";
+        export AUTHENTIK_REDIS__PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
+        export AURA_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/aura-oidc-client-secret)";
+        export AUTHENTIK_BOOTSTRAP_PASSWORD="$$(cat /run/secrets/authentik-bootstrap-password)";
+        case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        exec ak server
+    environment:
+      AUTHENTIK_IMAGE: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRES_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRES_USER:-authentik}
+      AUTHENTIK_REDIS__HOST: authentik-valkey
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      # The pinned release runs startup migrations while importing the
+      # preloaded web app. One web worker keeps that migration transaction
+      # single-owner during first boot; runtime task workers remain separate.
+      AUTHENTIK_WEB__WORKERS: "1"
+      AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER:?AUTHENTIK_HOST_BROWSER must match the stable Authentik issuer host}
+      AUTHENTIK_BLUEPRINTS_DIR: /blueprints
+      # Keep the audience explicit when the temporary provider is enabled so
+      # relocation cannot silently change Core's token-validation boundary.
+      AURA_OIDC_AUDIENCE: ${AURA_OIDC_AUDIENCE:?AURA_OIDC_AUDIENCE is required}
+      AURA_AUTHENTIK_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:?AURA_OIDC_CLIENT_ID is required}
+      AURA_AUTHENTIK_REDIRECT_URI: ${AURA_OIDC_REDIRECT_URI:?AURA_OIDC_REDIRECT_URI is required}
+      AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be configured for identity mode}
+    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, authentik-bootstrap-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/authentik-media:/media
+      # Overlay only Aura's blueprints; preserve Authentik's built-in system,
+      # default, and migration blueprints shipped in the image.
+      - ./deploy/authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-postgres: {condition: service_healthy}
+      authentik-valkey: {condition: service_healthy}
+    networks: [aura-identity, aura-identity-db, aura-identity-cache]
+    ports: ["127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"]
+    healthcheck:
+      test: [CMD, /ak-root/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/-/health/ready/', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  authentik-worker:
+    profiles: [local-identity]
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export AUTHENTIK_POSTGRESQL__PASSWORD="$$(cat /run/secrets/authentik-database-password)";
+        export AUTHENTIK_SECRET_KEY="$$(cat /run/secrets/authentik-secret-key)";
+        export AUTHENTIK_REDIS__PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
+        export AURA_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/aura-oidc-client-secret)";
+        case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        exec ak worker
+    environment:
+      AUTHENTIK_IMAGE: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRES_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRES_USER:-authentik}
+      AUTHENTIK_REDIS__HOST: authentik-valkey
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret]
+    volumes:
+      - ./deploy/authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-postgres: {condition: service_healthy}
+      authentik-valkey: {condition: service_healthy}
+      # Server owns the one-time schema migration before worker consumes it.
+      authentik-server: {condition: service_healthy}
+    networks: [aura-identity, aura-identity-db, aura-identity-cache]
+    restart: unless-stopped
+
+  authentik-valkey:
+    profiles: [local-identity]
+    image: ${AUTHENTIK_VALKEY_IMAGE:-valkey/valkey:8.1-alpine}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export VALKEY_PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
+        exec valkey-server --save "" --appendonly no --requirepass "$$VALKEY_PASSWORD"
+    secrets: [authentik-valkey-password]
+    healthcheck:
+      test: [CMD-SHELL, "valkey-cli -a \"$$(cat /run/secrets/authentik-valkey-password)\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [aura-identity-cache]
+    restart: unless-stopped
+
+secrets:
+  authentik-database-password:
+    file: ${AUTHENTIK_DATABASE_PASSWORD_FILE:-./.secrets/authentik-database-password}
+  authentik-secret-key:
+    file: ${AUTHENTIK_SECRET_KEY_FILE:-./.secrets/authentik-secret-key}
+  authentik-bootstrap-password:
+    file: ${AUTHENTIK_BOOTSTRAP_PASSWORD_FILE:-./.secrets/authentik-bootstrap-password}
+  authentik-valkey-password:
+    file: ${AUTHENTIK_VALKEY_PASSWORD_FILE:-./.secrets/authentik-valkey-password}
+
+networks:
+  aura-identity:
+    internal: true
+  aura-identity-db:
+    internal: true
+  aura-identity-cache:
+    internal: true

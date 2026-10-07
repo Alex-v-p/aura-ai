@@ -1,0 +1,108 @@
+id: AURA-0019
+title: Restore the green local validation baseline
+status: integrated
+change_class: repository_governance
+intent: >
+  Restore deterministic local validation after the disposable Authentik login
+  work by making the deployment assertion reflect Compose network merging and
+  allowing only the documented ignored runtime artifacts at repository root.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+    - docs/development/architecture-enforcement.md
+  specifications: []
+  decisions:
+    - User-approved Versioned Agents and Personas Workstream
+    - Documented local runtime artifacts are not repository modules
+    - Unknown non-runtime top-level paths remain prohibited
+  contracts: []
+feature_references:
+  - DEV-005
+  - DEV-018
+  - OPS-004
+ownership_zones:
+  - repository.governance
+  - aura-core.tests
+allowed_paths:
+  - work-items/active/AURA-0019.yaml
+  - work-items/archived/AURA-0019.yaml
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - tooling/architecture/validate-repository-shape.py
+  - tooling/architecture/tests/test_repository_shape.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/aura-core/src/**
+  - services/aura-core/migrations/**
+  - frontend/**
+  - deploy/**
+  - compose.yaml
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Runtime secret-bearing artifacts remain ignored and untracked
+    - The repository-shape guard must continue to reject every undocumented top-level path
+    - Network assertions must preserve Core and identity isolation without requiring an exclusive network list
+  data_classes:
+    - local development configuration paths
+required_agents:
+  implementation:
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: false
+  escalation_reason_required: true
+acceptance_criteria:
+  - The deployment test checks that aura-core-api retains its base networks and joins aura-identity without assuming an exclusive override list.
+  - Repository-shape validation accepts only .env, .env.local-http, .secrets, .local-state, and .venv as documented local runtime artifacts.
+  - Repository-shape validation continues to reject every other unknown top-level path and prohibited dumping-ground directory.
+  - The full backend and architecture test suites pass without changing product behavior or deployment topology.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0019.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0019.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

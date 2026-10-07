@@ -2,13 +2,14 @@ import { A11yModule } from '@angular/cdk/a11y';
 import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListener, Input, OnDestroy, Output, ViewChild, signal } from '@angular/core';
 import { AdaptiveLayoutComponent } from '@aura/shared/layout';
 import { ThemePreference, ThemeSelectComponent } from '@aura/shared/ui';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 
-export interface ShellConversationSummary { readonly id: string; readonly title: string; readonly active: boolean; }
+export interface ShellConversationSummary { readonly id: string; readonly title: string; readonly active: boolean; readonly status?: string; }
 
 @Component({
   selector: 'aura-shell',
   standalone: true,
-  imports: [A11yModule, AdaptiveLayoutComponent, ThemeSelectComponent],
+  imports: [A11yModule, AdaptiveLayoutComponent, ThemeSelectComponent, RouterLink, RouterLinkActive],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './aura-shell.component.html',
   styleUrl: './aura-shell.component.css',

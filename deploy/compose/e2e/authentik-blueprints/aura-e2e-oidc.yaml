@@ -1,0 +1,44 @@
+version: 1
+metadata:
+  name: aura-e2e-oidc-provider
+  labels:
+    aura.dev/purpose: test-only-local-identity
+
+# The disposable database is created for each fixture run. user_id therefore
+# emits the immutable bootstrap user ID (4), allowing Core's owner pair to be
+# deterministic without changing the production hashed-subject provider.
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: aura-e2e-provider
+    identifiers:
+      name: Aura E2E OIDC
+    attrs:
+      name: Aura E2E OIDC
+      client_type: confidential
+      client_id: !Env [AURA_E2E_CLIENT_ID, aura-e2e]
+      client_secret: !Env [AURA_AUTHENTIK_CLIENT_SECRET, fixture-client-secret]
+      grant_types:
+        - authorization_code
+        - refresh_token
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Env [AURA_E2E_REDIRECT_URI, http://aura-web:8080/api/v1/auth/callback]
+          redirect_uri_type: authorization
+      include_claims_in_id_token: true
+      sub_mode: user_id
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-offline_access]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+  - model: authentik_core.application
+    identifiers:
+      slug: aura-e2e
+    attrs:
+      name: Aura E2E
+      slug: aura-e2e
+      provider: !KeyOf aura-e2e-provider

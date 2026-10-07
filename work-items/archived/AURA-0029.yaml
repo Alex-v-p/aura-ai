@@ -1,0 +1,139 @@
+id: AURA-0029
+title: Compact conversation configuration metadata
+status: integrated
+change_class: bugfix
+intent: >
+  Replace the space-heavy conversation agent persona and model text row with
+  compact accessible icon controls that reuse the existing configuration
+  overlay and preserve every established configuration safeguard.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Responsive Navigation and AI Conversation Titles plan
+    - Robot persona-profile and processor-chip icons replace the full Agent Persona and Model text row
+    - Hover and keyboard-focus tooltips expose the current name revision status and newer-revision information
+    - Header icons and the existing composer plus control share one connected configuration overlay
+    - Each icon opens the existing overlay with focus placed on its corresponding supported selector
+    - Active runs keep metadata readable while configuration actions remain unavailable
+    - "This fix is delivered as its own reviewed commit named fix(web): compact conversation configuration metadata"
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUI-003
+  - AUI-005
+  - AUI-008
+  - AUI-009
+ownership_zones:
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0029.yaml
+  - work-items/archived/AURA-0029.yaml
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/aura/interaction/conversations/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/platform/aura-api-client/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/personas/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Compact presentation must not bypass owner authentication confirmation CSRF idempotency or optimistic conversation version checks
+    - Tooltips and status indicators expose only the already authorized agent persona and model display metadata
+    - Drafts and selected configuration must survive overlay route conflict and failed-change transitions
+  data_classes:
+    - authorized agent persona and model display metadata
+    - private conversation draft text
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The full Agent Persona and Model text row is removed and replaced beside the conversation heading by robot persona-profile and processor-chip icon controls.
+  - Hover and keyboard focus expose accessible tooltips containing the current agent and persona name with revision and the current model name.
+  - Disabled and newer agent or persona revision information remains available in the tooltip and through a small visible non-color-only status marker.
+  - Clicking or tapping an icon opens the existing Conversation options overlay anchored to that trigger with focus on the matching selector.
+  - The header icons and composer plus control share one connected overlay and Escape outside click and dismissal return focus to the actual opener.
+  - During an active run metadata stays keyboard-readable while configuration actions are explicitly unavailable.
+  - Agent persona and model confirmation optimistic update draft preservation conflict recovery and disabled configuration behavior remain unchanged.
+  - The compact controls remain usable with keyboard touch screen reader reduced-motion and narrow viewport layouts.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0029.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0029.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0029.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0029.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - docker compose config --quiet
+  - AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

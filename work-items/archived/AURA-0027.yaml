@@ -1,0 +1,108 @@
+id: AURA-0027
+title: Stabilize compact sidebar navigation geometry
+status: integrated
+change_class: bugfix
+intent: >
+  Keep the compact Aura Web sidebar destinations fixed-size and grouped near
+  the top across tablet desktop and live-resize breakpoints without regressing
+  recent-conversation scrolling or viewport-stable theme controls.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - User-approved Responsive Navigation and AI Conversation Titles plan
+    - Destination-link dimensions and layout are independent of recent-conversation link rules
+    - Compact desktop and tablet rails use explicit fixed tracks and 44 by 44 pixel destination controls
+    - The three destinations stay grouped directly below New conversation at every supported width
+    - "This fix is delivered as its own reviewed commit named fix(web): stabilize compact sidebar geometry"
+  contracts: []
+feature_references:
+  - AUI-001
+  - AUI-002
+  - AUI-003
+ownership_zones:
+  - frontend.aura-web.shell
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0027.yaml
+  - work-items/archived/AURA-0027.yaml
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Compact desktop and tablet destination controls remain 44 by 44 pixels and cannot stretch vertically or horizontally.
+  - Conversations Agents and Personas stay grouped directly below New conversation at 720 721 1279 and 1280 pixel viewport boundaries.
+  - Live resizing between mobile tablet compact desktop and expanded desktop does not leave stale grid flex width or height behavior.
+  - Recent conversations remain the only internally scrolling sidebar region and theme controls remain pinned within the viewport.
+  - Expanded navigation mobile drawer keyboard focus accessible names tooltips and current-route indication remain correct.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0027.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0027.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

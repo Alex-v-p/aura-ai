@@ -1,0 +1,37 @@
+component:
+  id: aura.runtime.model_routing
+  version: 1.2.0
+  owner: aura-core
+  category: routing
+input:
+  schema: model-policy-revision-reference-v1
+  replayable: true
+output:
+  schema: persisted-model-selection-reference-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.interaction.conversation_persistence
+metrics:
+  - model_routed
+  - model_selection_persisted
+  - model_routing_duration_ms
+  - errors
+metric_semantics:
+  model_routed: Exact immutable agent revision, model policy revision, provider, and model used.
+  model_selection_persisted: Selection successfully committed for a conversation or run.
+  model_routing_duration_ms: Component-local routing boundary duration from a parented span.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [provider, error_class, dependency, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id, agent_revision_id, model_policy_revision_id]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

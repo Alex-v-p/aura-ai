@@ -1,0 +1,77 @@
+"""Public conversation commands, queries, DTOs, and errors."""
+
+from aura_core.domains.interaction.conversations.context import build_context
+from aura_core.domains.interaction.conversations.dto import (
+    AgentAssignment,
+    AssignmentReason,
+    Conversation,
+    Message,
+    MessageRole,
+    MessageState,
+    PendingTitle,
+    PersonaAssignment,
+    PersonaAssignmentReason,
+    PersonaAssignmentSource,
+    SeededAgent,
+    TitleState,
+    now,
+)
+from aura_core.domains.interaction.conversations.repository import (
+    ConversationRecord,
+    SqlConversationRepository,
+)
+from aura_core.domains.interaction.conversations.store import (
+    GENERAL_AGENT,
+    ActiveRunConflict,
+    AgentSwitchConfirmationRequired,
+    AgentUnavailable,
+    ConversationNotFound,
+    ConversationStore,
+    IdempotencyConflict,
+    InvalidConversationCursor,
+    ModelUnavailable,
+    PersonaUnavailable,
+    VersionConflict,
+)
+from aura_core.domains.interaction.conversations.titles import (
+    TITLE_SYSTEM_PROMPT,
+    fallback_title_candidate,
+    normalize_generated_title,
+    pending_title_for,
+    title_request_messages,
+)
+
+__all__ = [
+    "GENERAL_AGENT",
+    "AgentAssignment",
+    "AssignmentReason",
+    "PersonaAssignment",
+    "PersonaAssignmentReason",
+    "PersonaAssignmentSource",
+    "PendingTitle",
+    "TitleState",
+    "ActiveRunConflict",
+    "AgentSwitchConfirmationRequired",
+    "AgentUnavailable",
+    "PersonaUnavailable",
+    "Conversation",
+    "ConversationNotFound",
+    "ConversationRecord",
+    "ConversationStore",
+    "IdempotencyConflict",
+    "InvalidConversationCursor",
+    "Message",
+    "MessageRole",
+    "MessageState",
+    "ModelUnavailable",
+    "SeededAgent",
+    "SqlConversationRepository",
+    "VersionConflict",
+    "build_context",
+    "now",
+    "TITLE_SYSTEM_PROMPT",
+    "fallback_title_candidate",
+    "normalize_generated_title",
+    "pending_title_for",
+    "title_request_messages",
+]

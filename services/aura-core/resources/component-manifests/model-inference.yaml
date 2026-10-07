@@ -1,0 +1,48 @@
+component:
+  id: aura.runtime.model_inference
+  version: 1.4.0
+  owner: aura-core
+  category: inference
+input:
+  schema: provider-neutral-chat-request-v1
+  replayable: false
+  replay_reason: Conversation content capture is not authorized by AURA-0015.
+output:
+  schema: provider-neutral-text-stream-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.runtime.model_routing
+metrics:
+  - time_to_first_token_ms
+  - inference_duration_ms
+  - output_tokens
+  - provider_errors
+  - title_inference_duration_ms
+  - title_generation_outcome
+  - title_input_size
+  - title_output_size
+  - errors
+metric_semantics:
+  time_to_first_token_ms: Monotonic time from claimed execution start to first provider chunk.
+  inference_duration_ms: Full provider stream boundary duration from invocation through completion, cancellation, timeout, or error; never substituted for time_to_first_token_ms.
+  output_tokens: Provider-neutral estimate ceil(total streamed characters / 4); not billed tokens.
+  provider_errors: Provider and provider-timeout failures without provider payload details.
+  title_inference_duration_ms: Bounded neutral title-only inference duration; transcript content is never captured.
+  title_generation_outcome: Metadata-only title settlement outcome.
+  title_input_size: Character count of the bounded first completed exchange.
+  title_output_size: Character count of the untrusted title response before settlement.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [provider, error_class, token_estimator, dependency, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id, title_input_size, title_output_size]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

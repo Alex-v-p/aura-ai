@@ -1,0 +1,39 @@
+services:
+  aura-core-api:
+    environment:
+      AURA_ENVIRONMENT: test
+      AURA_SECURE_COOKIES: "false"
+      AURA_PUBLIC_ORIGIN: http://aura-web:8080
+      AURA_OIDC_ISSUER: http://aura-e2e-oidc:8081
+      AURA_OIDC_AUDIENCE: aura-web
+      AURA_OIDC_CLIENT_ID: aura-web
+      AURA_OIDC_REDIRECT_URI: http://aura-web:8080/api/v1/auth/callback
+      AURA_OWNER_SUBJECT: owner
+      AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
+      AURA_DEFAULT_MODEL: fixture-chat
+    networks: [aura-e2e-provider]
+
+  aura-core-worker:
+    environment:
+      AURA_ENVIRONMENT: test
+      AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
+      AURA_DEFAULT_MODEL: fixture-chat
+    networks: [aura-e2e-provider]
+
+  frontend-e2e:
+    environment:
+      BASE_URL: http://aura-web:8080
+      AURA_E2E_IDENTITY_MODE: external-oidc
+      AURA_E2E_EXTERNAL_BASE_URL: http://aura-web:8080
+      AURA_E2E_EXTERNAL_ISSUER: http://aura-e2e-oidc:8081
+      AURA_E2E_EXTERNAL_IDENTITY_URL: http://aura-e2e-oidc:8081
+      AURA_E2E_EXTERNAL_OWNER_USERNAME: owner
+      AURA_E2E_EXTERNAL_OWNER_PASSWORD: fixture-password
+      AURA_E2E_EXTERNAL_OWNER_SUBJECT: owner
+    networks: [aura-e2e-provider]
+    command: [sh, -c, "pnpm --dir frontend exec playwright test --config=apps/aura-web-e2e/playwright.full-stack.config.ts"]
+
+networks:
+  aura-e2e-provider:
+    external: true
+    name: aura-e2e-provider
