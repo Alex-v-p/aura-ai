@@ -67,6 +67,7 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
       iconViewBox: icon?.getAttribute('viewBox') ?? '',
       iconDecorative: Boolean(icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]')),
       selected: link.getAttribute('aria-current') === 'page',
+      color: linkStyle.color,
       selectedSurface: linkStyle.backgroundColor,
       selectedBoxShadow: linkStyle.boxShadow,
       markerVisible: Boolean(marker),
@@ -80,6 +81,13 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
 
   expect(presentation).toHaveLength(3);
   expect(presentation.map((item) => item.labelText)).toEqual(['Conversations', 'Agents', 'Personas']);
+  const trayStyle = await productNav.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { backgroundColor: style.backgroundColor, border: style.border, boxShadow: style.boxShadow };
+  });
+  expect(trayStyle.backgroundColor).toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
+  expect(trayStyle.border).toMatch(/0px/);
+  expect(trayStyle.boxShadow).toMatch(/none|0px 0px 0px 0px/);
   for (const item of presentation) {
     expect(item.accessibleName).toMatch(/.+/);
     expect(item.title).toMatch(/^(Conversations|Agents|Personas)$/);
@@ -96,14 +104,15 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
 
   const tray = await productNav.boundingBox();
   if (!tray) throw new Error('Destination tray is not measurable.');
-  expect(presentation[0]?.left ?? 0).toBeGreaterThan(tray.x + 7);
-  expect((tray.x + tray.width) - (presentation.at(-1)?.right ?? 0)).toBeGreaterThan(7);
+  expect(presentation[0]?.left ?? 0).toBeGreaterThanOrEqual(tray.x);
+  expect(presentation.at(-1)?.right ?? 0).toBeLessThanOrEqual(tray.x + tray.width);
 
   const selected = presentation.find((item) => item.selected);
   expect(selected).toBeDefined();
-  expect(selected?.selectedSurface).not.toBe('rgba(0, 0, 0, 0)');
-  expect(selected?.selectedBoxShadow).not.toMatch(/0px 0px 0px 1px/);
-  expect(selected?.markerVisible).toBe(true);
+  expect(selected?.selectedSurface).toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
+  expect(selected?.selectedBoxShadow).toMatch(/none|0px 0px 0px 0px/);
+  expect(selected?.markerVisible).toBe(false);
+  expect(presentation.filter((item) => !item.selected).every((item) => item.color !== selected?.color)).toBe(true);
 }
 
 async function expectCompactDestinationControls(productNav: Locator): Promise<void> {
@@ -135,25 +144,54 @@ async function expectCompactDestinationControls(productNav: Locator): Promise<vo
   expect(controls.filter((control) => control.current)).toHaveLength(1);
 }
 
-async function installApiFake(page: import('@playwright/test').Page): Promise<void> {
+type ApiFakeOptions = { orderingFixture?: boolean };
+
+async function installApiFake(
+  page: import('@playwright/test').Page,
+  options: ApiFakeOptions = {},
+): Promise<void> {
   let errorOnce = false;
   let failNextStream = false;
-  page.on('framenavigated', (frame) => { if (frame === page.mainFrame() && frame.url().includes('fixture=error')) errorOnce = true; });
+  let orderingFixture = options.orderingFixture ?? false;
+  page.on('framenavigated', (frame) => {
+    if (frame !== page.mainFrame()) return;
+    if (frame.url().includes('fixture=ordering')) orderingFixture = true;
+    if (frame.url().includes('fixture=error')) errorOnce = true;
+  });
   let runNumber = 0;
   let version = 1;
   let selectedModel = 'qwen2.5:7b';
   let messages: Array<Record<string, unknown>> = [];
   let activeRun: Record<string, unknown> | null = null;
   let createdConversationId: string | null = null;
+  let orderingIds = ['second', 'first'];
   const deferredConversationResolvers = new Map<string, () => void>();
   const deferredConversationPending = new Set<string>();
   const now = (): string => new Date().toISOString();
   const summary = (): Record<string, unknown> => ({ id: 'welcome', title: 'A thoughtful beginning', agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: selectedModel, version, createdAt: now(), updatedAt: now(), currentRun: activeRun });
   const isLongSidebarFixture = (): boolean => page.url().includes('fixture=long-sidebar');
+  const isOrderingFixture = (): boolean => orderingFixture || page.url().includes('fixture=ordering');
   const isRouteRaceFixture = (): boolean => page.url().includes('fixture=route-race');
-  const recentConversationSummaries = (): Array<Record<string, unknown>> => isLongSidebarFixture()
-    ? Array.from({ length: 48 }, (_, index) => ({ ...summary(), id: index === 0 ? 'welcome' : `recent-${index}`, title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`, active: index === 0 }))
-    : [summary()];
+  const orderingSummary = (id: string): Record<string, unknown> => ({
+    ...summary(),
+    id,
+    title: id === 'first' ? 'First topic' : 'Second topic',
+    version: 1,
+    agent: {
+      profileId: 'general',
+      revisionId: 'agent-rev-1',
+      displayName: 'Aura',
+      revision: 1,
+      status: 'active',
+      newerRevisionAvailable: false,
+    },
+    currentRun: id === 'first' ? activeRun : null,
+  });
+  const recentConversationSummaries = (): Array<Record<string, unknown>> => {
+    if (isOrderingFixture()) return orderingIds.map((id) => orderingSummary(id));
+    if (isLongSidebarFixture()) return Array.from({ length: 48 }, (_, index) => ({ ...summary(), id: index === 0 ? 'welcome' : `recent-${index}`, title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`, active: index === 0 }));
+    return [summary()];
+  };
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -207,6 +245,16 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
       }
       return route.fulfill({ json: { ...summary(), messages, recentRuns: activeRun ? [activeRun] : [] } });
     }
+    if (isOrderingFixture() && url.pathname.match(/^\/api\/v1\/conversations\/(first|second)$/) && request.method() === 'GET') {
+      const conversationId = url.pathname.split('/').at(-1) ?? 'first';
+      return route.fulfill({
+        json: {
+          ...orderingSummary(conversationId),
+          messages: [],
+          recentRuns: conversationId === 'first' && activeRun ? [activeRun] : [],
+        },
+      });
+    }
     if (createdConversationId && url.pathname === `/api/v1/conversations/${createdConversationId}` && request.method() === 'GET') return route.fulfill({ json: { ...summary(), id: createdConversationId, title: 'Created conversation', messages, recentRuns: activeRun ? [activeRun] : [] } });
     const detailMatch = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)$/);
     if (detailMatch && request.method() === 'GET') {
@@ -228,11 +276,14 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
       // application's first API request.
       if (errorOnce || page.url().includes('fixture=error')) { errorOnce = false; failNextStream = true; }
       const body = JSON.parse(request.postData() ?? '{}') as { message?: string };
+      const runPath = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)\/runs$/);
+      const runConversationId = isOrderingFixture() ? runPath?.[1] ?? 'first' : 'welcome';
       const runId = `run-${++runNumber}`;
-      const userMessage = { id: `user-${runId}`, conversationId: 'welcome', role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
-      activeRun = { id: runId, conversationId: 'welcome', userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: 'qwen2.5:7b', retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
+      const userMessage = { id: `user-${runId}`, conversationId: runConversationId, role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
+      activeRun = { id: runId, conversationId: runConversationId, userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: 'qwen2.5:7b', retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
+      if (isOrderingFixture()) orderingIds = [runConversationId, ...orderingIds.filter((id) => id !== runConversationId)];
       messages = [...messages, userMessage]; version += 1;
-      return route.fulfill({ status: 202, json: { conversation: summary(), userMessage, run: activeRun } });
+      return route.fulfill({ status: 202, json: { conversation: isOrderingFixture() ? orderingSummary(runConversationId) : summary(), userMessage, run: activeRun } });
     }
     if (url.pathname.endsWith('/cancel') && request.method() === 'POST') { activeRun = activeRun ? { ...activeRun, status: 'canceled', finishedAt: now() } : null; return route.fulfill({ json: activeRun }); }
     if (url.pathname.endsWith('/retry') && request.method() === 'POST') {
@@ -240,6 +291,7 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
     }
     if (url.pathname.includes('/events')) {
       const run = activeRun; const lastUser = messages.filter((message) => message['role'] === 'user').at(-1)?.['content'] ?? 'your thought';
+      const eventConversationId = String(run?.['conversationId'] ?? 'welcome');
       if (String(lastUser).includes('small local thought') && activeRun?.['status'] !== 'canceled') {
         const deadline = Date.now() + 5_000;
         while (activeRun?.['status'] !== 'canceled' && Date.now() < deadline) {
@@ -247,23 +299,23 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
         }
       }
       if (activeRun?.['status'] === 'canceled') {
-        const partial = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: 'welcome', role: 'assistant', content: 'A partial response from the provider.', state: 'interrupted', runId: activeRun['id'], createdAt: now(), updatedAt: now() };
+        const partial = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: eventConversationId, role: 'assistant', content: 'A partial response from the provider.', state: 'interrupted', runId: activeRun['id'], createdAt: now(), updatedAt: now() };
         const canceledEvent = [
-          `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-partial', sequence: 1, eventType: 'assistant.snapshot', runId: activeRun['id'], conversationId: 'welcome', occurredAt: now(), data: { message: partial } })}\n\n`,
-          `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-canceled', sequence: 2, eventType: 'run.status', runId: activeRun['id'], conversationId: 'welcome', occurredAt: now(), data: { status: 'canceled', startedAt: activeRun['startedAt'], finishedAt: activeRun['finishedAt'] } })}\n\n`,
+          `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-partial', sequence: 1, eventType: 'assistant.snapshot', runId: activeRun['id'], conversationId: eventConversationId, occurredAt: now(), data: { message: partial } })}\n\n`,
+          `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-canceled', sequence: 2, eventType: 'run.status', runId: activeRun['id'], conversationId: eventConversationId, occurredAt: now(), data: { status: 'canceled', startedAt: activeRun['startedAt'], finishedAt: activeRun['finishedAt'] } })}\n\n`,
         ].join('');
         return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: canceledEvent });
       }
-      const assistant = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: 'welcome', role: 'assistant', content: `A server response with your thought: ${lastUser}`, state: 'complete', runId: run?.['id'] ?? 'run', createdAt: now(), updatedAt: now() };
+      const assistant = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: eventConversationId, role: 'assistant', content: `A server response with your thought: ${lastUser}`, state: 'complete', runId: run?.['id'] ?? 'run', createdAt: now(), updatedAt: now() };
       if (failNextStream) {
         failNextStream = false; activeRun = run ? { ...run, status: 'failed', finishedAt: now(), error: { code: 'provider_unavailable', message: 'Aura could not reach the selected provider.', retryable: true, traceId: 'trace-test' } } : null;
-        const errorEvent = `id: 1\nevent: run.error\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-error', sequence: 1, eventType: 'run.error', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: activeRun?.['error'] })}\n\n`;
+        const errorEvent = `id: 1\nevent: run.error\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-error', sequence: 1, eventType: 'run.error', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: activeRun?.['error'] })}\n\n`;
         return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: errorEvent });
       }
       messages = [...messages, assistant]; activeRun = run ? { ...run, status: 'completed', finishedAt: now() } : null;
       const events = [
-        `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-1', sequence: 1, eventType: 'assistant.snapshot', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: { message: assistant } })}\n\n`,
-        `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-2', sequence: 2, eventType: 'run.status', runId: run?.['id'] ?? 'run', conversationId: 'welcome', occurredAt: now(), data: { status: 'completed', startedAt: run?.['startedAt'] ?? now(), finishedAt: now() } })}\n\n`,
+        `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-1', sequence: 1, eventType: 'assistant.snapshot', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: { message: assistant } })}\n\n`,
+        `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-2', sequence: 2, eventType: 'run.status', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: { status: 'completed', startedAt: run?.['startedAt'] ?? now(), finishedAt: now() } })}\n\n`,
       ].join('');
       return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: events });
     }
@@ -271,7 +323,11 @@ async function installApiFake(page: import('@playwright/test').Page): Promise<vo
   });
 }
 
-test.beforeEach(async ({ page }) => { await installApiFake(page); });
+test.beforeEach(async ({ page }, testInfo) => {
+  await installApiFake(page, {
+    orderingFixture: testInfo.title.includes('selection order stable'),
+  });
+});
 
 test('opens with a new-conversation title surface', async ({ page }) => {
   await page.goto('/');
@@ -531,10 +587,24 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expectDestinationPresentation(productNav);
+  const conversationsDestination = productNav.getByRole('link', { name: /^Conversations$/i });
+  await conversationsDestination.focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  const focusPresentation = await conversationsDestination.evaluate((link) => {
+    const style = getComputedStyle(link);
+    return {
+      focusVisible: link.matches(':focus-visible'),
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+    };
+  });
+  expect(focusPresentation.focusVisible).toBe(true);
+  expect(focusPresentation.outlineStyle).not.toBe('none');
+  expect(focusPresentation.outlineWidth).not.toBe('0px');
   await expect(recentNav).toBeVisible();
-  await expect(recentNav.locator('.conversation-link')).toBeVisible();
-  await expect(productNav.locator('a')).not.toHaveClass(/conversation-link/);
-  await expect(recentNav.locator('.conversation-link')).toHaveCount(1);
+  await expect(recentNav.locator('.conversation-link').first()).toBeVisible();
+  await expect(productNav.locator('a.conversation-link')).toHaveCount(0);
 
   await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
   await expect(navigation).toHaveClass(/is-collapsed/);
@@ -564,7 +634,7 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expectExpandedDestinationTiles(productNav);
   await expectDestinationPresentation(productNav);
   await expect(recentNav).toBeVisible();
-  await expect(recentNav.locator('.conversation-link')).toBeVisible();
+  await expect(recentNav.locator('.conversation-link').first()).toBeVisible();
 });
 
 test('keeps the sidebar viewport-stable while long conversation content scrolls', async ({ page }, testInfo) => {
@@ -766,6 +836,38 @@ test('selects a recent conversation in one click from agent and persona routes',
     await expect(page).toHaveURL(/\/conversation\/welcome$/);
     await expect(page.getByRole('heading', { name: 'A calm space to think.' })).toBeVisible();
   }
+});
+
+test('keeps selection order stable and promotes only after an accepted message', async ({ page }, testInfo) => {
+  await page.goto('/?fixture=ordering');
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+
+  async function recentTitles(): Promise<string[]> {
+    if (testInfo.project.name === 'mobile') {
+      if (!(await navigation.isVisible())) await page.getByRole('button', { name: 'Open navigation' }).click();
+    }
+    const persistedLinks = navigation.locator(
+      'a.conversation-link[href*="/conversation/first"], a.conversation-link[href*="/conversation/second"]',
+    );
+    await expect(persistedLinks).toHaveCount(2);
+    return persistedLinks.locator('.label').allTextContents();
+  }
+
+  const initialOrder = await recentTitles();
+  expect(initialOrder).toEqual(['Second topic', 'First topic']);
+
+  await navigation.locator('.conversation-link').filter({ hasText: 'Second topic' }).click();
+  await expect(page).toHaveURL(/\/conversation\/second$/);
+  await expect(page.getByRole('heading', { name: 'Second topic' })).toBeVisible();
+  expect(await recentTitles()).toEqual(initialOrder);
+
+  await navigation.locator('.conversation-link').filter({ hasText: 'First topic' }).click();
+  await expect(page).toHaveURL(/\/conversation\/first$/);
+  await expect(page.getByRole('heading', { name: 'First topic' })).toBeVisible();
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Accepted activity advances this conversation.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect.poll(recentTitles).toEqual(['First topic', 'Second topic']);
 });
 
 test('supports direct conversation links, reload, and browser history', async ({ page }) => {

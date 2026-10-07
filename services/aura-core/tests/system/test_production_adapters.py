@@ -24,6 +24,8 @@ from aura_core.bootstrap.database import metadata
 from aura_core.domains.execution.runs.events import new_event
 from aura_core.domains.execution.runs.public import RunCoordinator, RunStatus
 from aura_core.domains.interaction.agents.adapters import SqlAgentSeeder
+from aura_core.domains.interaction.conversations.persistence import MessageRow
+from aura_core.domains.interaction.conversations.public import TitleState
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import (
     MemorySessionBackend,
@@ -44,6 +46,7 @@ from aura_core.runtime.streaming.publisher import EventPublisher
 from authlib.jose import JsonWebKey, JsonWebToken
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from sqlalchemy import update
 
 from conftest import owner_client
 
@@ -403,6 +406,97 @@ async def test_sql_repository_hydrates_principal_and_paginates(
     )
     assert {item.id for item in page + next_page} == {first.id, second.id}
     assert next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_sql_recent_activity_order_ignores_metadata_and_non_user_events(
+    sql_store: SqlConversationStore,
+) -> None:
+    """SQL ordering is activity-based, owner-scoped, and cursor-stable."""
+
+    issuer = "https://identity.integration.example"
+    owner = "activity-owner"
+    other_owner = "other-activity-owner"
+    first, _, first_run = await sql_store.create(
+        issuer, owner, "first accepted message", "chat", MODELS, str(uuid4())
+    )
+    second, _, _ = await sql_store.create(
+        issuer, owner, "second accepted message", "chat", MODELS, str(uuid4())
+    )
+    other, _, _ = await sql_store.create(
+        issuer, other_owner, "other owner's message", "chat", MODELS, str(uuid4())
+    )
+
+    # Force equal activity timestamps so the repository's UUID tie-break and
+    # the matching opaque cursor boundary are exercised deterministically.
+    equal_activity = datetime(2026, 1, 1, tzinfo=UTC)
+    async with sql_store.sessions() as session, session.begin():
+        await session.execute(
+            update(MessageRow)
+            .where(MessageRow.id.in_([first_run.user_message_id, second.messages[0].id]))
+            .values(created_at=equal_activity)
+        )
+
+    expected_tie_winner = max(first.id, second.id)
+    expected_tie_loser = min(first.id, second.id)
+    page, cursor = await sql_store.list(owner, limit=1, issuer=issuer)
+    assert [item.id for item in page] == [expected_tie_winner]
+    assert cursor is not None
+    owner_remainder, remainder_cursor = await sql_store.list(
+        owner, limit=1, cursor=cursor, issuer=issuer
+    )
+    assert [item.id for item in owner_remainder] == [expected_tie_loser]
+    assert remainder_cursor is None
+    other_page, other_cursor = await sql_store.list(other_owner, issuer=issuer)
+    assert [item.id for item in other_page] == [other.id]
+    assert other_cursor is None
+
+    async def assert_cursor_is_stable() -> None:
+        current_page, current_cursor = await sql_store.list(owner, limit=1, issuer=issuer)
+        assert [item.id for item in current_page] == [expected_tie_winner]
+        assert current_cursor == cursor
+
+    # Ordinary model metadata changes do not promote the tie loser.
+    loaded_first = await sql_store.get(first.id, owner, issuer)
+    await sql_store.update_model(
+        first.id,
+        owner,
+        "chat",
+        loaded_first.version,
+        MODELS,
+        str(uuid4()),
+        issuer,
+    )
+    await assert_cursor_is_stable()
+
+    # Completing the assistant side of the first exchange and settling its
+    # generated title also leave accepted-user activity unchanged.
+    await sql_store.append_assistant(first_run.id, "assistant completion")
+    await sql_store.finish_run(first_run.id, RunStatus.COMPLETED)
+    assert await sql_store.settle_title(first_run.id, "Generated topic", TitleState.GENERATED)
+    settled = await sql_store.get(first.id, owner, issuer)
+    assert settled.title == "Generated topic"
+    await assert_cursor_is_stable()
+
+    # A retry reuses the accepted user message and therefore does not promote.
+    retried = await sql_store.retry(first_run.id, owner, str(uuid4()), issuer)
+    await sql_store.finish_run(retried[2].id, RunStatus.FAILED)
+    await assert_cursor_is_stable()
+
+    # Only a newly accepted user message moves its target to the front.
+    ready = await sql_store.get(first.id, owner, issuer)
+    accepted = await sql_store.add_run(
+        first.id,
+        owner,
+        "new accepted activity",
+        ready.version,
+        str(uuid4()),
+        issuer,
+    )
+    assert accepted[1].role.value == "user"
+    promoted, promoted_cursor = await sql_store.list(owner, limit=2, issuer=issuer)
+    assert [item.id for item in promoted] == [first.id, second.id]
+    assert promoted_cursor is None
 
 
 @pytest.mark.asyncio

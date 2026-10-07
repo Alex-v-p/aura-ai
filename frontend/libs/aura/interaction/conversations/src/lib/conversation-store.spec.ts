@@ -146,6 +146,36 @@ describe('ConversationStore', () => {
     expect(titleStore.conversations().find((item) => item.id === 'title-refresh')?.title).toBe('Generated observatory topic');
     expect(titleStore.draft()).toBe('Keep this draft during title refresh');
   });
+  it('refreshes a terminal title in place without reordering the sidebar', async () => {
+    const now = new Date().toISOString();
+    const first = { ...summary('first-title'), title: 'First conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const running: Run = { id: 'run-second-title', conversationId: 'second-title', userMessageId: 'user-second-title', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const completed: Run = { ...running, status: 'completed', finishedAt: now, assistantMessageId: 'assistant-second-title' };
+    const user = { id: running.userMessageId, conversationId: running.conversationId, role: 'user' as const, content: 'Second fallback title', state: 'complete' as const, runId: running.id, createdAt: now, updatedAt: now };
+    let second = { ...summary('second-title'), title: 'Second fallback title', currentRun: running, messages: [user], recentRuns: [running] } as ConversationDetail;
+    let emitTerminal: (() => void) | undefined;
+    const api = fakeApi(
+      async () => ({ items: [first, second], nextCursor: null }),
+      [first, second],
+      [running],
+      (_runId, _lastEventId, onEvent) => {
+        emitTerminal = () => onEvent({ schemaVersion: 1, eventId: 'second-title-terminal', sequence: 1, eventType: 'run.status', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } } as RunEvent, 'second-title-terminal');
+        return { close: () => undefined };
+      },
+      async (id) => id === second.id ? second : first,
+    );
+    const titleStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    titleStore.select(second.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    second = { ...second, title: 'Generated second title', currentRun: null, recentRuns: [completed], messages: [user, { id: 'assistant-second-title', conversationId: second.id, role: 'assistant', content: 'Completed answer', state: 'complete', runId: running.id, createdAt: now, updatedAt: now }] } as ConversationDetail;
+    emitTerminal?.();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(titleStore.conversations().map((conversation) => conversation.id)).toEqual(['first-title', 'second-title']);
+    expect(titleStore.conversations().find((conversation) => conversation.id === second.id)?.title).toBe('Generated second title');
+  });
   it('loads a generated title when a persisted conversation is opened directly', async () => {
     const detail = { ...summary('generated-route'), title: 'Generated observatory topic', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
     const routedStore = new ConversationStore(fakeApi(async () => ({ items: [], nextCursor: null }), [detail]));
@@ -156,6 +186,49 @@ describe('ConversationStore', () => {
     expect(selection.status).toBe('selected');
     expect(routedStore.selected().title).toBe('Generated observatory topic');
     expect(routedStore.conversations().find((item) => item.id === 'generated-route')?.title).toBe('Generated observatory topic');
+  });
+  it('preserves conversation order when opening and refreshing a route', async () => {
+    const first = { ...summary('first'), title: 'First conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('second'), title: 'Second conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const routedStore = new ConversationStore(fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    await routedStore.selectFromRoute('second');
+
+    expect(routedStore.conversations().map((conversation) => conversation.id)).toEqual(['first', 'second']);
+    expect(routedStore.selectedId()).toBe('second');
+  });
+  it('promotes an existing conversation only after Core accepts a new user send', async () => {
+    const first = { ...summary('first'), title: 'First conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('second'), title: 'Second conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]);
+    const orderedStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    orderedStore.select('second');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    orderedStore.updateDraft('Accepted user message');
+
+    expect(orderedStore.send()).toBe(true);
+    expect(orderedStore.conversations().map((conversation) => conversation.id)).toEqual(['first', 'second']);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(orderedStore.conversations().map((conversation) => conversation.id)).toEqual(['second', 'first']);
+  });
+  it('preserves conversation order when Core rejects a user send', async () => {
+    const first = { ...summary('first'), title: 'First conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('second'), title: 'Second conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]);
+    api.createRun = async () => { throw { status: 503, message: 'unavailable', retryable: true }; };
+    const rejectedStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    rejectedStore.select('second');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    rejectedStore.updateDraft('Rejected user message');
+
+    expect(rejectedStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(rejectedStore.conversations().map((conversation) => conversation.id)).toEqual(['first', 'second']);
   });
   it('omits an agent identifier for an unconfigured draft', async () => {
     let selectedAgentRevision: string | undefined = 'unexpected';
@@ -354,7 +427,62 @@ describe('ConversationStore', () => {
   it('keeps independent drafts and does not stop a background run when selecting', () => { store.updateDraft('Keep this running'); store.send(); const workingId = store.selectedId(); store.create(); expect(store.selectedId()).not.toBe(workingId); store.select(workingId); expect(store.selected().turns[0].text).toBe('Keep this running'); });
   it('preserves user work and sends an idempotent cancellation command', async () => { store.updateDraft('Keep this visible'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().turns[0].text).toBe('Keep this visible'); expect(store.runState()).toBe('interrupted'); expect(store.notice()).toContain('stopped'); });
   it('consumes the complete accepted response when retrying a run', async () => { store.updateDraft('Retry this safely'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.retry(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().currentRun?.status).toBe('running'); expect(store.selected().currentRun?.agentRevisionId).toBe('agent-rev-1'); expect(store.selected().currentRun?.modelPolicyRevisionId).toBe('policy-1'); expect(store.selected().currentRun?.provider).toBe('ollama'); });
+  it('keeps a retried conversation in place through acceptance and completion', async () => {
+    const now = new Date().toISOString();
+    const first = { ...summary('first-retry'), title: 'First conversation', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const failed: Run = { id: 'run-second-retry-failed', conversationId: 'second-retry', userMessageId: 'user-second-retry', assistantMessageId: null, status: 'failed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: { code: 'MODEL_FAILED', message: 'The model failed.', retryable: true, traceId: 'trace' } };
+    const originalUser = { id: failed.userMessageId, conversationId: failed.conversationId, role: 'user' as const, content: 'Retry this conversation', state: 'complete' as const, runId: failed.id, createdAt: now, updatedAt: now };
+    let second = { ...summary('second-retry'), title: 'Second conversation', currentRun: null, messages: [originalUser], recentRuns: [failed] } as ConversationDetail;
+    let emitCompletion: (() => void) | undefined;
+    const api = fakeApi(
+      async () => ({ items: [first, second], nextCursor: null }),
+      [first, second],
+      [failed],
+      (runId, _lastEventId, onEvent) => {
+        emitCompletion = () => onEvent({ schemaVersion: 1, eventId: 'second-retry-complete', sequence: 1, eventType: 'run.status', runId, conversationId: second.id, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } } as RunEvent, 'second-retry-complete');
+        return { close: () => undefined };
+      },
+      async (id) => id === second.id ? second : first,
+    );
+    const retriedRun: Run = { id: 'run-second-retry-accepted', conversationId: second.id, userMessageId: 'user-second-retry', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: failed.id, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    api.retryRun = async (runId) => {
+      expect(runId).toBe(failed.id);
+      second = { ...second, currentRun: retriedRun, recentRuns: [failed, retriedRun] };
+      return { conversation: second, userMessage: originalUser, run: retriedRun };
+    };
+    const retryStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    retryStore.select(second.id);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    retryStore.retry();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(retryStore.conversations().map((conversation) => conversation.id)).toEqual(['first-retry', 'second-retry']);
+    const completed = { ...retriedRun, status: 'completed' as const, finishedAt: now, assistantMessageId: 'assistant-second-retry' };
+    second = { ...second, currentRun: null, recentRuns: [failed, completed], messages: [originalUser, { id: 'assistant-second-retry', conversationId: second.id, role: 'assistant', content: 'Completed retry', state: 'complete', runId: completed.id, createdAt: now, updatedAt: now }] } as ConversationDetail;
+    emitCompletion?.();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(retryStore.conversations().map((conversation) => conversation.id)).toEqual(['first-retry', 'second-retry']);
+  });
   it('updates model selection for future runs', async () => { await store.selectModel('qwen2.5:7b'); expect(store.selectedModelId()).toBe('qwen2.5:7b'); store.updateDraft('Choose a model'); expect(store.send()).toBe(true); });
+  it('submits the selected model when a draft becomes a persisted conversation', async () => {
+    let submittedModelId = '';
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId) => {
+      submittedModelId = modelId;
+      return fakeApi().createConversation(message, modelId, 'selected-model');
+    });
+    const modelStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await modelStore.selectModel(model.id);
+    modelStore.updateDraft('Persist this model choice');
+
+    expect(modelStore.selectedModelId()).toBe(model.id);
+    expect(modelStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(submittedModelId).toBe(model.id);
+  });
   it('follows all conversation cursors so older conversations remain available', async () => {
     const cursors: Array<string | undefined> = [];
     const totalPages = 27;

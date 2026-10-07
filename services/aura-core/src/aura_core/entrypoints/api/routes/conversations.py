@@ -3,8 +3,9 @@
 # FastAPI dependency markers are intentionally declared at the transport edge.
 # ruff: noqa: B008
 
+from time import perf_counter
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -18,6 +19,7 @@ from aura_core.domains.interaction.conversations.public import (
     Conversation,
     ConversationNotFound,
     IdempotencyConflict,
+    InvalidConversationCursor,
     ModelUnavailable,
     PersonaUnavailable,
     VersionConflict,
@@ -208,12 +210,54 @@ async def list_conversations(
     cursor: str | None = Query(default=None, min_length=1, max_length=1024),
     limit: int = Query(default=30, ge=1, le=100),
 ) -> dict[str, object]:
+    trace_id = uuid4().hex
+    root_span_id = new_span_id()
+    started = perf_counter()
     try:
         items, next_cursor = await state(request).store.list(
-            session.principal.subject, limit, cursor, session.principal.issuer
+            session.principal.subject,
+            limit,
+            cursor,
+            session.principal.issuer,
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
-    except ValueError as exc:
+    except InvalidConversationCursor as exc:
+        state(request).metrics.record_span(
+            "aura.interaction.conversation_persistence",
+            "conversation.list.request",
+            (perf_counter() - started) * 1000,
+            trace_id=trace_id,
+            span_id=root_span_id,
+            parent_span_id=None,
+            dependency="conversation_store",
+            outcome="error",
+            error_class="validation",
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        state(request).metrics.record_span(
+            "aura.interaction.conversation_persistence",
+            "conversation.list.request",
+            (perf_counter() - started) * 1000,
+            trace_id=trace_id,
+            span_id=root_span_id,
+            parent_span_id=None,
+            dependency="conversation_store",
+            outcome="error",
+            error_class="persistence",
+        )
+        raise
+    state(request).metrics.record_span(
+        "aura.interaction.conversation_persistence",
+        "conversation.list.request",
+        (perf_counter() - started) * 1000,
+        trace_id=trace_id,
+        span_id=root_span_id,
+        parent_span_id=None,
+        dependency="conversation_store",
+        outcome="ok",
+    )
     return {
         "items": [
             conversation_payload(item, state(request).agents, state(request).personas)

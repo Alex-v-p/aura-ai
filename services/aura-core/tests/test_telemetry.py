@@ -391,7 +391,7 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
     assert span.kind == "span"
     assert span.component_version == COMPONENT_VERSIONS[
         "aura.interaction.conversation_persistence"
-    ] == "1.4.0"
+    ] == "1.5.0"
     assert span.span_id == child_id
     assert span.parent_span_id == root_span_id(run_id.hex)
     assert dict(span.dimensions) == {"dependency": "postgresql", "outcome": "ok"}
@@ -400,7 +400,84 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
 
 
 def test_title_inference_component_version_remains_explicit() -> None:
-    assert COMPONENT_VERSIONS["aura.runtime.model_inference"] == "1.3.0"
+    assert COMPONENT_VERSIONS["aura.runtime.model_inference"] == "1.4.0"
+
+
+def test_conversation_list_telemetry_is_postgresql_bound_and_metadata_only() -> None:
+    from aura_core.bootstrap.conversation_uow import SqlConversationStore
+
+    metrics = MetadataMetrics()
+    store = SqlConversationStore(lambda: None)  # type: ignore[arg-type]
+    store.set_prompt_metrics(metrics)
+    trace_id = uuid4().hex
+    record_list = store._record_conversation_list  # pyright: ignore[reportPrivateUsage]
+
+    parent_span_id = new_span_id()
+    record_list(trace_id, parent_span_id, 0.0, "ok", None)
+    record_list(trace_id, parent_span_id, 0.0, "error", "persistence")
+
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert [dict(item.trace_attributes)["operation"] for item in spans] == [
+        "conversation.list",
+        "conversation.list",
+    ]
+    assert dict(spans[0].dimensions) == {"dependency": "postgresql", "outcome": "ok"}
+    assert dict(spans[1].dimensions) == {
+        "dependency": "postgresql",
+        "error_class": "persistence",
+        "outcome": "error",
+    }
+    assert all("subject" not in dict(item.trace_attributes) for item in spans)
+    assert all(item.parent_span_id == parent_span_id for item in spans)
+
+
+@pytest.mark.asyncio
+async def test_sql_conversation_list_records_parented_success_and_failure_spans() -> None:
+    from aura_core.bootstrap.conversation_uow import SqlConversationStore
+
+    class SessionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    metrics = MetadataMetrics()
+    store = SqlConversationStore(lambda: SessionContext())  # type: ignore[arg-type]
+    store.set_prompt_metrics(metrics)
+    trace_id, parent_span_id = uuid4().hex, new_span_id()
+
+    async def no_principal(session: object, issuer: str, subject: str) -> None:
+        del session, issuer, subject
+        return None
+
+    store.identities.find = no_principal  # type: ignore[method-assign]
+    assert await store.list(
+        "owner",
+        issuer="https://issuer",
+        trace_id=trace_id,
+        parent_span_id=parent_span_id,
+    ) == ([], None)
+
+    async def persistence_failure(session: object, issuer: str, subject: str) -> None:
+        del session, issuer, subject
+        raise RuntimeError("database details must not escape telemetry")
+
+    store.identities.find = persistence_failure  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await store.list(
+            "owner",
+            issuer="https://issuer",
+            trace_id=trace_id,
+            parent_span_id=parent_span_id,
+        )
+
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert len(spans) == 2
+    assert [dict(item.dimensions)["outcome"] for item in spans] == ["ok", "error"]
+    assert dict(spans[1].dimensions)["error_class"] == "persistence"
+    assert all(item.trace_id == trace_id for item in spans)
+    assert all(item.parent_span_id == parent_span_id for item in spans)
 
 
 def test_prompt_compilation_telemetry_keeps_provenance_metadata_without_prompt_content() -> None:

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { AuraShellComponent } from './shell/aura-shell.component';
 import { ThemePreference } from '@aura/shared/ui';
@@ -22,7 +22,7 @@ export class AppComponent implements OnDestroy {
   private readonly routeSyncReady = signal(false);
   private routeSyncSequence = 0;
   private readonly routeSubscription = this.router.events.subscribe((event) => { if (event instanceof NavigationEnd) { this.routeSyncSequence += 1; this.routeSyncReady.set(false); this.routedConversationId.set(this.conversationIdFromUrl(event.urlAfterRedirects)); } });
-  private readonly routeEffect = effect(() => { const routeId = this.routedConversationId(); const sequence = this.routeSyncSequence; if (routeId === undefined || this.store.loading()) return; void this.syncConversationRoute(routeId, sequence); });
+  private readonly routeEffect = effect(() => { const routeId = this.routedConversationId(); const sequence = this.routeSyncSequence; if (routeId === undefined || this.store.loading()) return; untracked(() => { void this.syncConversationRoute(routeId, sequence); }); });
   private readonly persistedRouteEffect = effect(() => { const selectedId = this.store.selectedId(); const routeId = this.routedConversationId(); const persistedDraftId = this.store.lastPersistedDraftId(); const bareConversationRoute = routeId === null && this.router.url.split('?')[0] === '/conversation'; const matchingDraftRoute = routeId !== undefined && routeId === persistedDraftId; if (!this.routeSyncReady() || selectedId.startsWith('draft-') || (!bareConversationRoute && !matchingDraftRoute)) return; void this.router.navigate(['/conversation', selectedId], { replaceUrl: true }); });
   private readonly mediaQuery = typeof window === 'undefined' ? null : window.matchMedia('(prefers-color-scheme: dark)');
   private readonly mediaListener = (): void => { if (this.theme() === 'system') this.applyTheme('system'); };

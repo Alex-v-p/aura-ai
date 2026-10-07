@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.model_inference
-  version: 1.3.0
+  version: 1.4.0
   owner: aura-core
   category: inference
 input:

@@ -44,6 +44,7 @@ from aura_core.domains.interaction.conversations.public import (
     ConversationNotFound,
     ConversationRecord,
     IdempotencyConflict,
+    InvalidConversationCursor,
     Message,
     MessageRole,
     MessageState,
@@ -465,23 +466,56 @@ class SqlConversationStore:
         limit: int = 30,
         cursor: str | None = None,
         issuer: str | None = None,
+        *,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> tuple[list[Conversation], str | None]:
         if issuer is None:
             raise ValueError("issuer is required")
-        async with self.sessions() as session:
-            principal = await self.identities.find(session, issuer, subject)
-            if principal is None:
-                return [], None
-            rows = await self.conversations.list(
-                session,
-                principal.id,
-                limit + 1,
-                decode_cursor(cursor) if cursor else None,
+        trace_id = trace_id or uuid4().hex
+        started = perf_counter()
+        try:
+            decoded_cursor = decode_cursor(cursor) if cursor else None
+        except InvalidConversationCursor:
+            self._record_conversation_list(
+                trace_id, parent_span_id, started, "error", "validation"
             )
-            has_more = len(rows) > limit
-            rows = rows[:limit]
-            next_cursor = encode_cursor(rows[-1].updated_at, rows[-1].id) if has_more else None
-            return [await self._load(session, row) for row in rows], next_cursor
+            raise
+        try:
+            async with self.sessions() as session:
+                principal = await self.identities.find(session, issuer, subject)
+                if principal is None:
+                    result: tuple[list[Conversation], str | None] = ([], None)
+                else:
+                    rows = await self.conversations.list(
+                        session,
+                        principal.id,
+                        limit + 1,
+                        decoded_cursor,
+                    )
+                    has_more = len(rows) > limit
+                    rows = rows[:limit]
+                    # The cursor mirrors the repository's internal activity
+                    # key. It must not use updated_at because metadata is
+                    # intentionally excluded from recent ordering.
+                    if has_more:
+                        activity_at = rows[-1].activity_at or rows[-1].created_at
+                        next_cursor = encode_cursor(activity_at, rows[-1].id)
+                    else:
+                        next_cursor = None
+                    result = ([await self._load(session, row) for row in rows], next_cursor)
+        except ValueError:
+            self._record_conversation_list(
+                trace_id, parent_span_id, started, "error", "persistence"
+            )
+            raise
+        except Exception:
+            self._record_conversation_list(
+                trace_id, parent_span_id, started, "error", "persistence"
+            )
+            raise
+        self._record_conversation_list(trace_id, parent_span_id, started, "ok", None)
+        return result
 
     async def update_model(
         self,
@@ -1084,6 +1118,35 @@ class SqlConversationStore:
             raise PersonaUnavailable("persona query is not configured")
         return self.persona_query.find_revision(persona_revision_id)[1].revision
 
+    def _record_conversation_list(
+        self,
+        trace_id: str,
+        parent_span_id: str | None,
+        started: float,
+        outcome: str,
+        error_class: str | None,
+    ) -> None:
+        """Record list latency without exposing principal or cursor content."""
+
+        if self.prompt_metrics is None:
+            return
+        try:
+            self.prompt_metrics.record_span(
+                "aura.interaction.conversation_persistence",
+                "conversation.list",
+                max(0.0, (perf_counter() - started) * 1000),
+                trace_id=trace_id,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="postgresql",
+                outcome=outcome,
+                error_class=error_class,
+            )
+        except Exception:
+            # Telemetry must never alter the list result or surface sensitive
+            # persistence/provider details to an API caller.
+            return
+
     def _record_persona_configuration(
         self,
         conversation_id: UUID,
@@ -1424,8 +1487,8 @@ def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
         return parsed, UUID(identifier)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise ValueError("invalid conversation cursor") from exc
+    except (ValueError, UnicodeDecodeError):
+        raise InvalidConversationCursor("invalid conversation cursor") from None
 
 
 def _fingerprint(*parts: object) -> str:

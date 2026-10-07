@@ -32,6 +32,35 @@ async def test_create_is_atomic_and_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recent_order_uses_accepted_user_activity_not_metadata_updates() -> None:
+    provider = FakeChatModel()
+    models = await provider.list_models()
+    store = ConversationStore()
+    issuer = "https://issuer"
+    first, _, first_run = await store.create(
+        issuer, "owner", "First", "fake", models, str(uuid4())
+    )
+    await store.finish_run(first_run.id, RunStatus.COMPLETED)
+    second, _, _ = await store.create(issuer, "owner", "Second", "fake", models, str(uuid4()))
+
+    initial, cursor = await store.list("owner", limit=1, issuer=issuer)
+    assert [item.id for item in initial] == [second.id]
+    assert cursor is not None
+
+    # A title/configuration-style metadata write must not promote the older
+    # conversation or invalidate a cursor based on message activity.
+    first.updated_at = first.updated_at.replace(year=first.updated_at.year + 1)
+    page, next_cursor = await store.list("owner", limit=1, cursor=cursor, issuer=issuer)
+    assert [item.id for item in page] == [first.id]
+    assert next_cursor is None
+
+    # A newly accepted user message is the only operation that promotes it.
+    await store.add_run(first.id, "owner", "Third", first.version, str(uuid4()), issuer)
+    promoted, _ = await store.list("owner", issuer=issuer)
+    assert [item.id for item in promoted] == [first.id, second.id]
+
+
+@pytest.mark.asyncio
 async def test_version_and_active_run_guards() -> None:
     provider = FakeChatModel()
     models = await provider.list_models()

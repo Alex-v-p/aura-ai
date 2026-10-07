@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aura_core.domains.interaction.conversations.dto import (
@@ -42,6 +42,10 @@ class ConversationRecord:
     created_at: datetime
     updated_at: datetime
     title_state: TitleState = TitleState.LEGACY
+    # Internal list ordering only.  This is deliberately not part of the
+    # conversation response DTO: updated_at remains ordinary metadata while
+    # recent activity is the latest durably accepted user message.
+    activity_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +56,9 @@ class IdempotencyRecord:
 
 class SqlConversationRepository:
     @staticmethod
-    def _record(row: ConversationRow) -> ConversationRecord:
+    def _record(
+        row: ConversationRow, activity_at: datetime | None = None
+    ) -> ConversationRecord:
         return ConversationRecord(
             row.id,
             row.principal_id,
@@ -65,6 +71,7 @@ class SqlConversationRepository:
             row.created_at or now(),
             row.updated_at or now(),
             TitleState(row.title_state or TitleState.LEGACY),
+            activity_at,
         )
 
     @staticmethod
@@ -106,24 +113,35 @@ class SqlConversationRepository:
         limit: int,
         cursor: tuple[datetime, UUID] | None,
     ) -> list[ConversationRecord]:
+        accepted_user_activity = (
+            select(func.max(MessageRow.created_at))
+            .where(
+                MessageRow.conversation_id == ConversationRow.id,
+                MessageRow.role == MessageRole.USER.value,
+                MessageRow.state == MessageState.COMPLETE.value,
+            )
+            .correlate(ConversationRow)
+            .scalar_subquery()
+        )
+        activity_key = func.coalesce(accepted_user_activity, ConversationRow.created_at)
         query = (
-            select(ConversationRow)
+            select(ConversationRow, activity_key.label("activity_at"))
             .where(ConversationRow.principal_id == principal_id)
-            .order_by(ConversationRow.updated_at.desc(), ConversationRow.id.desc())
+            .order_by(activity_key.desc(), ConversationRow.id.desc())
         )
         if cursor:
             cursor_time, cursor_id = cursor
             query = query.where(
                 or_(
-                    ConversationRow.updated_at < cursor_time,
+                    activity_key < cursor_time,
                     and_(
-                        ConversationRow.updated_at == cursor_time,
+                        activity_key == cursor_time,
                         ConversationRow.id < cursor_id,
                     ),
                 )
             )
-        rows = (await session.execute(query.limit(limit))).scalars().all()
-        return [self._record(row) for row in rows]
+        results = (await session.execute(query.limit(limit))).all()
+        return [self._record(row, activity_at) for row, activity_at in results]
 
     async def messages(self, session: AsyncSession, conversation_id: UUID) -> list[Message]:
         rows = (

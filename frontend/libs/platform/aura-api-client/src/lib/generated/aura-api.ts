@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 2ca1c9a4207fb8c4424d6e1e2d0d2443830b2fcad4585caad59822f5a6d8bfed
+// Contract SHA-256: d8a71f64d7f08ba6057f3605a884bd7c5f0f3caf2e0a39a6f233450e544dcb2e
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 

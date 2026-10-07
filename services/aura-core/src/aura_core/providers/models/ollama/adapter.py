@@ -1,7 +1,7 @@
 """Ollama HTTP adapter; no Ollama types cross the Core boundary."""
 
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, cast
 
 import httpx
@@ -14,6 +14,11 @@ from aura_core.runtime.models.ports import (
     ChatMessage,
     ModelDescriptor,
 )
+
+# Title inference is presentation metadata.  Keep the provider-side budget
+# deliberately small even when a model ignores the neutral prompt's brevity.
+TITLE_MAX_PREDICT = 32
+TITLE_RAW_RESPONSE_MAX_BYTES = TITLE_RESPONSE_MAX_BYTES
 
 
 class OllamaUnavailable(RuntimeError):
@@ -115,18 +120,89 @@ class OllamaAdapter:
         )
 
     async def infer_title(self, model_id: str, messages: Sequence[ChatMessage]) -> str:
-        """Run the bounded, neutral title request through the same model port."""
+        """Run a bounded, non-streaming title request on the pinned model.
 
-        chunks: list[str] = []
-        characters = 0
-        encoded_bytes = 0
-        async for chunk in self.stream_chat(model_id, messages):
-            characters += len(chunk)
-            encoded_bytes += len(chunk.encode("utf-8"))
-            if (
-                characters > TITLE_RESPONSE_MAX_CHARS
-                or encoded_bytes > TITLE_RESPONSE_MAX_BYTES
-            ):
-                raise OllamaUnavailable("title response exceeded configured limit")
-            chunks.append(chunk)
-        return "".join(chunks)
+        This is intentionally a dedicated request rather than ``stream_chat``:
+        title inference must not inherit interactive streaming defaults or a
+        provider-selected model.  The caller supplies the run's exact pinned
+        model identifier.
+        """
+
+        body = {
+            "model": model_id,
+            "messages": [
+                {"role": message.role, "content": message.content} for message in messages
+            ],
+            "stream": False,
+            "think": False,
+            "options": {"num_predict": TITLE_MAX_PREDICT},
+        }
+        raw_response, transport_status = await self._fetch_title_response(body)
+        if transport_status != "ok":
+            body = {}
+            messages = ()
+            raw_response = b""
+            raise OllamaUnavailable(
+                "title inference unavailable"
+                if transport_status == "unavailable"
+                else "title response exceeded configured limit"
+            )
+
+        title, response_status = self._decode_title_response(raw_response)
+        raw_response = b""
+        if response_status != "ok" or title is None:
+            body = {}
+            messages = ()
+            title = ""
+            raise OllamaUnavailable(
+                "title response malformed"
+                if response_status == "malformed"
+                else "title response exceeded configured limit"
+            )
+        return title
+
+    async def _fetch_title_response(
+        self, body: Mapping[str, object]
+    ) -> tuple[bytes, str]:
+        """Fetch only a bounded response body and return a sanitized status."""
+
+        raw_response = bytearray()
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                async with client.stream("POST", "/api/chat", json=body) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
+                        if len(raw_response) + len(chunk) > TITLE_RAW_RESPONSE_MAX_BYTES:
+                            return b"", "oversized"
+                        raw_response.extend(chunk)
+        except Exception:
+            # HTTP errors can retain response bodies; transport errors can
+            # retain request data.  Return a status after the helper frame is
+            # gone so neither can become part of the caller's exception graph.
+            return b"", "unavailable"
+        return bytes(raw_response), "ok"
+
+    @staticmethod
+    def _decode_title_response(raw_response: bytes) -> tuple[str | None, str]:
+        """Decode and validate a title while keeping provider data local."""
+
+        try:
+            payload: Any = json.loads(raw_response)
+            if not isinstance(payload, dict):
+                return None, "malformed"
+            payload_map = cast(dict[str, Any], payload)
+            message = payload_map.get("message")
+            if not isinstance(message, dict):
+                return None, "malformed"
+            message_map = cast(dict[str, Any], message)
+            title = message_map.get("content")
+            if not isinstance(title, str):
+                return None, "malformed"
+        except Exception:
+            return None, "malformed"
+        if (
+            len(title) > TITLE_RESPONSE_MAX_CHARS
+            or len(title.encode("utf-8")) > TITLE_RESPONSE_MAX_BYTES
+        ):
+            return None, "oversized"
+        return title, "ok"

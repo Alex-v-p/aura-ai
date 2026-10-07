@@ -93,7 +93,10 @@ export class ConversationStore {
       const detail = await this.api.getConversation(id);
       if (!isCurrent()) return { status: 'stale' };
       const conversation = this.fromDetail(detail);
-      this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== id)]);
+      // Opening a conversation is a selection/detail refresh, not new
+      // activity. Keep the server-provided list order (and append a direct
+      // route lookup that was not present in the list).
+      this.upsertConversation(conversation);
       this.cancelPendingConfigurationForSelection(id);
       this.selectedId.set(id);
       this.setNotice(id, null);
@@ -369,7 +372,7 @@ export class ConversationStore {
     } catch (error: unknown) { this.rejectSubmission(draftId, error); }
   }
 
-  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key()), submission?.pendingTurnId); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
+  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key()), submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
 
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
@@ -504,6 +507,22 @@ export class ConversationStore {
   private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
   private find(id: string): Conversation | undefined { return this.conversations().find((conversation) => conversation.id === id); }
   private replaceConversation(conversation: Conversation): void { this.conversations.update((items) => items.map((item) => item.id === conversation.id ? { ...conversation, updatedAt: conversation.updatedAt || Date.now() } : item)); }
+  private upsertConversation(conversation: Conversation): void {
+    this.conversations.update((items) => {
+      const index = items.findIndex((item) => item.id === conversation.id);
+      if (index < 0) return [...items, conversation];
+      return items.map((item, itemIndex) => itemIndex === index ? { ...conversation, updatedAt: conversation.updatedAt || Date.now() } : item);
+    });
+  }
+  private promoteConversation(id: string): void {
+    this.conversations.update((items) => {
+      const index = items.findIndex((item) => item.id === id);
+      if (index <= 0) return items;
+      const conversation = items[index];
+      if (!conversation) return items;
+      return [conversation, ...items.slice(0, index), ...items.slice(index + 1)];
+    });
+  }
   private replaceRun(id: string, run: Run): void { this.replaceConversationRun(id, () => run); }
   private replaceConversationRun(id: string, update: (run: Run | null) => Run | null): void { const conversation = this.find(id); if (conversation) { const run = update(conversation.currentRun); const runs = run && !conversation.runs.some((item) => item.id === run.id) ? [...conversation.runs, run] : conversation.runs.map((item) => item.id === run?.id ? run : item).filter((item): item is Run => Boolean(item)); this.replaceConversation({ ...conversation, currentRun: run, runs, retryableRun: run && this.isRetryable(run.status) ? run : conversation.retryableRun }); } }
   private appendTurn(id: string, turn: ConversationTurn): void { const conversation = this.find(id); if (conversation) this.replaceConversation({ ...conversation, turns: [...conversation.turns, turn], updatedAt: Date.now(), title: conversation.turns.length === 0 ? this.makeTitle(turn.text) : conversation.title }); }

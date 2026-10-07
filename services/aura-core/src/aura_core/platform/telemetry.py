@@ -30,8 +30,8 @@ from uuid import UUID
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.interaction.agent_configuration": "1.1.0",
     "aura.execution.run_coordinator": "1.3.0",
-    "aura.interaction.conversation_persistence": "1.4.0",
-    "aura.runtime.model_inference": "1.3.0",
+    "aura.interaction.conversation_persistence": "1.5.0",
+    "aura.runtime.model_inference": "1.4.0",
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
@@ -116,7 +116,14 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     "aura.interaction.conversation_persistence": frozenset(
-        {"checkpoint.persist", "conversation.persist", "run.claim", "run.finish"}
+        {
+            "checkpoint.persist",
+            "conversation.list",
+            "conversation.list.request",
+            "conversation.persist",
+            "run.claim",
+            "run.finish",
+        }
     ),
     "aura.runtime.model_inference": frozenset({"model.infer"}),
     "aura.runtime.model_routing": frozenset({"model.route", "model.selection.persist"}),

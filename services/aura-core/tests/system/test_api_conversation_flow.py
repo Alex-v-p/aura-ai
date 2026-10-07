@@ -3,18 +3,44 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
+from typing import TypedDict, cast
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from aura_core.domains.execution.runs.events import RunEvent, new_event
+from aura_core.domains.interaction.conversations.public import InvalidConversationCursor
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Settings
+from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.gateway import ModelGateway
 from aura_core.runtime.models.ports import ChatMessage
 from fastapi import FastAPI
 
 from conftest import ScriptedModel, owner_client
+
+
+class _ConversationSummary(TypedDict):
+    id: str
+    version: int
+
+
+class _RunSummary(TypedDict):
+    id: str
+
+
+class _CreatedConversation(TypedDict):
+    conversation: _ConversationSummary
+    run: _RunSummary
+
+
+class _ConversationPageItem(TypedDict):
+    id: str
+
+
+class _ConversationPage(TypedDict):
+    items: list[_ConversationPageItem]
+    nextCursor: str | None
 
 
 @pytest.mark.asyncio
@@ -58,6 +84,226 @@ async def test_owner_authentication_csrf_and_lazy_idempotent_creation(api_app: F
         assert replay.json()["conversation"]["id"] == accepted["conversation"]["id"]
         listing = await client.get("/api/v1/conversations")
         assert len(listing.json()["items"]) == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_recent_conversation_pages_follow_accepted_user_activity(api_app: FastAPI) -> None:
+    """Metadata updates and pagination must not make a conversation look active."""
+
+    client, session = await owner_client(api_app)
+    try:
+        def headers() -> dict[str, str]:
+            return {
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            }
+
+        async def create(message: str) -> _CreatedConversation:
+            response = await client.post(
+                "/api/v1/conversations",
+                headers=headers(),
+                json={"message": message, "modelId": "chat"},
+            )
+            assert response.status_code == 202
+            return cast(_CreatedConversation, response.json())
+
+        first = await create("first accepted message")
+        second = await create("second accepted message")
+        third = await create("third accepted message")
+        for created in (first, second, third):
+            await api_app.state.aura.coordinator.execute(
+                UUID(created["run"]["id"]), api_app.state.aura.provider
+            )
+        first_conversation = first["conversation"]
+        assert isinstance(first_conversation, dict)
+        first_id = str(first_conversation["id"])
+
+        initial_page = await client.get("/api/v1/conversations", params={"limit": 2})
+        assert initial_page.status_code == 200
+        initial_payload = cast(_ConversationPage, initial_page.json())
+        assert [item["id"] for item in initial_payload["items"]] == [
+            third["conversation"]["id"],
+            second["conversation"]["id"],
+        ]
+        cursor = initial_payload["nextCursor"]
+        assert isinstance(cursor, str) and cursor
+
+        remainder = await client.get(
+            "/api/v1/conversations", params={"limit": 2, "cursor": cursor}
+        )
+        remainder_payload = cast(_ConversationPage, remainder.json())
+        assert [item["id"] for item in remainder_payload["items"]] == [first_id]
+
+        # Configuration is a metadata-only mutation and must retain the same
+        # activity order and cursor boundary.
+        configured = await client.patch(
+            f"/api/v1/conversations/{first_id}",
+            headers=headers(),
+            json={
+                "modelId": "chat-plus",
+                "version": first_conversation["version"],
+            },
+        )
+        assert configured.status_code == 200
+        after_configuration = await client.get(
+            "/api/v1/conversations", params={"limit": 2}
+        )
+        after_configuration_payload = cast(_ConversationPage, after_configuration.json())
+        assert [item["id"] for item in after_configuration_payload["items"]] == [
+            third["conversation"]["id"],
+            second["conversation"]["id"],
+        ]
+        assert after_configuration_payload["nextCursor"] == cursor
+
+        # A newly accepted user message is the only operation in this flow
+        # that promotes an existing conversation.
+        accepted = await client.post(
+            f"/api/v1/conversations/{first_id}/runs",
+            headers=headers(),
+            json={
+                "message": "new accepted activity",
+                "conversationVersion": cast(_ConversationSummary, configured.json())["version"],
+            },
+        )
+        assert accepted.status_code == 202
+        promoted = await client.get("/api/v1/conversations", params={"limit": 3})
+        promoted_payload = cast(_ConversationPage, promoted.json())
+        assert [item["id"] for item in promoted_payload["items"]] == [
+            first_id,
+            third["conversation"]["id"],
+            second["conversation"]["id"],
+        ]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_conversation_list_failure_emits_parented_bounded_error_spans(
+    api_app: FastAPI,
+) -> None:
+    client, _ = await owner_client(api_app)
+    cookies = client.cookies
+    await client.aclose()
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api_app, raise_app_exceptions=False),
+        base_url="https://aura.dev.example",
+        headers={"Origin": "https://aura.dev.example"},
+        cookies=cookies,
+    )
+    try:
+        metrics = api_app.state.aura.metrics
+        store = api_app.state.aura.store
+
+        async def failing_list(
+            subject: str,
+            limit: int = 30,
+            cursor: str | None = None,
+            issuer: str | None = None,
+            *,
+            trace_id: str | None = None,
+            parent_span_id: str | None = None,
+        ) -> tuple[list[object], str | None]:
+            del subject, limit, cursor, issuer
+            assert trace_id is not None
+            assert parent_span_id is not None
+            metrics.record_span(
+                "aura.interaction.conversation_persistence",
+                "conversation.list",
+                1.0,
+                trace_id=trace_id,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="postgresql",
+                outcome="error",
+                error_class="persistence",
+            )
+            raise ValueError("PRIVATE_DATABASE_DETAIL")
+
+        store.list = failing_list  # type: ignore[method-assign]
+        response = await client.get("/api/v1/conversations")
+        assert response.status_code == 500
+        assert "PRIVATE_DATABASE_DETAIL" not in response.text
+
+        spans = [item for item in metrics.snapshot() if item.kind == "span"]
+        root = next(
+            item
+            for item in spans
+            if item.component_id == "aura.interaction.conversation_persistence"
+            and dict(item.trace_attributes).get("operation") == "conversation.list.request"
+            and dict(item.dimensions).get("outcome") == "error"
+        )
+        child = next(
+            item
+            for item in spans
+            if item.component_id == "aura.interaction.conversation_persistence"
+            and dict(item.trace_attributes).get("operation") == "conversation.list"
+        )
+        assert dict(root.dimensions)["error_class"] == "persistence"
+        assert dict(child.dimensions)["error_class"] == "persistence"
+        assert child.trace_id == root.trace_id
+        assert child.parent_span_id == root.span_id
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_conversation_cursor_emits_linked_validation_spans(
+    api_app: FastAPI,
+) -> None:
+    client, _ = await owner_client(api_app)
+    try:
+        metrics = api_app.state.aura.metrics
+        store = api_app.state.aura.store
+
+        async def invalid_cursor(
+            subject: str,
+            limit: int = 30,
+            cursor: str | None = None,
+            issuer: str | None = None,
+            *,
+            trace_id: str | None = None,
+            parent_span_id: str | None = None,
+        ) -> tuple[list[object], str | None]:
+            del subject, limit, cursor, issuer
+            assert trace_id is not None and parent_span_id is not None
+            metrics.record_span(
+                "aura.interaction.conversation_persistence",
+                "conversation.list",
+                1.0,
+                trace_id=trace_id,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="postgresql",
+                outcome="error",
+                error_class="validation",
+            )
+            raise InvalidConversationCursor("invalid cursor")
+
+        store.list = invalid_cursor  # type: ignore[method-assign]
+        response = await client.get("/api/v1/conversations", params={"cursor": "bad"})
+        assert response.status_code == 400
+        assert response.json()["detail"] == "invalid cursor"
+
+        spans = [item for item in metrics.snapshot() if item.kind == "span"]
+        root = next(
+            item
+            for item in spans
+            if item.component_id == "aura.interaction.conversation_persistence"
+            and dict(item.trace_attributes).get("operation") == "conversation.list.request"
+            and dict(item.dimensions).get("outcome") == "error"
+        )
+        child = next(
+            item
+            for item in spans
+            if item.component_id == "aura.interaction.conversation_persistence"
+            and dict(item.trace_attributes).get("operation") == "conversation.list"
+        )
+        assert dict(root.dimensions)["error_class"] == "validation"
+        assert dict(child.dimensions)["error_class"] == "validation"
+        assert child.trace_id == root.trace_id
+        assert child.parent_span_id == root.span_id
     finally:
         await client.aclose()
 

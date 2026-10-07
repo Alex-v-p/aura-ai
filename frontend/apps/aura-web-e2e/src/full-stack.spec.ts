@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 type IdentityMode = 'local-identity' | 'external-oidc';
 
@@ -131,22 +131,53 @@ async function signIn(page: Page, config: StackConfig): Promise<void> {
   if (config.ownerSubject) expect(principal.subject).toBe(config.ownerSubject);
 }
 
-async function waitForModelCatalog(page: Page): Promise<void> {
-  const picker = page.getByLabel('Model');
+async function openConversationOptions(page: Page): Promise<Locator> {
+  const dialog = page.getByRole('dialog', { name: 'Conversation options' });
+  if (!(await dialog.isVisible())) {
+    await page.getByRole('button', { name: 'Conversation options' }).click();
+    await expect(dialog).toBeVisible();
+  }
+  return dialog;
+}
+
+async function closeConversationOptions(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Conversation options' });
+  if (await dialog.isVisible()) {
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toBeHidden();
+  }
+}
+
+async function waitForModelCatalog(page: Page): Promise<Locator> {
+  await expect(page.getByRole('status', { name: 'Loading your conversation' })).toBeHidden();
+  const dialog = await openConversationOptions(page);
+  const picker = dialog.getByLabel('Model');
   await expect(picker).toBeVisible();
   const selectableModels = picker.locator('option:not([disabled])[value]:not([value=""])');
   await expect(selectableModels).toHaveCount(2);
   await expect(picker.locator('option[value="embed"]')).toHaveAttribute('disabled', '');
+  return picker;
 }
 
 async function selectSecondChatModel(page: Page): Promise<string> {
-  await waitForModelCatalog(page);
-  const picker = page.getByLabel('Model');
+  const picker = await waitForModelCatalog(page);
   const selectableModels = picker.locator('option:not([disabled])[value]:not([value=""])');
   const modelId = await selectableModels.nth(1).getAttribute('value');
   if (!modelId) throw new Error('full-stack fixture did not provide a second selectable chat model');
+  const selectedRoute = new URL(page.url()).pathname;
+  const selectedPersistedConversation = /^\/conversation\/[^/]+$/.test(selectedRoute);
+  const currentModelId = await picker.inputValue();
+  const modelUpdate = selectedPersistedConversation && currentModelId !== modelId
+    ? page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'PATCH'
+        && new URL(request.url()).pathname.startsWith('/api/v1/conversations/');
+    })
+    : undefined;
   await picker.selectOption(modelId);
   await expect(picker).toHaveValue(modelId);
+  if (modelUpdate) expect((await modelUpdate).ok()).toBeTruthy();
+  await closeConversationOptions(page);
   return modelId;
 }
 
@@ -174,8 +205,8 @@ for (const mode of configuredModes) {
       });
       await signIn(page, config);
 
-      const picker = page.getByLabel('Model');
-      await expect(picker.locator('option[value="embed"]')).toHaveAttribute('disabled', '');
+      await waitForModelCatalog(page);
+      await closeConversationOptions(page);
       const selectedModel = await selectSecondChatModel(page);
 
       const prompt = `real-stack-${mode}-${Date.now()}`;
@@ -183,7 +214,10 @@ for (const mode of configuredModes) {
       await expect.poll(async () => (await apiSession(page, config)).status).toBe(200);
       await page.reload();
       await expect(page.getByRole('article', { name: 'Your message' }).last()).toContainText(prompt);
-      await expect(page.getByLabel('Model')).toHaveValue(selectedModel);
+      await expect(page.getByRole('button', { name: `Model ${selectedModel}` })).toBeVisible();
+      const reloadedPicker = await waitForModelCatalog(page);
+      await expect(reloadedPicker).toHaveValue(selectedModel);
+      await closeConversationOptions(page);
 
       expect(eventUrls.length).toBeGreaterThan(0);
       for (const url of eventUrls) {
@@ -199,6 +233,7 @@ for (const mode of configuredModes) {
 
       await signIn(page, config);
       await waitForModelCatalog(page);
+      await closeConversationOptions(page);
       await page.locator('button.new-conversation').click();
       await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
       await selectSecondChatModel(page);
@@ -209,7 +244,7 @@ for (const mode of configuredModes) {
       // with `background-run-` long enough to prove navigation does not stop
       // the server-side run.
       await expect(page.getByRole('status').getByText(/gathering a thought/i)).toBeVisible({ timeout: 5_000 });
-      const firstConversation = page.getByRole('button', { name: new RegExp(`^${escapeRegExp(firstPrompt)}(?:,|$)`) });
+      const firstConversation = page.getByRole('link', { name: new RegExp(`^${escapeRegExp(firstPrompt)}(?:,|$)`) });
       await expect(firstConversation).toBeVisible({ timeout: 15_000 });
       await page.locator('button.new-conversation').click();
       await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();

@@ -72,6 +72,10 @@ class ConversationNotFound(LookupError):
     pass
 
 
+class InvalidConversationCursor(ValueError):
+    """Raised only when an opaque conversation pagination cursor is invalid."""
+
+
 class ActiveRunConflict(RuntimeError):
     pass
 
@@ -166,7 +170,11 @@ class ConversationStore:
         limit: int = 30,
         cursor: str | None = None,
         issuer: str | None = None,
+        *,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> tuple[list[Conversation], str | None]:
+        del trace_id, parent_span_id
         if issuer is None:
             raise ValueError("issuer is required")
         values = [
@@ -174,7 +182,22 @@ class ConversationStore:
             for item in self._conversations.values()
             if item.principal_subject == subject and item.principal_issuer == issuer
         ]
-        values.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
+        # Recent order is based only on durably accepted user messages.  Run
+        # output, title settlement, configuration, and other metadata updates
+        # must not move an existing conversation in the persisted list.
+        def activity_key(item: Conversation) -> tuple[datetime, UUID]:
+            accepted_user_messages = [
+                message
+                for message in item.messages
+                if message.role is MessageRole.USER and message.state is MessageState.COMPLETE
+            ]
+            activity_at = max(
+                (message.created_at for message in accepted_user_messages),
+                default=item.created_at,
+            )
+            return activity_at, item.id
+
+        values.sort(key=activity_key, reverse=True)
         if cursor:
             try:
                 padded = cursor + "=" * (-len(cursor) % 4)
@@ -183,16 +206,15 @@ class ConversationStore:
                 )
                 cursor_time = datetime.fromisoformat(timestamp)
                 cursor_id = UUID(identifier)
-                values = [
-                    item for item in values if (item.updated_at, item.id) < (cursor_time, cursor_id)
-                ]
+                values = [item for item in values if activity_key(item) < (cursor_time, cursor_id)]
             except ValueError, binascii.Error, UnicodeDecodeError:
-                raise ValueError("invalid cursor") from None
+                raise InvalidConversationCursor("invalid cursor") from None
         page = values[:limit]
         next_cursor = None
         if len(values) > limit:
             last = page[-1]
-            raw = f"{last.updated_at.isoformat()}|{last.id}"
+            activity_at, _ = activity_key(last)
+            raw = f"{activity_at.isoformat()}|{last.id}"
             next_cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
         return page, next_cursor
 

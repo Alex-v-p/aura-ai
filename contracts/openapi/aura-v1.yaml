@@ -230,7 +230,7 @@
           { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
         ],
         "responses": {
-          "200": { "description": "Conversations ordered by most recent update", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationPage" } } } },
+          "200": { "description": "Conversations ordered by latest durably accepted user message, with conversation ID as a deterministic tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationPage" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" }

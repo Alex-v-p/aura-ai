@@ -1,6 +1,6 @@
 component:
   id: aura.interaction.conversation_persistence
-  version: 1.4.0
+  version: 1.5.0
   owner: aura-core
   category: persistence
 input:
