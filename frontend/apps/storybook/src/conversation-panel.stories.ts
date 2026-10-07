@@ -10,7 +10,7 @@ type FixtureState = 'empty' | 'loading' | 'working' | 'interrupted' | 'recoverab
 const turns: Record<'completed', ReadonlyArray<ConversationTurn>> = {
   completed: [
     { id: 'fixture-user', role: 'user', text: 'Help me find a small next step.' },
-    { id: 'fixture-assistant', role: 'assistant', text: 'Start with one kind, concrete action you can finish today.' },
+    { id: 'fixture-assistant', role: 'assistant', text: '## A small next step\n\nStart with one **kind, concrete action** you can finish today.\n\n```ts\nconst nextStep = "one small action";\n```\n\nSee [the Aura guide](https://example.com/aura) for more.' },
   ],
 };
 

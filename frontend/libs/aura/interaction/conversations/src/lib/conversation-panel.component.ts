@@ -9,11 +9,12 @@ import { AgentStore, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
 import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
+import { SafeMarkdownComponent } from './safe-markdown.component';
 
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe],
+  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, SafeMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
