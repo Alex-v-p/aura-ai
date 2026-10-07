@@ -223,6 +223,12 @@ export class ConversationStore {
   showRouteNotice(message: string): void { this.setNotice(this.selectedId(), message); }
 
   create(): void {
+    const existingDraft = this.conversations().find((conversation) => conversation.id.startsWith('draft-'));
+    if (existingDraft) {
+      this.cancelPendingConfigurationForSelection(existingDraft.id);
+      this.selectedId.set(existingDraft.id);
+      return;
+    }
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
     this.cancelPendingConfigurationForSelection(id);
     const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };

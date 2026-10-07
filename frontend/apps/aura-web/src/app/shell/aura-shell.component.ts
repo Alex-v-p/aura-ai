@@ -1,4 +1,5 @@
 import { A11yModule } from '@angular/cdk/a11y';
+import { CdkOverlayOrigin, OverlayModule, type ConnectedPosition } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListener, Input, OnDestroy, Output, ViewChild, signal } from '@angular/core';
 import { AdaptiveLayoutComponent } from '@aura/shared/layout';
 import { ThemePreference, ThemeSelectComponent } from '@aura/shared/ui';
@@ -12,7 +13,7 @@ export type ShellConversationAction = { readonly id: string; readonly action: 'r
 @Component({
   selector: 'aura-shell',
   standalone: true,
-  imports: [A11yModule, AdaptiveLayoutComponent, ThemeSelectComponent, RouterLink, RouterLinkActive],
+  imports: [A11yModule, OverlayModule, AdaptiveLayoutComponent, ThemeSelectComponent, RouterLink, RouterLinkActive],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './aura-shell.component.html',
   styleUrl: './aura-shell.component.css',
@@ -29,6 +30,7 @@ export class AuraShellComponent implements OnDestroy {
   set collapsed(value: boolean) {
     const changed = this.collapsedValue !== value;
     this.collapsedValue = value;
+    if (value && this.filterPanelOpen()) this.closeFilterPanel(false);
     if (this.isWideDesktopViewport() && (value || changed)) this.desktopContentReady.set(!value && this.prefersReducedMotion());
   }
   @Input() mobileOpen = false;
@@ -41,11 +43,19 @@ export class AuraShellComponent implements OnDestroy {
   @Output() readonly loadMore = new EventEmitter<void>();
   @Output() readonly conversationAction = new EventEmitter<ShellConversationAction>();
   @ViewChild('mobileTrigger') private readonly mobileTrigger?: ElementRef<HTMLButtonElement>;
+  @ViewChild('filterTrigger') private readonly filterTrigger?: ElementRef<HTMLButtonElement>;
+  @ViewChild('filterPanel') private readonly filterPanel?: ElementRef<HTMLElement>;
   readonly isMobileViewport = signal(typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches);
   readonly isWideDesktopViewport = signal(typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches);
   readonly prefersReducedMotion = signal(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   readonly desktopContentReady = signal(true);
   readonly filterPanelOpen = signal(false);
+  readonly filterOverlayOrigin = signal<CdkOverlayOrigin>({} as CdkOverlayOrigin);
+  readonly filterOverlayPositions: ConnectedPosition[] = [
+    { originX: 'end', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetX: 8, offsetY: 8 },
+    { originX: 'end', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetX: 8, offsetY: -8 },
+    { originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 8 },
+  ];
   readonly rowMenuId = signal<string | null>(null);
   readonly renamingId = signal<string | null>(null);
   readonly renameValue = signal('');
@@ -82,6 +92,7 @@ export class AuraShellComponent implements OnDestroy {
   }
 
   closeMobileNavigation(restoreFocus = true): void {
+    if (this.filterPanelOpen()) this.closeFilterPanel(false);
     this.mobileOpenChange.emit(false);
     if (restoreFocus && this.isMobileViewport()) queueMicrotask(() => this.mobileTrigger?.nativeElement.focus());
   }
@@ -89,6 +100,35 @@ export class AuraShellComponent implements OnDestroy {
   startNewConversation(): void {
     this.newConversation.emit();
     this.closeMobileNavigation(this.isMobileViewport());
+  }
+
+  toggleFilterPanel(event?: Event, origin?: CdkOverlayOrigin): void {
+    event?.stopPropagation();
+    if (this.filterPanelOpen()) {
+      this.closeFilterPanel();
+      return;
+    }
+    this.filterOverlayOrigin.set(origin ?? this.filterOverlayOrigin());
+    this.filterPanelOpen.set(true);
+    queueMicrotask(() => this.focusFilterPanel());
+  }
+
+  handleFilterOverlayAttach(): void { setTimeout(() => this.focusFilterPanel(), 0); }
+
+  closeFilterPanel(returnFocus = true): void {
+    if (!this.filterPanelOpen()) return;
+    this.filterPanelOpen.set(false);
+    if (returnFocus) queueMicrotask(() => this.filterTrigger?.nativeElement.focus());
+  }
+
+  clearFilters(): void {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+    const next: ShellConversationFilters = { archiveState: 'active' };
+    this.activityFromInput.set('');
+    this.activityToInput.set('');
+    this.libraryFilters.set(next);
+    this.filtersChange.emit(next);
   }
 
   selectConversation(id: string): void {
@@ -133,8 +173,17 @@ export class AuraShellComponent implements OnDestroy {
 
   @HostListener('document:keydown.escape', ['$event'])
   handleEscape(event: Event): void {
+    if (this.filterPanelOpen()) {
+      event.preventDefault();
+      this.closeFilterPanel();
+      return;
+    }
     if (!this.mobileOpen) return;
     event.preventDefault();
     this.closeMobileNavigation();
+  }
+
+  private focusFilterPanel(): void {
+    this.filterPanel?.nativeElement.querySelector<HTMLElement>('select, input, button')?.focus();
   }
 }

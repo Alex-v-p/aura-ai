@@ -20,7 +20,7 @@ export class AppComponent implements OnDestroy {
   readonly theme = signal<ThemePreference>(this.readTheme());
   readonly navCollapsed = signal(false);
   readonly mobileNavigationOpen = signal(false);
-  readonly conversationSummaries = (): ReadonlyArray<ShellConversationSummary> => this.store.conversations().map((conversation) => ({
+  readonly conversationSummaries = (): ReadonlyArray<ShellConversationSummary> => this.store.conversations().filter((conversation) => !conversation.id.startsWith('draft-')).map((conversation) => ({
     id: conversation.id,
     title: conversation.title,
     active: conversation.id === this.store.selectedId(),

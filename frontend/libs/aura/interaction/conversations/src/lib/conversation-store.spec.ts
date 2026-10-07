@@ -86,6 +86,55 @@ describe('ConversationStore', () => {
     expect(raceStore.notice()).toContain('disabled');
   });
   it('uses the server model catalog default for new drafts', () => { expect(store.selectedModelId()).toBe(preferredModel.id); store.create(); expect(store.selectedModelId()).toBe(preferredModel.id); });
+  it('reuses one draft while preserving its text and configuration', async () => {
+    const agent = { profileId: 'agent-profile', revisionId: 'agent-revision-2', revision: 2, displayName: 'Researcher', status: 'active' as const };
+    const persona = { profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Focused', status: 'active' as const, newerRevisionAvailable: false };
+    await store.selectModel(model.id);
+    store.requestAgent(agent);
+    store.requestPersona(persona);
+    store.updateDraft('Keep this unsent thought');
+    const draftId = store.selectedId();
+
+    store.create();
+
+    expect(store.selectedId()).toBe(draftId);
+    expect(store.draft()).toBe('Keep this unsent thought');
+    expect(store.selectedModelId()).toBe(model.id);
+    expect(store.selectedAgent().revisionId).toBe(agent.revisionId);
+    expect(store.selectedPersona()?.revisionId).toBe(persona.revisionId);
+  });
+  it('retains a rejected first-send draft outside the library', async () => {
+    const rejectedApi = fakeApi(undefined, [], [], undefined, undefined, undefined, async () => { throw { status: 503, message: 'Conversation service unavailable', retryable: true }; });
+    const rejectedStore = new ConversationStore(rejectedApi);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    rejectedStore.updateDraft('Keep this after rejection');
+
+    expect(rejectedStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(rejectedStore.selectedId()).toMatch(/^draft-/);
+    expect(rejectedStore.draft()).toBe('Keep this after rejection');
+    expect(rejectedStore.selected().turns).toHaveLength(0);
+    expect(rejectedStore.conversations().filter((conversation) => !conversation.id.startsWith('draft-'))).toHaveLength(0);
+  });
+  it('replaces a draft with exactly one durable conversation after acceptance', async () => {
+    let createCalls = 0;
+    const acceptedApi = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId) => {
+      createCalls += 1;
+      return fakeApi().createConversation(message, modelId, 'accepted-once');
+    });
+    const acceptedStore = new ConversationStore(acceptedApi);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    acceptedStore.updateDraft('Persist this once');
+
+    expect(acceptedStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(createCalls).toBe(1);
+    expect(acceptedStore.selectedId()).toMatch(/^conversation-/);
+    expect(acceptedStore.conversations().filter((conversation) => !conversation.id.startsWith('draft-'))).toHaveLength(1);
+    expect(acceptedStore.conversations().filter((conversation) => conversation.id.startsWith('draft-'))).toHaveLength(0);
+  });
   it.each([
     { name: 'missing', defaultModelId: null },
     { name: 'incompatible', defaultModelId: 'embedding-only' },
@@ -424,7 +473,7 @@ describe('ConversationStore', () => {
     expect(historyStore.transitionMarkerFor('message-one')).toContain('Aura r1 to Researcher r1');
     expect(historyStore.transitionMarkerFor('message-two')).toBeNull();
   });
-  it('keeps independent drafts and does not stop a background run when selecting', () => { store.updateDraft('Keep this running'); store.send(); const workingId = store.selectedId(); store.create(); expect(store.selectedId()).not.toBe(workingId); store.select(workingId); expect(store.selected().turns[0].text).toBe('Keep this running'); });
+  it('reuses the transient draft without stopping its background run', () => { store.updateDraft('Keep this running'); store.send(); const draftId = store.selectedId(); store.create(); expect(store.selectedId()).toBe(draftId); expect(store.selected().turns[0].text).toBe('Keep this running'); });
   it('preserves user work and sends an idempotent cancellation command', async () => { store.updateDraft('Keep this visible'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().turns[0].text).toBe('Keep this visible'); expect(store.runState()).toBe('interrupted'); expect(store.notice()).toContain('stopped'); });
   it('consumes the complete accepted response when retrying a run', async () => { store.updateDraft('Retry this safely'); store.send(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.stop(); await new Promise<void>((resolve) => queueMicrotask(resolve)); store.retry(); await new Promise<void>((resolve) => queueMicrotask(resolve)); expect(store.selected().currentRun?.status).toBe('running'); expect(store.selected().currentRun?.agentRevisionId).toBe('agent-rev-1'); expect(store.selected().currentRun?.modelPolicyRevisionId).toBe('policy-1'); expect(store.selected().currentRun?.provider).toBe('ollama'); });
   it('keeps a retried conversation in place through acceptance and completion', async () => {

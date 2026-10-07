@@ -16,11 +16,16 @@
 .library-heading .nav-label { margin: 0; }
 .library-filter-toggle, .load-more { background: transparent; border: 1px solid var(--border); border-radius: .45rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .7rem; padding: .25rem .45rem; }
 .library-filter-toggle:hover, .load-more:hover { color: var(--text); }
-.library-search { display: block; margin: 0 .35rem .45rem; }
-.library-search input, .conversation-filters select, .rename-form input { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .45rem; color: var(--text); font: inherit; font-size: .75rem; min-height: 2rem; padding: .35rem .5rem; width: 100%; }
-.conversation-filters { display: grid; gap: .35rem; margin: 0 .35rem .55rem; }
+.library-search { display: block; margin: 0 .35rem .45rem; position: relative; }
+.library-search input, .conversation-filters select, .conversation-filters input, .rename-form input { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .45rem; color: var(--text); font: inherit; font-size: .75rem; min-height: 2rem; padding: .35rem .5rem; width: 100%; }
+.library-search input { padding-left: 2rem; }
+.search-icon { align-items: center; color: var(--text-muted); display: flex; height: 2rem; left: .55rem; pointer-events: none; position: absolute; top: 0; }
+.search-icon svg { height: 1rem; width: 1rem; }
+.conversation-filters { background: var(--surface); border: 1px solid var(--border); border-radius: .6rem; box-shadow: 0 .8rem 2rem rgb(0 0 0 / .18); display: grid; gap: .45rem; min-width: min(16rem, calc(100vw - 1.5rem)); padding: .7rem; }
 .conversation-filters label { color: var(--text-muted); display: grid; font-size: .68rem; gap: .15rem; }
 .conversation-filters select { min-height: 1.8rem; }
+.filter-clear { background: transparent; border: 1px solid var(--border); border-radius: .4rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .7rem; margin-top: .15rem; padding: .4rem .5rem; }
+.filter-clear:hover { color: var(--text); }
 .conversation-row { align-items: center; display: flex; min-height: 2.5rem; position: relative; }
 .conversation-row .conversation-link { min-width: 0; padding-right: .2rem; }
 .row-menu-trigger { background: transparent; border: 0; border-radius: .4rem; color: var(--text-muted); cursor: pointer; flex: 0 0 1.8rem; font: inherit; font-size: .75rem; height: 1.8rem; margin-right: .15rem; opacity: .65; }

@@ -153,10 +153,13 @@ async function installApiFake(
   let errorOnce = false;
   let failNextStream = false;
   let orderingFixture = options.orderingFixture ?? false;
+  let rejectCreateFixture = false;
   page.on('framenavigated', (frame) => {
     if (frame !== page.mainFrame()) return;
-    if (frame.url().includes('fixture=ordering')) orderingFixture = true;
-    if (frame.url().includes('fixture=error')) errorOnce = true;
+    const frameUrl = frame.url();
+    if (frameUrl.includes('fixture=ordering')) orderingFixture = true;
+    if (frameUrl.includes('fixture=error')) errorOnce = true;
+    if (frameUrl.includes('fixture=rejected-create')) rejectCreateFixture = true;
   });
   let runNumber = 0;
   let version = 1;
@@ -210,6 +213,7 @@ async function installApiFake(
     if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: recentConversationSummaries(), nextCursor: null } });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() ?? '{}') as { message?: string; modelId?: string };
+      if (rejectCreateFixture) return route.fulfill({ status: 503, json: { detail: 'Conversation service temporarily unavailable.' } });
       if (page.url().includes('fixture=deferred-create')) {
         await new Promise<void>((resolve) => {
           deferredConversationPending.add('create');
@@ -973,24 +977,43 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
   await expect(page.locator('.conversation-link').filter({ hasText: 'Background acceptance' })).toBeVisible();
 });
 
-test('persists a UI-created routed draft and survives reload at its persisted URL', async ({ page }, testInfo) => {
+test('keeps a new conversation out of the library until its first accepted message', async ({ page }, testInfo) => {
   await page.goto('/');
   if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: /new conversation/i }).click();
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  const draftLink = page.locator('.conversation-link').filter({ hasText: 'New conversation' }).first();
-  await expect(draftLink).toBeVisible();
-  const draftHref = await draftLink.getAttribute('href');
-  expect(draftHref).toMatch(/^\/conversation\/draft-/);
-  await draftLink.click();
-  await expect(page).toHaveURL(/\/conversation\/draft-[^/]+$/);
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Persist this routed draft.');
+
+  // New conversation is idempotent while the local draft is unsent. Reopening
+  // it must preserve the text and must not create a second hidden library row.
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: /new conversation/i }).click();
+  await expect(composer).toHaveValue('Persist this routed draft.');
+  await expect(page.locator('.conversation-link').filter({ hasText: 'New conversation' })).toHaveCount(0);
+
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
+  const durableRows = page.locator('.conversation-link[href="/conversation/created-1"]');
+  await expect(durableRows).toHaveCount(1);
   await page.reload();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
-  await expect(page.getByText('Persist this routed draft.')).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Your message' }).getByText('Persist this routed draft.', { exact: true })).toBeVisible();
+});
+
+test('keeps a rejected first send in the local draft and outside the library', async ({ page }, testInfo) => {
+  await page.goto('/?fixture=rejected-create');
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: /new conversation/i }).click();
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Keep this after the rejected first send.');
+  const rejectedCreate = page.waitForResponse((response) => response.url().endsWith('/api/v1/conversations') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Send' }).click();
+  expect((await rejectedCreate).status()).toBe(503);
+
+  await expect(page.locator('#composer-notice')).toContainText(/temporarily unavailable|could not complete|try again/i);
+  await expect(composer).toHaveValue('Keep this after the rejected first send.');
+  await expect(page.locator('.conversation-link').filter({ hasText: 'New conversation' })).toHaveCount(0);
+  await expect(page.locator('.conversation-link[href^="/conversation/draft-"]')).toHaveCount(0);
 });
 
 test('preserves an unauthorized deep-link URL and surfaces the authentication state', async ({ page }) => {

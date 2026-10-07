@@ -230,10 +230,12 @@ test.describe('conversation productivity', () => {
     await expect(page.getByRole('link', { name: 'Conversation 30' })).toBeVisible();
   });
 
-  test('debounces title search, sends server filters, and keeps terms out of the URL', async ({ page }) => {
+  test('debounces title search, opens a connected live filter popup, and keeps terms out of the URL', async ({ page }) => {
     const fixture = await installFixture(page);
     await waitForLibrary(page);
     const search = page.getByRole('searchbox', { name: /search conversation titles/i });
+    await expect(search).toHaveAccessibleName('Search conversation titles');
+    await expect(page.locator('.library-search .search-icon[aria-hidden="true"] svg')).toHaveCount(1);
     await search.fill('Alpha');
     expect(fixture.listRequests).toHaveLength(1);
     await expect.poll(() => fixture.listRequests.length, { timeout: 2_000 }).toBe(2);
@@ -241,8 +243,21 @@ test.describe('conversation productivity', () => {
     expect(filteredRequest.searchParams.get('q')).toBe('Alpha');
     expect(page.url()).not.toContain('Alpha');
 
-    await page.getByRole('button', { name: 'Filter' }).click();
-    const filterSelects = page.locator('#conversation-filters select');
+    const filterTrigger = page.getByRole('button', { name: 'Filter', exact: true });
+    const navigation = page.getByRole('navigation', { name: /primary navigation/i });
+    const navigationBefore = await navigation.boundingBox();
+    await filterTrigger.click();
+    const filterPanel = page.locator('#conversation-filters');
+    await expect(filterPanel).toBeVisible();
+    await expect(filterPanel).toHaveAttribute('role', 'dialog');
+    await expect(filterTrigger).toHaveAttribute('aria-haspopup', 'dialog');
+    await expect(filterTrigger).toHaveAttribute('aria-expanded', 'true');
+    const navigationAfter = await navigation.boundingBox();
+    expect(navigationBefore).not.toBeNull();
+    expect(navigationAfter).not.toBeNull();
+    expect(navigationAfter?.height).toBe(navigationBefore?.height);
+
+    const filterSelects = filterPanel.locator('select');
     await filterSelects.nth(0).selectOption('agent-researcher');
     await expect.poll(() => fixture.listRequests.at(-1)?.searchParams.get('agentProfileId')).toBe('agent-researcher');
     await expect(filterSelects.nth(2).locator('option[value="cancel_requested"]')).toHaveCount(1);
@@ -256,6 +271,46 @@ test.describe('conversation productivity', () => {
     await expect(dates.nth(1)).toHaveValue('2026-10-31');
     await expect.poll(() => fixture.listRequests.at(-1)?.searchParams.get('activityFrom')).toMatch(/^2026-10-01T00:00:00(?:\.000)?Z$/);
     await expect.poll(() => fixture.listRequests.at(-1)?.searchParams.get('activityTo')).toMatch(/^2026-11-01T00:00:00(?:\.000)?Z$/);
+
+    await page.getByRole('button', { name: /clear filters/i }).click();
+    await expect(filterPanel).toBeVisible();
+    await expect(search).toHaveValue('');
+    await expect(filterSelects.nth(0)).toHaveValue('');
+    await expect(filterSelects.nth(1)).toHaveValue('');
+    await expect(filterSelects.nth(2)).toHaveValue('');
+    await expect(filterSelects.nth(3)).toHaveValue('active');
+    await expect(dates.nth(0)).toHaveValue('');
+    await expect(dates.nth(1)).toHaveValue('');
+
+    await page.keyboard.press('Escape');
+    await expect(filterPanel).toBeHidden();
+    await expect(filterTrigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(filterTrigger).toBeFocused();
+
+    await filterTrigger.click();
+    await expect(filterPanel).toBeVisible();
+    await page.getByRole('heading', { name: /new conversation/i }).click();
+    await expect(filterPanel).toBeHidden();
+    await expect(filterTrigger).toBeFocused();
+  });
+
+  test('closes the filter popup when the mobile navigation closes', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await installFixture(page);
+    await page.goto('/conversation');
+    const openNavigation = page.getByRole('button', { name: /open navigation/i });
+    await openNavigation.click();
+    const navigation = page.getByRole('navigation', { name: /primary navigation/i });
+    await expect(navigation).toBeVisible();
+
+    const filterTrigger = page.getByRole('button', { name: 'Filter', exact: true });
+    await filterTrigger.click();
+    const filterPanel = page.locator('#conversation-filters');
+    await expect(filterPanel).toBeVisible();
+    await navigation.getByRole('button', { name: 'Close navigation' }).click();
+    await expect(navigation).toBeHidden();
+    await expect(filterPanel).toBeHidden();
+    await expect(openNavigation).toBeFocused();
   });
 
   test('preserves selection and draft through filtering and rejected metadata mutation', async ({ page }) => {
