@@ -1176,6 +1176,12 @@ class SqlMemoryRepository:
                 updated_at=now,
             )
             session.add(row)
+            # The database owns the provenance/revision foreign keys, but the
+            # deliberately thin ORM rows do not declare relationships that
+            # let SQLAlchemy infer insert ordering.  Establish the memory row
+            # before adding dependent immutable evidence rows; otherwise a
+            # later query-triggered autoflush can insert provenance first.
+            await session.flush()
             session.add(
                 MemoryRevisionRow(
                     id=revision_id,
@@ -2057,6 +2063,7 @@ class SqlMemoryRepository:
             if row is not None and expected is not None and row.version != int(expected):
                 raise MemoryVersionConflict("model configuration version conflict")
             selected_generation = configuration.embedding_generation
+            missing_generation = row is not None and row.embedding_generation is None
             if configuration.embedding_generation is not None:
                 selected = await session.get(
                     MemoryEmbeddingGenerationRow, configuration.embedding_generation
@@ -2067,10 +2074,36 @@ class SqlMemoryRepository:
                     or selected.principal_subject != subject
                 ):
                     raise MemoryNotFound("embedding generation not found")
+            # Early first-run configurations could be persisted before their
+            # initial embedding generation was created.  Repair that narrow
+            # state on the next verified save without treating it as a model
+            # change or requiring a reindex of an empty index.
+            if row is not None and row.embedding_generation is None:
+                dimension = int(kwargs.get("dimension", 0))
+                model_digest = kwargs.get("model_digest")
+                if dimension < 1 or not isinstance(model_digest, str):
+                    raise MemoryValidationError("initial embedding generation is unavailable")
+                generation_id = uuid4()
+                session.add(
+                    MemoryEmbeddingGenerationRow(
+                        id=generation_id,
+                        generation=1,
+                        model_id=configuration.embedding_model_id,
+                        model_revision=configuration.embedding_model_revision,
+                        model_digest=model_digest,
+                        dimension=dimension,
+                        status="active",
+                        principal_issuer=issuer,
+                        principal_subject=subject,
+                        created_at=datetime.now(UTC),
+                        activated_at=datetime.now(UTC),
+                    )
+                )
+                selected_generation = generation_id
             # A model change creates a discoverable building generation while
             # leaving the currently selected generation active until a full
             # reindex atomically activates its replacement.
-            if row is not None and (
+            if row is not None and not missing_generation and (
                 row.embedding_model_id != configuration.embedding_model_id
                 or row.embedding_model_revision != configuration.embedding_model_revision
             ):
@@ -2116,6 +2149,27 @@ class SqlMemoryRepository:
                     session.add(building)
                     selected_generation = row.embedding_generation
             if row is None:
+                dimension = int(kwargs.get("dimension", 0))
+                model_digest = kwargs.get("model_digest")
+                if dimension < 1 or not isinstance(model_digest, str):
+                    raise MemoryValidationError("initial embedding generation is unavailable")
+                generation_id = uuid4()
+                session.add(
+                    MemoryEmbeddingGenerationRow(
+                        id=generation_id,
+                        generation=1,
+                        model_id=configuration.embedding_model_id,
+                        model_revision=configuration.embedding_model_revision,
+                        model_digest=model_digest,
+                        dimension=dimension,
+                        status="active",
+                        principal_issuer=issuer,
+                        principal_subject=subject,
+                        created_at=datetime.now(UTC),
+                        activated_at=datetime.now(UTC),
+                    )
+                )
+                configuration = replace(configuration, embedding_generation=generation_id)
                 row = MemoryModelConfigurationRow(
                     principal_issuer=issuer,
                     principal_subject=subject,
@@ -2123,7 +2177,7 @@ class SqlMemoryRepository:
                     extraction_model_revision=configuration.extraction_model_revision,
                     embedding_model_id=configuration.embedding_model_id,
                     embedding_model_revision=configuration.embedding_model_revision,
-                    embedding_generation=configuration.embedding_generation,
+                    embedding_generation=generation_id,
                     version=configuration.version,
                     updated_at=datetime.now(UTC),
                 )

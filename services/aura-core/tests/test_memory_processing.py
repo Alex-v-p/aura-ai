@@ -53,7 +53,11 @@ from aura_core.entrypoints.worker.app import run_memory_once
 from aura_core.platform.outbox import InMemoryOutbox
 from aura_core.platform.telemetry import MetadataMetrics
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
-from aura_core.runtime.models.ports import EmbeddingResult, ModelDescriptor
+from aura_core.runtime.models.ports import (
+    EmbeddingResult,
+    ModelDescriptor,
+    StructuredInferenceRequest,
+)
 
 ISSUER = "https://issuer.example"
 OWNER = "owner"
@@ -1236,6 +1240,83 @@ async def test_absent_configuration_has_no_provider_fallback() -> None:
             user_message_ids=frozenset({uuid4()}),
         )
     assert inference.calls == []
+
+
+@pytest.mark.asyncio
+async def test_model_configuration_refreshes_durable_selection_after_worker_start() -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository, _Inference(_candidate()), _Embedding(), clock=lambda: NOW
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    await repository.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder-v2", version=1),
+        expected_version=1,
+        dimension=3,
+        model_digest="b" * 64,
+    )
+
+    refreshed = await processor.model_configuration(ISSUER, OWNER)
+
+    assert refreshed.embedding_model_id == "embedder-v2"
+
+
+@pytest.mark.asyncio
+async def test_structured_request_carries_domain_owned_memory_decision_contract() -> None:
+    seen: list[StructuredInferenceRequest] = []
+
+    class CapturingInference:
+        async def infer(self, request: StructuredInferenceRequest) -> dict[str, object]:
+            seen.append(request)
+            handle = str(request.input["evidence_segments"][0]["handle"])  # type: ignore[index]
+            return {
+                "action": "review",
+                "content": "I prefer concise answers.",
+                "kind": "preference",
+                "scope_type": "user",
+                "confidence": 0.7,
+                "grounded_evidence_handles": [handle],
+            }
+
+    processor = MemoryProcessingService(
+        MemoryStore(clock=lambda: NOW), CapturingInference(), _Embedding(), clock=lambda: NOW
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(ISSUER, OWNER, run_id=uuid4(), conversation_id=uuid4())
+
+    result = await processor.process(
+        job,
+        user_content="I prefer concise answers.",
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+    )
+
+    assert result.state is CandidateState.REVIEW
+    assert seen[0].input["decision_contract"] == {
+        "allowed_actions": [item.value for item in MemoryAction],
+        "instructions": (
+            "Extract only durable facts explicitly stated by the user. For create or review, "
+            "copy the durable fact into content, choose kind semantic or preference, choose "
+            "scope_type agent or user, and return the matching opaque evidence handle. Use "
+            "action ignore when there is no durable user-authored fact. Never invent identifiers."
+        ),
+        "required_for_create_or_review": [
+            "content",
+            "kind",
+            "scope_type",
+            "grounded_evidence_handles",
+        ],
+        "scope_guidance": {
+            "agent": "private to the current agent",
+            "user": "shared user memory; policy may require review",
+        },
+    }
 
 
 @pytest.mark.asyncio

@@ -79,9 +79,9 @@ class OllamaEmbeddingAdapter:
                 outcome="error", error_class="provider"
             )
             raise OllamaEmbeddingUnavailable("embedding response malformed")
-        values, model_revision = parsed
-        model_digest = await self._request_model_artifact(model_id)
-        if model_digest is None:
+        values, response_revision = parsed
+        artifact = await self._request_model_artifact(model_id)
+        if artifact is None:
             payload = None
             model_id = ""
             text = ""
@@ -90,6 +90,8 @@ class OllamaEmbeddingAdapter:
                 outcome="error", error_class="provider"
             )
             raise OllamaEmbeddingUnavailable("embedding model artifact unavailable")
+        model_digest, artifact_revision = artifact
+        model_revision = response_revision or artifact_revision
         digest = hashlib.sha256(
             json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -192,8 +194,8 @@ class OllamaEmbeddingAdapter:
         except Exception:
             return None
 
-    async def _request_model_artifact(self, model_id: str) -> str | None:
-        """Read one unambiguous artifact digest from Ollama's model inventory."""
+    async def _request_model_artifact(self, model_id: str) -> tuple[str, str | None] | None:
+        """Read one unambiguous artifact identity from Ollama inventory."""
 
         payload = await self._request_inventory()
         if payload is None or not isinstance(payload.get("models"), list):
@@ -214,7 +216,15 @@ class OllamaEmbeddingAdapter:
         digest = value.strip().lower()
         if digest.startswith("sha256:"):
             digest = digest[7:]
-        return digest if re.fullmatch(r"[0-9a-f]{64}", digest) else None
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return None
+        revision_value = matches[0].get("modified_at")
+        revision = (
+            revision_value[:255]
+            if isinstance(revision_value, str) and revision_value
+            else None
+        )
+        return digest, revision
 
     @classmethod
     def _parse_embedding(cls, payload: object) -> tuple[tuple[float, ...], str | None] | None:

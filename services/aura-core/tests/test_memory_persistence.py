@@ -1362,6 +1362,13 @@ async def test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex(
         model_digest="a" * 64,
         idempotency_key="model-config-replay",
     )
+    assert first.embedding_generation is not None
+    initial_generations = await store.list_embedding_generations(ISSUER, OWNER)
+    assert len(initial_generations) == 1
+    assert initial_generations[0].id == first.embedding_generation
+    assert initial_generations[0].generation == 1
+    assert initial_generations[0].status == "active"
+    assert initial_generations[0].model_id == "embed-v1"
     replay = await store.save_model_configuration(
         ISSUER,
         OWNER,
@@ -1383,27 +1390,73 @@ async def test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex(
             idempotency_key="model-config-replay",
         )
 
-    changed = await store.save_model_configuration(
+    # Preserve compatibility with configurations written before initial
+    # generation activation was enforced.
+    async with store.sessions() as session, session.begin():
+        await session.execute(
+            text(
+                "UPDATE memory_model_configurations SET embedding_generation = NULL "
+                "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+            ),
+            {"issuer": ISSUER, "subject": OWNER},
+        )
+        await session.execute(
+            text(
+                "DELETE FROM memory_embedding_generations "
+                "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+            ),
+            {"issuer": ISSUER, "subject": OWNER},
+        )
+    repaired = await store.save_model_configuration(
         ISSUER,
         OWNER,
         MemoryModelConfiguration(ISSUER, OWNER, "extractor-v1", "embed-v2"),
         expected_version=1,
         dimension=3,
         model_digest="b" * 64,
+        idempotency_key="model-config-repair-and-change",
+    )
+    assert repaired.embedding_generation is not None
+    assert repaired.version == 2
+    repaired_generations = await store.list_embedding_generations(ISSUER, OWNER)
+    assert len(repaired_generations) == 1
+    assert repaired_generations[0].id == repaired.embedding_generation
+    assert repaired_generations[0].generation == 1
+    assert repaired_generations[0].status == "active"
+    assert repaired_generations[0].model_id == "embed-v2"
+    replay_repaired = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor-v1", "embed-v2"),
+        expected_version=1,
+        dimension=3,
+        model_digest="b" * 64,
+        idempotency_key="model-config-repair-and-change",
+    )
+    assert replay_repaired == repaired
+
+    changed = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor-v1", "embed-v3"),
+        expected_version=2,
+        dimension=3,
+        model_digest="c" * 64,
         idempotency_key="model-config-cutover",
     )
-    assert changed.version == 2
+    assert changed.version == 3
     generations = await store.list_embedding_generations(ISSUER, OWNER)
     replacement = [item for item in generations if item.status == "building"]
     assert len(replacement) == 1
-    assert replacement[0].model_id == "embed-v2"
+    assert replacement[0].model_id == "embed-v3"
+    assert replacement[0].model_digest == "c" * 64
     assert await store.list_embedding_generations(ISSUER, OTHER_OWNER) == []
     with pytest.raises(MemoryVersionConflict):
         await store.save_model_configuration(
             ISSUER,
             OWNER,
             MemoryModelConfiguration(ISSUER, OWNER, "extractor-v3", "embed-v3"),
-            expected_version=1,
+            expected_version=2,
             dimension=3,
             model_digest="c" * 64,
             idempotency_key="model-config-stale",

@@ -67,7 +67,10 @@ def _policy_owner_matches(row: MemoryPolicyRevisionRow, issuer: str, subject: st
 
     return (row.principal_issuer, row.principal_subject) == (issuer, subject) or (
         (row.principal_issuer, row.principal_subject) == ("", "")
-        and is_platform_memory_policy(row.id, row.agent_profile_id)
+        and (
+            row.id == GENERAL_MEMORY_POLICY_ID
+            or is_platform_memory_policy(row.id, row.agent_profile_id)
+        )
     )
 
 

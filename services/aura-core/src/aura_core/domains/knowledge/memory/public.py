@@ -2163,17 +2163,21 @@ class MemoryProcessingService:
         return configuration
 
     async def model_configuration(self, issuer: str, subject: str) -> MemoryModelConfiguration:
+        load = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "get_model_configuration", None),
+        )
+        if callable(load):
+            # Production workers are long-lived while owners may update model
+            # selection in the API process.  SQL is authoritative here; a
+            # process-local snapshot must not keep jobs parked after setup or
+            # an embedding-generation cutover.
+            configuration = cast(MemoryModelConfiguration, await load(issuer, subject))
+            self.configurations[(issuer, subject)] = configuration
+            return configuration
         try:
             return self.configurations[(issuer, subject)]
         except KeyError as exc:
-            load = cast(
-                Callable[..., Awaitable[object]] | None,
-                getattr(self.repository, "get_model_configuration", None),
-            )
-            if callable(load):
-                configuration = cast(MemoryModelConfiguration, await load(issuer, subject))
-                self.configurations[(issuer, subject)] = configuration
-                return configuration
             raise MemoryNotFound("memory model configuration not found") from exc
 
     async def enqueue(
@@ -2456,6 +2460,26 @@ class MemoryProcessingService:
             model_id=config.extraction_model_id,
             schema=MEMORY_ACTION_SCHEMA,
             input={
+                "decision_contract": {
+                    "allowed_actions": [item.value for item in MemoryAction],
+                    "instructions": (
+                        "Extract only durable facts explicitly stated by the user. "
+                        "For create or review, copy the durable fact into content, choose "
+                        "kind semantic or preference, choose scope_type agent or user, and "
+                        "return the matching opaque evidence handle. Use action ignore when "
+                        "there is no durable user-authored fact. Never invent identifiers."
+                    ),
+                    "required_for_create_or_review": [
+                        "content",
+                        "kind",
+                        "scope_type",
+                        "grounded_evidence_handles",
+                    ],
+                    "scope_guidance": {
+                        "agent": "private to the current agent",
+                        "user": "shared user memory; policy may require review",
+                    },
+                },
                 "evidence_segments": request_segments,
                 "assistant_context": assistant_content[:8192],
             },

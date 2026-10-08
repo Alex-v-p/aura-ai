@@ -181,6 +181,14 @@ async def test_ollama_selected_verification_is_cached_by_digest_and_embedding_pr
             return httpx.Response(200, json={"capabilities": ["embedding"], "details": {}})
         if request.url.path == "/api/chat":
             structured_calls += 1
+            body = cast(dict[str, object], json.loads(request.content))
+            assert body["think"] is False
+            assert body["stream"] is False
+            schema = cast(dict[str, object], body["format"])
+            assert schema["additionalProperties"] is False
+            options = cast(dict[str, object], body["options"])
+            assert options["temperature"] == 0
+            assert 0 < cast(int, options["num_predict"]) <= 8
             return httpx.Response(200, json={"message": {"content": '{"ok":true}'}})
         if request.url.path == "/api/embed":
             embedding_calls += 1
@@ -614,7 +622,8 @@ async def test_ollama_memory_inference_is_bounded_schema_constrained_and_non_str
             },
         )
 
-    adapter = OllamaAdapter("https://ollama.test")
+    metrics = MetadataMetrics()
+    adapter = OllamaAdapter("https://ollama.test", telemetry=metrics)
     transport = httpx.MockTransport(handler)
     original = httpx.AsyncClient
     httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
@@ -627,7 +636,17 @@ async def test_ollama_memory_inference_is_bounded_schema_constrained_and_non_str
                     "additionalProperties": False,
                     "required": ["action", "confidence", "grounded_message_ids"],
                     "properties": {
-                        "action": {"type": "string"},
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "ignore",
+                                "create",
+                                "reinforce",
+                                "supersede",
+                                "dispute",
+                                "review",
+                            ],
+                        },
                         "content": {"type": ["string", "null"]},
                         "kind": {"type": ["string", "null"]},
                         "scope_type": {"type": ["string", "null"]},
@@ -636,7 +655,7 @@ async def test_ollama_memory_inference_is_bounded_schema_constrained_and_non_str
                         "grounded_message_ids": {"type": "array"},
                     },
                 },
-                input={"user_content": "I prefer concise answers."},
+                input={"user_content": "PRIVATE_MEMORY_PROMPT_MARKER"},
             )
         )
         assert action["action"] == "create"
@@ -645,6 +664,15 @@ async def test_ollama_memory_inference_is_bounded_schema_constrained_and_non_str
         assert seen["think"] is False
         schema = cast(dict[str, object], seen["format"])
         assert schema["additionalProperties"] is False
+        messages = cast(list[object], seen["messages"])
+        system_message = cast(dict[str, object], messages[0])
+        system_prompt = cast(str, system_message["content"])
+        assert "Required fields: action, confidence, grounded_message_ids." in system_prompt
+        assert "$.action must be exactly one of" in system_prompt
+        assert '"remember_verification_marker"' not in system_prompt
+        assert "PRIVATE_MEMORY_PROMPT_MARKER" not in system_prompt
+        assert len(system_prompt.encode("utf-8")) < 70_000
+        assert "PRIVATE_MEMORY_PROMPT_MARKER" not in repr(metrics.snapshot())
         options = cast(dict[str, object], seen["options"])
         assert 0 < cast(int, options["num_predict"]) <= 8192
     finally:
@@ -696,7 +724,15 @@ async def test_ollama_embedding_returns_finite_vector_metadata_without_text_leak
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
-                json={"models": [{"name": "qwen3-embedding:4b", "digest": "sha256:" + "a" * 64}]},
+                json={
+                    "models": [
+                        {
+                            "name": "qwen3-embedding:4b",
+                            "digest": "sha256:" + "a" * 64,
+                            "modified_at": "2026-10-07T17:40:30Z",
+                        }
+                    ]
+                },
             )
         assert request.url.path == "/api/embed"
         body = cast(dict[str, object], json.loads(request.content))
@@ -713,6 +749,7 @@ async def test_ollama_embedding_returns_finite_vector_metadata_without_text_leak
         assert result.vector == (0.1, 0.2, 0.3)
         assert result.dimension == 3
         assert result.model_digest == "a" * 64
+        assert result.model_revision == "2026-10-07T17:40:30Z"
         assert len(result.digest) == 64
         assert "private memory text" not in repr(result)
     finally:
