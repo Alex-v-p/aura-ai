@@ -89,7 +89,9 @@ def upgrade() -> None:
         "shared_user_read, current_agent_read, fallback_relevance_threshold, "
         "max_memories, context_budget_fraction, allow_shared_user_promotion, created_at) "
         "VALUES (:id, '', '', :agent, 1, TRUE, TRUE, 0.5, 8, 0.2, FALSE, CURRENT_TIMESTAMP) "
-        "ON CONFLICT (id) DO NOTHING"
+        "ON CONFLICT (principal_issuer, principal_subject, agent_profile_id, revision) "
+        "DO UPDATE SET agent_profile_id = EXCLUDED.agent_profile_id "
+        "RETURNING id"
     )
     bind = op.get_bind()
     # Agent profiles predate owner-scoped memory policies, so legacy rows have
@@ -102,7 +104,9 @@ def upgrade() -> None:
     ).scalars().all()
     for profile_id in profile_ids:
         policy_id = uuid.uuid5(_NAMESPACE, f"agent-memory-policy:{profile_id}:1")
-        bind.execute(seed_policy, {"id": policy_id, "agent": profile_id})
+        policy_id = bind.execute(
+            seed_policy, {"id": policy_id, "agent": profile_id}
+        ).scalar_one()
         bind.execute(
             text(
                 "UPDATE agent_revisions SET memory_policy_revision_id = :policy "

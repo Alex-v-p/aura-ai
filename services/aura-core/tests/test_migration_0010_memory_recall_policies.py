@@ -74,6 +74,11 @@ def test_recall_migration_bounds_policy_and_grant_values() -> None:
     assert "TRUE, TRUE, 0.5, 8, 0.2, FALSE, CURRENT_TIMESTAMP" in source
     assert "UPDATE agent_revisions SET memory_policy_revision_id" in source
     assert "agent-memory-policy:" in source
+    assert (
+        "ON CONFLICT (principal_issuer, principal_subject, agent_profile_id, revision)"
+        in source
+    )
+    assert "RETURNING id" in source
 
 
 @pytest.mark.parametrize(
