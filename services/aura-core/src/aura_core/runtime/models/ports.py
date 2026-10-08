@@ -1,13 +1,15 @@
 """Inward-facing model ports. Providers implement these protocols."""
 
-# Provider payloads are normalized at the adapter boundary.
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
+from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from aura_core.domains.execution.runs.ports import ChatMessage
+
+# Provider payloads are normalized at the adapter boundary.
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,26 @@ class ProviderTraceContext:
     run_id: str | None = None
     conversation_id: str | None = None
     generation_id: str | None = None
+
+
+class ModelSelectionPort(Protocol):
+    """Provider-neutral port for owner-selected memory model verification."""
+
+    async def list_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]: ...
+
+    async def refresh_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]: ...
+
+    async def verify_model(
+        self,
+        model_id: str,
+        capability: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> ModelDescriptor | None: ...
 
 
 class ProviderTelemetryPort(Protocol):

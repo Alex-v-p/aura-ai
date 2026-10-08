@@ -27,11 +27,12 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryScope,
     MemoryScopeType,
     MemoryStore,
+    MemoryValidationError,
 )
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Principal, Session, Settings
 from aura_core.runtime.models.gateway import ModelGateway
-from aura_core.runtime.models.ports import ChatMessage, ModelDescriptor
+from aura_core.runtime.models.ports import ChatMessage, ModelDescriptor, ProviderTraceContext
 from fastapi import FastAPI
 
 REPOSITORY = Path(__file__).parents[3]
@@ -45,7 +46,10 @@ OWNER = "owner-subject"
 
 
 class _ProductModel:
-    async def list_models(self) -> Sequence[ModelDescriptor]:
+    async def list_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]:
+        del context
         return (
             ModelDescriptor(
                 "chat", "Chat model", "ollama", ("structured_output",),
@@ -66,6 +70,28 @@ class _ProductModel:
 
     async def is_ready(self, model_id: str | None = None) -> bool:
         return model_id in (None, "chat", "embed")
+
+    async def refresh_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]:
+        return await self.list_models(context=context)
+
+    async def verify_model(
+        self,
+        model_id: str,
+        capability: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> ModelDescriptor | None:
+        del context
+        model = next((item for item in await self.list_models() if item.id == model_id), None)
+        if model is None:
+            return None
+        if capability == "structured_output" and "structured_output" in model.capabilities:
+            return model
+        if capability == "embedding" and "embedding" in model.capabilities:
+            return model
+        return None
 
 
 @pytest.fixture
@@ -578,11 +604,104 @@ async def test_memory_model_inventory_configuration_and_reindex_are_owner_scoped
 
 
 @pytest.mark.asyncio
+async def test_memory_configuration_verifies_selected_models_and_preserves_on_failure(
+) -> None:
+    class LazyProvider(_ProductModel):
+        def __init__(self) -> None:
+            self.verifications: list[tuple[str, str]] = []
+            self.fail = False
+            self.tamper = False
+
+        async def list_models(
+            self, *, context: ProviderTraceContext | None = None
+        ) -> Sequence[ModelDescriptor]:
+            del context
+            return (
+                ModelDescriptor(
+                    "chat", "Chat model", "ollama", ("chat", "structured_output"),
+                    model_revision="chat-rev", model_digest="a" * 64,
+                ),
+                ModelDescriptor(
+                    "embed", "Embedding model", "ollama", ("embedding",),
+                    model_revision="embed-rev", model_digest="b" * 64,
+                ),
+                ModelDescriptor(
+                    "unused", "Unused model", "ollama", ("chat",),
+                    model_revision="unused-rev", model_digest="c" * 64,
+                ),
+            )
+
+        async def verify_model(
+            self,
+            model_id: str,
+            capability: str,
+            *,
+            context: ProviderTraceContext | None = None,
+        ) -> ModelDescriptor | None:
+            del context
+            self.verifications.append((model_id, capability))
+            if self.fail:
+                return None
+            if capability == "structured_output":
+                return ModelDescriptor(
+                    model_id, model_id, "ollama", ("chat", "structured_output"),
+                    model_revision="chat-rev", model_digest="c" * 64 if self.tamper else "a" * 64,
+                )
+            return ModelDescriptor(
+                model_id, model_id, "ollama", ("embedding",),
+                model_revision="embed-rev", model_digest="b" * 64, dimension=3,
+            )
+
+    provider = LazyProvider()
+    repository = MemoryStore()
+    service = MemoryModelApplicationService(repository, provider, None)
+    await service.save_configuration(
+        ISSUER,
+        OWNER,
+        extraction_model_id="chat",
+        embedding_model_id="embed",
+        expected_version=1,
+        idempotency_key="first-selection",
+    )
+    assert provider.verifications == [("chat", "structured_output"), ("embed", "embedding")]
+
+    provider.fail = True
+    with pytest.raises(MemoryValidationError):
+        await service.save_configuration(
+            ISSUER,
+            OWNER,
+            extraction_model_id="chat",
+            embedding_model_id="embed",
+            expected_version=2,
+            idempotency_key="failed-selection",
+        )
+    current = await repository.get_model_configuration(ISSUER, OWNER)
+    assert current.version == 1
+
+    provider.fail = False
+    provider.tamper = True
+    with pytest.raises(MemoryValidationError):
+        await service.save_configuration(
+            ISSUER,
+            OWNER,
+            extraction_model_id="chat",
+            embedding_model_id="embed",
+            expected_version=2,
+            idempotency_key="mismatched-selection",
+        )
+    current = await repository.get_model_configuration(ISSUER, OWNER)
+    assert current.version == 1
+
+
+@pytest.mark.asyncio
 async def test_memory_inventory_excludes_unverified_provider_models(
     product_app: FastAPI,
 ) -> None:
     class InventoryProvider(_ProductModel):
-        async def list_models(self) -> Sequence[ModelDescriptor]:
+        async def list_models(
+            self, *, context: ProviderTraceContext | None = None
+        ) -> Sequence[ModelDescriptor]:
+            del context
             return (
                 ModelDescriptor(
                     "good-chat",
@@ -626,6 +745,7 @@ async def test_memory_inventory_excludes_unverified_provider_models(
         assert {item["id"] for item in response.json()["models"]} == {
             "good-chat",
             "good-embed",
+            "missing-embed-dimension",
         }
         assert all(item["available"] for item in response.json()["models"])
     finally:
@@ -656,7 +776,7 @@ async def test_reindex_resume_keeps_pending_receipt_until_dispatch_settles() -> 
                 raise RuntimeError("injected dispatch failure")
 
     worker = Worker()
-    service = MemoryModelApplicationService(store, object(), worker)
+    service = MemoryModelApplicationService(store, _ProductModel(), worker)
     with pytest.raises(RuntimeError, match="injected dispatch failure"):
         await service.resume(ISSUER, OWNER, generation.id, "resume-key")
     await service.resume(ISSUER, OWNER, generation.id, "resume-key")

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any, cast
 
@@ -27,14 +28,29 @@ def _traceback_locals(exception: BaseException) -> str:
 
 @pytest.mark.asyncio
 async def test_ollama_discovery_and_streaming() -> None:
+    inventory_paths: list[str] = []
+
     async def handler(request: httpx.Request) -> httpx.Response:
+        inventory_paths.append(request.url.path)
         if request.url.path == "/api/tags":
             return httpx.Response(
                 200,
                 json={
                     "models": [
-                        {"name": "chat", "digest": "a" * 64, "modified_at": "chat-rev"},
-                        {"name": "embed", "digest": "b" * 64, "modified_at": "embed-rev"},
+                        {
+                            "name": "chat",
+                            "digest": "a" * 64,
+                            "modified_at": "chat-rev",
+                            "capabilities": ["chat"],
+                            "details": {},
+                        },
+                        {
+                            "name": "embed",
+                            "digest": "b" * 64,
+                            "modified_at": "embed-rev",
+                            "capabilities": ["embedding"],
+                            "details": {"embedding_length": 3},
+                        },
                     ]
                 },
             )
@@ -65,11 +81,274 @@ async def test_ollama_discovery_and_streaming() -> None:
         models = await adapter.list_models()
         assert models[0].selectable is True
         assert models[1].selectable is True
-        assert "structured_output" in models[0].capabilities
+        assert "structured_output" not in models[0].capabilities
         assert models[0].model_digest == "a" * 64
         assert models[1].dimension == 3
+        assert inventory_paths == ["/api/tags"]
+        verified = await adapter.verify_model("chat", "structured_output")
+        assert verified is not None
+        assert "structured_output" in verified.capabilities
         chunks = [chunk async for chunk in adapter.stream_chat("chat", [])]
         assert chunks == ["Hi"]
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_inventory_cache_and_legacy_show_failure_isolated() -> None:
+    tags_calls = 0
+    show_calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal tags_calls
+        if request.url.path == "/api/tags":
+            tags_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "chat", "digest": "a" * 64, "modified_at": "chat-rev"},
+                        {"name": "broken", "digest": "b" * 64, "modified_at": "broken-rev"},
+                        {"name": "embed", "digest": "c" * 64, "modified_at": "embed-rev"},
+                    ]
+                },
+            )
+        assert request.url.path == "/api/show"
+        name = cast(str, json.loads(request.content)["name"])
+        show_calls.append(name)
+        if name == "broken":
+            return httpx.Response(503)
+        return httpx.Response(
+            200,
+            json={
+                "capabilities": ["chat"] if name == "chat" else ["embedding"],
+                "details": {"embedding_length": 3} if name == "embed" else {},
+            },
+        )
+
+    adapter = OllamaAdapter("https://ollama.test", inventory_cache_ttl_seconds=15)
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        first = await adapter.list_models()
+        second = await adapter.list_models()
+        assert first == second
+        assert tags_calls == 1
+        assert sorted(show_calls) == ["broken", "chat", "embed"]
+        assert next(item for item in first if item.id == "chat").selectable
+        broken = next(item for item in first if item.id == "broken")
+        assert broken.capabilities == ()
+        assert broken.selectable is False
+        assert next(item for item in first if item.id == "embed").dimension == 3
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_selected_verification_is_cached_by_digest_and_embedding_probe_is_non_empty(
+) -> None:
+    tags_calls = 0
+    structured_calls = 0
+    embedding_calls = 0
+    digest = "a" * 64
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal tags_calls, structured_calls, embedding_calls
+        if request.url.path == "/api/tags":
+            tags_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "chat",
+                            "digest": digest,
+                            "modified_at": "chat-rev",
+                            "capabilities": ["chat", "structured_output"],
+                            "details": {},
+                        },
+                        {
+                            "name": "embed",
+                            "digest": "b" * 64,
+                            "modified_at": "embed-rev",
+                            "capabilities": ["embedding"],
+                        },
+                    ]
+                },
+            )
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["embedding"], "details": {}})
+        if request.url.path == "/api/chat":
+            structured_calls += 1
+            return httpx.Response(200, json={"message": {"content": '{"ok":true}'}})
+        if request.url.path == "/api/embed":
+            embedding_calls += 1
+            body = cast(dict[str, object], json.loads(request.content))
+            assert body["input"] == "aura embedding dimension probe"
+            return httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
+        raise AssertionError(request.url.path)
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        assert (await adapter.verify_model("chat", "structured_output")) is not None
+        assert (await adapter.verify_model("chat", "structured_output")) is not None
+        verified_embedding = await adapter.verify_model("embed", "embedding")
+        assert verified_embedding is not None
+        assert verified_embedding.dimension == 3
+        assert structured_calls == 1
+        assert embedding_calls == 1
+        assert tags_calls == 1
+
+        digest = "c" * 64
+        await adapter.refresh_models()
+        assert (await adapter.verify_model("chat", "structured_output")) is not None
+        assert tags_calls == 2
+        assert structured_calls == 2
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_failed_verification_retries_for_same_digest() -> None:
+    calls = 0
+    failures = 1
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, failures
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "chat",
+                            "digest": "a" * 64,
+                            "modified_at": "chat-rev",
+                            "capabilities": ["chat", "structured_output"],
+                            "details": {},
+                        }
+                    ]
+                },
+            )
+        assert request.url.path == "/api/chat"
+        calls += 1
+        if failures:
+            failures -= 1
+            return httpx.Response(200, json={"message": {"content": "not-json"}})
+        return httpx.Response(200, json={"message": {"content": '{"ok":true}'}})
+
+    metrics = MetadataMetrics()
+    context = ProviderTraceContext(trace_id="c" * 32, span_id="d" * 16)
+    adapter = OllamaAdapter("https://ollama.test", telemetry=metrics)
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        assert await adapter.verify_model("chat", "structured_output", context=context) is None
+        assert await adapter.verify_model("chat", "structured_output", context=context) is not None
+        assert await adapter.verify_model("chat", "structured_output", context=context) is not None
+        assert calls == 2
+        verification_spans = [
+            item
+            for item in metrics.snapshot()
+            if item.kind == "span"
+            and dict(item.trace_attributes).get("operation") == "model.capability.verify"
+        ]
+        assert verification_spans
+        assert all(item.trace_id == context.trace_id for item in verification_spans)
+        assert all(item.parent_span_id == context.span_id for item in verification_spans)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_refresh_is_atomic_and_cache_expiry_is_observed() -> None:
+    calls = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/tags"
+        calls += 1
+        call_number = calls
+        if call_number == 1:
+            first_started.set()
+            await release_first.wait()
+        digest = "a" * 64 if call_number == 1 else "b" * 64
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "chat",
+                        "digest": digest,
+                        "modified_at": str(call_number),
+                        "capabilities": ["chat"],
+                        "details": {},
+                    }
+                ]
+            },
+        )
+
+    adapter = OllamaAdapter("https://ollama.test", inventory_cache_ttl_seconds=0.01)
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        listing = asyncio.create_task(adapter.list_models())
+        await first_started.wait()
+        refresh = asyncio.create_task(adapter.refresh_models())
+        await asyncio.sleep(0)
+        release_first.set()
+        first, fresh = await asyncio.gather(listing, refresh)
+        assert first[0].model_digest == "a" * 64
+        assert fresh[0].model_digest == "b" * 64
+        await asyncio.sleep(0.02)
+        expired = await adapter.list_models()
+        assert expired[0].model_digest == "b" * 64
+        assert calls == 3
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_legacy_show_fallback_has_bounded_concurrency() -> None:
+    active = 0
+    maximum = 0
+    names = [f"legacy-{index}" for index in range(8)]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, maximum
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": name, "digest": "a" * 64, "modified_at": name}
+                        for name in names
+                    ]
+                },
+            )
+        assert request.url.path == "/api/show"
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.005)
+        active -= 1
+        return httpx.Response(200, json={"capabilities": ["chat"], "details": {}})
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        models = await adapter.list_models()
+        assert len(models) == len(names)
+        assert 1 < maximum <= 4
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
 
@@ -139,6 +418,69 @@ async def test_ollama_inventory_failure_is_provider_safe() -> None:
         with pytest.raises(OllamaUnavailable, match="model inventory unavailable") as error:
             await adapter.list_models()
         assert "private-ollama" not in str(error.value)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_inventory_rejects_oversized_metadata_without_provider_details() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(200, content=b"{" + b"x" * (2 * 1024 * 1024) + b"}")
+
+    adapter = OllamaAdapter("https://private-ollama.invalid")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        with pytest.raises(OllamaUnavailable, match="model inventory unavailable") as error:
+            await adapter.list_models()
+        assert error.value.__cause__ is None
+        assert error.value.__context__ is None
+        assert "private-ollama" not in repr(error.value)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_inventory_telemetry_classifies_provider_timeout_and_validation() -> None:
+    failures = (
+        (httpx.Response(503), "provider"),
+        (httpx.Response(200, content=b"[]"), "validation"),
+    )
+    original = httpx.AsyncClient
+    try:
+        for response, error_class in failures:
+            async def handler(
+                request: httpx.Request, result: httpx.Response = response
+            ) -> httpx.Response:
+                assert request.url.path == "/api/tags"
+                return result
+
+            metrics = MetadataMetrics()
+            adapter = OllamaAdapter("https://ollama.test", telemetry=metrics)
+            transport = httpx.MockTransport(handler)
+            httpx.AsyncClient = lambda *args, _transport=transport, **kwargs: original(  # type: ignore[method-assign]
+                *args, transport=_transport, **kwargs
+            )
+            with pytest.raises(OllamaUnavailable):
+                await adapter.list_models()
+            spans = [item for item in metrics.snapshot() if item.kind == "span"]
+            assert spans
+            assert dict(spans[-1].dimensions)["error_class"] == error_class
+
+        async def timeout_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("provider timeout", request=request)
+
+        metrics = MetadataMetrics()
+        adapter = OllamaAdapter("https://ollama.test", telemetry=metrics)
+        transport = httpx.MockTransport(timeout_handler)
+        httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+        with pytest.raises(OllamaUnavailable):
+            await adapter.list_models()
+        spans = [item for item in metrics.snapshot() if item.kind == "span"]
+        assert spans
+        assert dict(spans[-1].dimensions)["error_class"] == "timeout"
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
 

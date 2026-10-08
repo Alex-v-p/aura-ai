@@ -4,10 +4,12 @@
 # ruff: noqa: E501
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnknownMemberType=false
 
+import asyncio
 import json
 import math
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import replace
 from time import monotonic
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -35,10 +37,25 @@ STRUCTURED_SCHEMA_MAX_BYTES = 64 * 1024
 STRUCTURED_OUTPUT_MAX_BYTES = 1024 * 1024
 STRUCTURED_MAX_DEPTH = 16
 STRUCTURED_PROBE_MAX_BYTES = 16 * 1024
+INVENTORY_CACHE_SECONDS = 5.0
+LEGACY_SHOW_CONCURRENCY = 4
+MAX_INVENTORY_MODELS = 256
+MAX_MODEL_CAPABILITIES = 32
+INVENTORY_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
+EMBEDDING_RESPONSE_MAX_BYTES = 512 * 1024
+MAX_EMBEDDING_DIMENSION = 16_384
+EMBEDDING_DIMENSION_PROBE_INPUT = "aura embedding dimension probe"
 
 
 class OllamaUnavailable(RuntimeError):
     """Raised when the configured provider cannot be reached."""
+
+
+class _InventoryFailure(Exception):
+    """Sanitized internal inventory status; provider exceptions never escape."""
+
+    def __init__(self, error_class: str) -> None:
+        self.error_class = error_class
 
 
 class OllamaAdapter:
@@ -47,84 +64,408 @@ class OllamaAdapter:
         endpoint: str,
         timeout_seconds: float = 30.0,
         telemetry: ProviderTelemetryPort | None = None,
+        *,
+        inventory_timeout_seconds: float | None = None,
+        verification_timeout_seconds: float | None = None,
+        inventory_cache_ttl_seconds: float = INVENTORY_CACHE_SECONDS,
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
+        self._inventory_timeout = httpx.Timeout(
+            inventory_timeout_seconds if inventory_timeout_seconds is not None else min(timeout_seconds, 10.0)
+        )
+        self._verification_timeout = httpx.Timeout(
+            verification_timeout_seconds
+            if verification_timeout_seconds is not None
+            else min(timeout_seconds, 60.0)
+        )
+        self._inventory_cache_ttl = max(0.0, inventory_cache_ttl_seconds)
         self._telemetry = telemetry
+        self._inventory_cache: tuple[float, tuple[ModelDescriptor, ...]] | None = None
+        self._inventory_lock = asyncio.Lock()
+        self._verification_cache: dict[tuple[str, str, str], ModelDescriptor | None] = {}
 
-    async def list_models(self) -> Sequence[ModelDescriptor]:
+    async def list_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]:
+        async with self._inventory_lock:
+            return await self._load_inventory_locked(force=False, context=context)
+
+    async def refresh_models(
+        self, *, context: ProviderTraceContext | None = None
+    ) -> Sequence[ModelDescriptor]:
+        """Read fresh metadata for an explicit owner model-selection action."""
+
+        async with self._inventory_lock:
+            return await self._load_inventory_locked(force=True, context=context)
+
+    async def _load_inventory_locked(
+        self, *, force: bool, context: ProviderTraceContext | None
+    ) -> tuple[ModelDescriptor, ...]:
+        cached = self._inventory_cache
+        if not force and cached is not None and monotonic() - cached[0] < self._inventory_cache_ttl:
+            self._record_inventory_cache("hit", context=context)
+            return cached[1]
+        self._record_inventory_cache("miss", context=context)
+        started = monotonic()
+        failure: _InventoryFailure | None = None
+        descriptors: tuple[ModelDescriptor, ...] | None = None
         try:
-            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
-                response = await client.get("/api/tags")
-                response.raise_for_status()
-            payload = cast(dict[str, Any], response.json())
-        except (httpx.HTTPError, ValueError) as exc:
-            raise OllamaUnavailable("model inventory unavailable") from exc
-        descriptors: list[ModelDescriptor] = []
-        raw_models: Any = payload["models"] if "models" in payload else []
-        for item in cast(list[Any], raw_models):
+            descriptors = await self._read_inventory()
+        except _InventoryFailure as caught:
+            failure = caught
+        if failure is not None:
+            self._record_inventory_telemetry(
+                started,
+                "error",
+                error_class=failure.error_class,
+                context=context,
+            )
+            raise OllamaUnavailable("model inventory unavailable")
+        assert descriptors is not None
+        self._inventory_cache = (monotonic(), descriptors)
+        self._record_inventory_telemetry(started, "ok", context=context)
+        return descriptors
+
+    async def _read_inventory(self) -> tuple[ModelDescriptor, ...]:
+        payload_value: object | None = None
+        failure_class: str | None = None
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._endpoint, timeout=self._inventory_timeout
+            ) as client:
+                payload_value = await self._bounded_json_request(client, "GET", "/api/tags")
+        except httpx.TimeoutException:
+            failure_class = "timeout"
+        except httpx.HTTPError:
+            failure_class = "provider"
+        except (ValueError, TypeError):
+            failure_class = "validation"
+        if failure_class is not None:
+            raise _InventoryFailure(failure_class)
+        if not isinstance(payload_value, dict):
+            raise _InventoryFailure("validation")
+        payload = cast(dict[str, Any], payload_value)
+        raw_models: Any = payload.get("models", [])
+        if not isinstance(raw_models, list):
+            raise _InventoryFailure("validation")
+        if len(raw_models) > MAX_INVENTORY_MODELS:
+            raw_models = raw_models[:MAX_INVENTORY_MODELS]
+        parsed: list[dict[str, Any]] = []
+        fallback_names: list[str] = []
+        for item in raw_models:
             if not isinstance(item, dict):
                 continue
             item_map = cast(dict[str, Any], item)
-            model_name: Any = item_map["name"] if "name" in item_map else None
-            if (
-                not isinstance(model_name, str)
-                or not 1 <= len(model_name) <= 255
-                or any(ord(char) < 32 or ord(char) == 127 for char in model_name)
-            ):
+            model_name = item_map.get("name")
+            if not _valid_model_name(model_name):
                 continue
-            model_id = model_name
-            capabilities = await self._capabilities(model_id)
-            chat_capable = "chat" in capabilities or "completion" in capabilities
-            if chat_capable or "structured_output" in capabilities:
-                if await self._supports_structured_output(model_id):
-                    capabilities.add("structured_output")
-                else:
-                    capabilities.discard("structured_output")
-            digest = item_map.get("digest")
-            candidate_digest = digest.strip().removeprefix("sha256:").lower() if isinstance(digest, str) else None
-            model_digest = (
-                candidate_digest
-                if candidate_digest is not None and re.fullmatch(r"[0-9a-f]{64}", candidate_digest)
+            parsed.append(item_map)
+            capabilities = _parse_capabilities(item_map.get("capabilities"))
+            details = item_map.get("details")
+            dimension = (
+                _parse_dimension(details.get("embedding_length"))
+                if isinstance(details, dict)
                 else None
             )
-            revision = item_map.get("modified_at")
-            model_revision = (
-                revision
-                if isinstance(revision, str)
-                and 1 <= len(revision) <= 255
-                and not any(ord(char) < 32 or ord(char) == 127 for char in revision)
-                else None
-            )
-            dimension = await self._embedding_dimension(model_id) if "embedding" in capabilities else None
-            identity_available = model_digest is not None and model_revision is not None
-            dimension_available = "embedding" not in capabilities or dimension is not None
-            selectable = (
-                (chat_capable or "embedding" in capabilities)
-                and identity_available
-                and dimension_available
-            )
-            descriptors.append(
-                ModelDescriptor(
-                    id=model_id,
-                    display_name=model_id,
-                    provider="ollama",
-                    capabilities=tuple(sorted(capabilities)),
-                    availability="available",
-                    selectable=selectable,
-                    disabled_reason=(
-                        None
-                        if selectable
-                        else "provider identity or embedding dimension unavailable"
-                    ),
-                    model_revision=model_revision,
-                    model_digest=model_digest,
-                    dimension=dimension,
-                )
-            )
-        return descriptors
+            if (
+                not capabilities
+                or "embedding" in capabilities and dimension is None
+            ):
+                fallback_names.append(cast(str, model_name))
 
-    async def _supports_structured_output(self, model_id: str) -> bool:
+        # Older Ollama versions omit capabilities and embedding dimensions from
+        # /api/tags.  Fetch only the incomplete rows, concurrently and with a
+        # short metadata timeout. One unavailable row never poisons the list.
+        fallback = await self._legacy_show_metadata(fallback_names)
+        descriptors: list[ModelDescriptor] = []
+        for item_map in parsed:
+            model_name = cast(str, item_map["name"])
+            show = fallback.get(model_name, {})
+            capabilities = _parse_capabilities(item_map.get("capabilities"))
+            if not capabilities:
+                capabilities = _parse_capabilities(show.get("capabilities"))
+            details_value = item_map.get("details")
+            if isinstance(details_value, dict):
+                details = details_value
+                show_details = show.get("details")
+                if (
+                    _parse_dimension(details.get("embedding_length")) is None
+                    and isinstance(show_details, dict)
+                ):
+                    details = {**show_details, **details}
+            else:
+                show_details = show.get("details")
+                details = show_details if isinstance(show_details, dict) else {}
+            dimension = _parse_dimension(details.get("embedding_length"))
+            metadata = dict(item_map)
+            for identity_key in ("digest", "modified_at"):
+                if identity_key not in metadata and identity_key in show:
+                    metadata[identity_key] = show[identity_key]
+            descriptor = self._descriptor(model_name, metadata, capabilities, dimension)
+            descriptors.append(descriptor)
+        return tuple(descriptors)
+
+    async def _legacy_show_metadata(self, model_names: Sequence[str]) -> dict[str, dict[str, Any]]:
+        if not model_names:
+            return {}
+        semaphore = asyncio.Semaphore(LEGACY_SHOW_CONCURRENCY)
+
+        async def fetch(model_id: str) -> tuple[str, dict[str, Any] | None]:
+            async with semaphore:
+                try:
+                    async with httpx.AsyncClient(
+                        base_url=self._endpoint, timeout=self._inventory_timeout
+                    ) as client:
+                        payload = await self._bounded_json_request(
+                            client, "POST", "/api/show", {"name": model_id}
+                        )
+                    if not isinstance(payload, dict):
+                        return model_id, None
+                    return model_id, cast(dict[str, Any], payload)
+                except (httpx.HTTPError, ValueError, TypeError):
+                    return model_id, None
+
+        results = await asyncio.gather(*(fetch(model_id) for model_id in model_names))
+        return {
+            model_id: payload
+            for model_id, payload in results
+            if payload is not None
+        }
+
+    @staticmethod
+    async def _bounded_json_request(
+        client: httpx.AsyncClient,
+        method: str,
+        path: str,
+        json_body: Mapping[str, object] | None = None,
+    ) -> object:
+        raw = bytearray()
+        async with client.stream(method, path, json=json_body) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes(chunk_size=16 * 1024):
+                if len(raw) + len(chunk) > INVENTORY_RESPONSE_MAX_BYTES:
+                    raise ValueError("provider metadata response exceeded limit")
+                raw.extend(chunk)
+        return json.loads(bytes(raw))
+
+    @staticmethod
+    def _descriptor(
+        model_name: str,
+        item_map: Mapping[str, Any],
+        capabilities: set[str],
+        dimension: int | None,
+    ) -> ModelDescriptor:
+        digest = item_map.get("digest")
+        candidate_digest = digest.strip().removeprefix("sha256:").lower() if isinstance(digest, str) else None
+        model_digest = (
+            candidate_digest
+            if candidate_digest is not None and re.fullmatch(r"[0-9a-f]{64}", candidate_digest)
+            else None
+        )
+        revision = item_map.get("modified_at")
+        model_revision = (
+            revision
+            if isinstance(revision, str)
+            and 1 <= len(revision) <= 255
+            and not any(ord(char) < 32 or ord(char) == 127 for char in revision)
+            else None
+        )
+        chat_capable = "chat" in capabilities or "completion" in capabilities
+        identity_available = model_digest is not None and model_revision is not None
+        dimension_available = "embedding" not in capabilities or dimension is not None
+        selectable = (
+            (chat_capable or "embedding" in capabilities)
+            and identity_available
+            and dimension_available
+        )
+        return ModelDescriptor(
+            id=model_name,
+            display_name=model_name,
+            provider="ollama",
+            capabilities=tuple(sorted(capabilities)),
+            availability="available",
+            selectable=selectable,
+            disabled_reason=(
+                None if selectable else "provider identity or embedding dimension unavailable"
+            ),
+            model_revision=model_revision,
+            model_digest=model_digest,
+            dimension=dimension,
+        )
+
+    async def verify_model(
+        self,
+        model_id: str,
+        capability: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> ModelDescriptor | None:
+        """Verify one selected memory model after metadata-based discovery."""
+
+        started = monotonic()
+        # The memory application service performs one explicit fresh scan at
+        # the save boundary. Reuse that short-lived snapshot for both selected
+        # capability checks so saving two models does not rescan Ollama.
+        try:
+            models = await self.list_models(context=context)
+        except OllamaUnavailable:
+            self._record_verification_telemetry(
+                started, "error", error_class="provider", context=context
+            )
+            return None
+        selected = next((item for item in models if item.id == model_id), None)
+        if selected is None or selected.model_digest is None or selected.model_revision is None:
+            self._record_verification_telemetry(
+                started, "error", error_class="validation", context=context
+            )
+            return None
+        key = (model_id, selected.model_digest, capability)
+        cached = self._verification_cache.get(key)
+        if cached is not None:
+            self._record_verification_telemetry(
+                started, "ok", context=context, cache_hit=True
+            )
+            return cached
+        verified: ModelDescriptor | None = None
+        verification_error_class = "provider"
+        if capability == "structured_output":
+            supported, verification_error_class = await self._supports_structured_output(model_id)
+            if supported:
+                verified = replace(
+                    selected,
+                    capabilities=tuple(sorted(set(selected.capabilities) | {"structured_output"})),
+                )
+        elif capability == "embedding" and "embedding" in selected.capabilities:
+            dimension = selected.dimension
+            if dimension is None:
+                dimension, verification_error_class = await self._embedding_dimension(model_id)
+            if dimension is not None:
+                verified = replace(selected, dimension=dimension, selectable=True)
+        if verified is not None:
+            self._verification_cache[key] = verified
+            self._record_verification_telemetry(started, "ok", context=context)
+        else:
+            self._record_verification_telemetry(
+                started, "error", error_class=verification_error_class, context=context
+            )
+        return verified
+
+    def _record_inventory_cache(
+        self, outcome: str, *, context: ProviderTraceContext | None = None
+    ) -> None:
+        if self._telemetry is None:
+            return
+        try:
+            trace_id = (
+                cast(str, context.trace_id)
+                if context is not None and _valid_trace_id(context.trace_id)
+                else None
+            )
+            self._telemetry.increment(
+                "aura.runtime.structured_inference",
+                "model_inventory_cache_outcome",
+                trace_id=trace_id,
+                outcome=outcome,
+                provider="ollama",
+            )
+        except Exception:
+            return
+
+    def _record_inventory_telemetry(
+        self,
+        started: float,
+        outcome: str,
+        *,
+        error_class: str | None = None,
+        context: ProviderTraceContext | None = None,
+    ) -> None:
+        if self._telemetry is None:
+            return
+        try:
+            trace_id = uuid4().hex
+            parent_span_id = None
+            attrs: dict[str, str] = {}
+            if context is not None:
+                if _valid_trace_id(context.trace_id):
+                    trace_id = cast(str, context.trace_id)
+                if _valid_span_id(context.span_id):
+                    parent_span_id = cast(str, context.span_id)
+                attrs = _trace_attributes(context)
+            self._telemetry.increment(
+                "aura.runtime.structured_inference",
+                "model_inventory_outcome",
+                trace_id=trace_id,
+                outcome=outcome,
+                provider="ollama",
+            )
+            self._telemetry.record_span(
+                "aura.runtime.structured_inference",
+                "model.inventory",
+                max(0.0, (monotonic() - started) * 1000.0),
+                trace_id=trace_id,
+                span_id=uuid4().hex[:16],
+                parent_span_id=parent_span_id,
+                dependency="model_provider",
+                outcome=outcome,
+                error_class=error_class,
+                provider="ollama",
+                **attrs,
+            )
+        except Exception:
+            return
+
+    def _record_verification_telemetry(
+        self,
+        started: float,
+        outcome: str,
+        *,
+        error_class: str | None = None,
+        context: ProviderTraceContext | None = None,
+        cache_hit: bool = False,
+    ) -> None:
+        if self._telemetry is None:
+            return
+        try:
+            trace_id = uuid4().hex
+            if context is not None and _valid_trace_id(context.trace_id):
+                trace_id = cast(str, context.trace_id)
+            attrs = _trace_attributes(context)
+            self._telemetry.increment(
+                "aura.runtime.structured_inference",
+                "model_capability_verification_outcome",
+                trace_id=trace_id,
+                outcome=outcome,
+                provider="ollama",
+            )
+            self._telemetry.increment(
+                "aura.runtime.structured_inference",
+                "model_capability_verification_cache_outcome",
+                trace_id=trace_id,
+                outcome="hit" if cache_hit else "miss",
+                provider="ollama",
+            )
+            self._telemetry.record_span(
+                "aura.runtime.structured_inference",
+                "model.capability.verify",
+                max(0.0, (monotonic() - started) * 1000.0),
+                trace_id=trace_id,
+                span_id=uuid4().hex[:16],
+                parent_span_id=(
+                    context.span_id
+                    if context is not None and _valid_span_id(context.span_id)
+                    else None
+                ),
+                dependency="model_provider",
+                outcome=outcome,
+                error_class=error_class,
+                provider="ollama",
+                **attrs,
+            )
+        except Exception:
+            return
+
+    async def _supports_structured_output(self, model_id: str) -> tuple[bool, str]:
         """Verify JSON-schema output with a bounded, content-free probe."""
 
         schema = {
@@ -134,67 +475,82 @@ class OllamaAdapter:
             "additionalProperties": False,
         }
         try:
-            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
-                response = await client.post(
-                    "/api/chat",
-                    json={
-                        "model": model_id,
-                        "messages": [{"role": "user", "content": '{"ok":true}'}],
-                        "format": schema,
-                        "stream": False,
-                        "options": {"temperature": 0, "num_predict": 8},
-                    },
-                )
-                response.raise_for_status()
-                if len(response.content) > STRUCTURED_PROBE_MAX_BYTES:
-                    return False
-                payload = cast(dict[str, Any], response.json())
-        except (httpx.HTTPError, ValueError, TypeError):
-            return False
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._verification_timeout) as client:
+                body = {
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": '{"ok":true}'}],
+                    "format": schema,
+                    "stream": False,
+                    "options": {"temperature": 0, "num_predict": 8},
+                }
+                async with client.stream(
+                    "POST", "/api/chat", json=body
+                ) as response:
+                    response.raise_for_status()
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
+                        if len(raw) + len(chunk) > STRUCTURED_PROBE_MAX_BYTES:
+                            return False, "validation"
+                        raw.extend(chunk)
+                payload_value = json.loads(bytes(raw))
+                if not isinstance(payload_value, dict):
+                    return False, "validation"
+                payload = cast(dict[str, Any], payload_value)
+        except httpx.TimeoutException:
+            return False, "timeout"
+        except httpx.HTTPError:
+            return False, "provider"
+        except (ValueError, TypeError):
+            return False, "validation"
         message = payload.get("message")
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
-            return False
+            return False, "validation"
         try:
             result = json.loads(message["content"])
         except (TypeError, json.JSONDecodeError):
-            return False
-        return isinstance(result, dict) and result.get("ok") is True
+            return False, "validation"
+        return (True, "ok") if isinstance(result, dict) and result.get("ok") is True else (False, "validation")
 
-    async def _capabilities(self, model_id: str) -> set[str]:
-        try:
-            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
-                response = await client.post("/api/show", json={"name": model_id})
-                response.raise_for_status()
-                payload = cast(dict[str, Any], response.json())
-        except (httpx.HTTPError, ValueError):
-            return set()
-        if "capabilities" not in payload:
-            return set()
-        capabilities = payload["capabilities"]
-        if isinstance(capabilities, list):
-            return {value for value in cast(list[Any], capabilities) if isinstance(value, str)}
-        return set()
-
-    async def _embedding_dimension(self, model_id: str) -> int | None:
+    async def _embedding_dimension(self, model_id: str) -> tuple[int | None, str]:
         """Bounded provider probe used only to verify embedding identity."""
 
         try:
-            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
-                response = await client.post(
-                    "/api/embed", json={"model": model_id, "input": ""}
-                )
-                response.raise_for_status()
-                payload = cast(dict[str, Any], response.json())
-        except (httpx.HTTPError, ValueError):
-            return None
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._verification_timeout) as client:
+                async with client.stream(
+                    "POST",
+                    "/api/embed",
+                    json={"model": model_id, "input": EMBEDDING_DIMENSION_PROBE_INPUT},
+                ) as response:
+                    response.raise_for_status()
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
+                        if len(raw) + len(chunk) > EMBEDDING_RESPONSE_MAX_BYTES:
+                            return None, "validation"
+                        raw.extend(chunk)
+                payload_value = json.loads(bytes(raw))
+                if not isinstance(payload_value, dict):
+                    return None, "validation"
+                payload = cast(dict[str, Any], payload_value)
+        except httpx.TimeoutException:
+            return None, "timeout"
+        except httpx.HTTPError:
+            return None, "provider"
+        except (ValueError, TypeError):
+            return None, "validation"
         vectors = payload.get("embeddings")
         if isinstance(vectors, list) and vectors and isinstance(vectors[0], list):
             vector = vectors[0]
         else:
             vector = payload.get("embedding")
-        if not isinstance(vector, list) or not 1 <= len(vector) <= 16_384:
-            return None
-        return len(vector) if all(isinstance(value, (int, float)) for value in vector) else None
+        if not isinstance(vector, list) or not 1 <= len(vector) <= MAX_EMBEDDING_DIMENSION:
+            return None, "validation"
+        valid = all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            for value in vector
+        )
+        return (len(vector), "ok") if valid else (None, "validation")
 
     async def stream_chat(
         self, model_id: str, messages: Sequence[ChatMessage]
@@ -593,3 +949,30 @@ def _safe_model_id(value: str) -> bool:
     return bool(value) and len(value) <= 255 and all(
         character.isalnum() or character in ".:_/-" for character in value
     )
+
+
+def _valid_model_name(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 255
+        and all(ord(char) >= 32 and ord(char) != 127 for char in value)
+        and _safe_model_id(value)
+    )
+
+
+def _parse_capabilities(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        item
+        for item in value[:MAX_MODEL_CAPABILITIES]
+        if isinstance(item, str)
+        and 1 <= len(item) <= 64
+        and all(char.isalnum() or char in "._-" for char in item)
+    }
+
+
+def _parse_dimension(value: object) -> int | None:
+    if type(value) is int and 1 <= value <= MAX_EMBEDDING_DIMENSION:
+        return value
+    return None

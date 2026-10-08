@@ -67,6 +67,31 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn(setting, worker)
         self.assertIn("AURA_CONTEXT_TOKEN_BUDGET=8192", environment)
 
+    def test_core_entrypoints_share_independent_ollama_inventory_timeouts_and_cache(self) -> None:
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        settings = {
+            "AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS": "5",
+            "AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS": "60",
+            "AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS": "15",
+        }
+
+        for name, default in settings.items():
+            setting = f"{name}: ${{{name}:-{default}}}"
+            self.assertIn(setting, api)
+            self.assertIn(setting, worker)
+            self.assertIn(f"{name}={default}", environment)
+
+        self.assertIn(
+            "AURA_OLLAMA_RUN_TIMEOUT_SECONDS: ${AURA_OLLAMA_RUN_TIMEOUT_SECONDS:-300}",
+            worker,
+        )
+        self.assertIn(
+            "AURA_OLLAMA_RUN_TIMEOUT_SECONDS: ${AURA_OLLAMA_RUN_TIMEOUT_SECONDS:-300}",
+            api,
+        )
+
     def test_browser_e2e_runner_uses_only_the_web_network(self) -> None:
         e2e = self.compose.split("  frontend-e2e:\n", 1)[1].split("\nsecrets:\n", 1)[0]
 

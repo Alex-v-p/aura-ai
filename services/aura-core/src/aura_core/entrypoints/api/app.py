@@ -60,6 +60,9 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
         component, duration_metric, outcome_metric, operation, dependency = boundary
         started = monotonic()
         trace_id = uuid4().hex
+        boundary_span_id = new_span_id()
+        request.state.memory_trace_id = trace_id
+        request.state.memory_span_id = boundary_span_id
         try:
             response = await call_next(request)
         except Exception:
@@ -71,6 +74,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
                 operation,
                 dependency,
                 trace_id,
+                boundary_span_id,
                 started,
                 "error",
                 "unknown",
@@ -99,6 +103,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
             operation,
             dependency,
             trace_id,
+            boundary_span_id,
             started,
             outcome,
             error_class,
@@ -185,6 +190,7 @@ def _record_memory_boundary(
     operation: str,
     dependency: str,
     trace_id: str,
+    span_id: str,
     started: float,
     outcome: str,
     error_class: str | None,
@@ -195,7 +201,7 @@ def _record_memory_boundary(
         operation,
         duration,
         trace_id=trace_id,
-        span_id=new_span_id(),
+        span_id=span_id,
         parent_span_id=None,
         dependency=dependency,
         outcome=outcome,

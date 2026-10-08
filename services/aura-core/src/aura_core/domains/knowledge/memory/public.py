@@ -27,7 +27,11 @@ from time import monotonic
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
-from aura_core.runtime.models.ports import ProviderTraceContext, StructuredInferenceRequest
+from aura_core.runtime.models.ports import (
+    ModelSelectionPort,
+    ProviderTraceContext,
+    StructuredInferenceRequest,
+)
 
 MIN_HALF_LIFE_DAYS = 0.25
 MAX_HALF_LIFE_DAYS = 3650.0
@@ -323,17 +327,15 @@ class MemoryModelConfigurationSnapshot:
 class MemoryModelApplicationService:
     """Application boundary for verified model selection and scoped reindexing."""
 
-    def __init__(self, repository: MemoryRepository, provider: object, worker: object | None) -> None:
+    def __init__(
+        self, repository: MemoryRepository, provider: ModelSelectionPort, worker: object | None
+    ) -> None:
         self.repository = repository
         self.provider = provider
         self.worker = worker
 
     async def inventory(self) -> tuple[MemoryModelDescriptor, ...]:
-        loader = getattr(self.provider, "list_models", None)
-        if not callable(loader):
-            raise MemoryValidationError("memory model inventory is unavailable")
-        raw_models = await cast(Callable[[], Awaitable[Sequence[object]]], loader)()
-        return tuple(self._normalize(item) for item in raw_models)
+        return tuple(self._project(item) for item in await self.provider.list_models())
 
     async def save_configuration(
         self,
@@ -344,10 +346,17 @@ class MemoryModelApplicationService:
         embedding_model_id: str,
         expected_version: int,
         idempotency_key: str,
+        trace: ProviderTraceContext | None = None,
     ) -> MemoryModelConfiguration:
-        models = await self.inventory()
-        extraction = self._require(models, extraction_model_id, "structured_output")
-        embedding = self._require(models, embedding_model_id, "embedding")
+        models = await self._fresh_inventory(trace=trace)
+        extraction = self._candidate(models, extraction_model_id, "structured_output")
+        if extraction is not None:
+            extraction = await self._verify_selected(extraction, "structured_output", trace=trace)
+        embedding = self._candidate(models, embedding_model_id, "embedding")
+        if embedding is not None and embedding.dimension is None:
+            embedding = await self._verify_selected(embedding, "embedding", trace=trace)
+        if extraction is None or embedding is None:
+            raise MemoryValidationError("selected memory model is unavailable")
         if extraction.model_digest is None or embedding.model_digest is None:
             raise MemoryValidationError("provider model identity is unavailable")
         if extraction.model_revision is None or embedding.model_revision is None:
@@ -371,6 +380,65 @@ class MemoryModelApplicationService:
             idempotency_key=idempotency_key,
             dimension=embedding.dimension,
             model_digest=embedding.model_digest,
+        )
+
+    async def _fresh_inventory(
+        self, *, trace: ProviderTraceContext | None = None
+    ) -> tuple[MemoryModelDescriptor, ...]:
+        return tuple(
+            self._project(item)
+            for item in await self.provider.refresh_models(context=trace)
+        )
+
+    async def _verify_selected(
+        self,
+        model: MemoryModelDescriptor,
+        capability: str,
+        *,
+        trace: ProviderTraceContext | None = None,
+    ) -> MemoryModelDescriptor | None:
+        try:
+            verified = await self.provider.verify_model(model.id, capability, context=trace)
+        except Exception:
+            return None
+        if verified is None:
+            return None
+        normalized = self._normalize(verified)
+        if (
+            capability not in normalized.capabilities
+            or normalized.id != model.id
+            or normalized.provider != model.provider
+            or normalized.model_digest != model.model_digest
+            or normalized.model_revision != model.model_revision
+        ):
+            return None
+        return normalized
+
+    @classmethod
+    def _project(cls, item: object) -> MemoryModelDescriptor:
+        normalized = cls._normalize(item)
+        capabilities = set(normalized.capabilities)
+        if {"chat", "completion"} & capabilities:
+            capabilities.add("structured_output")
+        if capabilities == set(normalized.capabilities):
+            return normalized
+        return replace(normalized, capabilities=tuple(sorted(capabilities)))
+
+    @staticmethod
+    def _candidate(
+        models: Sequence[MemoryModelDescriptor], model_id: str, capability: str
+    ) -> MemoryModelDescriptor | None:
+        return next(
+            (
+                item
+                for item in models
+                if item.id == model_id
+                and item.availability == "available"
+                and item.model_digest is not None
+                and item.model_revision is not None
+                and capability in item.capabilities
+            ),
+            None,
         )
 
     async def status(self, issuer: str, subject: str) -> MemoryReindexSnapshot:
@@ -506,6 +574,10 @@ class MemoryModelApplicationService:
         identifier_valid = 1 <= len(model_id) <= 255 and not any(
             ord(char) < 32 or ord(char) == 127 for char in model_id
         )
+        identity_available = identifier_valid and digest is not None and revision is not None
+        pending_embedding_verification = (
+            identity_available and "embedding" in capabilities and dimension is None
+        )
         missing = (
             not identifier_valid
             or digest is None
@@ -521,8 +593,15 @@ class MemoryModelApplicationService:
             digest,
             dimension,
             str(getattr(item, "availability", "available")),
-            bool(getattr(item, "selectable", True)) and not missing,
-            "provider identity or dimension unavailable" if missing else getattr(item, "disabled_reason", None),
+            (bool(getattr(item, "selectable", True)) and not missing)
+            or pending_embedding_verification,
+            (
+                "provider identity unavailable"
+                if not identity_available
+                else getattr(item, "disabled_reason", None)
+                if not missing
+                else None
+            ),
         )
 
     @staticmethod

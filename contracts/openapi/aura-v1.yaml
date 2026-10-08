@@ -595,8 +595,9 @@
       "get": {
         "operationId": "getMemoryModelInventory",
         "tags": ["Models", "Memories"],
+        "description": "Returns extraction and embedding candidates derived from bounded provider metadata. Inventory eligibility does not assert final structured-output compatibility or synthesize a missing embedding dimension; Core verifies those requirements for the selected models when memory configuration is saved.",
         "responses": {
-          "200": { "description": "Currently verified compatible Ollama model inventory without provider endpoints or credentials", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryModelInventory" } } } },
+          "200": { "description": "Provider-metadata eligible memory model candidates without provider endpoints or credentials", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryModelInventory" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
@@ -1112,6 +1113,7 @@
       "MemoryModelCapability": { "type": "string", "enum": ["structured_output", "embedding"] },
       "MemoryCompatibleModel": {
         "type": "object", "additionalProperties": false,
+        "description": "A provider-metadata eligible extraction or embedding candidate. Final compatibility is enforced when the owner saves a memory model configuration.",
         "required": ["id", "displayName", "provider", "modelRevision", "modelDigest", "capabilities", "dimension", "available", "disabledReason"],
         "properties": {
           "id": { "type": "string", "minLength": 1, "maxLength": 255 },
@@ -1119,14 +1121,15 @@
           "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
           "modelRevision": { "type": ["string", "null"], "maxLength": 255 },
           "modelDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/components/schemas/MemoryModelCapability" } },
-          "dimension": { "type": ["integer", "null"], "minimum": 1 },
-          "available": { "type": "boolean" },
+          "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/components/schemas/MemoryModelCapability" }, "description": "Eligible memory roles inferred from provider metadata. An extraction candidate is verified for structured output when selected configuration is saved." },
+          "dimension": { "type": ["integer", "null"], "minimum": 1, "description": "Provider-reported embedding dimension, or null when the selected embedding model requires save-time dimension verification." },
+          "available": { "type": "boolean", "description": "Whether provider metadata currently makes this model eligible for selection; final role compatibility is still verified on configuration save." },
           "disabledReason": { "type": ["string", "null"], "maxLength": 500 }
         }
       },
       "MemoryModelInventory": {
         "type": "object", "additionalProperties": false,
+        "description": "Provider-metadata candidates for memory extraction and embedding. Ordinary inventory reads do not execute model inference.",
         "required": ["models", "observedAt"],
         "properties": {
           "models": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryCompatibleModel" } },
@@ -1176,7 +1179,7 @@
           "embeddingModelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "expectedVersion": { "type": "integer", "minimum": 1 }
         },
-        "description": "Model identity is resolved from current verified inventory by Core; browser-supplied revisions or digests are not accepted."
+        "description": "Core resolves model identity from current provider metadata and verifies selected-model compatibility before persistence; browser-supplied revisions or digests are not accepted."
       },
       "MemoryReindexPhase": { "type": "string", "enum": ["idle", "queued", "running", "failed", "completed"] },
       "MemoryReindexStatus": {

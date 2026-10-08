@@ -83,6 +83,35 @@ def test_metadata_metrics_is_bounded_and_separates_dimensions_from_trace_fields(
     assert metrics.stats().rejected == 2
 
 
+def test_model_inventory_telemetry_is_registered_and_metadata_only() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    metrics.record_span(
+        "aura.runtime.structured_inference",
+        "model.inventory",
+        4.0,
+        trace_id=trace_id,
+        span_id=uuid4().hex[:16],
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+        provider="ollama",
+    )
+    metrics.increment(
+        "aura.runtime.structured_inference",
+        "model_inventory_cache_outcome",
+        outcome="hit",
+        provider="ollama",
+    )
+    measurements = metrics.snapshot()
+    assert {item.metric for item in measurements} == {
+        "model_inventory_duration_ms",
+        "model_inventory_cache_outcome",
+    }
+    assert all(item.trace_id in {None, trace_id} for item in measurements)
+    assert "model_provider" in repr(measurements)
+
+
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:
     metrics = MetadataMetrics()
     trace_id = uuid4().hex

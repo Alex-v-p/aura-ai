@@ -59,7 +59,7 @@ from aura_core.platform.telemetry import (
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.runtime.models.gateway import ModelGateway
-from aura_core.runtime.models.ports import ChatModelPort, ModelDescriptor
+from aura_core.runtime.models.ports import ChatModelPort, ModelDescriptor, ModelSelectionPort
 from aura_core.runtime.streaming.publisher import EventPublisher, PersistentEventPublisher
 
 
@@ -86,8 +86,23 @@ class AppState:
     ) -> None:
         self.settings = settings or Settings()
         self.testing = testing
+        self.metrics = MetadataMetrics(
+            exporter=None if testing else StructuredContainerLogExporter()
+        )
+        self.telemetry = TelemetryLifecycle(self.metrics)
         self.provider = provider or OllamaAdapter(
-            self.settings.ollama_url, self.settings.ollama_run_timeout_seconds
+            self.settings.ollama_url,
+            self.settings.ollama_run_timeout_seconds,
+            telemetry=self.metrics,
+            inventory_timeout_seconds=float(
+                getattr(self.settings, "ollama_inventory_timeout_seconds", 5.0)
+            ),
+            verification_timeout_seconds=float(
+                getattr(self.settings, "ollama_verification_timeout_seconds", 60.0)
+            ),
+            inventory_cache_ttl_seconds=float(
+                getattr(self.settings, "ollama_inventory_cache_ttl_seconds", 15.0)
+            ),
         )
         self.gateway = ModelGateway(self.provider)
         self.engine = None
@@ -103,10 +118,6 @@ class AppState:
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.startup_errors: dict[str, str] = {}
-        self.metrics = MetadataMetrics(
-            exporter=None if testing else StructuredContainerLogExporter()
-        )
-        self.telemetry = TelemetryLifecycle(self.metrics)
         self.persona_catalog = PersonaCatalog()
         self.personas = self.persona_catalog
         self.agents = AgentCatalog(self.persona_catalog)
@@ -248,7 +259,7 @@ class AppState:
                 "ollama": CallableProbe(self._model_ready, "provider unavailable"),
             }
         self.memory_model_service = memory_public.MemoryModelApplicationService(
-            self.memory_repository, self.provider, self.memory_worker
+            self.memory_repository, cast(ModelSelectionPort, self.provider), self.memory_worker
         )
         self.login = LoginService(
             LoginConfiguration(

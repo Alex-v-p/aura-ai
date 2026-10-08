@@ -1,0 +1,141 @@
+id: AURA-0042
+title: Make Ollama discovery metadata-only and lazily verify memory models
+status: integrated
+change_class: contract
+intent: >
+  Keep Ollama model discovery fast and reliable by avoiding inference during
+  inventory reads while preserving fail-closed, provider-verified memory model
+  configuration at the explicit owner save boundary.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - User-approved AURA-0042 implementation plan
+    - Live Ollama evidence showed metadata endpoints complete in milliseconds while cold inference probes exceed browser request tolerances
+    - Ordinary inventory must never call chat or embedding inference
+    - Explicit memory configuration save may run bounded content-free verification for only the selected models
+    - Verification results are cached only by provider model identifier and immutable digest
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references: [MOD-001, MOD-003, MOD-014, MOD-017, MEM-019]
+ownership_zones:
+  - aura-core.runtime.models
+  - aura-core.providers.models.ollama
+  - aura-core.knowledge.memory
+  - aura-core.entrypoints.api
+  - aura-core.platform.configuration
+  - aura-core.platform.telemetry
+  - deploy.compose
+allowed_paths:
+  - work-items/active/AURA-0042.yaml
+  - work-items/archived/AURA-0042.yaml
+  - .env.example
+  - compose.yaml
+  - deploy/compose/**
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/models.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/structured-inference.yaml
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - contracts/openapi/aura-v1.yaml
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - tooling/architecture/**
+  - docs/**
+  - contracts/events/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - frontend/libs/observatory/**
+  - frontend/libs/shared/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: true
+  affected: [contracts/openapi/aura-v1.yaml]
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: runtime.models
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.structured_inference
+  required_metrics:
+    - model_inventory_duration_ms
+    - model_inventory_outcome
+    - model_inventory_cache_outcome
+    - model_capability_verification_duration_ms
+    - model_capability_verification_outcome
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Provider endpoints credentials prompts responses vectors and owner identifiers never appear in errors logs metrics or traces
+    - Memory configuration fails closed unless current provider identity capability and embedding dimension are verified server-side
+    - Structured-output verification is content-free bounded and limited to the explicitly selected extraction model
+    - Embedding fallback verification uses fixed non-private input and never persists the returned vector
+    - Untrusted provider metadata is bounded and validated before crossing the adapter boundary
+  data_classes:
+    - local model identifiers revisions digests capabilities and embedding dimensions
+required_agents:
+  implementation: [contract_steward, core_worker, platform_worker, test_evaluation_engineer]
+  review: [general_reviewer, architecture_guardian, security_privacy_reviewer, observability_steward]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - General and memory inventory use validated provider metadata and never execute chat or embedding inference.
+  - Current Ollama tags metadata supplies identity capabilities and embedding dimension without per-model show calls.
+  - Incomplete legacy metadata uses bounded concurrent show lookups and isolates individual malformed timeout or unavailable models.
+  - A short shared inventory cache prevents duplicate general and memory scans and refreshes after expiry.
+  - Memory configuration resolves fresh metadata and verifies structured output only for the selected extraction model before persistence.
+  - Capability verification is bounded content-free cached by model identifier and immutable digest and reruns after a digest change.
+  - Embedding configuration uses provider metadata dimension and falls back to one non-empty fixed-input probe only when selected model metadata lacks a dimension.
+  - Missing malformed or failed identity capability dimension and verification data reject configuration without replacing the current configuration.
+  - Metadata and verification timeouts are independently configurable from inference runtime and propagated to API and worker containers where applicable.
+  - Metadata-only telemetry diagnoses inventory cache and selection verification without private or provider payload content.
+  - The running local Compose stack loads conversations and both inventories promptly against the configured restarted Ollama endpoint.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0042.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0042.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0042.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0042.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0042.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_ollama.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_contract_and_deployment.py -q
+  - python3 -m unittest deploy.compose.test_topology -v
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

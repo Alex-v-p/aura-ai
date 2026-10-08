@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.structured_inference
-  version: 1.0.0
+  version: 1.1.0
   owner: runtime.models
   category: inference
 input:
@@ -21,10 +21,22 @@ metrics:
   - duration_ms
   - backlog_depth
   - retry_count
+  - model_inventory_duration_ms
+  - model_inventory_outcome
+  - model_inventory_cache_outcome
+  - model_capability_verification_duration_ms
+  - model_capability_verification_outcome
+  - model_capability_verification_cache_outcome
   - backlog
 metric_semantics:
   structured_inference_duration_ms: Bounded non-streaming schema-constrained inference duration.
   provider_errors: Provider failures without provider payloads.
+  model_inventory_duration_ms: Metadata-only provider model inventory duration.
+  model_inventory_outcome: Metadata-only provider model inventory outcome.
+  model_inventory_cache_outcome: Shared inventory cache hit or miss.
+  model_capability_verification_duration_ms: Selected-model capability verification duration.
+  model_capability_verification_outcome: Selected-model capability verification outcome.
+  model_capability_verification_cache_outcome: Selected-model verification cache hit or miss.
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency, provider]

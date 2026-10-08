@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     )
     context_token_budget: int = Field(default=8192, gt=0)
     ollama_run_timeout_seconds: float = 300.0
+    # Inventory reads use provider metadata and should fail quickly without
+    # inheriting the much longer inference deadline. Selecting a memory model
+    # may perform a separate bounded provider verification, and a short cache
+    # prevents duplicate scans during one UI refresh.
+    ollama_inventory_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    ollama_verification_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    ollama_inventory_cache_ttl_seconds: float = Field(default=15.0, ge=0, le=300)
     database_url: str = ""
     database_host: str = "127.0.0.1"
     database_port: int = 5432

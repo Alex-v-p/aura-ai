@@ -40,7 +40,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.memory_persistence": "1.0.0",
     "aura.knowledge.memory_extraction": "1.0.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
-    "aura.runtime.structured_inference": "1.0.0",
+    "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.0.0",
 }
@@ -157,6 +157,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.runtime.structured_inference": frozenset({
         "structured_inference_duration_ms", "provider_errors", "errors", "duration_ms",
         "backlog_depth", "retry_count",
+        "model_inventory_duration_ms", "model_inventory_outcome",
+        "model_inventory_cache_outcome", "model_capability_verification_duration_ms",
+        "model_capability_verification_outcome",
+        "model_capability_verification_cache_outcome",
     }),
     "aura.runtime.embedding_gateway": frozenset({
         "embedding_duration_ms", "provider_errors", "errors", "retry_count", "backlog",
@@ -263,7 +267,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         "memory.maintenance", "memory.decay", "memory.archive", "memory.reindex.chunk",
         "memory.reindex.switch", "memory.embedding", "memory.retry", "memory.error",
     }),
-    "aura.runtime.structured_inference": frozenset({"structured.inference"}),
+    "aura.runtime.structured_inference": frozenset({
+        "structured.inference", "model.inventory", "model.capability.verify"
+    }),
     "aura.runtime.embedding_gateway": frozenset({"embedding.generate", "embedding.retry"}),
     "aura.knowledge.memory_retrieval": frozenset({
         "memory.retrieval",
@@ -320,6 +326,10 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "memory_rerank_duration_ms",
     ("aura.knowledge.memory_retrieval", "memory.query_embedding"):
         "memory_query_embedding_duration_ms",
+    ("aura.runtime.structured_inference", "model.inventory"):
+        "model_inventory_duration_ms",
+    ("aura.runtime.structured_inference", "model.capability.verify"):
+        "model_capability_verification_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -479,7 +489,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     "outcome": frozenset(
         {
             "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
-            "ok", "retryable", "review", "skipped", "used", "not_needed",
+            "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",
         }

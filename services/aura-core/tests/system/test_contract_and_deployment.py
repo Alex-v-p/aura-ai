@@ -6,9 +6,30 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+import pytest
+from aura_core.platform.auth import Settings
 from aura_core.platform.outbox.service import make_run_command
 
 ROOT = Path(__file__).parents[4]
+
+
+def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
+    settings = Settings()
+
+    assert settings.ollama_inventory_timeout_seconds == 5.0
+    assert settings.ollama_verification_timeout_seconds == 60.0
+    assert settings.ollama_inventory_cache_ttl_seconds == 15.0
+
+    for field, value in (
+        ("ollama_inventory_timeout_seconds", 0),
+        ("ollama_inventory_timeout_seconds", 61),
+        ("ollama_verification_timeout_seconds", 0),
+        ("ollama_verification_timeout_seconds", 301),
+        ("ollama_inventory_cache_ttl_seconds", -1),
+        ("ollama_inventory_cache_ttl_seconds", 301),
+    ):
+        with pytest.raises(ValueError):
+            Settings(**cast(Any, {field: value}))
 
 
 def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> None:

@@ -5,7 +5,7 @@
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,6 +20,8 @@ from aura_core.domains.knowledge.memory.public import (
 from aura_core.entrypoints.api.routes.conversations import state
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.platform.auth import Session
+from aura_core.platform.telemetry import new_span_id
+from aura_core.runtime.models.ports import ProviderTraceContext
 
 router = APIRouter(prefix="/api/v1/models", tags=["Models"])
 memory_router = APIRouter(tags=["Models", "Memories"])
@@ -144,13 +146,11 @@ async def get_memory_model_inventory(
         if model.availability != "available" or not model.selectable:
             continue
         capabilities = set(model.capabilities)
-        normalized: list[str] = []
-        # Compatibility capabilities are intentionally not promoted: memory
-        # extraction requires a provider-observed structured-output contract.
-        if "structured_output" in capabilities:
-            normalized.append("structured_output")
-        if "embedding" in capabilities:
-            normalized.append("embedding")
+        normalized = [
+            capability
+            for capability in ("structured_output", "embedding")
+            if capability in capabilities
+        ]
         if not normalized:
             continue
         items.append(
@@ -162,7 +162,7 @@ async def get_memory_model_inventory(
                 "modelDigest": model.model_digest,
                 "capabilities": normalized,
                 "dimension": model.dimension,
-                "available": model.availability == "available" and model.selectable,
+                "available": True,
                 "disabledReason": model.disabled_reason,
             }
         )
@@ -189,6 +189,10 @@ async def update_memory_model_configuration(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> dict[str, object]:
     try:
+        trace = ProviderTraceContext(
+            trace_id=getattr(request.state, "memory_trace_id", uuid4().hex),
+            span_id=getattr(request.state, "memory_span_id", new_span_id()),
+        )
         await _model_service(request).save_configuration(
             session.principal.issuer,
             session.principal.subject,
@@ -196,6 +200,7 @@ async def update_memory_model_configuration(
             extraction_model_id=body.extraction_model_id,
             embedding_model_id=body.embedding_model_id,
             idempotency_key=idempotency_key,
+            trace=trace,
         )
         return await _configuration_payload(
             request, session.principal.issuer, session.principal.subject
