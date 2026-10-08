@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 from asyncio import gather
 from collections.abc import AsyncIterator, Awaitable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -22,12 +23,16 @@ from aura_core.bootstrap.memory_uow import memory_repository
 from aura_core.domains.knowledge.memory import persistence as _memory_mappings
 from aura_core.domains.knowledge.memory.public import (
     PURGE_CONFIRMATION,
+    CandidateState,
+    MemoryAction,
+    MemoryCandidate,
     MemoryEmbeddingGeneration,
     MemoryFilters,
     MemoryIdempotencyConflict,
     MemoryKind,
     MemoryLifecycleStatus,
     MemoryNotFound,
+    MemoryProcessingJob,
     MemoryRecord,
     MemoryScope,
     MemoryScopeAuthorizationRequired,
@@ -35,6 +40,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryStore,
     MemoryValidationError,
     MemoryVersionConflict,
+    ProcessingJobStatus,
 )
 from aura_core.domains.knowledge.memory.repository import SqlMemoryRepository
 from aura_core.platform.database.base import Base
@@ -346,12 +352,6 @@ async def test_composed_repository_traces_bounded_operations_and_identifiers_sep
     )
     generation = cast(MemoryEmbeddingGeneration, generation_result)
     assert "memory_id" not in generation_attributes
-    activation_attributes, _ = await invoke(
-        "memory.embedding.activate",
-        store.activate_embedding_generation(ISSUER, OWNER, generation.id),
-    )
-    assert "memory_id" not in activation_attributes
-    assert activation_attributes["generation_id"] == str(generation.id)
     embedding_attributes, _ = await invoke(
         "memory.embedding.attach",
         store.attach_embedding(
@@ -366,6 +366,24 @@ async def test_composed_repository_traces_bounded_operations_and_identifiers_sep
     )
     assert embedding_attributes["memory_id"] == str(memory.id)
     assert embedding_attributes["memory_revision_id"] == str(historical_revision_id)
+    _, _ = await invoke(
+        "memory.embedding.attach",
+        store.attach_embedding(
+            ISSUER,
+            OWNER,
+            memory.id,
+            generation_id=generation.id,
+            revision_id=revised.current_revision_id,
+            vector=(0.1, 0.2, 0.3),
+            digest="c" * 64,
+        ),
+    )
+    activation_attributes, _ = await invoke(
+        "memory.embedding.activate",
+        store.activate_embedding_generation(ISSUER, OWNER, generation.id),
+    )
+    assert "memory_id" not in activation_attributes
+    assert activation_attributes["generation_id"] == str(generation.id)
     purge_attributes, _ = await invoke(
         "memory.purge",
         store.purge(
@@ -808,4 +826,248 @@ async def test_sql_purge_replays_scrubbed_receipt_and_removes_old_commands(
                 ),
                 {"id": memory.id},
             )
-        ).scalar_one() == 0
+            ).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_postgres_terminal_processing_rows_are_content_free_and_owner_scoped(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    """Terminal worker metadata must survive without retaining turn content."""
+
+    store, engine = sql_memory_store
+    jobs = [
+        MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4()),
+        MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4()),
+        MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4()),
+    ]
+    for job in jobs:
+        await store.enqueue_processing_job(job)
+        loaded = await store.get_processing_job(job.id, ISSUER, OWNER)
+        assert loaded.id == job.id
+        with pytest.raises(MemoryNotFound):
+            await store.get_processing_job(job.id, ISSUER, OTHER_OWNER)
+        claimed = await store.claim_processing_job_by_id(job.id, ISSUER, OWNER)
+        assert claimed is not None
+        with pytest.raises(MemoryValidationError):
+            await store.settle_processing_job(
+                job.id, uuid4(), issuer=ISSUER, subject=OWNER
+            )
+        with pytest.raises(TypeError):
+            await store.settle_processing_job(job.id, claimed.lease_id)  # type: ignore[arg-type]
+        with pytest.raises(MemoryValidationError):
+            await store.settle_processing_job(
+                job.id,
+                claimed.lease_id,  # type: ignore[arg-type]
+                issuer=ISSUER,
+                subject=OTHER_OWNER,
+            )
+        await store.settle_processing_job(
+            job.id,
+            claimed.lease_id,  # type: ignore[arg-type]
+            issuer=ISSUER,
+            subject=OWNER,
+            retryable=True,
+            error_class="unconfigured" if job is jobs[0] else "provider",
+        )
+    for action, state, reason in (
+        (MemoryAction.IGNORE, CandidateState.REJECTED, "ignored"),
+        (MemoryAction.CREATE, CandidateState.REJECTED, "low_confidence"),
+        (MemoryAction.REVIEW, CandidateState.RETRYABLE, "malformed"),
+        (MemoryAction.CREATE, CandidateState.REJECTED, "credential"),
+    ):
+        await store.persist_candidate(
+            MemoryCandidate(
+                uuid4(), jobs[0].id, ISSUER, OWNER, action, None, None, None,
+                0.1, state=state, decision_reason=reason,
+            )
+        )
+    async with engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text(
+                    "SELECT content, decision_reason, state FROM memory_candidates "
+                    "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+                ),
+                {"issuer": ISSUER, "subject": OWNER},
+            )
+        ).all()
+    assert len(rows) == 4
+    assert all(row.content is None for row in rows)
+    assert {row.decision_reason for row in rows} == {
+        "ignored", "low_confidence", "malformed", "credential"
+    }
+    assert await store.claim_processing_job_by_id(jobs[0].id, ISSUER, OTHER_OWNER) is None
+    assert await store.get_candidate_for_job(jobs[0].id, ISSUER, OTHER_OWNER) is None
+
+
+@pytest.mark.asyncio
+async def test_postgres_generation_owner_numbering_first_generation_completeness_and_fences(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _ = sql_memory_store
+    memory = await _create(store, content="A retained fact.")
+    owner_generation = await store.register_embedding_generation(
+        ISSUER, OWNER, generation=1, model_id="embed-owner", dimension=2, model_digest="a" * 64
+    )
+    foreign_generation = await store.register_embedding_generation(
+        ISSUER,
+        OTHER_OWNER,
+        generation=1,
+        model_id="embed-other",
+        dimension=2,
+        model_digest="b" * 64,
+    )
+    assert owner_generation.generation == foreign_generation.generation == 1
+    with pytest.raises(MemoryNotFound):
+        await store.get_embedding_generation(ISSUER, OTHER_OWNER, owner_generation.id)
+    with pytest.raises(MemoryValidationError):
+        await store.activate_embedding_generation(ISSUER, OWNER, owner_generation.id)
+    with pytest.raises(MemoryNotFound):
+        await store.activate_embedding_generation(ISSUER, OTHER_OWNER, owner_generation.id)
+    await store.attach_embedding(
+        ISSUER, OWNER, memory.id, revision_id=memory.current_revision_id,
+        generation_id=owner_generation.id, vector=(0.1, 0.2), digest="c" * 64,
+    )
+    await store.activate_embedding_generation(ISSUER, OWNER, owner_generation.id)
+    with pytest.raises(MemoryNotFound):
+        await store.attach_embedding(
+            ISSUER, OTHER_OWNER, memory.id, revision_id=memory.current_revision_id,
+            generation_id=owner_generation.id, vector=(0.1, 0.2), digest="d" * 64,
+        )
+
+
+@pytest.mark.asyncio
+async def test_postgres_embedding_queue_is_idempotent_and_retry_rows_remain_owner_scoped(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _ = sql_memory_store
+    memory = await _create(store, content="A queueable fact.")
+    generation = await store.register_embedding_generation(
+        ISSUER, OWNER, generation=1, model_id="embedder", dimension=2, model_digest="e" * 64
+    )
+    await store.attach_embedding(
+        ISSUER, OWNER, memory.id, revision_id=memory.current_revision_id,
+        generation_id=generation.id, vector=(0.1, 0.2), digest="f" * 64,
+    )
+    await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
+    first = await store.queue_embedding_job(
+        ISSUER, OWNER, memory_id=memory.id, revision_id=memory.current_revision_id,
+        generation_id=generation.id,
+    )
+    replay = await store.queue_embedding_job(
+        ISSUER, OWNER, memory_id=memory.id, revision_id=memory.current_revision_id,
+        generation_id=generation.id,
+    )
+    assert replay.id == first.id
+    # Install the deterministic clock after queue creation so the initial
+    # claim is not defeated by sub-millisecond client/DB wall-clock skew.
+    fake_now = [datetime.now(UTC)]
+    store.set_clock_for_testing(lambda: fake_now[0])
+    initial_claim = await store.claim_embedding_job(ISSUER, OWNER, lease_seconds=30)
+    assert initial_claim is not None and initial_claim.lease_id is not None
+    retry = await store.settle_embedding_job(
+        initial_claim.id,
+        issuer=ISSUER,
+        subject=OWNER,
+        lease_id=initial_claim.lease_id,
+        retryable=True,
+        error_class="provider",
+    )
+    assert retry.status is ProcessingJobStatus.RETRYABLE
+    # Production retry pacing remains future-dated; advance a deterministic
+    # test clock instead of weakening the backoff for immediate reclaims.
+    fake_now[0] += timedelta(seconds=3)
+    claimed = await store.claim_embedding_job(ISSUER, OWNER, lease_seconds=30)
+    assert claimed is not None
+    assert claimed.status is ProcessingJobStatus.RUNNING
+    assert claimed.lease_id is not None
+    assert await store.claim_embedding_job(ISSUER, OTHER_OWNER, lease_seconds=30) is None
+    with pytest.raises(MemoryNotFound):
+        await store.settle_embedding_job(
+            claimed.id, issuer=ISSUER, subject=OTHER_OWNER,
+            lease_id=claimed.lease_id, retryable=True,
+            error_class="provider",
+        )
+    with pytest.raises(TypeError):
+        await cast(Any, store).settle_embedding_job(
+            claimed.id, lease_id=claimed.lease_id, retryable=True,
+            error_class="provider",
+        )
+    completed = await store.settle_embedding_job(
+        claimed.id, issuer=ISSUER, subject=OWNER, lease_id=claimed.lease_id
+    )
+    assert completed.status is ProcessingJobStatus.COMPLETED
+    with pytest.raises(MemoryNotFound):
+        await store.settle_embedding_job(
+            uuid4(), issuer=ISSUER, subject=OWNER,
+            lease_id=uuid4(),
+            retryable=True, error_class="provider",
+        )
+
+
+@pytest.mark.asyncio
+async def test_postgres_purge_scrubs_linked_candidate_outcome_embedding_and_retry_fence(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, engine = sql_memory_store
+    job = MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4())
+    memory = await _create(
+        store,
+        content="Purge fence fact.",
+        idempotency_key=f"memory-job:{job.id}",
+    )
+    generation = await store.register_embedding_generation(
+        ISSUER, OWNER, generation=1, model_id="embedder", dimension=2, model_digest="f" * 64
+    )
+    await store.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(), job.id, ISSUER, OWNER, MemoryAction.REINFORCE,
+        "Purge candidate content", MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER), 0.9,
+        state=CandidateState.ACCEPTED, decision_reason="reinforced",
+        related_memory_id=memory.id,
+    )
+    await store.persist_candidate(candidate)
+    await store.record_action_outcome(
+        candidate_id=candidate.id,
+        job_id=job.id,
+        issuer=ISSUER,
+        subject=OWNER,
+        action="reinforce",
+        outcome="created",
+    )
+    embedding_job = await store.queue_embedding_job(
+        ISSUER, OWNER, memory_id=memory.id, revision_id=memory.current_revision_id,
+        generation_id=generation.id,
+    )
+    await store.purge(
+        ISSUER,
+        OWNER,
+        memory.id,
+        confirmation=PURGE_CONFIRMATION,
+        expected_version=memory.version,
+        idempotency_key="purge-linked-work",
+    )
+    async with engine.connect() as connection:
+        counts = {}
+        for table, column, value in (
+            ("memory_candidates", "id", candidate.id),
+            ("memory_action_outcomes", "candidate_id", candidate.id),
+            ("memory_embedding_jobs", "id", embedding_job.id),
+            ("memory_purge_fences", "memory_id", memory.id),
+            ("memory_command_idempotency", "memory_id", memory.id),
+        ):
+            counts[table] = (
+                await connection.execute(
+                    text(f"SELECT COUNT(*) FROM {table} WHERE {column} = :value"),
+                    {"value": value},
+                )
+            ).scalar_one()
+    assert counts["memory_candidates"] == 0
+    assert counts["memory_action_outcomes"] == 0
+    assert counts["memory_embedding_jobs"] == 0
+    assert counts["memory_purge_fences"] == 1
+    assert counts["memory_command_idempotency"] == 0
+    # The delayed processing job must not recreate the purged memory.
+    assert await store.get_processing_job(job.id, ISSUER, OWNER)

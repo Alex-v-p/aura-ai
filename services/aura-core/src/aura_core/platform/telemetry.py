@@ -21,6 +21,8 @@ import secrets
 import sys
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
@@ -36,6 +38,10 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
     "aura.knowledge.memory_persistence": "1.0.0",
+    "aura.knowledge.memory_extraction": "1.0.0",
+    "aura.knowledge.memory_maintenance": "1.0.0",
+    "aura.runtime.structured_inference": "1.0.0",
+    "aura.runtime.embedding_gateway": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -113,6 +119,34 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "memory_scope_type",
         }
     ),
+    "aura.knowledge.memory_extraction": frozenset({
+        "memory_job_outcome", "memory_candidate_outcome", "memory_action_outcome",
+        "structured_inference_duration_ms", "queue_wait_ms", "retry_count", "backlog", "errors",
+        "provider_errors", "duration_ms", "backlog_depth",
+        "memory_extraction_duration_ms", "memory_job_duration_ms", "memory_job_queue_wait_ms",
+        "memory_policy_duration_ms", "memory_processing_errors", "memory_retry_count",
+        "missing_embedding_backlog", "embedding_duration_ms", "consumer_received",
+        "consumer_acknowledged",
+        "consumer_redelivered", "outbox_duplicates", "consumer_nacked", "consumer_rejected",
+        "operation_duration_ms",
+    }),
+    "aura.knowledge.memory_maintenance": frozenset({
+        "memory_maintenance_transition", "maintenance_duration_ms", "retry_count", "backlog",
+        "errors", "duration_ms", "backlog_depth",
+        "memory_maintenance_duration_ms", "memory_reindex_backlog",
+        "memory_reindex_chunk_duration_ms", "memory_reindex_progress",
+        "memory_reindex_switch_duration_ms", "missing_embedding_backlog",
+        "embedding_duration_ms", "memory_retry_count", "memory_processing_errors",
+        "operation_duration_ms",
+    }),
+    "aura.runtime.structured_inference": frozenset({
+        "structured_inference_duration_ms", "provider_errors", "errors", "duration_ms",
+        "backlog_depth", "retry_count",
+    }),
+    "aura.runtime.embedding_gateway": frozenset({
+        "embedding_duration_ms", "provider_errors", "errors", "retry_count", "backlog",
+        "duration_ms", "backlog_depth",
+    }),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -151,6 +185,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "memory.list",
             "memory.get",
             "memory.create",
+            "memory.reinforce",
             "memory.revise",
             "memory.status",
             "memory.pin",
@@ -158,8 +193,31 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "memory.embedding.register",
             "memory.embedding.activate",
             "memory.embedding.attach",
+            "memory.model.configure",
+            "memory.model.get",
+            "memory.job.enqueue",
+            "memory.job.get",
+            "memory.job.claim",
+            "memory.job.claim_next",
+            "memory.job.settle",
+            "memory.candidate.persist",
+            "memory.candidate.get",
+            "memory.outcome.record",
+            "memory.embedding.queue",
+            "memory.embedding.settle",
         }
     ),
+    "aura.knowledge.memory_extraction": frozenset({
+        "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
+        "memory.candidate", "memory.action", "memory.policy", "memory.embedding",
+        "memory.retry", "memory.error",
+    }),
+    "aura.knowledge.memory_maintenance": frozenset({
+        "memory.maintenance", "memory.decay", "memory.archive", "memory.reindex.chunk",
+        "memory.reindex.switch", "memory.embedding", "memory.retry", "memory.error",
+    }),
+    "aura.runtime.structured_inference": frozenset({"structured.inference"}),
+    "aura.runtime.embedding_gateway": frozenset({"embedding.generate", "embedding.retry"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -171,6 +229,26 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "prompt_compile_duration_ms",
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
     "aura.knowledge.memory_persistence": "memory_operation_duration_ms",
+    "aura.knowledge.memory_extraction": "operation_duration_ms",
+    "aura.knowledge.memory_maintenance": "operation_duration_ms",
+    "aura.runtime.structured_inference": "structured_inference_duration_ms",
+    "aura.runtime.embedding_gateway": "embedding_duration_ms",
+}
+
+_OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
+    ("aura.knowledge.memory_extraction", "memory.job.queue"): "memory_job_queue_wait_ms",
+    ("aura.knowledge.memory_extraction", "memory.job"): "memory_job_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.extraction"): "memory_extraction_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.extract"): "memory_extraction_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.policy"): "memory_policy_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.maintenance"):
+        "memory_maintenance_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.reindex.chunk"):
+        "memory_reindex_chunk_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.reindex.switch"):
+        "memory_reindex_switch_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.embedding"):
+        "embedding_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -205,17 +283,21 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "memory_id",
         "memory_revision_id",
         "generation_id",
+        "job_id",
         "operation_duration_ms",
+        "attempt_id",
         "attempt_count",
         "causation_id",
         "command_id",
         "conversation_id",
         "correlation_id",
         "delivery_count",
+        "assistant_message_id",
         "model_id",
         "model_policy_revision_id",
         "retry_of_run_id",
         "run_id",
+        "user_message_id",
         "title_input_size",
         "title_output_size",
     }
@@ -226,16 +308,20 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "profile_id",
         "persona_revision_id",
         "prompt_bundle_revision_id",
+        "attempt_id",
         "causation_id",
         "command_id",
         "conversation_id",
         "correlation_id",
+        "assistant_message_id",
         "memory_id",
         "memory_revision_id",
         "generation_id",
+        "job_id",
         "model_policy_revision_id",
         "retry_of_run_id",
         "run_id",
+        "user_message_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -265,6 +351,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "configuration_store",
             "prompt_compiler",
             "memory_store",
+            "structured_inference",
+            "embedding_provider",
+            "memory_worker",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -279,13 +368,18 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "not_found",
             "persistence",
             "provider",
+            "generation",
+            "purged",
             "queue",
             "timeout",
             "validation",
         }
     ),
     "outcome": frozenset(
-        {"canceled", "duplicate", "error", "fallback", "generated", "ok", "skipped"}
+        {
+            "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
+            "ok", "retryable", "review", "skipped",
+        }
     ),
     "status": frozenset(
         {
@@ -303,6 +397,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "disputed",
             "superseded",
             "unknown",
+            "retryable",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
@@ -323,7 +418,71 @@ class Measurement:
     trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
+    link_span_ids: tuple[str, ...] = ()
     trace_attributes: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryTraceContext:
+    """Metadata-only context shared by one asynchronous memory command."""
+
+    trace_id: str
+    span_id: str
+    command_id: str | None = None
+    job_id: str | None = None
+    run_id: str | None = None
+    conversation_id: str | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    agent_revision_id: str | None = None
+    user_message_id: str | None = None
+    assistant_message_id: str | None = None
+    memory_id: str | None = None
+    memory_revision_id: str | None = None
+    generation_id: str | None = None
+    link_span_ids: tuple[str, ...] = ()
+
+    def attributes(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in {
+                "command_id": self.command_id,
+                "job_id": self.job_id,
+                "run_id": self.run_id,
+                "conversation_id": self.conversation_id,
+                "correlation_id": self.correlation_id,
+                "causation_id": self.causation_id,
+                "agent_revision_id": self.agent_revision_id,
+                "user_message_id": self.user_message_id,
+                "assistant_message_id": self.assistant_message_id,
+                "memory_id": self.memory_id,
+                "memory_revision_id": self.memory_revision_id,
+                "generation_id": self.generation_id,
+            }.items()
+            if value is not None
+        }
+
+
+_MEMORY_TRACE_CONTEXT: ContextVar[MemoryTraceContext | None] = ContextVar(
+    "aura_memory_trace_context", default=None
+)
+
+
+@contextmanager
+def memory_trace_context(context: MemoryTraceContext):
+    """Propagate one command trace across async Core/provider call sites."""
+
+    token = _MEMORY_TRACE_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _MEMORY_TRACE_CONTEXT.reset(token)
+
+
+def current_memory_trace_context() -> MemoryTraceContext | None:
+    """Return the active memory context without exposing content."""
+
+    return _MEMORY_TRACE_CONTEXT.get()
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +533,8 @@ class StructuredContainerLogExporter:
             trace["span_id"] = item.span_id
         if item.parent_span_id is not None:
             trace["parent_span_id"] = item.parent_span_id
+        if item.link_span_ids:
+            trace["link_span_ids"] = item.link_span_ids
         if item.trace_attributes:
             trace["attributes"] = dict(item.trace_attributes)
         record: dict[str, object] = {
@@ -492,8 +653,22 @@ class MetadataMetrics:
         provider: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
+        metric_name: str | None = None,
+        link_span_ids: Sequence[str] = (),
         **trace_attributes: str,
     ) -> None:
+        memory_context = current_memory_trace_context()
+        if memory_context is not None and component in {
+            "aura.knowledge.memory_extraction",
+            "aura.knowledge.memory_maintenance",
+            "aura.runtime.structured_inference",
+            "aura.runtime.embedding_gateway",
+            "aura.knowledge.memory_persistence",
+        }:
+            trace_id = memory_context.trace_id
+            parent_span_id = parent_span_id or memory_context.span_id
+            trace_attributes = {**trace_attributes, **memory_context.attributes()}
+            link_span_ids = (*memory_context.link_span_ids, *link_span_ids)
         if operation not in _SPAN_OPERATIONS.get(component, frozenset()):
             self._rejected += 1
             return
@@ -512,11 +687,13 @@ class MetadataMetrics:
             dimensions,
             trace_attributes,
         )
+        links = tuple(dict.fromkeys(link_span_ids))
         if (
             normalized is None
             or not _valid_span_id(span_id)
             or parent_span_id is not None
             and not _valid_span_id(parent_span_id)
+            or any(not _valid_span_id(link) for link in links)
         ):
             self._rejected += 1
             return
@@ -525,13 +702,14 @@ class MetadataMetrics:
                 kind="span",
                 component_id=component,
                 component_version=COMPONENT_VERSIONS[component],
-                metric=_SPAN_METRICS[component],
+                metric=metric_name or _SPAN_METRICS[component],
                 value=float(duration_ms),
                 observed_at=datetime.now(UTC),
                 dimensions=normalized[0],
                 trace_id=trace_id,
                 span_id=span_id,
                 parent_span_id=parent_span_id,
+                link_span_ids=links,
                 trace_attributes=(("operation", operation), *normalized[1]),
             )
         )
@@ -564,6 +742,18 @@ class MetadataMetrics:
         conversation_id: str | None,
         attributes: Mapping[str, str],
     ) -> None:
+        memory_context = current_memory_trace_context()
+        if memory_context is not None and component in {
+            "aura.knowledge.memory_extraction",
+            "aura.knowledge.memory_maintenance",
+            "aura.runtime.structured_inference",
+            "aura.runtime.embedding_gateway",
+            "aura.knowledge.memory_persistence",
+        }:
+            trace_id = memory_context.trace_id
+            run_id = memory_context.run_id or run_id
+            conversation_id = memory_context.conversation_id or conversation_id
+            attributes = {**attributes, **memory_context.attributes()}
         if metric not in _METRICS.get(component, frozenset()) or not math.isfinite(value):
             self._rejected += 1
             return
@@ -827,3 +1017,108 @@ def record_memory_operation(
         "aura.knowledge.memory_persistence", "memory_scope_type",
         scope_type=bounded_scope, **common,
     )
+
+
+def record_memory_processing(
+    metrics: MetadataMetrics,
+    *,
+    component: str,
+    operation: str,
+    duration_ms: float,
+    trace_id: str,
+    outcome: str,
+    dependency: str,
+    error_class: str | None = None,
+    memory_id: str | None = None,
+    memory_revision_id: str | None = None,
+    generation_id: str | None = None,
+    attempt_count: int | None = None,
+    backlog: int | None = None,
+    progress: float | None = None,
+) -> None:
+    """Record worker/model lifecycle metadata with one correlated trace."""
+
+    # Processing also emits maintenance/reindex callbacks through the
+    # extraction recorder. Classify by operation so lifecycle and backlog
+    # signals remain owned by the maintenance component.
+    effective_component = component
+    if operation in {
+        "memory.maintenance",
+        "memory.decay",
+        "memory.archive",
+        "memory.reindex.chunk",
+        "memory.reindex.switch",
+    }:
+        effective_component = "aura.knowledge.memory_maintenance"
+
+    attrs: dict[str, str] = {}
+    if memory_id:
+        attrs["memory_id"] = memory_id
+    if memory_revision_id:
+        attrs["memory_revision_id"] = memory_revision_id
+    if generation_id:
+        attrs["generation_id"] = generation_id
+    if attempt_count is not None:
+        attrs["attempt_count"] = str(max(0, attempt_count))
+    metrics.record_span(
+        effective_component,
+        operation,
+        duration_ms,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency=dependency,
+        outcome=outcome,
+        error_class=error_class,
+        metric_name=_OPERATION_SPAN_METRICS.get((effective_component, operation)),
+        **attrs,
+    )
+    # Core services report semantic boundary operations; keep the mapping in
+    # the telemetry platform so domains do not depend on metric names.
+    semantic_metrics: Mapping[str, tuple[str, ...]] = {
+        "memory.job.queue": (),
+        "memory.job": ("memory_job_outcome",),
+        "memory.extraction": (),
+        "memory.policy": (),
+        "memory.candidate": ("memory_candidate_outcome",),
+        "memory.action": ("memory_action_outcome",),
+        "memory.embedding": ("embedding_duration_ms", "missing_embedding_backlog"),
+        # A sweep measures maintenance duration. Lifecycle transitions are
+        # emitted only by the concrete decay/archive operations.
+        "memory.maintenance": (),
+        "memory.decay": ("memory_maintenance_transition",),
+        "memory.archive": ("memory_maintenance_transition",),
+        "memory.reindex.chunk": (
+            "memory_reindex_progress", "memory_reindex_backlog",
+        ),
+        "memory.reindex.switch": (),
+        "memory.retry": ("memory_retry_count",),
+        "memory.error": ("memory_processing_errors",),
+    }
+    for semantic_metric in semantic_metrics.get(operation, ()):
+        if semantic_metric.endswith("_duration_ms") or semantic_metric.endswith("_wait_ms"):
+            metrics.observe(
+                effective_component, semantic_metric, duration_ms, trace_id=trace_id,
+                outcome=outcome, dependency=dependency,
+            )
+        elif semantic_metric.endswith("_progress"):
+            metrics.observe(
+                effective_component, semantic_metric,
+                float(progress if progress is not None else 0),
+                trace_id=trace_id, outcome=outcome, dependency=dependency,
+            )
+        elif semantic_metric.endswith("_backlog"):
+            metrics.observe(
+                effective_component, semantic_metric, float(max(0, backlog or 0)),
+                trace_id=trace_id, outcome=outcome, dependency=dependency,
+            )
+        else:
+            metrics.increment(
+                effective_component, semantic_metric, outcome=outcome,
+                dependency=dependency, trace_id=trace_id,
+            )
+    if backlog is not None and "backlog" in _METRICS.get(effective_component, frozenset()):
+        metrics.observe(
+            effective_component, "backlog", float(max(0, backlog)), trace_id=trace_id,
+            dependency=dependency,
+        )

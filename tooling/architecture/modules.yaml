@@ -240,6 +240,7 @@ modules:
   - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.conversations.repository
   - aura-core.domains.interaction.conversations.store
+  - aura-core.platform.outbox
   - aura-core.platform.database.base
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
@@ -309,7 +310,9 @@ modules:
   - services/aura-core/src/aura_core/entrypoints/worker/__init__.py
   dependencies:
   - aura-core.bootstrap.conversation-uow
+  - aura-core.bootstrap.memory-uow
   - aura-core.domains.execution.runs.public
+  - aura-core.domains.knowledge.memory.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
@@ -351,6 +354,28 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/providers/models/ollama/__init__.py
   dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.providers.embeddings
+  root: services/aura-core/src/aura_core/providers/embeddings
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.embeddings
+  source_files:
+  - services/aura-core/src/aura_core/providers/embeddings/__init__.py
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.providers.embeddings.ollama
+  root: services/aura-core/src/aura_core/providers/embeddings/ollama
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.embeddings.ollama
+  source_files:
+  - services/aura-core/src/aura_core/providers/embeddings/ollama/__init__.py
+  dependencies:
+  - aura-core.providers.embeddings
+  - aura-core.providers.embeddings.ollama.adapter
   - aura-core.runtime.models.ports
 - id: aura-core.runtime.models
   root: services/aura-core/src/aura_core/runtime/models
@@ -413,6 +438,8 @@ modules:
   - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.personas
   - aura-core.domains.interaction.personas.persistence
+  - aura-core.domains.knowledge.memory
+  - aura-core.domains.knowledge.memory.persistence
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
@@ -434,7 +461,14 @@ modules:
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
   - aura-core.domains.knowledge.memory.repository
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.outbox
   - aura-core.platform.telemetry
+  - aura-core.providers.embeddings.ollama.adapter
+  - aura-core.providers.models.ollama.adapter
+  - aura-core.runtime.models.ports
 - id: aura-core.domains.knowledge.memory.persistence
   root: services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
   kind: python
@@ -449,7 +483,8 @@ modules:
   public_api: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
   python_modules:
   - aura_core.domains.knowledge.memory.public
-  dependencies: []
+  dependencies:
+  - aura-core.runtime.models.ports
 - id: aura-core.domains.knowledge.memory.repository
   root: services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
   kind: python
@@ -767,6 +802,7 @@ modules:
   - aura-core.domains.interaction.personas.public
   - aura-core.domains.interaction.conversations.titles
   - aura-core.platform.telemetry
+  - aura-core.platform.outbox
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
   - aura-core.runtime.prompting.public
@@ -907,6 +943,7 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.state
   dependencies:
+  - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.health
   - aura-core.domains.execution.runs.public
@@ -917,6 +954,7 @@ modules:
   - aura-core.domains.interaction.personas.adapters
   - aura-core.domains.interaction.personas.public
   - aura-core.bootstrap.memory-uow
+  - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
@@ -947,12 +985,16 @@ modules:
   python_modules:
   - aura_core.entrypoints.worker.app
   dependencies:
+  - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
+  - aura-core.bootstrap.memory-uow
   - aura-core.domains.execution.runs.public
   - aura-core.domains.interaction.agents.adapters
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.personas.adapters
   - aura-core.domains.interaction.personas.public
+  - aura-core.domains.knowledge.memory
+  - aura-core.domains.knowledge.memory.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
@@ -1056,6 +1098,14 @@ modules:
   public_api: services/aura-core/src/aura_core/providers/models/ollama/fake.py
   python_modules:
   - aura_core.providers.models.ollama.fake
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.providers.embeddings.ollama.adapter
+  root: services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  python_modules:
+  - aura_core.providers.embeddings.ollama.adapter
   dependencies:
   - aura-core.runtime.models.ports
 - id: aura-core.runtime.models.capacity

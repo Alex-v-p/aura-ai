@@ -1,4 +1,15 @@
-"""Worker composition root; durable deployments replace the in-process outbox."""
+"""Worker composition root; durable deployments replace the in-process outbox.
+
+The run and memory consumers intentionally share a deployable boundary but
+have separate JetStream subjects and processing loops.  Memory processing is
+identifier-only and cannot delay acknowledgement or execution of run work.
+"""
+
+import asyncio
+import inspect
+from collections.abc import Callable
+from typing import Protocol, cast
+from uuid import uuid4
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.domains.execution.runs.public import ChatCompletionPort, RunCoordinator
@@ -9,18 +20,30 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaConfigurationService,
 )
+from aura_core.domains.knowledge.memory.public import (
+    MEMORY_PROCESSING_SCHEMA_VERSION,
+    MEMORY_PROCESSING_TOPIC,
+    MemoryProcessingCommand,
+    MemoryValidationError,
+)
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
-from aura_core.platform.outbox import TransactionalOutboxTransport
-from aura_core.platform.outbox.nats import NatsOutbox, NatsRunConsumer
+from aura_core.platform.outbox import OutboxCommand, TransactionalOutboxTransport
+from aura_core.platform.outbox.nats import NatsIdentifierConsumer, NatsOutbox, NatsRunConsumer
 from aura_core.platform.telemetry import (
+    MemoryTraceContext,
     MetadataMetrics,
     Stopwatch,
     StructuredContainerLogExporter,
     TelemetryLifecycle,
+    memory_trace_context,
     new_span_id,
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
+
+
+class MemoryJobProcessor(Protocol):
+    async def process_command(self, command: MemoryProcessingCommand) -> object: ...
 
 
 async def run_once(
@@ -40,6 +63,208 @@ async def run_once(
         acknowledge = getattr(consumer, "ack", None)
         if acknowledge is not None:
             await acknowledge()
+
+
+async def run_memory_once(
+    processor: MemoryJobProcessor,
+    consumer: NatsIdentifierConsumer,
+) -> None:
+    """Process one memory job and ack only after Core commits its result."""
+
+    try:
+        command = await consumer.receive()
+    except (TypeError, ValueError):
+        # A malformed generic envelope is a poison delivery.  Terminate it
+        # explicitly rather than letting an unbounded retry loop consume the
+        # memory worker.
+        await consumer.reject(error_class="validation")
+        return
+    if command is None:
+        return
+    try:
+        if command.topic != MEMORY_PROCESSING_TOPIC:
+            raise MemoryValidationError("unexpected memory command subject")
+        if command.schema_version != MEMORY_PROCESSING_SCHEMA_VERSION:
+            raise MemoryValidationError("unsupported memory command version")
+        # Parsing and validation stay in knowledge.memory.  The canonical
+        # schema parser owns the producer envelope and preserves the exact
+        # generic command identity for Core's durable job checks.
+        memory_command = MemoryProcessingCommand.from_payload(command.payload())
+        _verify_memory_trace_links(command, memory_command)
+    except (MemoryValidationError, TypeError, ValueError):
+        await consumer.reject(error_class="validation")
+        return
+    context = _memory_context(memory_command)
+    with memory_trace_context(context):
+        try:
+            # Core resolves the owner-scoped evidence and reports the durable
+            # terminal settlement.  A provider result or an in-memory
+            # candidate is not sufficient to acknowledge the delivery.
+            result = await processor.process_command(memory_command)
+        except Exception as error:
+            delivery_count = int(getattr(consumer, "delivery_count", 1))
+            await consumer.nack(
+                retry_delay=_retry_delay(delivery_count),
+                error_class=_memory_error_class(error),
+            )
+            return
+        if not _is_terminal_settlement(result):
+            delivery_count = int(getattr(consumer, "delivery_count", 1))
+            await consumer.nack(
+                retry_delay=_retry_delay(delivery_count),
+                error_class="delivery",
+            )
+            return
+        await consumer.ack()
+
+
+def _memory_context(memory_command: MemoryProcessingCommand) -> MemoryTraceContext:
+    """Build one trace context from the validated producer envelope."""
+
+    return MemoryTraceContext(
+        trace_id=memory_command.correlation_id.hex,
+        span_id=new_span_id(),
+        command_id=memory_command.command_id.hex,
+        job_id=memory_command.job_id.hex,
+        run_id=memory_command.run_id.hex,
+        conversation_id=memory_command.conversation_id.hex,
+        correlation_id=memory_command.correlation_id.hex,
+        causation_id=memory_command.causation_id.hex,
+        agent_revision_id=memory_command.agent_revision_id.hex,
+        user_message_id=memory_command.user_message_id.hex,
+        assistant_message_id=memory_command.assistant_message_id.hex,
+        link_span_ids=(),
+    )
+
+
+def _verify_memory_trace_links(
+    command: OutboxCommand,
+    memory_command: MemoryProcessingCommand,
+) -> None:
+    """Ensure Core receives every identifier from the transport envelope."""
+
+    expected: tuple[tuple[str, str], ...] = (
+        ("command_id", str(command.id)),
+        ("job_id", command.identifier("jobId") or ""),
+        ("run_id", str(command.run_id)),
+        ("conversation_id", str(command.conversation_id)),
+        ("correlation_id", str(command.correlation_id or command.run_id)),
+        ("causation_id", str(command.causation_id or command.run_id)),
+        ("agent_revision_id", command.identifier("agentRevisionId") or ""),
+        ("user_message_id", command.identifier("userMessageId") or ""),
+        ("assistant_message_id", command.identifier("assistantMessageId") or ""),
+    )
+    for field, expected_value in expected:
+        value = getattr(memory_command, field, None)
+        if not expected_value or value is None or str(value) != expected_value:
+            raise MemoryValidationError(f"memory command {field} does not match envelope")
+
+
+def _is_terminal_settlement(result: object) -> bool:
+    status = getattr(result, "status", None)
+    status_value = getattr(status, "value", status)
+    # A candidate/action result is not an acknowledgement boundary.  Only the
+    # memory application service's durable settlement, explicitly marked
+    # completed or failed, permits JetStream acknowledgement.
+    if status_value not in {"completed", "failed"}:
+        return False
+    terminal = getattr(result, "terminal", None)
+    if terminal is True:
+        return True
+    durable = getattr(result, "durable", None)
+    if durable is True:
+        return True
+    settled = getattr(result, "settled", None)
+    return settled is True
+
+
+def _memory_error_class(error: BaseException) -> str:
+    """Map retryable worker failures to bounded, metadata-only classes."""
+
+    name = type(error).__name__.casefold()
+    if any(token in name for token in ("conflict", "contention", "lease", "lock")):
+        return "conflict"
+    if any(token in name for token in ("timeout", "temporarily", "unavailable")):
+        return "timeout"
+    return "provider"
+
+
+def _retry_delay(delivery_count: int) -> float:
+    """Bound worker retry backoff while JetStream retains redelivery state."""
+
+    return min(30.0, 2.0 ** max(0, min(delivery_count, 5) - 1))
+
+
+async def run_memory_loop(
+    processor: MemoryJobProcessor,
+    consumer: NatsIdentifierConsumer,
+) -> None:
+    """Keep memory redelivery semantics independent from run execution."""
+
+    while True:
+        try:
+            await run_memory_once(processor, consumer)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Leave the delivery unacknowledged.  JetStream will redeliver the
+            # identifier after the worker lease/ack timeout.
+            await asyncio.sleep(0.2)
+
+
+async def run_memory_maintenance(processor: object) -> None:
+    """Invoke the Core-owned maintenance use case when configured."""
+
+    method = getattr(processor, "maintain", None)
+    if callable(method):
+        with memory_trace_context(_housekeeping_context(processor, "maintenance")):
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+
+
+async def run_memory_reindex(processor: object) -> None:
+    """Resume the Core-owned embedding reindex use case when configured."""
+
+    method = getattr(processor, "resume_reindex", None)
+    if callable(method):
+        with memory_trace_context(_housekeeping_context(processor, "reindex")):
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+
+
+def _housekeeping_context(processor: object, operation: str) -> MemoryTraceContext:
+    """Build a fresh trace for one non-conversational housekeeping pass.
+
+    Core may provide a richer context with job, memory, revision, generation,
+    and link identifiers through ``housekeeping_trace_context``.  The
+    fallback remains metadata-only and deliberately uses a fresh opaque trace
+    rather than deriving a root from an operation name.
+    """
+
+    supplied = getattr(processor, "housekeeping_trace_context", None)
+    if callable(supplied):
+        candidate = supplied(operation)
+        if isinstance(candidate, MemoryTraceContext):
+            return candidate
+    return MemoryTraceContext(trace_id=uuid4().hex, span_id=new_span_id())
+
+
+async def run_memory_housekeeping(processor: object, interval_seconds: float = 60.0) -> None:
+    """Run maintenance and resumable reindex work outside the run loop."""
+
+    while True:
+        try:
+            await run_memory_maintenance(processor)
+            await run_memory_reindex(processor)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Maintenance is independently retryable; a provider or database
+            # outage must not stop either consumer loop.
+            pass
+        await asyncio.sleep(max(1.0, interval_seconds))
 
 
 async def run_forever(settings: Settings | None = None) -> None:
@@ -63,12 +288,45 @@ async def run_forever(settings: Settings | None = None) -> None:
     )
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
+    from aura_core.bootstrap import memory_uow
+
+    command_factory = getattr(memory_uow, "memory_command_factory", None)
+    if callable(command_factory):
+        store.set_memory_command_factory(cast(Callable[..., OutboxCommand], command_factory))
     metrics, telemetry = make_worker_telemetry()
     consumer = NatsRunConsumer(config.nats_url, metrics=metrics)
-    event_transport = NatsOutbox(config.nats_url)
+    from aura_core.domains.knowledge.memory import public as memory_public
+
+    memory_topic = str(getattr(memory_public, "MEMORY_PROCESSING_TOPIC", "aura.memory.process.v1"))
+    memory_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        memory_topic,
+        metrics=metrics,
+        durable="aura-core-memory-worker",
+        component="aura.knowledge.memory_extraction",
+    )
+    event_transport = NatsOutbox(config.nats_url, additional_subjects=(memory_topic,))
+    memory_processor: MemoryJobProcessor | None = None
+    try:
+        factory = getattr(memory_uow, "memory_processing_service", None)
+        if callable(factory):
+            candidate = factory(sessions, metrics=metrics, settings=config)
+            if callable(getattr(candidate, "process_command", None)):
+                memory_processor = cast(MemoryJobProcessor, candidate)
+    except (AttributeError, TypeError):
+        # The composition root remains importable while a deployment is
+        # running an older Core module; no memory command is acknowledged in
+        # that state.
+        memory_processor = None
+    memory_task: asyncio.Task[None] | None = None
+    housekeeping_task: asyncio.Task[None] | None = None
     await telemetry.start()
     try:
         await consumer.connect()
+        if memory_processor is not None:
+            await memory_consumer.connect()
+            memory_task = asyncio.create_task(run_memory_loop(memory_processor, memory_consumer))
+            housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
         await event_transport.connect()
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
@@ -125,6 +383,13 @@ async def run_forever(settings: Settings | None = None) -> None:
                 )
             await run_once(coordinator, provider, consumer)
     finally:
+        if housekeeping_task is not None:
+            housekeeping_task.cancel()
+            await asyncio.gather(housekeeping_task, return_exceptions=True)
+        if memory_task is not None:
+            memory_task.cancel()
+            await asyncio.gather(memory_task, return_exceptions=True)
+        await memory_consumer.close()
         await consumer.close()
         await event_transport.close()
         await telemetry.stop()

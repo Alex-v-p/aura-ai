@@ -1,0 +1,261 @@
+id: AURA-0038
+title: Add autonomous memory extraction and maintenance
+status: integrated
+change_class: repository_governance
+intent: >
+  Process completed conversation turns asynchronously into policy-validated
+  memory candidates, accepted revisions, embeddings, lifecycle transitions,
+  and resumable embedding generations without delaying conversational
+  responses or introducing retrieval or product UI behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Autonomous Scoped Long-Term Memory plan
+    - AURA-0037 scoped memory contracts and persistence foundation
+    - The existing Core worker remains the deployable boundary and receives a separate versioned identifier-only memory command
+    - PostgreSQL owns candidate job maintenance configuration and reindex state while NATS remains an at-least-once wakeup transport
+    - Dedicated extraction and embedding model selections are owner-scoped persisted configuration with no hard-coded model names
+    - Structured inference remains a generic schema-driven runtime port while memory action semantics and validation remain owned by knowledge.memory
+    - Embedding providers use a separate providers.embeddings boundary and do not extend the chat-model adapter with embedding authority
+    - Platform outbox code remains generic while the versioned memory command topic DTO and payload validation remain owned by knowledge.memory
+    - Memory jobs bind the completed run agent revision and exact user and assistant message identifiers and the worker re-resolves their owner conversation roles completion state and evidence digest before inference
+    - Sensitive-category policy uses a bounded versioned deterministic fail-closed taxonomy and never trusts a provider ordinary label to permit auto-commit
+    - Until versioned agent memory policies arrive in AURA-0039 every proposed promotion from the current agent scope into shared-user scope requires review
+    - At-least-once processing uses durable owner-scoped leases deterministic job candidate and action identities database uniqueness and resumable idempotent steps across every commit boundary
+    - Ignored discarded malformed credential-bearing and unconfigured outcomes retain only content-free processing metadata
+    - Hard purge creates a content-free terminal fence that prevents queued retry maintenance and reindex work from recreating or re-embedding purged content and scrubs linked candidate and job content
+    - Model configuration HTTP resources and Aura Web controls remain reserved for AURA-0040
+    - Ordinary grounded candidates at confidence 0.85 or higher may auto-commit while 0.60 through less than 0.85 conflicts sensitive categories and risky scope changes require review and lower-confidence candidates are discarded
+    - Credentials and secret values are rejected before candidate or memory persistence regardless of model confidence
+    - Accepted memory revisions are incomplete until their selected-generation embedding is durably attached and retryable failures never alter the completed conversation
+    - Relevance decay uses the persisted reinforcement clock and half-life with a 0.10 dormant threshold and archival after 30 dormant days while pinned records do not transition automatically
+    - Re-embedding builds a parallel resumable generation and atomically activates it only after every retained revision is embedded while the prior active generation remains available
+    - No conversational recall hybrid search agent memory policy SSE activity or memory product UI is implemented in this work item
+  contracts: []
+feature_references:
+  - MEM-002
+  - MEM-003
+  - MEM-004
+  - MEM-005
+  - MEM-006
+  - MEM-007
+  - MEM-008
+  - MEM-018
+  - MEM-019
+  - MEM-020
+  - MEM-021
+  - MEM-024
+  - MEM-025
+  - MEM-026
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-core.execution.runs
+  - aura-core.interaction.conversations
+  - aura-core.runtime.models
+  - aura-core.providers.models.ollama
+  - aura-core.providers.embeddings.ollama
+  - aura-core.platform.outbox
+  - aura-core.entrypoints.worker
+  - aura-core.bootstrap
+  - aura-core.platform.telemetry
+  - aura-core.migrations
+  - architecture.module-registry
+allowed_paths:
+  - work-items/active/AURA-0038.yaml
+  - work-items/archived/AURA-0038.yaml
+  - services/aura-core/migrations/versions/0009_memory_processing.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/runtime/models/**
+  - services/aura-core/src/aura_core/providers/models/ollama/**
+  - services/aura-core/src/aura_core/providers/embeddings/**
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-extraction.yaml
+  - services/aura-core/resources/component-manifests/memory-maintenance.yaml
+  - services/aura-core/resources/component-manifests/structured-inference.yaml
+  - services/aura-core/resources/component-manifests/embedding-gateway.yaml
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_maintenance.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_migration_0009_memory_processing.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_title_generation.py
+  - services/aura-core/tests/fixtures/memory/**
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/interaction/agents/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_maintenance
+    - aura.runtime.structured_inference
+    - aura.runtime.embedding_gateway
+  required_metrics:
+    - memory_job_queue_wait_ms
+    - memory_job_duration_ms
+    - memory_job_outcome
+    - memory_extraction_duration_ms
+    - memory_candidate_outcome
+    - memory_policy_duration_ms
+    - memory_action_outcome
+    - memory_maintenance_duration_ms
+    - memory_maintenance_transition
+    - memory_reindex_chunk_duration_ms
+    - memory_reindex_switch_duration_ms
+    - memory_reindex_progress
+    - memory_retry_count
+    - memory_processing_errors
+    - missing_embedding_backlog
+    - memory_reindex_backlog
+    - structured_inference_duration_ms
+    - embedding_duration_ms
+    - provider_errors
+  required_evaluators:
+    - memory_extraction_policy
+    - memory_maintenance_integrity
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - NATS commands contain identifiers and correlation metadata only and never conversation memory candidate evidence prompt response or embedding content
+    - Structured inference output is untrusted and must pass strict schema bounds ownership scope evidence sensitivity confidence validity and credential policy before persistence
+    - The worker trusts only server-resolved completed user evidence bound to the staged run message and agent revision and never trusts provider-supplied content message identifiers or ownership metadata
+    - Sensitivity classification is deterministic versioned and fail-closed for unknown categories even when the provider labels a candidate ordinary
+    - Automatic writes may use only authenticated user-authored evidence from the completed exchange and agent-scope proposals must match the run agent
+    - Shared-user scope promotion conflicts sensitive categories and ambiguous grounding require review rather than automatic commitment
+    - Provider errors worker errors telemetry and evaluation results must not include conversation memory candidate evidence prompt response vector or secret values
+    - Duplicate delivery crash recovery retries and reindex restarts must not create duplicate candidates revisions relations or embeddings
+    - Model configuration and job lookup remain owner-scoped and generation activation cannot expose or select mixed dimensions
+    - Candidate job model-configuration embedding-generation and reindex reads and mutations are owner-scoped and unauthorized identifiers return the same content-safe not-found outcome
+    - Purge scrubs linked candidate action job idempotency and embedding work content while a content-free terminal fence blocks delayed retry maintenance and reindex recreation
+    - Ignored low-confidence malformed credential-bearing and unconfigured processing outcomes contain no candidate text evidence raw model output or vectors
+  data_classes:
+    - private conversation turns used as extraction evidence
+    - proposed and accepted durable memory content
+    - memory candidates confidence sensitivity scope and review state
+    - semantic embeddings derived from private memory content
+    - owner agent conversation run message and model identifiers
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Completing a user and assistant turn transactionally stages exactly one versioned identifier-only memory-processing command and never calls extraction or embedding providers on the conversational response path.
+  - The memory-owned versioned command DTO is staged through generic outbox operations and dispatch routes run and memory commands to distinct versioned JetStream subjects while preserving stable command IDs correlation causation duplicate suppression redelivery and acknowledge-after-success behavior.
+  - A provider-neutral schema-driven structured-inference port returns bounded JSON while knowledge.memory alone validates ignore create reinforce supersede dispute or review actions and the Ollama model adapter never owns memory semantics or leaks provider payloads.
+  - A provider-neutral embedding port under the separate providers.embeddings boundary and its Ollama adapter return finite vectors with recorded model identity revision digest and dimension and never make embedding a second model acceptance decision.
+  - PostgreSQL persists owner-scoped memory model configuration processing jobs candidate review state action outcomes retry metadata maintenance state and resumable reindex progress under migration 0009.
+  - The deterministic policy auto-commits only ordinary user-grounded candidates at confidence 0.85 or higher routes confidence 0.60 through less than 0.85 conflicts sensitive categories ambiguous evidence and risky scope proposals to review and discards lower confidence.
+  - Each staged job durably binds the completed run agent revision and exact user and assistant message IDs and the worker re-loads and verifies the same owner conversation run roles COMPLETE state and server-computed user-evidence digest before invoking a provider or policy.
+  - Provider actions may reference only server-issued evidence handles or bounded offsets and cannot supply trusted message IDs owner IDs or evidence text; invented canonical content unsupported by the bound user evidence cannot auto-commit.
+  - A bounded versioned deterministic sensitivity taxonomy detects health finance identity intimate precise-location credential and unknown-risk content independently of the provider and fails closed to review or rejection.
+  - Secret-bearing canonical content correction or evidence is rejected before candidate memory or embedding persistence and malformed oversized unauthorized ignored low-confidence credential-bearing or unconfigured outcomes persist content-free status metadata only.
+  - Duplicate deliveries repeated completed turns and worker restarts converge on one job and one candidate action while exact duplicates reinforce existing same-scope records rather than create duplicate memories.
+  - Durable processing claims expire safely and deterministic database identities prevent duplicate candidates memories provenance relations and embeddings across crashes before or after candidate memory action embedding and outcome commits.
+  - Shared-user scope proposals remain review-only until the versioned AURA-0039 agent memory policy explicitly authorizes an automatic promotion path.
+  - Reinforcement appends provenance resets the relevance clock reactivates eligible dormant records and preserves prior revisions and evidence without overwriting history.
+  - Fake-clock maintenance moves unpinned active records below 0.10 relevance to dormant archives them after 30 dormant days and leaves pinned disabled disputed superseded and already archived records unchanged.
+  - Every accepted revision including manual creations corrections and reviewed candidates is durably embedded through retryable missing-embedding work.
+  - Changing the configured embedding model creates a parallel building generation re-embeds all retained revisions resumably rejects mixed dimensions keeps the prior generation active until completion and atomically activates the replacement with rollback to the prior generation on failure.
+  - Model configuration processing jobs candidates embedding generations activation and reindex state are owner-scoped and cross-owner identifiers return content-safe not-found without revealing existence.
+  - Hard purge scrubs linked candidate action job and embedding retry content and installs a content-free terminal fence checked by queued duplicate restart maintenance and reindex paths so purged content cannot be recreated or re-embedded.
+  - When an owner has no explicit compatible extraction or embedding configuration the job is parked content-free without provider invocation or fallback model selection.
+  - Metadata-only spans metrics and evaluator outputs distinguish job extraction policy embedding maintenance reindex retry and failure outcomes without memory text evidence prompt response vector credentials owner subjects or model payloads.
+  - Component-local queue wait extraction policy job maintenance embedding reindex chunk and atomic-switch latency plus bounded retry error missing-embedding backlog and reindex backlog signals diagnose asynchronous failure and recovery without substituting conversational or run latency.
+  - Trace and link continuity preserves stable command job correlation causation run conversation memory revision and generation identities as validated trace-only attributes from outbox dispatch through JetStream delivery worker inference policy embedding and persistence while metric dimensions remain bounded.
+  - Every affected component manifest declares a stable versioned input and output schema dependencies replayability with an accurate reason or safe synthetic-fixture hook metadata allowlists prohibited content bounded retention export failure behavior and metric-versus-trace cardinality.
+  - Evaluation fixtures cover family facts changing project state short-lived meal context preferences corrections contradictions agent-private and shared-user information and report component and policy versions extraction model identity embedding generation fixture revision action precision scope accuracy horizon accuracy duplicate reinforcement accuracy and maintenance invariants.
+  - No hybrid recall context injection agent memory policies candidate HTTP resources SSE memory activity or Aura Web memory UI is added in AURA-0038.
+  - All new and changed Core sources have exactly one module-registry owner with reviewed dependency edges and no new deployable service provider authority or database ownership boundary is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0038.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0038.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0038.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0038.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0038.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

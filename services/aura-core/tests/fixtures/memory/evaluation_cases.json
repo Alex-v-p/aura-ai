@@ -1,0 +1,83 @@
+[
+  {
+    "id": "family-fact",
+    "category": "family_fact",
+    "user": "My daughter Maya starts university in September.",
+    "assistant": "I can remember that Maya starts university in September.",
+    "expected_action": "create",
+    "expected_scope": "user",
+    "expected_horizon": "long"
+  },
+  {
+    "id": "changing-project",
+    "category": "changing_project_state",
+    "user": "The migration is blocked on the database review today.",
+    "assistant": "I will treat the database review as the current blocker.",
+    "expected_action": "create",
+    "expected_scope": "user",
+    "expected_horizon": "short"
+  },
+  {
+    "id": "meal-context",
+    "category": "meal_context",
+    "user": "I am making lentil soup for lunch.",
+    "assistant": "Lentil soup sounds good.",
+    "expected_action": "ignore",
+    "expected_scope": "user",
+    "expected_horizon": "short"
+  },
+  {
+    "id": "preference",
+    "category": "preference",
+    "user": "Please keep answers concise and use metric units.",
+    "assistant": "I will keep future answers concise and use metric units.",
+    "expected_action": "create",
+    "expected_scope": "user",
+    "expected_horizon": "long"
+  },
+  {
+    "id": "correction",
+    "category": "correction",
+    "user": "Correction: the review is on Thursday, not Tuesday.",
+    "assistant": "I will retain the correction and its provenance.",
+    "expected_action": "supersede",
+    "expected_scope": "user",
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "contradiction",
+    "category": "contradiction",
+    "user": "I no longer work on the Atlas project.",
+    "assistant": "I will not use the earlier Atlas-project memory as current fact.",
+    "expected_action": "dispute",
+    "expected_scope": "user",
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "agent-private",
+    "category": "agent_private",
+    "user": "Only this planning agent should remember the draft launch checklist.",
+    "assistant": "I will keep the draft checklist in the current agent scope.",
+    "expected_action": "create",
+    "expected_scope": "agent",
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "shared-user",
+    "category": "shared_user",
+    "user": "Across my agents, remember that I prefer a short weekly summary.",
+    "assistant": "I will treat that as a shared user preference.",
+    "expected_action": "review",
+    "expected_scope": "user",
+    "expected_horizon": "long"
+  },
+  {
+    "id": "duplicate-reinforcement",
+    "category": "duplicate_reinforcement",
+    "user": "As before, please keep answers concise.",
+    "assistant": "I will reinforce the existing concise-answer preference.",
+    "expected_action": "reinforce",
+    "expected_scope": "user",
+    "expected_horizon": "long"
+  }
+]

@@ -1,5 +1,6 @@
 """Session-scoped transactional outbox repository."""
 
+import json
 from uuid import UUID
 
 from sqlalchemy import select
@@ -35,6 +36,30 @@ class SqlOutboxRepository:
                 },
             )
         )
+
+    async def stage_command(
+        self,
+        session: AsyncSession,
+        *,
+        command: OutboxCommand,
+    ) -> UUID:
+        """Stage one generic identifier-only command transactionally.
+
+        Callers own the topic and identifier schema.  The platform only
+        persists the command envelope and never interprets its identifiers.
+        """
+
+        existing = await session.get(OutboxRow, command.id)
+        if existing is None:
+            session.add(
+                OutboxRow(
+                    id=command.id,
+                    topic=command.topic,
+                    aggregate_id=command.run_id,
+                    payload=json.loads(command.wire_payload()),
+                )
+            )
+        return command.id
 
     async def pending(self, session: AsyncSession, limit: int) -> list[OutboxCommand]:
         rows = (

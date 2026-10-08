@@ -1,0 +1,43 @@
+component:
+  id: aura.runtime.embedding_gateway
+  version: 1.0.0
+  owner: runtime.models
+  category: embedding
+input:
+  schema: embedding-request-v1
+  replayable: false
+  replay_reason: Input memory content and vector payloads are never captured.
+output:
+  schema: embedding-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - model_provider
+metrics:
+  - embedding_duration_ms
+  - provider_errors
+  - retry_count
+  - backlog
+  - errors
+  - duration_ms
+  - backlog_depth
+  - backlog
+metric_semantics:
+  embedding_duration_ms: Bounded provider embedding duration.
+  provider_errors: Provider failures without text or vector payloads.
+  retry_count: Missing-embedding retry count.
+  backlog: Missing embeddings queued for the selected generation.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, causation_id, command_id, job_id, run_id, conversation_id, generation_id, model_id, memory_id, memory_revision_id, attempt_count]
+  prohibited: [content, evidence, prompt, response, memory_text, vector, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

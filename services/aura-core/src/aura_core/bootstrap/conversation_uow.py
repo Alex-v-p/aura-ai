@@ -7,7 +7,7 @@ imports or manipulates another domain's ORM mapping.
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from time import perf_counter
 from typing import Any
@@ -105,6 +105,17 @@ class SqlConversationStore:
         self.persona_admission = persona_admission
         self.agent_store: Any = None
         self.prompt_metrics: PromptMetricsPort | None = None
+        self.memory_command_factory: (
+            Callable[[Conversation, Run, Message], OutboxCommand] | None
+        ) = None
+
+    def set_memory_command_factory(
+        self,
+        factory: Callable[[Conversation, Run, Message], OutboxCommand],
+    ) -> None:
+        """Attach the knowledge.memory-owned completed-turn command builder."""
+
+        self.memory_command_factory = factory
 
     def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
         """Attach the application metadata-only prompt telemetry sink."""
@@ -1681,6 +1692,14 @@ class SqlConversationStore:
             conversation = await self._load(
                 session, await self.conversations.get(session, run.conversation_id)
             )
+            assistant = next(
+                (item for item in conversation.messages if item.id == run.assistant_message_id),
+                None,
+            )
+            if status == RunStatus.COMPLETED and assistant is not None:
+                if self.memory_command_factory is not None:
+                    command = self.memory_command_factory(conversation, run, assistant)
+                    await self.outbox.stage_command(session, command=command)
             return (
                 conversation,
                 run,

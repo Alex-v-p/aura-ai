@@ -1,0 +1,40 @@
+component:
+  id: aura.runtime.structured_inference
+  version: 1.0.0
+  owner: runtime.models
+  category: inference
+input:
+  schema: structured-inference-request-v1
+  replayable: false
+  replay_reason: Provider input is not captured and no safe deterministic replay hook exists.
+output:
+  schema: structured-inference-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - model_provider
+metrics:
+  - structured_inference_duration_ms
+  - provider_errors
+  - errors
+  - duration_ms
+  - backlog_depth
+  - retry_count
+  - backlog
+metric_semantics:
+  structured_inference_duration_ms: Bounded non-streaming schema-constrained inference duration.
+  provider_errors: Provider failures without provider payloads.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, causation_id, command_id, job_id, run_id, conversation_id, generation_id, model_id, memory_id, memory_revision_id, attempt_count]
+  prohibited: [content, evidence, prompt, response, vector, structured_payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

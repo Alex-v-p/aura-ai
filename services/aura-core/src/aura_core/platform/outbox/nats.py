@@ -11,15 +11,25 @@ from nats.errors import TimeoutError as NatsTimeoutError
 
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import MetricsPort, NullMetrics
-from aura_core.platform.outbox.service import OutboxCommand
+from aura_core.platform.outbox.service import (
+    RUN_COMMAND_TOPIC,
+    OutboxCommand,
+    identifier_trace_metadata,
+)
 
 EventHandler = Callable[[UUID, UUID], Awaitable[None]]
 
 
 class NatsOutbox:
-    def __init__(self, connection_url: str, subject: str = "aura.runs.execute.v1") -> None:
+    def __init__(
+        self,
+        connection_url: str,
+        subject: str = RUN_COMMAND_TOPIC,
+        additional_subjects: tuple[str, ...] = (),
+    ) -> None:
         self.connection_url = connection_url
         self.subject = subject
+        self.additional_subjects = additional_subjects
         self._connection: Any = None
         self._jetstream: Any = None
         self._event_subscription: Any = None
@@ -33,12 +43,7 @@ class NatsOutbox:
         nats_module: Any = nats
         self._connection = await nats_module.connect(self.connection_url)
         self._jetstream = self._connection.jetstream()
-        try:
-            await self._jetstream.add_stream(name="AURA_RUNS", subjects=[self.subject])
-        except Exception:
-            # Existing streams reject add_stream; verify the expected stream
-            # below instead of treating every create failure as harmless.
-            await self._jetstream.stream_info("AURA_RUNS")
+        await _ensure_command_stream(self._jetstream, (self.subject, *self.additional_subjects))
         # Stream creation is idempotent but can be rejected for reasons other
         # than an existing stream.  Account info proves JetStream is actually
         # usable before readiness reports the broker as healthy.
@@ -47,6 +52,9 @@ class NatsOutbox:
         subjects = _stream_subjects(info)
         if self.subject not in subjects:
             raise RuntimeError("AURA_RUNS does not contain the configured run subject")
+        missing = [subject for subject in self.additional_subjects if subject not in subjects]
+        if missing:
+            raise RuntimeError("AURA_RUNS does not contain all configured command subjects")
         self._readiness_detail = None
 
     async def readiness(self) -> tuple[bool, str | None]:
@@ -62,6 +70,9 @@ class NatsOutbox:
             if self.subject not in subjects:
                 self._readiness_detail = "run stream subject missing"
                 return False, self._readiness_detail
+            if any(subject not in subjects for subject in self.additional_subjects):
+                self._readiness_detail = "configured command subject missing"
+                return False, self._readiness_detail
         except Exception:
             self._readiness_detail = "JetStream account or run stream unavailable"
             return False, self._readiness_detail
@@ -75,8 +86,9 @@ class NatsOutbox:
     async def publish(self, command: OutboxCommand) -> bool:
         if self._jetstream is None:
             raise RuntimeError("NATS transport is not connected")
+        subject = self.subject if command.topic == RUN_COMMAND_TOPIC else command.topic
         acknowledgment = await self._jetstream.publish(
-            self.subject,
+            subject,
             command.wire_payload(),
             headers={"Nats-Msg-Id": str(command.id)},
         )
@@ -137,8 +149,12 @@ class NatsRunConsumer:
     def __init__(
         self,
         connection_url: str,
-        subject: str = "aura.runs.execute.v1",
+        subject: str = RUN_COMMAND_TOPIC,
         metrics: MetricsPort | None = None,
+        *,
+        durable: str = "aura-core-worker",
+        component: str = "aura.execution.run_coordinator",
+        strict_schema: bool = False,
     ) -> None:
         self.connection_url = connection_url
         self.subject = subject
@@ -148,22 +164,22 @@ class NatsRunConsumer:
         self._pending_command: OutboxCommand | None = None
         self._pending_delivery_count = 1
         self.metrics = metrics or NullMetrics()
+        self.durable = durable
+        self.component = component
+        self.strict_schema = strict_schema
 
     async def connect(self) -> None:
         nats_module: Any = nats
         self._connection = await nats_module.connect(self.connection_url)
         jetstream = self._connection.jetstream()
-        try:
-            await jetstream.add_stream(name="AURA_RUNS", subjects=[self.subject])
-        except Exception:
-            await jetstream.stream_info("AURA_RUNS")
+        await _ensure_command_stream(jetstream, (RUN_COMMAND_TOPIC, self.subject))
         await jetstream.account_info()
         info = await jetstream.stream_info("AURA_RUNS")
         subjects = _stream_subjects(info)
         if self.subject not in subjects:
             raise RuntimeError("AURA_RUNS does not contain the configured run subject")
         self._subscription = await jetstream.pull_subscribe(
-            self.subject, durable="aura-core-worker", stream="AURA_RUNS"
+            self.subject, durable=self.durable, stream="AURA_RUNS"
         )
 
     async def receive(self) -> OutboxCommand | None:
@@ -173,33 +189,76 @@ class NatsRunConsumer:
             message = (await self._subscription.fetch(1, timeout=30))[0]
         except NatsTimeoutError:
             return None
-        import json
+        self._pending_message = message
+        metadata = getattr(message, "metadata", None)
+        delivery_count = int(getattr(metadata, "num_delivered", 1) or 1)
+        self._pending_delivery_count = delivery_count
 
         try:
-            payload = cast(dict[str, str], json.loads(message.data))
+            raw_payload = json.loads(message.data)
+            if not isinstance(raw_payload, dict):
+                raise ValueError("command payload must be an object")
+            payload = cast(dict[str, object], raw_payload)
+            schema_version = payload.get("schemaVersion")
+            if schema_version is None and not self.strict_schema:
+                # Existing run producers predate the generic envelope version
+                # field.  They remain wire-compatible at v1; memory commands
+                # use the strict identifier consumer and must carry it.
+                schema_version = 1
+            if type(schema_version) is not int:
+                raise ValueError("invalid command schema version")
+            reserved = {
+                "schemaVersion",
+                "commandId",
+                "runId",
+                "conversationId",
+                "createdAt",
+                "correlationId",
+                "causationId",
+                "attemptId",
+                "generationId",
+            }
+            if any(type(value) is not str for key, value in payload.items() if key not in reserved):
+                raise ValueError("non-string identifier metadata")
             command = OutboxCommand(
-                UUID(payload["commandId"]),
+                UUID(str(payload["commandId"])),
                 self.subject,
-                UUID(payload["runId"]),
-                UUID(payload["conversationId"]),
-                datetime.fromisoformat(payload["createdAt"]),
-                UUID(payload["correlationId"]),
-                UUID(payload.get("causationId", payload["runId"])),
+                UUID(str(payload["runId"])),
+                UUID(str(payload["conversationId"])),
+                datetime.fromisoformat(str(payload["createdAt"])),
+                UUID(str(payload["correlationId"])),
+                UUID(str(payload.get("causationId", payload["runId"]))),
+                tuple(
+                    (str(key), str(value))
+                    for key, value in payload.items()
+                    if key
+                    not in {
+                        "schemaVersion",
+                        "commandId",
+                        "runId",
+                        "conversationId",
+                        "createdAt",
+                        "correlationId",
+                        "causationId",
+                        "attemptId",
+                        "generationId",
+                    }
+                    and type(value) is str
+                ),
+                UUID(str(payload["attemptId"])) if "attemptId" in payload else None,
+                UUID(str(payload["generationId"])) if "generationId" in payload else None,
+                schema_version,
             )
         except KeyError, TypeError, ValueError, json.JSONDecodeError:
             self.metrics.increment(
-                "aura.execution.run_coordinator",
+                self.component,
                 "errors",
                 error_class="delivery",
             )
             raise ValueError("invalid run command metadata") from None
-        self._pending_message = message
         self._pending_command = command
-        metadata = getattr(message, "metadata", None)
-        delivery_count = int(getattr(metadata, "num_delivered", 1) or 1)
-        self._pending_delivery_count = delivery_count
         self.metrics.increment(
-            "aura.execution.run_coordinator",
+            self.component,
             "consumer_received",
             trace_id=(command.correlation_id or command.run_id).hex,
             run_id=str(command.run_id),
@@ -208,10 +267,23 @@ class NatsRunConsumer:
             correlation_id=str(command.correlation_id or command.run_id),
             causation_id=str(command.causation_id or command.run_id),
             delivery_count=str(delivery_count),
+            **_optional_command_metadata(command),
         )
         if delivery_count > 1:
             self.metrics.increment(
-                "aura.execution.run_coordinator",
+                self.component,
+                "consumer_redelivered",
+                trace_id=(command.correlation_id or command.run_id).hex,
+                run_id=str(command.run_id),
+                conversation_id=str(command.conversation_id),
+                command_id=str(command.id),
+                correlation_id=str(command.correlation_id or command.run_id),
+                causation_id=str(command.causation_id or command.run_id),
+                delivery_count=str(delivery_count),
+                **_optional_command_metadata(command),
+            )
+            self.metrics.increment(
+                self.component,
                 "outbox_duplicates",
                 trace_id=(command.correlation_id or command.run_id).hex,
                 run_id=str(command.run_id),
@@ -220,8 +292,13 @@ class NatsRunConsumer:
                 correlation_id=str(command.correlation_id or command.run_id),
                 causation_id=str(command.causation_id or command.run_id),
                 delivery_count=str(delivery_count),
+                **_optional_command_metadata(command),
             )
         return command
+
+    @property
+    def delivery_count(self) -> int:
+        return self._pending_delivery_count
 
     async def ack(self) -> None:
         """Acknowledge only after the run mutation has reached a terminal state."""
@@ -242,7 +319,7 @@ class NatsRunConsumer:
                     else {}
                 )
                 self.metrics.increment(
-                    "aura.execution.run_coordinator",
+                    self.component,
                     "errors",
                     error_class="delivery",
                     **metadata,
@@ -250,7 +327,7 @@ class NatsRunConsumer:
                 raise
             if command is not None:
                 self.metrics.increment(
-                    "aura.execution.run_coordinator",
+                    self.component,
                     "consumer_acknowledged",
                     trace_id=(command.correlation_id or command.run_id).hex,
                     run_id=str(command.run_id),
@@ -259,10 +336,87 @@ class NatsRunConsumer:
                     correlation_id=str(command.correlation_id or command.run_id),
                     causation_id=str(command.causation_id or command.run_id),
                     delivery_count=str(self._pending_delivery_count),
+                    **_optional_command_metadata(command),
                 )
             self._pending_message = None
             self._pending_command = None
             self._pending_delivery_count = 1
+
+    async def nack(
+        self,
+        *,
+        retry_delay: float | None = None,
+        error_class: str = "delivery",
+    ) -> None:
+        """Release a delivery for bounded JetStream redelivery."""
+
+        message = self._pending_message
+        command = self._pending_command
+        if message is None:
+            return
+        try:
+            nack = getattr(message, "nak", None)
+            if not callable(nack):
+                raise RuntimeError("JetStream message cannot be negatively acknowledged")
+            if retry_delay is None:
+                await cast(Callable[[], Awaitable[object]], nack)()
+            else:
+                try:
+                    await cast(Callable[..., Awaitable[object]], nack)(delay=retry_delay)
+                except TypeError:
+                    # Keep compatibility with test doubles and older nats-py
+                    # releases that do not expose delayed NAKs.
+                    await cast(Callable[[], Awaitable[object]], nack)()
+            if command is not None:
+                self.metrics.increment(
+                    self.component,
+                    "consumer_nacked",
+                    trace_id=(command.correlation_id or command.run_id).hex,
+                    run_id=str(command.run_id),
+                    conversation_id=str(command.conversation_id),
+                    command_id=str(command.id),
+                    correlation_id=str(command.correlation_id or command.run_id),
+                    causation_id=str(command.causation_id or command.run_id),
+                    delivery_count=str(self._pending_delivery_count),
+                    error_class=error_class,
+                    **_optional_command_metadata(command),
+                )
+        finally:
+            self._clear_pending()
+
+    async def reject(self, *, error_class: str = "validation") -> None:
+        """Permanently terminate a malformed or incompatible delivery."""
+
+        message = self._pending_message
+        command = self._pending_command
+        if message is None:
+            return
+        try:
+            term = getattr(message, "term", None)
+            if not callable(term):
+                raise RuntimeError("JetStream message cannot be terminated")
+            await cast(Callable[[], Awaitable[object]], term)()
+            if command is not None:
+                self.metrics.increment(
+                    self.component,
+                    "consumer_rejected",
+                    trace_id=(command.correlation_id or command.run_id).hex,
+                    run_id=str(command.run_id),
+                    conversation_id=str(command.conversation_id),
+                    command_id=str(command.id),
+                    correlation_id=str(command.correlation_id or command.run_id),
+                    causation_id=str(command.causation_id or command.run_id),
+                    delivery_count=str(self._pending_delivery_count),
+                    error_class=error_class,
+                    **_optional_command_metadata(command),
+                )
+        finally:
+            self._clear_pending()
+
+    def _clear_pending(self) -> None:
+        self._pending_message = None
+        self._pending_command = None
+        self._pending_delivery_count = 1
 
     async def close(self) -> None:
         if self._connection is not None:
@@ -274,8 +428,50 @@ class NatsRunConsumer:
             self._pending_delivery_count = 1
 
 
+class NatsIdentifierConsumer(NatsRunConsumer):
+    """Durable pull consumer for a caller-owned identifier-only command."""
+
+    def __init__(
+        self,
+        connection_url: str,
+        subject: str,
+        metrics: MetricsPort | None = None,
+        *,
+        durable: str = "aura-core-identifier-worker",
+        component: str = "aura.execution.run_coordinator",
+    ) -> None:
+        super().__init__(
+            connection_url,
+            subject,
+            metrics,
+            durable=durable,
+            component=component,
+            strict_schema=True,
+        )
+
+
 def _stream_subjects(info: Any) -> tuple[str, ...]:
     raw: Any = getattr(getattr(info, "config", None), "subjects", None)
     if not isinstance(raw, (list, tuple)):
         return ()
     return tuple(str(value) for value in cast(list[Any] | tuple[Any, ...], raw))
+
+
+async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> None:
+    try:
+        await jetstream.add_stream(name="AURA_RUNS", subjects=subjects)
+    except Exception:
+        info = await jetstream.stream_info("AURA_RUNS")
+        existing = _stream_subjects(info)
+        missing = [subject for subject in subjects if subject not in existing]
+        if missing:
+            # Upgrade an older AURA_RUNS stream in place.  The stream retains
+            # all existing messages while adding the versioned memory subject.
+            await jetstream.update_stream(
+                name="AURA_RUNS",
+                subjects=list(dict.fromkeys(existing + tuple(missing))),
+            )
+
+
+def _optional_command_metadata(command: OutboxCommand) -> dict[str, str]:
+    return identifier_trace_metadata(command)

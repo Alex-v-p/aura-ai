@@ -1,0 +1,69 @@
+component:
+  id: aura.knowledge.memory_extraction
+  version: 1.0.0
+  owner: knowledge.memory
+  category: worker
+input:
+  schema: memory-processing-command-v1
+  replayable: false
+  replay_reason: Extraction consumes private conversation evidence and has durable idempotent side effects.
+output:
+  schema: memory-action-outcome-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - memory_worker
+  - structured_inference
+  - embedding_provider
+metrics:
+  - memory_job_outcome
+  - memory_candidate_outcome
+  - memory_action_outcome
+  - structured_inference_duration_ms
+  - queue_wait_ms
+  - retry_count
+  - backlog
+  - memory_extraction_duration_ms
+  - memory_job_duration_ms
+  - memory_job_queue_wait_ms
+  - memory_policy_duration_ms
+  - memory_processing_errors
+  - memory_retry_count
+  - missing_embedding_backlog
+  - errors
+  - provider_errors
+  - duration_ms
+  - backlog_depth
+  - backlog
+metric_semantics:
+  memory_job_outcome: Queued, completed, retryable, or failed identifier-only job outcome.
+  memory_candidate_outcome: Deterministic acceptance, review, rejection, or retry decision.
+  memory_action_outcome: Durable create, reinforce, dispute, supersede, or review result.
+  structured_inference_duration_ms: Bounded provider call duration without prompt or response capture.
+  queue_wait_ms: Monotonic delay from persisted job availability to worker claim.
+  retry_count: Bounded worker/provider retry count.
+  backlog: Number of due identifier-only jobs at observation time.
+  memory_extraction_duration_ms: End-to-end extraction boundary duration.
+  memory_job_duration_ms: Durable job claim-to-settlement duration.
+  memory_job_queue_wait_ms: Time waiting for a worker lease.
+  memory_policy_duration_ms: Deterministic policy evaluation duration.
+  memory_processing_errors: Bounded processing error count.
+  memory_retry_count: Retry count for provider and worker recovery.
+  missing_embedding_backlog: Accepted revisions awaiting embeddings.
+evaluators:
+  - memory_extraction_policy
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, causation_id, command_id, job_id, run_id, conversation_id, generation_id, model_id, memory_id, memory_revision_id, attempt_count]
+  prohibited: [content, memory_text, evidence, prompt, response, vector, payload, endpoint, token, credential, owner_subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

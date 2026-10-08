@@ -1,12 +1,13 @@
 """API composition state."""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any, cast
 from uuid import UUID
 
+from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
-from aura_core.bootstrap.memory_uow import memory_repository
 from aura_core.domains.execution.runs.public import RunCoordinator
 from aura_core.domains.governance.identity.application import LoginConfiguration, LoginService
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
@@ -22,6 +23,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationService,
     PersonaMemoryRepository,
 )
+from aura_core.domains.knowledge.memory import public as memory_public
 from aura_core.domains.knowledge.memory.public import MemoryRepository
 from aura_core.platform.auth import (
     MemoryLoginStateBackend,
@@ -33,7 +35,12 @@ from aura_core.platform.auth import (
 )
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.oidc import OidcClient
-from aura_core.platform.outbox import InMemoryOutbox, TransactionalOutboxTransport
+from aura_core.platform.outbox import (
+    InMemoryOutbox,
+    OutboxCommand,
+    TransactionalOutboxTransport,
+    identifier_trace_metadata,
+)
 from aura_core.platform.outbox.nats import NatsOutbox
 from aura_core.platform.readiness import (
     CallableProbe,
@@ -104,7 +111,14 @@ class AppState:
             self.publisher = EventPublisher()
             self.outbox = InMemoryOutbox()
             self.sessions = SessionService(MemorySessionBackend(), self.settings)
-            self.memory_repository = memory_repository(None, testing=True, metrics=self.metrics)
+            self.memory_repository = memory_uow.memory_repository(
+                None, testing=True, metrics=self.metrics
+            )
+            command_factory = getattr(memory_uow, "memory_command_factory", None)
+            if callable(command_factory):
+                self.store.set_memory_command_factory(
+                    cast(Callable[..., OutboxCommand], command_factory), self.outbox
+                )
             probes = {
                 "postgres": UnknownProbe(),
                 "nats": UnknownProbe(),
@@ -137,7 +151,13 @@ class AppState:
             self.agent_service = AgentConfigurationService(self.agent_store, self.persona_service)
             self.sql_store.agent_store = self.agent_store
             self.store = self.sql_store
-            self.nats = NatsOutbox(self.settings.nats_url)
+            memory_topic = str(
+                getattr(memory_public, "MEMORY_PROCESSING_TOPIC", "aura.memory.process.v1")
+            )
+            self.nats = NatsOutbox(
+                self.settings.nats_url,
+                additional_subjects=(memory_topic,),
+            )
             self.outbox = TransactionalOutboxTransport()
             self.publisher = PersistentEventPublisher(self.sql_store.persist_event)
             import redis.asyncio
@@ -150,7 +170,14 @@ class AppState:
             redis_client = redis_factory(self.settings.valkey_url, decode_responses=True)
             self.sessions = SessionService(RedisSessionBackend(redis_client), self.settings)
             self.oidc_states = RedisLoginStateBackend(redis_client)
-            self.memory_repository = memory_repository(self.sessions_factory, metrics=self.metrics)
+            self.memory_repository = memory_uow.memory_repository(
+                self.sessions_factory, metrics=self.metrics
+            )
+            command_factory = getattr(memory_uow, "memory_command_factory", None)
+            if callable(command_factory):
+                self.sql_store.set_memory_command_factory(
+                    cast(Callable[..., OutboxCommand], command_factory)
+                )
             probes = {
                 "postgres": DatabaseProbe(self.engine),
                 "nats": DiagnosticProbe(self._nats_readiness, "transport unavailable"),
@@ -243,6 +270,11 @@ class AppState:
             try:
                 commands = await self.sql_store.pending_commands()
                 for command in commands:
+                    # Outbox dispatch is part of the existing run-coordinator
+                    # boundary; no unregistered platform telemetry component
+                    # may silently reject these measurements.
+                    component = "aura.execution.run_coordinator"
+                    trace_identifiers = identifier_trace_metadata(command)
                     metadata = {
                         "trace_id": command.correlation_id.hex
                         if command.correlation_id
@@ -251,16 +283,18 @@ class AppState:
                         "conversation_id": str(command.conversation_id),
                         "command_id": str(command.id),
                         "correlation_id": str(command.correlation_id or command.run_id),
+                        **trace_identifiers,
                     }
-                    if command.causation_id is not None:
-                        metadata["causation_id"] = str(command.causation_id)
+                    metadata["causation_id"] = str(command.causation_id or command.run_id)
+                    trace_metadata = dict(trace_identifiers)
+                    trace_metadata["causation_id"] = metadata["causation_id"]
                     dispatch_timer = Stopwatch()
                     dispatch_span_id = new_span_id()
                     try:
                         duplicate = await self.nats.publish(command)
                     except Exception:
                         self.metrics.record_span(
-                            "aura.execution.run_coordinator",
+                            component,
                             "outbox.dispatch",
                             dispatch_timer.elapsed_ms(),
                             trace_id=metadata["trace_id"],
@@ -273,10 +307,11 @@ class AppState:
                             conversation_id=metadata["conversation_id"],
                             command_id=metadata["command_id"],
                             correlation_id=metadata["correlation_id"],
+                            **trace_metadata,
                         )
                         raise
                     self.metrics.record_span(
-                        "aura.execution.run_coordinator",
+                        component,
                         "outbox.dispatch",
                         dispatch_timer.elapsed_ms(),
                         trace_id=metadata["trace_id"],
@@ -288,6 +323,7 @@ class AppState:
                         conversation_id=metadata["conversation_id"],
                         command_id=metadata["command_id"],
                         correlation_id=metadata["correlation_id"],
+                        **trace_metadata,
                     )
                     persistence_timer = Stopwatch()
                     persistence_span_id = new_span_id()
@@ -304,15 +340,16 @@ class AppState:
                         run_id=metadata["run_id"],
                         conversation_id=metadata["conversation_id"],
                         command_id=metadata["command_id"],
+                        **trace_metadata,
                     )
                     self.metrics.increment(
-                        "aura.execution.run_coordinator",
+                        component,
                         "outbox_dispatched",
                         **metadata,
                     )
                     if duplicate:
                         self.metrics.increment(
-                            "aura.execution.run_coordinator",
+                            component,
                             "outbox_duplicates",
                             **metadata,
                         )

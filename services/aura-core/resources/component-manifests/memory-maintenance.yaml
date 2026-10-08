@@ -1,0 +1,59 @@
+component:
+  id: aura.knowledge.memory_maintenance
+  version: 1.0.0
+  owner: knowledge.memory
+  category: worker
+input:
+  schema: memory-maintenance-command-v1
+  replayable: false
+  replay_reason: Maintenance consumes private memory state and has no safe deterministic replay hook.
+output:
+  schema: memory-maintenance-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - memory_worker
+  - embedding_provider
+metrics:
+  - memory_maintenance_transition
+  - maintenance_duration_ms
+  - retry_count
+  - backlog
+  - memory_maintenance_duration_ms
+  - memory_reindex_backlog
+  - memory_reindex_chunk_duration_ms
+  - memory_reindex_progress
+  - memory_reindex_switch_duration_ms
+  - missing_embedding_backlog
+  - errors
+  - duration_ms
+  - backlog_depth
+  - backlog
+metric_semantics:
+  memory_maintenance_transition: Bounded lifecycle transition with no memory text.
+  maintenance_duration_ms: Fake-clock-compatible lifecycle maintenance duration.
+  retry_count: Reindex and maintenance retry count.
+  backlog: Missing embedding or due maintenance work count.
+  memory_maintenance_duration_ms: Lifecycle maintenance duration.
+  memory_reindex_backlog: Retained revisions awaiting the target generation.
+  memory_reindex_chunk_duration_ms: Bounded reindex chunk duration.
+  memory_reindex_progress: Completed versus retained revision count.
+  memory_reindex_switch_duration_ms: Atomic active-generation switch duration.
+  missing_embedding_backlog: Accepted revisions awaiting embeddings.
+evaluators:
+  - memory_maintenance_integrity
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, causation_id, command_id, job_id, run_id, conversation_id, generation_id, model_id, memory_id, memory_revision_id, attempt_count]
+  prohibited: [content, memory_text, evidence, prompt, response, vector, payload, endpoint, token, credential, owner_subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

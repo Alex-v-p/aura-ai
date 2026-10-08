@@ -1,10 +1,18 @@
 import json
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
+from aura_core.platform.telemetry import MetadataMetrics
+from aura_core.providers.embeddings.ollama.adapter import (
+    OllamaEmbeddingAdapter,
+)
 from aura_core.providers.models.ollama.adapter import OllamaAdapter, OllamaUnavailable
-from aura_core.runtime.models.ports import ChatMessage
+from aura_core.runtime.models.ports import (
+    ChatMessage,
+    ProviderTraceContext,
+    StructuredInferenceRequest,
+)
 
 
 def _traceback_locals(exception: BaseException) -> str:
@@ -124,9 +132,10 @@ async def test_ollama_title_request_is_pinned_bounded_non_streaming_and_non_thin
     original = httpx.AsyncClient
     httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
     try:
-        assert await adapter.infer_title(
-            "qwen3:8b", [ChatMessage("system", "Return only a title")]
-        ) == "A short title"
+        assert (
+            await adapter.infer_title("qwen3:8b", [ChatMessage("system", "Return only a title")])
+            == "A short title"
+        )
         assert seen["model"] == "qwen3:8b"
         assert seen["stream"] is False
         assert seen["think"] is False
@@ -209,3 +218,172 @@ async def test_ollama_title_rejects_oversized_raw_response_before_json_parsing()
         assert "PRIVATE_TRANSCRIPT_REQUEST" not in trace_locals
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_memory_inference_is_bounded_schema_constrained_and_non_streaming() -> None:
+    seen: dict[str, object] = {}
+    message_id = "7f7c9c1f-94d1-4d93-8cf0-0a37f9e3908b"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat"
+        seen.update(cast(dict[str, object], json.loads(request.content)))
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "action": "create",
+                            "content": "The owner prefers concise answers.",
+                            "kind": "preference",
+                            "scope_type": "user",
+                            "confidence": 0.9,
+                            "sensitivity": "ordinary",
+                            "grounded_message_ids": [message_id],
+                        }
+                    )
+                }
+            },
+        )
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        action = await adapter.infer(
+            StructuredInferenceRequest(
+                "qwen3:8b",
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["action", "confidence", "grounded_message_ids"],
+                    "properties": {
+                        "action": {"type": "string"},
+                        "content": {"type": ["string", "null"]},
+                        "kind": {"type": ["string", "null"]},
+                        "scope_type": {"type": ["string", "null"]},
+                        "confidence": {"type": "number"},
+                        "sensitivity": {"type": "string"},
+                        "grounded_message_ids": {"type": "array"},
+                    },
+                },
+                input={"user_content": "I prefer concise answers."},
+            )
+        )
+        assert action["action"] == "create"
+        assert action["grounded_message_ids"] == [message_id]
+        assert seen["stream"] is False
+        assert seen["think"] is False
+        schema = cast(dict[str, object], seen["format"])
+        assert schema["additionalProperties"] is False
+        options = cast(dict[str, object], seen["options"])
+        assert 0 < cast(int, options["num_predict"]) <= 8192
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_memory_inference_malformed_and_oversized_responses_are_content_safe() -> None:
+    responses = [
+        httpx.Response(200, json={"message": {"content": "not-json"}}),
+        httpx.Response(200, content=("{" + "x" * 200_000).encode()),
+    ]
+    for response in responses:
+
+        async def handler(
+            request: httpx.Request, result: httpx.Response = response
+        ) -> httpx.Response:
+            assert request.url.path == "/api/chat"
+            return result
+
+        adapter = OllamaAdapter("https://private-ollama.invalid")
+        transport = httpx.MockTransport(handler)
+        original = httpx.AsyncClient
+
+        def patched_client(
+            *args: Any,
+            _original: Any = original,
+            _transport: Any = transport,
+            **kwargs: Any,
+        ) -> httpx.AsyncClient:
+            return _original(*args, transport=_transport, **kwargs)
+
+        httpx.AsyncClient = patched_client  # type: ignore[method-assign]
+        try:
+            with pytest.raises(OllamaUnavailable) as error:
+                await adapter.infer(
+                    StructuredInferenceRequest("qwen3:8b", input={"user_content": "private"})
+                )
+            assert "private-ollama" not in str(error.value)
+            assert error.value.__cause__ is None
+            assert error.value.__context__ is None
+        finally:
+            httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_embedding_returns_finite_vector_metadata_without_text_leakage() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/embed"
+        body = cast(dict[str, object], json.loads(request.content))
+        assert body["model"] == "qwen3-embedding:4b"
+        assert body["input"] == "private memory text"
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
+
+    adapter = OllamaEmbeddingAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        result = await adapter.embed("qwen3-embedding:4b", "private memory text")
+        assert result.vector == (0.1, 0.2, 0.3)
+        assert result.dimension == 3
+        assert len(result.digest) == 64
+        assert "private memory text" not in repr(result)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_telemetry_is_correlated_and_metadata_only() -> None:
+    context = ProviderTraceContext(
+        trace_id="a" * 32,
+        span_id="b" * 16,
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            return httpx.Response(200, json={"message": {"content": '{"answer":"ok"}'}})
+        assert request.url.path == "/api/embed"
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    metrics = MetadataMetrics()
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        await OllamaAdapter("https://ollama.test", telemetry=metrics).infer(
+            StructuredInferenceRequest(
+                "qwen3:8b",
+                schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+                input={"private": "prompt text"},
+                trace=context,
+            )
+        )
+        await OllamaEmbeddingAdapter("https://ollama.test", telemetry=metrics).embed(
+            "qwen3-embedding:4b", "private memory text", context=context
+        )
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+    measurements = metrics.snapshot()
+    assert {item.metric for item in measurements} == {
+        "structured_inference_duration_ms",
+        "embedding_duration_ms",
+    }
+    assert all(item.trace_id == context.trace_id for item in measurements)
+    rendered = repr(measurements)
+    assert "prompt text" not in rendered
+    assert "private memory text" not in rendered

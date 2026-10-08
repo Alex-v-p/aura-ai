@@ -8,8 +8,9 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import inspect
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import cast
@@ -58,6 +59,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaRevisionQueryPort,
 )
+from aura_core.platform.outbox import OutboxCommand
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
 from aura_core.runtime.models.ports import ModelDescriptor
@@ -134,6 +136,20 @@ class ConversationStore:
         self._global_lock = asyncio.Lock()
         self.auth_audit: list[dict[str, object]] = []
         self.prompt_metrics: PromptMetricsPort | None = None
+        self.memory_command_factory: (
+            Callable[[Conversation, Run, Message], OutboxCommand] | None
+        ) = None
+        self.memory_outbox: object | None = None
+
+    def set_memory_command_factory(
+        self,
+        factory: Callable[[Conversation, Run, Message], OutboxCommand],
+        publisher: object,
+    ) -> None:
+        """Attach the knowledge.memory-owned generic command seam."""
+
+        self.memory_command_factory = factory
+        self.memory_outbox = publisher
 
     def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
         """Attach the application metadata-only prompt telemetry sink."""
@@ -1077,6 +1093,14 @@ class ConversationStore:
             )
             assistant.updated_at = now()
         conversation.updated_at = now()
+        if status == RunStatus.COMPLETED and assistant is not None:
+            if self.memory_command_factory is not None:
+                command = self.memory_command_factory(conversation, run, assistant)
+                publish = getattr(self.memory_outbox, "publish", None)
+                if callable(publish):
+                    result = publish(command)
+                    if inspect.isawaitable(result):
+                        await result
         return conversation, run, assistant
 
     async def _find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]:
