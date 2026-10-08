@@ -10,16 +10,25 @@ from __future__ import annotations
 import os
 from asyncio import gather
 from collections.abc import AsyncIterator, Awaitable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 import yaml
 from aura_core.bootstrap.database import metadata
 from aura_core.bootstrap.memory_uow import memory_repository
+from aura_core.domains.interaction.agents.adapters.sql_store import SqlAgentStore
+from aura_core.domains.interaction.agents.persistence import AgentProfileRow
+from aura_core.domains.interaction.agents.public import (
+    AgentCatalog,
+    ConfigurationIdempotencyConflict,
+    ConfigurationVersionConflict,
+    MemoryPolicy,
+)
 from aura_core.domains.knowledge.memory import persistence as _memory_mappings
 from aura_core.domains.knowledge.memory.public import (
     PURGE_CONFIRMATION,
@@ -31,6 +40,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryIdempotencyConflict,
     MemoryKind,
     MemoryLifecycleStatus,
+    MemoryModelConfiguration,
     MemoryNotFound,
     MemoryProcessingJob,
     MemoryRecord,
@@ -108,6 +118,33 @@ async def _create(
         half_life_days=30,
         **kwargs,
     )
+
+
+async def _candidate(
+    store: SqlMemoryRepository,
+    *,
+    subject: str = OWNER,
+    action: MemoryAction = MemoryAction.CREATE,
+    content: str | None = "The owner prefers tea.",
+    related_memory_id: UUID | None = None,
+) -> MemoryCandidate:
+    job = MemoryProcessingJob(uuid4(), ISSUER, subject, uuid4(), uuid4())
+    await store.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        subject,
+        action,
+        content,
+        MemoryKind.PREFERENCE if content is not None else None,
+        MemoryScope(MemoryScopeType.USER) if content is not None else None,
+        0.9,
+        importance=0.8 if content is not None else None,
+        half_life_days=30 if content is not None else None,
+        related_memory_id=related_memory_id,
+    )
+    return await store.persist_candidate(candidate)
 
 
 def test_memory_mapping_is_core_owned_and_keeps_sensitive_values_out_of_audit_rows() -> None:
@@ -434,6 +471,16 @@ async def test_sql_repository_matches_in_memory_owner_scope_and_immutable_revisi
             MemoryFilters(scope_type=None)  # type: ignore[arg-type]
         with pytest.raises(MemoryNotFound):
             await store.get_memory(ISSUER, OWNER, agent_memory.id, scope_type=None)
+        resolved_agent = await store.get_memory(
+            ISSUER,
+            OWNER,
+            agent_memory.id,
+            scope_type=MemoryScopeType.AGENT,
+            agent_profile_id=agent_memory.scope.agent_profile_id,
+        )
+        assert resolved_agent.id == agent_memory.id
+        with pytest.raises(MemoryNotFound):
+            await store.get_memory(ISSUER, OTHER_OWNER, agent_memory.id, scope_type=None)
         with pytest.raises(MemoryNotFound):
             await store.get_memory(ISSUER, OTHER_OWNER, memory.id)
 
@@ -1121,3 +1168,300 @@ async def test_postgres_purge_scrubs_linked_candidate_outcome_embedding_and_retr
     assert counts["memory_command_idempotency"] == 0
     # The delayed processing job must not recreate the purged memory.
     assert await store.get_processing_job(job.id, ISSUER, OWNER)
+
+
+@pytest.mark.asyncio
+async def test_sql_candidate_decisions_replay_conflict_scrub_and_relations(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _ = sql_memory_store
+    candidate = await _candidate(store)
+    first = await store.reject_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        reason="not durable",
+        idempotency_key="candidate-reject-replay",
+    )
+    replay = await store.reject_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        reason="not durable",
+        idempotency_key="candidate-reject-replay",
+    )
+    assert replay == first
+    assert first.state is CandidateState.REJECTED
+    assert first.content is None
+    assert first.grounded_message_ids == ()
+    with pytest.raises(MemoryIdempotencyConflict):
+        await store.reject_candidate(
+            ISSUER,
+            OWNER,
+            candidate.id,
+            expected_version=1,
+            reason="changed reason",
+            idempotency_key="candidate-reject-replay",
+        )
+
+    secret_candidate = await _candidate(store)
+    secret_edit = {
+        "content": "api_key: do-not-persist",
+        "action": "create",
+        "kind": "preference",
+        "scope": {"type": "user"},
+        "confidence": 0.9,
+        "importance": 0.8,
+        "halfLifeDays": 30,
+        "validTo": None,
+        "relatedMemoryId": None,
+    }
+    with pytest.raises(MemoryValidationError):
+        await store.approve_candidate(
+            ISSUER,
+            OWNER,
+            secret_candidate.id,
+            expected_version=1,
+            edit=secret_edit,
+            idempotency_key="candidate-secret-edit",
+        )
+    reason_candidate = await _candidate(store)
+    with pytest.raises(MemoryValidationError):
+        await store.reject_candidate(
+            ISSUER,
+            OWNER,
+            reason_candidate.id,
+            expected_version=1,
+            reason="Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.secret.signature",
+            idempotency_key="candidate-secret-reason",
+        )
+
+    disputed_memory = await _create(store, content="The owner likes tea.")
+    disputed = await _candidate(
+        store,
+        action=MemoryAction.DISPUTE,
+        content="The owner does not like tea.",
+        related_memory_id=disputed_memory.id,
+    )
+    disputed_result = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        disputed.id,
+        expected_version=1,
+        idempotency_key="candidate-dispute",
+    )
+    assert disputed_result.state is CandidateState.ACCEPTED
+    current_disputed = await store.get_memory(ISSUER, OWNER, disputed_memory.id)
+    assert current_disputed.status is MemoryLifecycleStatus.DISPUTED
+
+    superseded_memory = await _create(store, content="The owner prefers coffee.")
+    superseding = await _candidate(
+        store,
+        action=MemoryAction.SUPERSEDE,
+        content="The owner now prefers tea.",
+        related_memory_id=superseded_memory.id,
+    )
+    superseded_result = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        superseding.id,
+        expected_version=1,
+        idempotency_key="candidate-supersede",
+    )
+    assert superseded_result.state is CandidateState.ACCEPTED
+    current_superseded = await store.get_memory(ISSUER, OWNER, superseded_memory.id)
+    assert current_superseded.status is MemoryLifecycleStatus.SUPERSEDED
+
+
+@pytest.mark.asyncio
+async def test_sql_candidate_approval_uses_one_optimistic_version_under_concurrency(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _ = sql_memory_store
+    candidate = await _candidate(store)
+    outcomes = await gather(
+        store.approve_candidate(
+            ISSUER,
+            OWNER,
+            candidate.id,
+            expected_version=1,
+            idempotency_key="candidate-concurrent-a",
+        ),
+        store.approve_candidate(
+            ISSUER,
+            OWNER,
+            candidate.id,
+            expected_version=1,
+            idempotency_key="candidate-concurrent-b",
+        ),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(item, Exception) for item in outcomes) == 1
+    assert sum(isinstance(item, MemoryVersionConflict) for item in outcomes) == 1
+
+
+@pytest.mark.asyncio
+async def test_sql_candidate_approval_resumes_durable_retryable_claim_after_failure(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _ = sql_memory_store
+    candidate = await _candidate(store)
+    original_create = store.create_memory
+    failed = True
+
+    async def fail_once(issuer: str, subject: str, **kwargs: object) -> MemoryRecord:
+        nonlocal failed
+        if failed:
+            failed = False
+            raise RuntimeError("injected candidate action failure")
+        return await original_create(issuer, subject, **kwargs)
+
+    monkeypatch.setattr(store, "create_memory", fail_once)
+    with pytest.raises(RuntimeError, match="injected candidate action failure"):
+        await store.approve_candidate(
+            ISSUER,
+            OWNER,
+            candidate.id,
+            expected_version=1,
+            idempotency_key="candidate-resume-after-failure",
+        )
+
+    resumed = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key="candidate-resume-after-failure",
+    )
+    replay = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key="candidate-resume-after-failure",
+    )
+    assert resumed.state is CandidateState.ACCEPTED
+    assert replay == resumed
+
+
+@pytest.mark.asyncio
+async def test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _ = sql_memory_store
+    first_config = MemoryModelConfiguration(ISSUER, OWNER, "extractor-v1", "embed-v1")
+    first = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        first_config,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+        idempotency_key="model-config-replay",
+    )
+    replay = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        first_config,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+        idempotency_key="model-config-replay",
+    )
+    assert replay == first
+    with pytest.raises(MemoryIdempotencyConflict):
+        await store.save_model_configuration(
+            ISSUER,
+            OWNER,
+            MemoryModelConfiguration(ISSUER, OWNER, "extractor-v2", "embed-v1"),
+            expected_version=1,
+            dimension=3,
+            model_digest="a" * 64,
+            idempotency_key="model-config-replay",
+        )
+
+    changed = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor-v1", "embed-v2"),
+        expected_version=1,
+        dimension=3,
+        model_digest="b" * 64,
+        idempotency_key="model-config-cutover",
+    )
+    assert changed.version == 2
+    generations = await store.list_embedding_generations(ISSUER, OWNER)
+    replacement = [item for item in generations if item.status == "building"]
+    assert len(replacement) == 1
+    assert replacement[0].model_id == "embed-v2"
+    assert await store.list_embedding_generations(ISSUER, OTHER_OWNER) == []
+    with pytest.raises(MemoryVersionConflict):
+        await store.save_model_configuration(
+            ISSUER,
+            OWNER,
+            MemoryModelConfiguration(ISSUER, OWNER, "extractor-v3", "embed-v3"),
+            expected_version=1,
+            dimension=3,
+            model_digest="c" * 64,
+            idempotency_key="model-config-stale",
+        )
+
+
+@pytest.mark.asyncio
+async def test_sql_memory_policy_replay_conflict_scope_and_fallback_grant(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    _, engine = sql_memory_store
+    sessions = session_factory(engine)
+    source_agent, fallback_agent = uuid4(), uuid4()
+    async with sessions() as session, session.begin():
+        session.add_all(
+            [
+                AgentProfileRow(
+                    id=source_agent, slug="source-agent", display_name="Source"
+                ),
+                AgentProfileRow(
+                    id=fallback_agent, slug="fallback-agent", display_name="Fallback"
+                ),
+            ]
+        )
+    agent_store = SqlAgentStore(sessions, AgentCatalog())
+    target = MemoryPolicy(uuid4(), fallback_agent, 1)
+    await agent_store.create_memory_policy(
+        ISSUER, OWNER, target, key="policy-target"
+    )
+    source = MemoryPolicy(
+        uuid4(),
+        source_agent,
+        1,
+        fallback_agent_profile_ids=(fallback_agent,),
+    )
+    created = await agent_store.create_memory_policy(
+        ISSUER, OWNER, source, key="policy-source"
+    )
+    replay = await agent_store.create_memory_policy(
+        ISSUER, OWNER, source, key="policy-source"
+    )
+    assert replay == created
+    with pytest.raises(ConfigurationIdempotencyConflict):
+        await agent_store.create_memory_policy(
+            ISSUER,
+            OWNER,
+            replace(source, shared_user_read=False),
+            key="policy-source",
+        )
+    assert (await agent_store.list_memory_policies(ISSUER, OTHER_OWNER, source_agent)) == []
+    concurrent = await gather(
+        agent_store.create_memory_policy(
+            ISSUER, OWNER, MemoryPolicy(uuid4(), source_agent, 2), key="policy-race-a"
+        ),
+        agent_store.create_memory_policy(
+            ISSUER, OWNER, MemoryPolicy(uuid4(), source_agent, 2), key="policy-race-b"
+        ),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(item, Exception) for item in concurrent) == 1
+    assert sum(isinstance(item, ConfigurationVersionConflict) for item in concurrent) == 1

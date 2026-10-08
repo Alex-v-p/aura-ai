@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "description": "Owner-authenticated agent, persona, conversation, run, and memory transport contract. Provider endpoints, credentials, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -372,21 +372,39 @@
         }
       }
     },
+    "/api/v1/runs/{run_id}/memory-activity": {
+      "get": {
+        "operationId": "getRunMemoryActivity",
+        "tags": ["Runs", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }],
+        "responses": {
+          "200": { "description": "Authoritative owner-scoped memory activity snapshot used to reconcile missed, duplicate, or reordered realtime events", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunMemoryActivitySnapshot" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/memories": {
       "get": {
         "operationId": "listMemories",
         "tags": ["Memories"],
         "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
           { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
-          { "name": "q", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 500 }, "description": "Owner-scoped literal content search. Memory content is never emitted to telemetry." },
           { "name": "kind", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemoryKind" } },
-          { "$ref": "#/components/parameters/MemoryReadScopeType" },
-          { "$ref": "#/components/parameters/MemoryReadAgentProfileId" },
+          { "$ref": "#/components/parameters/MemoryCollectionScopeType" },
+          { "$ref": "#/components/parameters/MemoryCollectionAgentProfileId" },
           { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemoryLifecycleStatus" } },
+          { "name": "provenanceType", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemoryProvenanceType" } },
+          { "name": "confidenceMin", "in": "query", "required": false, "schema": { "type": "number", "minimum": 0, "maximum": 1 } },
+          { "name": "confidenceMax", "in": "query", "required": false, "schema": { "type": "number", "minimum": 0, "maximum": 1 } },
+          { "name": "createdFrom", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
+          { "name": "createdTo", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
           { "name": "includeHistorical", "in": "query", "required": false, "schema": { "type": "boolean", "default": false }, "description": "When true, explicitly includes non-active lifecycle states in owner inspection results." }
         ],
         "responses": {
-          "200": { "description": "Owner-scoped memories ordered by most recent update with memory ID as a deterministic tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryPage" } } } },
+          "200": { "description": "Owner-scoped memories ordered by most recent update with memory ID as a deterministic tie-breaker. Omitted scope returns user memory; explicit all returns user and all owner-authorized agent scopes.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryPage" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -408,6 +426,22 @@
         }
       }
     },
+    "/api/v1/memories/search": {
+      "post": {
+        "operationId": "searchMemories",
+        "tags": ["Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchMemoriesRequest" } } } },
+        "responses": {
+          "200": { "description": "Owner-scoped literal memory search ordered by most recent update with memory ID as a deterministic tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        },
+        "description": "Literal search text is accepted only in this authenticated request body and must not be emitted to URLs, telemetry, logs, diagnostics, or caches."
+      }
+    },
     "/api/v1/memories/{memory_id}": {
       "parameters": [{ "$ref": "#/components/parameters/MemoryId" }],
       "get": {
@@ -415,7 +449,7 @@
         "tags": ["Memories"],
         "parameters": [{ "$ref": "#/components/parameters/MemoryReadScopeType" }, { "$ref": "#/components/parameters/MemoryReadAgentProfileId" }],
         "responses": {
-          "200": { "description": "Owner-scoped memory with immutable revisions, provenance, embedding metadata, and relations", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryDetail" } } } },
+          "200": { "description": "Owner-scoped memory with immutable revisions, provenance, embedding metadata, and relations. Memory IDs are not resolved across scopes: omission selects user scope, while agent memory requires scopeType=agent and its agentProfileId.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryDetail" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -491,6 +525,182 @@
         }
       }
     },
+    "/api/v1/memory-candidates": {
+      "get": {
+        "operationId": "listMemoryCandidates",
+        "tags": ["Memories"],
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "state", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemoryCandidateState" } },
+          { "name": "action", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemoryCandidateAction" } },
+          { "name": "sensitivity", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MemorySensitivity" } },
+          { "name": "runId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped memory candidates ordered by creation time with candidate ID as a deterministic tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryCandidatePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/memory-candidates/{candidate_id}": {
+      "get": {
+        "operationId": "getMemoryCandidate",
+        "tags": ["Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryCandidateId" }],
+        "responses": {
+          "200": { "description": "Owner-scoped candidate with bounded grounding and proposed-action metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryCandidateDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/memory-candidates/{candidate_id}/approve": {
+      "post": {
+        "operationId": "approveMemoryCandidate",
+        "tags": ["Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryCandidateId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApproveMemoryCandidateRequest" } } } },
+        "responses": {
+          "200": { "description": "Candidate approved, optionally after owner edits were revalidated by Core", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryCandidateDecisionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/memory-candidates/{candidate_id}/reject": {
+      "post": {
+        "operationId": "rejectMemoryCandidate",
+        "tags": ["Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/MemoryCandidateId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RejectMemoryCandidateRequest" } } } },
+        "responses": {
+          "200": { "description": "Candidate rejected and private candidate content removed from retained terminal state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryCandidateDecisionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/memory-model-inventory": {
+      "get": {
+        "operationId": "getMemoryModelInventory",
+        "tags": ["Models", "Memories"],
+        "responses": {
+          "200": { "description": "Currently verified compatible Ollama model inventory without provider endpoints or credentials", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryModelInventory" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/memory-model-configuration": {
+      "get": {
+        "operationId": "getMemoryModelConfiguration",
+        "tags": ["Models", "Memories"],
+        "responses": {
+          "200": { "description": "Current owner memory model configuration and generation state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryModelConfiguration" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "operationId": "updateMemoryModelConfiguration",
+        "tags": ["Models", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateMemoryModelConfigurationRequest" } } } },
+        "responses": {
+          "200": { "description": "Verified model configuration updated; an embedding change starts or resumes a parallel generation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryModelConfiguration" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/memory-reindex": {
+      "get": {
+        "operationId": "getMemoryReindexStatus",
+        "tags": ["Models", "Memories"],
+        "responses": {
+          "200": { "description": "Owner-scoped active and replacement embedding generation progress", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryReindexStatus" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/memory-reindex/resume": {
+      "post": {
+        "operationId": "resumeMemoryReindex",
+        "tags": ["Models", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResumeMemoryReindexRequest" } } } },
+        "responses": {
+          "202": { "description": "Existing replacement generation reindex queued for resumable processing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryReindexStatus" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}/memory-policies": {
+      "get": {
+        "operationId": "listAgentMemoryPolicies",
+        "tags": ["Agents", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }],
+        "responses": {
+          "200": { "description": "Immutable owner-scoped memory policy revisions for the agent", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentMemoryPolicyCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "operationId": "createAgentMemoryPolicy",
+        "tags": ["Agents", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentMemoryPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "Validated immutable memory policy revision created without changing an agent revision", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentMemoryPolicy" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}/memory-policies/{policy_revision_id}/attach": {
+      "post": {
+        "operationId": "attachAgentMemoryPolicy",
+        "tags": ["Agents", "Memories"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/MemoryPolicyRevisionId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachAgentMemoryPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "New immutable agent revision created with the selected owner-scoped memory policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -521,8 +731,12 @@
       "ConversationId": { "name": "conversation_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryId": { "name": "memory_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-      "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Scope being inspected. Omission safely selects only owner-wide user memory; agent scope additionally requires agentProfileId." },
-      "MemoryReadAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Required for agent-scoped reads and rejected for user-scoped reads." },
+      "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
+      "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
+      "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
+      "MemoryReadAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Required with scopeType=agent for a single-resource detail or mutation. Rejected for user scope." },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 512 }, "description": "Session-bound anti-CSRF token returned by getSession." },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Caller-generated UUID. Reuse only for an exact replay of the same command." }
     },
@@ -578,7 +792,8 @@
         }
       },
       "MemoryKind": { "type": "string", "enum": ["episodic", "semantic", "procedural", "preference", "system"] },
-      "MemoryScopeType": { "type": "string", "enum": ["user", "agent"] },
+      "MemoryScopeType": { "type": "string", "enum": ["user", "agent"], "description": "Persisted or single-resource memory scope. All is intentionally not a valid stored scope." },
+      "MemoryCollectionScopeType": { "type": "string", "enum": ["user", "agent", "all"], "description": "Owner-authorized collection selector. Agent means every owned agent scope unless narrowed by agentProfileId; all combines user memory with every owned agent scope." },
       "MemoryLifecycleStatus": { "type": "string", "enum": ["active", "dormant", "archived", "disabled", "disputed", "superseded"] },
       "MemoryProvenanceType": { "type": "string", "enum": ["manual", "conversation_message", "run", "system", "import"] },
       "MemoryRelationType": { "type": "string", "enum": ["supersedes", "superseded_by", "disputes", "disputed_by"] },
@@ -611,6 +826,25 @@
           "nextCursor": { "type": ["string", "null"] }
         }
       },
+      "SearchMemoriesRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Owner-scoped literal content search text. This value is private and never appears in URLs, telemetry, logs, diagnostics, or caches." },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, query-, and filter-bound pagination cursor." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 },
+          "kind": { "$ref": "#/components/schemas/MemoryKind" },
+          "scopeType": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user", "description": "Omission selects user memory; agent selects every owner-authorized agent scope unless narrowed by agentProfileId; all combines user and every owner-authorized agent scope." },
+          "agentProfileId": { "type": "string", "format": "uuid", "description": "Optional narrowing filter for agent scope. Omission selects all owner-authorized agent scopes. Rejected for user or all scope." },
+          "status": { "$ref": "#/components/schemas/MemoryLifecycleStatus" },
+          "provenanceType": { "$ref": "#/components/schemas/MemoryProvenanceType" },
+          "confidenceMin": { "type": "number", "minimum": 0, "maximum": 1 },
+          "confidenceMax": { "type": "number", "minimum": 0, "maximum": 1 },
+          "createdFrom": { "type": "string", "format": "date-time" },
+          "createdTo": { "type": "string", "format": "date-time" },
+          "includeHistorical": { "type": "boolean", "default": false }
+        }
+      },
       "MemorySummary": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "scope", "status", "pinned", "version", "currentRevision", "reinforcedAt", "dormantAt", "archivedAt", "createdAt", "updatedAt"],
@@ -625,7 +859,8 @@
           "dormantAt": { "type": ["string", "null"], "format": "date-time" },
           "archivedAt": { "type": ["string", "null"], "format": "date-time" },
           "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "currentRelevance": { "type": "number", "minimum": 0, "maximum": 1, "description": "Optional server-computed relevance using the revision half-life and latest reinforcement clock." }
         }
       },
       "MemoryDetail": {
@@ -643,6 +878,7 @@
           "archivedAt": { "type": ["string", "null"], "format": "date-time" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
+          "currentRelevance": { "type": "number", "minimum": 0, "maximum": 1, "description": "Current server-computed relevance using the revision half-life and latest reinforcement clock." },
           "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryRevision" } },
           "provenance": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryProvenance" } },
           "embeddingGenerations": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryEmbeddingGeneration" } },
@@ -692,6 +928,7 @@
           "generation": { "type": "integer", "minimum": 1 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "modelRevision": { "type": ["string", "null"], "maxLength": 255 },
+          "modelDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
           "dimension": { "type": "integer", "minimum": 1 },
           "status": { "$ref": "#/components/schemas/MemoryEmbeddingGenerationStatus" },
           "createdAt": { "type": "string", "format": "date-time" },
@@ -709,6 +946,7 @@
           "generation": { "type": "integer", "minimum": 1 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "modelRevision": { "type": ["string", "null"], "maxLength": 255 },
+          "modelDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
           "digest": { "type": "string", "minLength": 1, "maxLength": 128 },
           "dimension": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" }
@@ -788,6 +1026,257 @@
           "purgedAt": { "type": "string", "format": "date-time" }
         }
       },
+      "MemoryCandidateAction": { "type": "string", "enum": ["ignore", "create", "reinforce", "supersede", "dispute", "review"] },
+      "MemoryCandidateState": { "type": "string", "enum": ["proposed", "accepted", "rejected", "review", "retryable"] },
+      "MemorySensitivity": { "type": "string", "enum": ["ordinary", "health", "finance", "identity", "intimate", "precise_location", "sensitive", "credential", "unknown_risk"] },
+      "MemoryCandidatePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryCandidateSummary" } },
+          "nextCursor": { "type": ["string", "null"] }
+        }
+      },
+      "MemoryCandidateSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "jobId", "runId", "version", "action", "state", "content", "kind", "scope", "confidence", "importance", "halfLifeDays", "validTo", "sensitivity", "relatedMemoryId", "memoryId", "decisionReason", "createdAt", "decidedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "jobId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "version": { "type": "integer", "minimum": 1 },
+          "action": { "$ref": "#/components/schemas/MemoryCandidateAction" },
+          "state": { "$ref": "#/components/schemas/MemoryCandidateState" },
+          "content": { "type": ["string", "null"], "minLength": 1, "maxLength": 32768, "description": "Owner-inspectable untrusted candidate text. Null after content-free rejection." },
+          "kind": { "oneOf": [{ "$ref": "#/components/schemas/MemoryKind" }, { "type": "null" }] },
+          "scope": { "oneOf": [{ "$ref": "#/components/schemas/MemoryScope" }, { "type": "null" }] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "importance": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "halfLifeDays": { "type": ["number", "null"], "minimum": 0.25, "maximum": 3650 },
+          "validTo": { "type": ["string", "null"], "format": "date-time" },
+          "sensitivity": { "$ref": "#/components/schemas/MemorySensitivity" },
+          "relatedMemoryId": { "type": ["string", "null"], "format": "uuid" },
+          "memoryId": { "type": ["string", "null"], "format": "uuid" },
+          "decisionReason": { "type": ["string", "null"], "maxLength": 64 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "MemoryCandidateDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/MemoryCandidateSummary" },
+          { "type": "object", "additionalProperties": false, "required": ["groundedMessageIds"], "properties": {
+            "groundedMessageIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Identifiers only; message content is resolved through owner-authorized resources." }
+          } }
+        ]
+      },
+      "MemoryCandidateEdit": {
+        "type": "object", "additionalProperties": false,
+        "required": ["content", "action", "kind", "scope", "confidence", "importance", "halfLifeDays", "validTo", "relatedMemoryId"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "action": { "$ref": "#/components/schemas/MemoryCandidateAction" },
+          "kind": { "$ref": "#/components/schemas/MemoryKind" },
+          "scope": { "$ref": "#/components/schemas/MemoryScope" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "importance": { "type": "number", "minimum": 0, "maximum": 1 },
+          "halfLifeDays": { "type": "number", "minimum": 0.25, "maximum": 3650 },
+          "validTo": { "type": ["string", "null"], "format": "date-time" },
+          "relatedMemoryId": { "type": ["string", "null"], "format": "uuid" }
+        }
+      },
+      "ApproveMemoryCandidateRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": {
+          "expectedVersion": { "type": "integer", "minimum": 1 },
+          "edit": { "$ref": "#/components/schemas/MemoryCandidateEdit", "description": "Omit to approve unchanged; provide to revalidate and approve the owner-edited candidate." }
+        }
+      },
+      "RejectMemoryCandidateRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion", "reason"],
+        "properties": {
+          "expectedVersion": { "type": "integer", "minimum": 1 },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      },
+      "MemoryCandidateDecisionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "required": ["candidate", "activityId"],
+        "properties": {
+          "candidate": { "$ref": "#/components/schemas/MemoryCandidateDetail" },
+          "activityId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "MemoryModelCapability": { "type": "string", "enum": ["structured_output", "embedding"] },
+      "MemoryCompatibleModel": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "displayName", "provider", "modelRevision", "modelDigest", "capabilities", "dimension", "available", "disabledReason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "modelRevision": { "type": ["string", "null"], "maxLength": 255 },
+          "modelDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "capabilities": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/components/schemas/MemoryModelCapability" } },
+          "dimension": { "type": ["integer", "null"], "minimum": 1 },
+          "available": { "type": "boolean" },
+          "disabledReason": { "type": ["string", "null"], "maxLength": 500 }
+        }
+      },
+      "MemoryModelInventory": {
+        "type": "object", "additionalProperties": false,
+        "required": ["models", "observedAt"],
+        "properties": {
+          "models": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryCompatibleModel" } },
+          "observedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MemoryModelSelection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "modelRevision", "modelDigest"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "modelRevision": { "type": ["string", "null"], "maxLength": 255 },
+          "modelDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      },
+      "MemoryManagedEmbeddingGeneration": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-scoped generation metadata with exact provider-observed model identity and no vector values.",
+        "required": ["id", "generation", "model", "dimension", "status", "createdAt", "activatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "generation": { "type": "integer", "minimum": 1 },
+          "model": { "$ref": "#/components/schemas/MemoryModelSelection" },
+          "dimension": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/MemoryEmbeddingGenerationStatus" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "activatedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "MemoryModelConfiguration": {
+        "type": "object", "additionalProperties": false,
+        "required": ["version", "extraction", "embedding", "activeGeneration", "buildingGeneration", "updatedAt"],
+        "properties": {
+          "version": { "type": "integer", "minimum": 1 },
+          "extraction": { "$ref": "#/components/schemas/MemoryModelSelection" },
+          "embedding": { "$ref": "#/components/schemas/MemoryModelSelection" },
+          "activeGeneration": { "oneOf": [{ "$ref": "#/components/schemas/MemoryManagedEmbeddingGeneration" }, { "type": "null" }] },
+          "buildingGeneration": { "oneOf": [{ "$ref": "#/components/schemas/MemoryManagedEmbeddingGeneration" }, { "type": "null" }] },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "UpdateMemoryModelConfigurationRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["extractionModelId", "embeddingModelId", "expectedVersion"],
+        "properties": {
+          "extractionModelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "embeddingModelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        },
+        "description": "Model identity is resolved from current verified inventory by Core; browser-supplied revisions or digests are not accepted."
+      },
+      "MemoryReindexPhase": { "type": "string", "enum": ["idle", "queued", "running", "failed", "completed"] },
+      "MemoryReindexStatus": {
+        "type": "object", "additionalProperties": false,
+        "required": ["phase", "activeGeneration", "replacementGeneration", "processedRevisionCount", "totalRevisionCount", "startedAt", "updatedAt", "completedAt", "retryable"],
+        "properties": {
+          "phase": { "$ref": "#/components/schemas/MemoryReindexPhase" },
+          "activeGeneration": { "oneOf": [{ "$ref": "#/components/schemas/MemoryManagedEmbeddingGeneration" }, { "type": "null" }] },
+          "replacementGeneration": { "oneOf": [{ "$ref": "#/components/schemas/MemoryManagedEmbeddingGeneration" }, { "type": "null" }] },
+          "processedRevisionCount": { "type": "integer", "minimum": 0 },
+          "totalRevisionCount": { "type": "integer", "minimum": 0 },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "ResumeMemoryReindexRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["generationId"],
+        "properties": { "generationId": { "type": "string", "format": "uuid" } }
+      },
+      "AgentMemoryPolicyCollection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "attachedPolicyRevisionId", "agentVersion"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/AgentMemoryPolicy" } },
+          "attachedPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "agentVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AgentMemoryPolicy": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "agentProfileId", "revision", "sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "agentProfileId": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "sharedUserRead": { "type": "boolean" },
+          "currentAgentRead": { "type": "boolean" },
+          "sharedUserPromotion": { "type": "boolean" },
+          "fallbackRelevanceThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "maxMemories": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "contextBudgetFraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.2 },
+          "fallbackAgentProfileIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Retrieval fallback grants only; these grants never authorize invocation or delegation." },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateAgentMemoryPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds", "expectedRevision"],
+        "properties": {
+          "sharedUserRead": { "type": "boolean" },
+          "currentAgentRead": { "type": "boolean" },
+          "sharedUserPromotion": { "type": "boolean" },
+          "fallbackRelevanceThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "maxMemories": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "contextBudgetFraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.2 },
+          "fallbackAgentProfileIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "expectedRevision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AttachAgentMemoryPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedAgentVersion"],
+        "properties": { "expectedAgentVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "MemoryActivityAction": { "type": "string", "enum": ["created", "reinforced", "disputed", "recalled", "queued_for_review"] },
+      "MemoryActivityStatus": { "type": "string", "enum": ["queued", "completed", "failed"] },
+      "MemoryActivityReconciliationStatus": { "type": "string", "enum": ["pending", "authoritative"] },
+      "MemoryActivity": {
+        "type": "object", "additionalProperties": false,
+        "description": "Identifier-only durable memory activity. Private memory, candidate, evidence, prompt, response, vector, credential, and owner content are prohibited.",
+        "required": ["id", "action", "status", "scope", "candidateId", "memoryId", "memoryRevisionId", "policyRevisionId", "embeddingGenerationId", "reconciliationStatus", "occurredAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "action": { "$ref": "#/components/schemas/MemoryActivityAction" },
+          "status": { "$ref": "#/components/schemas/MemoryActivityStatus" },
+          "scope": { "oneOf": [{ "$ref": "#/components/schemas/MemoryScope" }, { "type": "null" }] },
+          "candidateId": { "type": ["string", "null"], "format": "uuid" },
+          "memoryId": { "type": ["string", "null"], "format": "uuid" },
+          "memoryRevisionId": { "type": ["string", "null"], "format": "uuid" },
+          "policyRevisionId": { "type": ["string", "null"], "format": "uuid" },
+          "embeddingGenerationId": { "type": ["string", "null"], "format": "uuid" },
+          "reconciliationStatus": { "$ref": "#/components/schemas/MemoryActivityReconciliationStatus" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MemoryProcessingStatus": { "type": "string", "enum": ["queued", "running", "settled"] },
+      "RunMemoryActivitySnapshot": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "processingStatus", "items", "lastEventId", "reconciledAt"],
+        "properties": {
+          "runId": { "type": "string", "format": "uuid" },
+          "processingStatus": { "$ref": "#/components/schemas/MemoryProcessingStatus" },
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/MemoryActivity" } },
+          "lastEventId": { "type": ["string", "null"], "format": "uuid" },
+          "reconciledAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "ProfileStatus": { "type": "string", "enum": ["active", "disabled"] },
       "AgentCollection": {
         "type": "object", "additionalProperties": false,
@@ -832,6 +1321,7 @@
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "memoryPolicyRevisionId": { "type": "string", "format": "uuid" },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },
@@ -1138,6 +1628,7 @@
           { "$ref": "#/components/schemas/AssistantDeltaEvent" },
           { "$ref": "#/components/schemas/AssistantSnapshotEvent" },
           { "$ref": "#/components/schemas/RunErrorEvent" },
+          { "$ref": "#/components/schemas/MemoryActivityEvent" },
           { "$ref": "#/components/schemas/HeartbeatEvent" }
         ],
         "discriminator": { "propertyName": "eventType" }
@@ -1169,6 +1660,9 @@
       },
       "RunErrorEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "run.error" }, "data": { "$ref": "#/components/schemas/RunError" } } }]
+      },
+      "MemoryActivityEvent": {
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "memory.activity" }, "data": { "$ref": "#/components/schemas/MemoryActivity" } } }]
       },
       "HeartbeatEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "heartbeat" }, "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "type": "string", "format": "date-time" } } } } }]

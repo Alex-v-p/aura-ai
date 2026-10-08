@@ -30,6 +30,10 @@
           <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a7 7 0 0 1 7 7v2.2a7 7 0 0 1-14 0v-2.2a7 7 0 0 1 7-7Z"/><path d="M8.5 11.5h.01M15.5 11.5h.01M9 15.5c1.8 1.2 4.2 1.2 6 0M5 12.5H3.5a1.5 1.5 0 0 1 0-3H5M19 12.5h1.5a1.5 1.5 0 0 0 0-3H19"/></svg>
           <span class="label">Personas</span><span class="product-current-marker" aria-hidden="true">✓</span>
         </a>
+        <a class="product-link" routerLink="/memory" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Memory" title="Memory" (click)="closeMobileNavigation(isMobileViewport())">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4.5h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"/><path d="M8.5 9h7M8.5 12h7M8.5 15h4"/><path d="M9 4.5V3m6 1.5V3"/></svg>
+          <span class="label">Memory</span><span class="product-current-marker" aria-hidden="true">✓</span>
+        </a>
       </div>
       @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
         <div class="conversation-nav" aria-label="Conversations">

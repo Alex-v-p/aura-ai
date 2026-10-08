@@ -1,5 +1,5 @@
 import { Inject, Injectable, computed, signal } from '@angular/core';
-import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, Session } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 
@@ -7,7 +7,11 @@ export type TurnRole = 'user' | 'assistant';
 export type RunState = 'idle' | 'working' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; }
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; }
+export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: MemoryDetail } | { readonly kind: 'candidate'; readonly detail: MemoryCandidateDetail };
+export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): { readonly recalled: boolean; readonly updated: boolean } {
+  return { recalled: items.some((item) => item.action === 'recalled'), updated: items.some((item) => item.action !== 'recalled') };
+}
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
@@ -56,6 +60,11 @@ export class ConversationStore {
   readonly runInspectorRequested = signal(0);
   readonly runInspectorFocusId = signal<string | null>(null);
   readonly authenticated = computed(() => this.authState() === 'authenticated');
+  readonly memoryActivityNotices = signal<Readonly<Record<string, string | null>>>({});
+  readonly memoryActivityNotice = computed(() => this.memoryActivityNotices()[this.selectedId()] ?? null);
+  readonly memoryPopupRecords = signal<Readonly<Record<string, MemoryPopupRecord | null>>>({});
+  readonly memoryPopupLoading = signal<Readonly<Record<string, boolean>>>({});
+  readonly memoryPopupErrors = signal<Readonly<Record<string, string | null>>>({});
 
   private readonly subscriptions = new Map<string, RunEventSubscription>();
   private readonly lastEventIds = new Map<string, string>();
@@ -542,6 +551,9 @@ export class ConversationStore {
       const detail = await this.api.getConversation(run.conversationId);
       const conversation = this.fromDetail(detail);
       this.replaceConversation(conversation);
+      if (this.api.getRunMemoryActivity) {
+        try { this.applyMemorySnapshot(await this.api.getRunMemoryActivity(run.id)); this.setMemoryActivityNotice(run.conversationId, null); } catch { this.setMemoryActivityNotice(run.conversationId, 'Memory activity is temporarily unavailable. Your transcript is preserved. Try reconciliation again.'); }
+      }
       if (detail.currentRun && !this.isTerminal(detail.currentRun.status)) {
         this.expiredCursorRecoveries.delete(run.id); this.setRunState(run.conversationId, 'working'); this.setNotice(run.conversationId, null); this.subscribe(detail.currentRun, attempt); return;
       }
@@ -566,10 +578,11 @@ export class ConversationStore {
     else if (event.eventType === 'run.status') { this.setRunState(event.conversationId, this.statusToState(event.data.status)); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: event.data.status, startedAt: event.data.startedAt, finishedAt: event.data.finishedAt } : run); if (this.isTerminal(event.data.status)) { this.clearReconnect(event.runId); void this.refresh(event.conversationId); } }
     else if (event.eventType === 'assistant.delta') this.appendAssistantDelta(event.conversationId, event.data.messageId, event.data.offset, event.data.text, event.runId);
     else if (event.eventType === 'assistant.snapshot') this.upsertTurn(event.conversationId, this.fromMessage(event.data.message));
+    else if (event.eventType === 'memory.activity') this.applyMemoryActivity(event.conversationId, event.runId, event.data);
     else if (event.eventType === 'run.error') { this.setRunState(event.conversationId, 'error'); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: 'failed', error: event.data } : run); this.setNotice(event.conversationId, event.data.message || 'Aura could not complete this response. Your message is still here.'); }
   }
 
-  private async refresh(id: string): Promise<void> { try { const detail = await this.api.getConversation(id); const conversation = this.fromDetail(detail); this.replaceConversation(conversation); if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); } else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); } } catch (error: unknown) { this.handleError(id, error); } }
+  private async refresh(id: string): Promise<void> { try { const detail = await this.api.getConversation(id); const conversation = this.fromDetail(detail); this.replaceConversation(conversation); const latestRun = detail.currentRun ?? conversation.runs.at(-1); if (latestRun && this.api.getRunMemoryActivity) { try { this.applyMemorySnapshot(await this.api.getRunMemoryActivity(latestRun.id)); this.setMemoryActivityNotice(id, null); } catch { this.setMemoryActivityNotice(id, 'Memory activity is temporarily unavailable. Your transcript is preserved. Try reconciliation again.'); } } if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); } else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); } } catch (error: unknown) { this.handleError(id, error); } }
   private async loadConversationPage(generation: number): Promise<ReadonlyArray<ConversationSummary>> {
     const page = await this.api.listConversations(undefined, this.libraryFilters());
     if (generation === this.libraryRequestGeneration) this.libraryNextCursor.set(page.nextCursor);
@@ -618,10 +631,60 @@ export class ConversationStore {
     const retryableRun = currentRun && this.isRetryable(currentRun.status) ? currentRun : existing.retryableRun;
     return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()] };
   }
-  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); return { ...base, turns: detail.messages.map((message) => this.fromMessage(message)), currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]) }; }
+  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
   private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
+  private applyMemoryActivity(conversationId: string, runId: string, activity: MemoryActivity): void {
+    const conversation = this.find(conversationId); if (!conversation) return;
+    const assistant = [...conversation.turns].reverse().find((turn) => turn.role === 'assistant' && turn.runId === runId);
+    if (!assistant) return;
+    const existing = assistant.memoryActivities ?? [];
+    const index = existing.findIndex((item) => item.id === activity.id);
+    const activities = index < 0 ? [...existing, activity] : existing.map((item, itemIndex) => itemIndex === index ? activity : item);
+    this.upsertTurn(conversationId, { ...assistant, memoryActivities: activities });
+  }
+  private applyMemorySnapshot(snapshot: RunMemoryActivitySnapshot): void {
+    const conversation = this.conversations().find((item) => item.runs.some((run) => run.id === snapshot.runId) || item.currentRun?.id === snapshot.runId);
+    if (!conversation) return;
+    const assistant = [...conversation.turns].reverse().find((turn) => turn.role === 'assistant' && turn.runId === snapshot.runId);
+    if (assistant) this.upsertTurn(conversation.id, { ...assistant, memoryActivities: snapshot.items });
+  }
+  async retryMemoryActivity(runId: string): Promise<void> {
+    if (!this.api.getRunMemoryActivity) return;
+    const conversation = this.conversations().find((item) => item.runs.some((run) => run.id === runId) || item.currentRun?.id === runId);
+    if (!conversation) return;
+    try { this.applyMemorySnapshot(await this.api.getRunMemoryActivity(runId)); this.setMemoryActivityNotice(conversation.id, null); }
+    catch { this.setMemoryActivityNotice(conversation.id, 'Memory activity is temporarily unavailable. Your transcript is preserved. Try reconciliation again.'); }
+  }
+  async loadMemoryPopup(turnId: string): Promise<void> {
+    const activities = this.find(this.selectedId())?.turns.find((turn) => turn.id === turnId)?.memoryActivities ?? [];
+    if (!activities.length || (!this.api.getMemoryDetail && !this.api.getMemoryCandidateDetail)) return;
+    const pending = Object.fromEntries(activities.map((activity) => [activity.id, true]));
+    this.memoryPopupLoading.update((items) => ({ ...items, ...pending }));
+    await Promise.all(activities.map(async (activity) => {
+      try {
+        if (activity.memoryId && this.api.getMemoryDetail) {
+          const detail = await this.api.getMemoryDetail(activity.memoryId, activity.scope ?? undefined);
+          this.memoryPopupRecords.update((items) => ({ ...items, [activity.id]: { kind: 'memory', detail } }));
+        } else if (activity.candidateId && this.api.getMemoryCandidateDetail) {
+          const detail = await this.api.getMemoryCandidateDetail(activity.candidateId);
+          this.memoryPopupRecords.update((items) => ({ ...items, [activity.id]: { kind: 'candidate', detail } }));
+        } else {
+          this.memoryPopupErrors.update((items) => ({ ...items, [activity.id]: 'No owner-authorized record is attached to this activity.' }));
+        }
+      } catch {
+        // Provider/API errors must not leak private content or server detail
+        // into the conversation surface.
+        this.memoryPopupErrors.update((items) => ({ ...items, [activity.id]: 'Record details are temporarily unavailable.' }));
+      } finally {
+        this.memoryPopupLoading.update((items) => ({ ...items, [activity.id]: false }));
+      }
+    }));
+  }
+  memoryPopupRecord(activityId: string): MemoryPopupRecord | null { return this.memoryPopupRecords()[activityId] ?? null; }
+  memoryPopupIsLoading(activityId: string): boolean { return this.memoryPopupLoading()[activityId] ?? false; }
+  memoryPopupError(activityId: string): string | null { return this.memoryPopupErrors()[activityId] ?? null; }
   private find(id: string): Conversation | undefined { return this.conversations().find((conversation) => conversation.id === id); }
   private replaceConversation(conversation: Conversation): void { this.conversations.update((items) => items.map((item) => item.id === conversation.id ? { ...conversation, updatedAt: conversation.updatedAt || Date.now() } : item)); }
   private upsertConversation(conversation: Conversation): void {
@@ -648,6 +711,7 @@ export class ConversationStore {
   private appendAssistantDelta(id: string, messageId: string, offset: number, text: string, runId: string): void { const conversation = this.find(id); if (!conversation) return; const existing = conversation.turns.find((turn) => turn.id === messageId); const content = existing?.text ?? ''; const next = offset <= content.length ? `${content.slice(0, offset)}${text}` : `${content}${text}`; this.upsertTurn(id, { id: messageId, role: 'assistant', text: next, state: 'partial', runId }); }
   private setRunState(id: string, state: RunState): void { this.runStates.update((states) => ({ ...states, [id]: state })); }
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
+  private setMemoryActivityNotice(id: string, notice: string | null): void { this.memoryActivityNotices.update((notices) => ({ ...notices, [id]: notice })); }
   private ensureDraftModel(): void { const modelId = this.defaultModelId(); const current = this.find(emptyDraft.id); if (current) { this.replaceConversation({ ...current, modelId }); if (!modelId) this.setNotice(emptyDraft.id, 'The configured default model is unavailable. Choose an available model to continue.'); } }
   private canRunWithSelectedAgent(id: string): boolean {
     const conversation = this.find(id);

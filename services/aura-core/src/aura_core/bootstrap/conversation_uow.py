@@ -115,6 +115,7 @@ class SqlConversationStore:
             Callable[[Conversation, Run, Message], OutboxCommand] | None
         ) = None
         self.memory_recall: object | None = None
+        self.memory_activity_repository: object | None = None
 
     def set_memory_command_factory(
         self,
@@ -128,6 +129,44 @@ class SqlConversationStore:
         """Attach the knowledge.memory public recall port at composition time."""
 
         self.memory_recall = recall
+
+    def set_memory_activity_repository(self, repository: object | None) -> None:
+        self.memory_activity_repository = repository
+
+    async def get_run_memory_activity(
+        self, run_id: UUID, issuer: str, subject: str
+    ) -> object:
+        repository = self.memory_activity_repository
+        method = getattr(repository, "get_run_memory_activity", None)
+        if not callable(method):
+            raise ConversationNotFound("run memory activity not found")
+        typed_method = cast(Callable[..., Awaitable[object]], method)
+        return await typed_method(run_id, issuer, subject)
+
+    async def get_run_memory_recall_metadata(
+        self, run_id: UUID, issuer: str, subject: str
+    ) -> tuple[dict[str, object] | None, UUID | None]:
+        """Return owner-authorized recall metadata and the durable last event."""
+
+        async with self.sessions() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT r.memory_recall_metadata, "
+                        "(SELECT e.id FROM run_events e WHERE e.run_id = r.id "
+                        "ORDER BY e.sequence DESC LIMIT 1) AS last_event_id "
+                        "FROM runs r JOIN conversations c ON c.id = r.conversation_id "
+                        "JOIN principals p ON p.id = c.principal_id "
+                        "WHERE r.id = :run_id AND p.issuer = :issuer AND p.subject = :subject"
+                    ),
+                    {"run_id": run_id, "issuer": issuer, "subject": subject},
+                )
+            ).first()
+            if row is None:
+                raise ConversationNotFound("run memory activity not found")
+            metadata = cast(dict[str, object] | None, row[0])
+            event_id = row[1] if isinstance(row[1], UUID) else None
+            return metadata, event_id
 
     @staticmethod
     def _memory_policy_revision(revision: object) -> UUID | None:
@@ -299,9 +338,14 @@ class SqlConversationStore:
     ) -> None:
         self.audit.stage(session, principal_id, action, resource, metadata)
 
-    async def persist_event(self, event: RunEvent) -> None:
+    async def append_event(self, event: RunEvent) -> RunEvent:
         async with self.sessions() as session, session.begin():
-            await self.runs.persist_event(session, event)
+            return await self.runs.append_event(session, event)
+
+    async def persist_event(self, event: RunEvent) -> RunEvent:
+        """Compatibility alias for the atomic run-event append seam."""
+
+        return await self.append_event(event)
 
     async def event_history(self, run_id: UUID) -> list[RunEvent]:
         async with self.sessions() as session:

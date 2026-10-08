@@ -512,7 +512,10 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
             )()
 
     class ProcessingStore(MemoryStore):
-        async def persist_candidate(self, candidate: MemoryCandidate) -> MemoryCandidate:
+        async def persist_candidate(
+            self, candidate: MemoryCandidate, **kwargs: object
+        ) -> MemoryCandidate:
+            del kwargs
             return candidate
 
         async def record_action_outcome(self, **kwargs: object) -> None:
@@ -535,7 +538,7 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
 
         async def get_embedding_generation(
             self, issuer: str, subject: str, generation_id: UUID
-        ) -> object:
+        ) -> MemoryEmbeddingGeneration:
             generation = self.embedding_generations[generation_id]
             if generation.issuer != issuer or generation.subject != subject:
                 raise MemoryNotFound("embedding generation not found")

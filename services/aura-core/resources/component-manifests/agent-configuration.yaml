@@ -16,9 +16,13 @@ dependencies:
   - configuration_store
   - postgresql
 metrics:
+  - memory_policy_configuration_duration_ms
+  - memory_policy_configuration_outcome
   - operation_duration_ms
   - configuration_outcome
 metric_semantics:
+  memory_policy_configuration_duration_ms: Owner-scoped immutable memory policy configuration duration.
+  memory_policy_configuration_outcome: Metadata-only memory policy configuration outcome.
   operation_duration_ms: Owner configuration operation duration at the application boundary.
   configuration_outcome: Identifier-only mutation outcome.
 capture_policy: metadata_only

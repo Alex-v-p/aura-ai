@@ -3,8 +3,9 @@ import { A11yModule } from '@angular/cdk/a11y';
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators } from './conversation-store';
 import { AgentStore, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -14,7 +15,7 @@ import { SafeMarkdownComponent } from './safe-markdown.component';
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, SafeMarkdownComponent],
+  imports: [FormsModule, RouterLink, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, SafeMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
@@ -43,6 +44,9 @@ export class ConversationPanelComponent {
   readonly stagedPersona = signal<PersonaReference | null>(null);
   readonly stagedUseAgentDefaultPersona = signal(true);
   readonly runInspectorOpen = signal(false);
+  readonly memoryPopupTurnId = signal<string | null>(null);
+  @ViewChild('memoryPopupClose') private readonly memoryPopupClose?: ElementRef<HTMLButtonElement>;
+  private memoryPopupOpener: HTMLButtonElement | null = null;
   private hadPendingConfiguration = false;
   private pendingConfigurationOriginId: string | null = null;
   private opener: HTMLButtonElement | null = null;
@@ -182,6 +186,30 @@ export class ConversationPanelComponent {
       if (target instanceof HTMLElement) target.focus();
     });
   }
+  openMemoryPopup(turnId: string, opener?: EventTarget | null): void { this.memoryPopupOpener = opener instanceof HTMLButtonElement ? opener : null; this.memoryPopupTurnId.set(turnId); const store = this.store as unknown as { readonly loadMemoryPopup?: (id: string) => Promise<void> }; void store.loadMemoryPopup?.(turnId); queueMicrotask(() => this.memoryPopupClose?.nativeElement.focus()); }
+  closeMemoryPopup(returnFocus = true): void { this.memoryPopupTurnId.set(null); if (returnFocus) queueMicrotask(() => this.memoryPopupOpener?.focus()); }
+  memoryActivities(turnId: string): ReadonlyArray<import('@aura/aura-api-client').MemoryActivity> { return this.store.selected().turns.find((turn) => turn.id === turnId)?.memoryActivities ?? []; }
+  hasRecalledMemory(turnId: string): boolean { return memoryActivityIndicators(this.memoryActivities(turnId)).recalled; }
+  hasMemoryUpdate(turnId: string): boolean { return memoryActivityIndicators(this.memoryActivities(turnId)).updated; }
+  memoryActivityRecoveryNotice(): string | null { const store = this.store as unknown as { readonly memoryActivityNotice?: () => string | null }; return store.memoryActivityNotice?.() ?? null; }
+  retryMemoryActivity(runId: string): void { const store = this.store as unknown as { readonly retryMemoryActivity?: (id: string) => Promise<void> }; void store.retryMemoryActivity?.(runId); }
+  memoryIndicatorLabel(turnId: string, kind: 'recall' | 'update'): string { return kind === 'recall' ? 'Memory recalled for this answer' : 'Memory created or updated from this turn'; }
+  memoryActivityLabel(activity: import('@aura/aura-api-client').MemoryActivity): string { return activity.action === 'recalled' ? 'Recalled' : activity.action === 'queued_for_review' ? 'Queued for review' : activity.action === 'created' ? 'Created' : activity.action === 'reinforced' ? 'Reinforced' : 'Disputed'; }
+  memoryScopeLabel(activity: import('@aura/aura-api-client').MemoryActivity): string { return activity.scope?.type === 'agent' ? `Private to agent ${activity.scope.agentProfileId}` : activity.scope?.type === 'user' ? 'Shared user scope' : 'Scope withheld'; }
+  memoryRouteQuery(activity: import('@aura/aura-api-client').MemoryActivity, action?: 'correct' | 'disable'): Record<string, string> { const scope = activity.scope; return { ...(scope?.type === 'agent' ? { scopeType: 'agent', agentProfileId: scope.agentProfileId } : scope?.type === 'user' ? { scopeType: 'user' } : {}), ...(action ? { action } : {}) }; }
+  memoryPopupProvenance(activity: import('@aura/aura-api-client').MemoryActivity): string {
+    const store = this.store as unknown as { readonly memoryPopupRecord?: (id: string) => { readonly kind: 'memory' | 'candidate'; readonly detail: { readonly provenance?: ReadonlyArray<{ readonly type: string }>; readonly runId?: string; readonly groundedMessageIds?: ReadonlyArray<string> } } | null; readonly memoryPopupIsLoading?: (id: string) => boolean; readonly memoryPopupError?: (id: string) => string | null };
+    const record = store.memoryPopupRecord?.(activity.id);
+    if (!record) return store.memoryPopupIsLoading?.(activity.id) ? 'Loading owner-authorized provenance…' : store.memoryPopupError?.(activity.id) ?? 'Provenance unavailable';
+    if (record.kind === 'memory') return record.detail.provenance?.slice(0, 2).map((item) => item.type).join(', ') || 'No provenance recorded';
+    return `Candidate run ${record.detail.runId ?? 'unavailable'} · ${(record.detail.groundedMessageIds ?? []).length} grounded message(s)`;
+  }
+  memoryPopupRecordId(activity: import('@aura/aura-api-client').MemoryActivity): string {
+    const store = this.store as unknown as { readonly memoryPopupRecord?: (id: string) => { readonly kind: 'memory' | 'candidate'; readonly detail: { readonly id: string; readonly currentRevision?: { readonly id: string } } } | null };
+    const record = store.memoryPopupRecord?.(activity.id);
+    if (!record) return activity.memoryId ? `Memory ${activity.memoryId}` : activity.candidateId ? `Candidate ${activity.candidateId}` : 'No record identifier';
+    return record.kind === 'memory' ? `Memory ${record.detail.id} · revision ${record.detail.currentRevision?.id ?? 'unavailable'}` : `Candidate ${record.detail.id}`;
+  }
   runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {
     if (!run.startedAt || !run.finishedAt) return '—';
     const milliseconds = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt));
@@ -196,7 +224,7 @@ export class ConversationPanelComponent {
   cancelConfiguration(): void { this.store.cancelPendingConfiguration(); }
   async confirmConfiguration(): Promise<void> { await this.store.confirmConfigurationChange(); }
 
-  @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.runInspectorOpen()) this.closeRunInspector(); else if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
+  @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.memoryPopupTurnId()) this.closeMemoryPopup(); else if (this.runInspectorOpen()) this.closeRunInspector(); else if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
 
   private applyDraftConfigurationIfNeeded(): void { if (this.store.selected().id.startsWith('draft-')) this.store.stageConfiguration(this.stagedAgent(), this.stagedPersona(), this.stagedUseAgentDefaultPersona()); }
   private focusRequestedControl(): void {

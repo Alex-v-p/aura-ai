@@ -83,6 +83,123 @@ def test_metadata_metrics_is_bounded_and_separates_dimensions_from_trace_fields(
     assert metrics.stats().rejected == 2
 
 
+def test_memory_product_observations_are_registered_and_metadata_only() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    required = (
+        (
+            "aura.knowledge.memory_persistence",
+            "memory_product_operation_duration_ms",
+            "memory_product_operation_outcome",
+        ),
+        (
+            "aura.knowledge.memory_extraction",
+            "memory_candidate_review_duration_ms",
+            "memory_candidate_review_outcome",
+        ),
+        (
+            "aura.knowledge.memory_persistence",
+            "memory_model_configuration_duration_ms",
+            "memory_model_configuration_outcome",
+        ),
+        (
+            "aura.interaction.agent_configuration",
+            "memory_policy_configuration_duration_ms",
+            "memory_policy_configuration_outcome",
+        ),
+        (
+            "aura.runtime.stream_delivery",
+            "memory_activity_publication_duration_ms",
+            "memory_activity_publication_outcome",
+        ),
+        (
+            "aura.runtime.stream_delivery",
+            "memory_activity_delivery_duration_ms",
+            "memory_activity_delivery_outcome",
+        ),
+    )
+    for component, duration, outcome in required:
+        metrics.observe(
+            component,
+            duration,
+            1.0,
+            dependency="memory_store",
+            outcome="ok",
+            trace_id=trace_id,
+        )
+        metrics.increment(
+            component,
+            outcome,
+            dependency="memory_store",
+            outcome="ok",
+            trace_id=trace_id,
+        )
+    assert metrics.stats().rejected == 0
+    assert {item.metric for item in metrics.snapshot()} == {
+        metric
+        for _, duration, outcome in required
+        for metric in (duration, outcome)
+    }
+    assert all(not _contains_uuid(dict(item.dimensions)) for item in metrics.snapshot())
+    retained = len(metrics.snapshot())
+    metrics.increment(
+        "aura.knowledge.memory_persistence",
+        "memory_product_operation_outcome",
+        content="must be rejected before export",
+    )
+    assert len(metrics.snapshot()) == retained
+    assert metrics.stats().rejected == 1
+
+
+def test_stream_activity_operations_use_distinct_metrics_without_rejection() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    metrics.record_span(
+        "aura.runtime.stream_delivery",
+        "memory.activity.publish",
+        3.5,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="event_store",
+        outcome="ok",
+        run_id=str(uuid4()),
+        conversation_id=str(uuid4()),
+    )
+    metrics.record_span(
+        "aura.runtime.stream_delivery",
+        "memory.activity.cursor_expired",
+        1.5,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="event_store",
+        outcome="expired",
+        error_class="cursor_expired",
+        run_id=str(uuid4()),
+        conversation_id=str(uuid4()),
+    )
+    metrics.record_span(
+        "aura.runtime.stream_delivery",
+        "memory.activity.reconcile",
+        2.5,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="memory_store",
+        outcome="not_found",
+        error_class="run_not_found",
+        run_id=str(uuid4()),
+    )
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert [item.metric for item in spans] == [
+        "memory_activity_publication_duration_ms",
+        "stream_delivery_duration_ms",
+        "stream_delivery_duration_ms",
+    ]
+    assert metrics.stats().rejected == 0
+
+
 @pytest.mark.asyncio
 async def test_export_failure_retries_are_bounded_and_counters_survive() -> None:
     class Exporter:

@@ -226,7 +226,7 @@ async def test_memory_owner_isolation_returns_not_found_for_other_session(api_ap
 
 
 @pytest.mark.asyncio
-async def test_agent_scope_requires_explicit_agent_filter_for_two_agent_records(
+async def test_unscoped_agent_records_are_limited_to_the_authenticated_owner(
     api_app: Any,
 ) -> None:
     client, session = await owner_client(api_app)
@@ -248,14 +248,24 @@ async def test_agent_scope_requires_explicit_agent_filter_for_two_agent_records(
         )
         unscoped = await client.get("/api/v1/memories")
         assert unscoped.status_code == 200
-        assert {first["id"], second["id"]}.isdisjoint(
-            {item["id"] for item in unscoped.json()["items"]}
+        assert unscoped.json()["items"] == []
+        all_scopes = await client.get(
+            "/api/v1/memories", params={"scopeType": "all"}
         )
+        assert {first["id"], second["id"]} <= {
+            item["id"] for item in all_scopes.json()["items"]
+        }
         agent_a_items = await client.get(
             "/api/v1/memories",
             params={"scopeType": "agent", "agentProfileId": agent_a},
         )
         assert [item["id"] for item in agent_a_items.json()["items"]] == [first["id"]]
+        all_agent_items = await client.get(
+            "/api/v1/memories", params={"scopeType": "agent"}
+        )
+        assert {first["id"], second["id"]} <= {
+            item["id"] for item in all_agent_items.json()["items"]
+        }
         agent_b_items = await client.get(
             "/api/v1/memories",
             params={"scopeType": "agent", "agentProfileId": agent_b},
@@ -263,10 +273,26 @@ async def test_agent_scope_requires_explicit_agent_filter_for_two_agent_records(
         assert [item["id"] for item in agent_b_items.json()["items"]] == [second["id"]]
         wrong_agent = await client.get(
             "/api/v1/memories",
-            params={"scopeType": "agent", "agentProfileId": agent_b, "q": "agent A"},
+            params={"scopeType": "agent", "agentProfileId": agent_b},
         )
-        assert wrong_agent.json()["items"] == []
+        searched = await client.post(
+            "/api/v1/memories/search",
+            headers={"X-CSRF-Token": session.csrf_token},
+            json={
+                "query": "agent A",
+                "scopeType": "agent",
+                "agentProfileId": agent_b,
+            },
+        )
+        assert wrong_agent.status_code == 200
+        assert searched.json()["items"] == []
         assert (await client.get(f"/api/v1/memories/{first['id']}")).status_code == 404
+        assert (
+            await client.get(
+                f"/api/v1/memories/{first['id']}",
+                params={"scopeType": "agent", "agentProfileId": agent_a},
+            )
+        ).status_code == 200
     finally:
         await client.aclose()
 
@@ -295,12 +321,22 @@ async def test_memory_correction_preserves_manual_provenance_and_reason(api_app:
 
 
 @pytest.mark.asyncio
-async def test_memory_q_rejects_overlong_terms_and_emits_all_declared_metrics(api_app: Any) -> None:
+async def test_memory_search_rejects_overlong_terms_and_emits_all_declared_metrics(
+    api_app: Any,
+) -> None:
     client, session = await owner_client(api_app)
     try:
-        too_long = await client.get("/api/v1/memories", params={"q": "x" * 501})
+        too_long = await client.post(
+            "/api/v1/memories/search",
+            headers={"X-CSRF-Token": session.csrf_token},
+            json={"query": "x" * 501},
+        )
         assert too_long.status_code == 422
-        accepted = await client.get("/api/v1/memories", params={"q": "x" * 500})
+        accepted = await client.post(
+            "/api/v1/memories/search",
+            headers={"X-CSRF-Token": session.csrf_token},
+            json={"query": "x" * 500},
+        )
         assert accepted.status_code == 200
         await _create(client, session, key=str(uuid4()))
         measurements = [
@@ -318,7 +354,7 @@ async def test_memory_q_rejects_overlong_terms_and_emits_all_declared_metrics(ap
         for measurement in measurements:
             dimensions = dict(measurement.dimensions)
             if measurement.metric == "memory_scope_type":
-                assert dimensions.get("scope_type") == "user"
+                assert dimensions.get("scope_type") in {"all", "user", "unknown"}
             elif measurement.metric == "memory_lifecycle_status":
                 assert dimensions.get("status") in {
                     "active",
@@ -331,13 +367,16 @@ async def test_memory_q_rejects_overlong_terms_and_emits_all_declared_metrics(ap
                 }
             else:
                 assert dimensions.get("dependency") in {"memory_store", "postgresql"}
-        for trace_id in {item.trace_id for item in measurements if item.trace_id is not None}:
-            correlated = {item.metric for item in measurements if item.trace_id == trace_id}
-            assert {
-                "memory_operation_duration_ms",
-                "memory_operation_outcome",
-                "memory_lifecycle_status",
-                "memory_scope_type",
-            } <= correlated
+        required_metrics = {
+            "memory_operation_duration_ms",
+            "memory_operation_outcome",
+            "memory_lifecycle_status",
+            "memory_scope_type",
+        }
+        assert any(
+            required_metrics
+            <= {item.metric for item in measurements if item.trace_id == trace_id}
+            for trace_id in {item.trace_id for item in measurements if item.trace_id is not None}
+        )
     finally:
         await client.aclose()

@@ -145,7 +145,7 @@ class _DurableMemoryStore(MemoryStore):
 
     async def get_embedding_generation(
         self, issuer: str, subject: str, generation_id: UUID
-    ) -> object:
+    ) -> MemoryEmbeddingGeneration:
         generation = self.embedding_generations.get(generation_id)
         if generation is None or (generation.issuer, generation.subject) != (issuer, subject):
             raise MemoryNotFound("embedding generation not found")
@@ -215,7 +215,10 @@ class _DurableMemoryStore(MemoryStore):
     async def list_processing_owners(self) -> list[tuple[str, str]]:
         return sorted({(job.issuer, job.subject) for job in self.processing_jobs.values()})
 
-    async def persist_candidate(self, candidate: MemoryCandidate) -> MemoryCandidate:
+    async def persist_candidate(
+        self, candidate: MemoryCandidate, **kwargs: object
+    ) -> MemoryCandidate:
+        del kwargs
         self.persisted_candidates[candidate.id] = candidate
         return candidate
 
@@ -304,8 +307,10 @@ class _CrashStore(_DurableMemoryStore):
                 raise asyncio.CancelledError("injected crash at embedding")
             raise RuntimeError(f"injected crash at {stage}")
 
-    async def persist_candidate(self, candidate: MemoryCandidate) -> MemoryCandidate:
-        result = await super().persist_candidate(candidate)
+    async def persist_candidate(
+        self, candidate: MemoryCandidate, **kwargs: object
+    ) -> MemoryCandidate:
+        result = await super().persist_candidate(candidate, **kwargs)
         self._crash("candidate")
         return result
 

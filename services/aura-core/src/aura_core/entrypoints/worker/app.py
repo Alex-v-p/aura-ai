@@ -7,11 +7,15 @@ identifier-only and cannot delay acknowledgement or execution of run work.
 
 import asyncio
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from time import monotonic
 from typing import Protocol, cast
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.domains.execution.runs.events import RunEvent
+from aura_core.domains.execution.runs.ports import RunEventPort
 from aura_core.domains.execution.runs.public import ChatCompletionPort, RunCoordinator
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
 from aura_core.domains.interaction.agents.public import AgentCatalog, AgentConfigurationService
@@ -21,6 +25,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationService,
 )
 from aura_core.domains.knowledge.memory.public import (
+    MEMORY_ID_NAMESPACE,
     MEMORY_PROCESSING_SCHEMA_VERSION,
     MEMORY_PROCESSING_TOPIC,
     MemoryProcessingCommand,
@@ -36,6 +41,7 @@ from aura_core.platform.telemetry import (
     Stopwatch,
     StructuredContainerLogExporter,
     TelemetryLifecycle,
+    current_memory_trace_context,
     memory_trace_context,
     new_span_id,
 )
@@ -44,6 +50,9 @@ from aura_core.providers.models.ollama.adapter import OllamaAdapter
 
 class MemoryJobProcessor(Protocol):
     async def process_command(self, command: MemoryProcessingCommand) -> object: ...
+
+
+MemoryActivityEmitter = Callable[[MemoryProcessingCommand, str, object | None], Awaitable[None]]
 
 
 async def run_once(
@@ -68,6 +77,7 @@ async def run_once(
 async def run_memory_once(
     processor: MemoryJobProcessor,
     consumer: NatsIdentifierConsumer,
+    activity_emitter: MemoryActivityEmitter | None = None,
 ) -> None:
     """Process one memory job and ack only after Core commits its result."""
 
@@ -96,6 +106,8 @@ async def run_memory_once(
         return
     context = _memory_context(memory_command)
     with memory_trace_context(context):
+        if activity_emitter is not None:
+            await activity_emitter(memory_command, "queued", None)
         try:
             # Core resolves the owner-scoped evidence and reports the durable
             # terminal settlement.  A provider result or an in-memory
@@ -115,6 +127,13 @@ async def run_memory_once(
                 error_class="delivery",
             )
             return
+        if activity_emitter is not None:
+            settlement_status = getattr(getattr(result, "status", None), "value", None)
+            await activity_emitter(
+                memory_command,
+                "failed" if settlement_status == "failed" else "completed",
+                result,
+            )
         await consumer.ack()
 
 
@@ -122,7 +141,9 @@ def _memory_context(memory_command: MemoryProcessingCommand) -> MemoryTraceConte
     """Build one trace context from the validated producer envelope."""
 
     return MemoryTraceContext(
-        trace_id=memory_command.correlation_id.hex,
+        # Correlation identifies the durable command across redelivery; each
+        # delivery gets a fresh trace root so retries remain distinguishable.
+        trace_id=uuid4().hex,
         span_id=new_span_id(),
         command_id=memory_command.command_id.hex,
         job_id=memory_command.job_id.hex,
@@ -189,6 +210,136 @@ def _memory_error_class(error: BaseException) -> str:
     return "provider"
 
 
+async def emit_memory_activity(
+    publisher: RunEventPort,
+    store: object,
+    metrics: object,
+    command: MemoryProcessingCommand,
+    status: str,
+    result: object | None,
+) -> None:
+    """Persist an identifier-only activity event before local fan-out."""
+
+    if status not in {"queued", "completed", "failed"}:
+        raise MemoryValidationError("unsupported memory activity status")
+    started = monotonic()
+    candidate = getattr(result, "candidate", None) if result is not None else None
+    candidate_action = getattr(getattr(candidate, "action", None), "value", None)
+    action_values = {
+        "create": "created",
+        "reinforce": "reinforced",
+        "dispute": "disputed",
+        "supersede": "created",
+        "review": "queued_for_review",
+        "ignore": "queued_for_review",
+    }
+    if candidate_action is None:
+        action = "queued_for_review"
+    elif str(candidate_action) not in action_values:
+        raise MemoryValidationError("unsupported memory candidate action")
+    else:
+        action = action_values[str(candidate_action)]
+    candidate_scope = getattr(candidate, "scope", None)
+    scope: dict[str, object] | None = None
+    if candidate_scope is not None:
+        scope_type = getattr(getattr(candidate_scope, "type", None), "value", None)
+        if scope_type in {"user", "agent"}:
+            scope = {"type": scope_type}
+            agent_id = getattr(candidate_scope, "agent_profile_id", None)
+            if scope_type == "agent" and agent_id is not None:
+                scope["agentProfileId"] = str(agent_id)
+    activity_id = uuid5(MEMORY_ID_NAMESPACE, f"activity:{command.job_id}")
+    event_id = uuid5(MEMORY_ID_NAMESPACE, f"activity-event:{command.job_id}:{status}")
+    candidate_id = getattr(candidate, "id", None)
+    memory_id = getattr(candidate, "memory_id", None)
+    revision_id = getattr(result, "revision_id", None) if result is not None else None
+    policy_revision_id = (
+        getattr(result, "policy_revision_id", None) if result is not None else None
+    )
+    embedding_generation_id = (
+        getattr(result, "embedding_generation_id", None) if result is not None else None
+    )
+    data: dict[str, object] = {
+        "id": str(activity_id),
+        "action": action,
+        "status": status,
+        "scope": scope,
+        "candidateId": str(candidate_id) if candidate_id is not None else None,
+        "memoryId": str(memory_id) if memory_id is not None else None,
+        "memoryRevisionId": str(revision_id) if revision_id is not None else None,
+        "policyRevisionId": str(policy_revision_id) if policy_revision_id is not None else None,
+        "embeddingGenerationId": (
+            str(embedding_generation_id) if embedding_generation_id is not None else None
+        ),
+        "reconciliationStatus": "pending" if status == "queued" else "authoritative",
+        "occurredAt": datetime.now(UTC).isoformat(),
+    }
+    event = RunEvent(
+        event_id,
+        0,
+        "memory.activity",
+        command.run_id,
+        command.conversation_id,
+        datetime.now(UTC),
+        data,
+    )
+    trace_context = current_memory_trace_context()
+    trace_id = trace_context.trace_id if trace_context is not None else uuid4().hex
+    parent_span_id = trace_context.span_id if trace_context is not None else None
+    trace_metadata = {
+        "trace_id": trace_id,
+        "run_id": str(command.run_id),
+        "conversation_id": str(command.conversation_id),
+    }
+    try:
+        # PersistentEventPublisher commits this event before its optional
+        # external wakeup and process-local subscriber notification.
+        await publisher.publish(event)
+        record_span = getattr(metrics, "record_span", None)
+        if callable(record_span):
+            record_span(
+                "aura.runtime.stream_delivery",
+                "memory.activity.publish",
+                (monotonic() - started) * 1000,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="event_store",
+                outcome="ok",
+                **trace_metadata,
+            )
+        increment = getattr(metrics, "increment", None)
+        if callable(increment):
+            increment(
+                "aura.runtime.stream_delivery",
+                "memory_activity_publication_outcome",
+                outcome="ok",
+                **trace_metadata,
+            )
+    except Exception:
+        record_span = getattr(metrics, "record_span", None)
+        if callable(record_span):
+            record_span(
+                "aura.runtime.stream_delivery",
+                "memory.activity.publish",
+                (monotonic() - started) * 1000,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="event_store",
+                outcome="error",
+                error_class="persistence",
+                **trace_metadata,
+            )
+        increment = getattr(metrics, "increment", None)
+        if callable(increment):
+            increment(
+                "aura.runtime.stream_delivery",
+                "memory_activity_publication_outcome",
+                outcome="error",
+                **trace_metadata,
+            )
+        raise
+
+
 def _retry_delay(delivery_count: int) -> float:
     """Bound worker retry backoff while JetStream retains redelivery state."""
 
@@ -198,12 +349,13 @@ def _retry_delay(delivery_count: int) -> float:
 async def run_memory_loop(
     processor: MemoryJobProcessor,
     consumer: NatsIdentifierConsumer,
+    activity_emitter: MemoryActivityEmitter | None = None,
 ) -> None:
     """Keep memory redelivery semantics independent from run execution."""
 
     while True:
         try:
-            await run_memory_once(processor, consumer)
+            await run_memory_once(processor, consumer, activity_emitter)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -330,20 +482,39 @@ async def run_forever(settings: Settings | None = None) -> None:
         await consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
-            memory_task = asyncio.create_task(run_memory_loop(memory_processor, memory_consumer))
             housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
         await event_transport.connect()
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
         coordinator = RunCoordinator(
             store,
-            PersistentEventPublisher(store.persist_event, event_transport.publish_event),
+            PersistentEventPublisher(store.append_event, event_transport.publish_event),
             TransactionalOutboxTransport(),
             metrics,
             lease_seconds=config.ollama_run_timeout_seconds + 30.0,
             timeout_seconds=config.ollama_run_timeout_seconds,
             context_token_budget=config.context_token_budget,
         )
+        if memory_processor is not None:
+            activity_publisher = coordinator.publisher
+
+            async def publish_activity(
+                command: MemoryProcessingCommand,
+                activity_status: str,
+                result: object | None,
+            ) -> None:
+                await emit_memory_activity(
+                    activity_publisher,
+                    store,
+                    metrics,
+                    command,
+                    activity_status,
+                    result,
+                )
+
+            memory_task = asyncio.create_task(
+                run_memory_loop(memory_processor, memory_consumer, publish_activity)
+            )
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
         while True:
             expired_runs = await store.expire_leases()

@@ -64,6 +64,19 @@ from aura_core.runtime.streaming.publisher import EventPublisher, PersistentEven
 
 
 class AppState:
+    @property
+    def provider(self) -> ChatModelPort:
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: ChatModelPort) -> None:
+        self._provider = value
+        if hasattr(self, "gateway"):
+            self.gateway = ModelGateway(value)
+        memory_service = getattr(self, "memory_model_service", None)
+        if memory_service is not None:
+            memory_service.provider = value
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -85,6 +98,8 @@ class AppState:
         self.agent_service: AgentConfigurationService
         self.persona_service: PersonaConfigurationService
         self.memory_repository: MemoryRepository
+        self.memory_worker: object | None = None
+        self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.startup_errors: dict[str, str] = {}
@@ -113,6 +128,13 @@ class AppState:
             self.sessions = SessionService(MemorySessionBackend(), self.settings)
             self.memory_repository = memory_uow.memory_repository(
                 None, testing=True, metrics=self.metrics
+            )
+            async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
+                return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
+
+            self.store.get_run_memory_activity = get_memory_activity  # type: ignore[attr-defined]
+            self.memory_worker = memory_uow.memory_processing_service(
+                None, settings=self.settings, metrics=self.metrics
             )
             self.store.set_memory_recall(
                 memory_uow.memory_recall_service(
@@ -151,7 +173,9 @@ class AppState:
                 persona_admission=self.persona_service,
             )
             self.agent_store = SqlAgentStore(
-                self.sessions_factory, self.agents, self.persona_service  # type: ignore[arg-type]
+                self.sessions_factory,
+                self.agents,
+                self.persona_service,  # type: ignore[arg-type]
             )
             self.agent_service = AgentConfigurationService(self.agent_store, self.persona_service)
             self.sql_store.agent_store = self.agent_store
@@ -164,7 +188,7 @@ class AppState:
                 additional_subjects=(memory_topic,),
             )
             self.outbox = TransactionalOutboxTransport()
-            self.publisher = PersistentEventPublisher(self.sql_store.persist_event)
+            self.publisher = PersistentEventPublisher(self.sql_store.append_event)
             import redis.asyncio
 
             redis_factory = cast(
@@ -177,6 +201,26 @@ class AppState:
             self.oidc_states = RedisLoginStateBackend(redis_client)
             self.memory_repository = memory_uow.memory_repository(
                 self.sessions_factory, metrics=self.metrics
+            )
+            cast(Any, self.memory_repository).set_run_recall_metadata_loader(
+                self.sql_store.get_run_memory_recall_metadata
+            )
+            agent_policy_loader = memory_uow.make_agent_policy_loader(
+                self.agent_service.repository
+            )
+            cast(Any, self.memory_repository).set_candidate_evidence_loader(
+                memory_uow.memory_evidence_loader(
+                    self.sessions_factory,
+                    self.memory_repository,
+                    agent_policy_loader=agent_policy_loader,
+                )
+            )
+            self.sql_store.set_memory_activity_repository(self.memory_repository)
+            self.memory_worker = memory_uow.memory_processing_service(
+                self.sessions_factory,
+                settings=self.settings,
+                metrics=self.metrics,
+                agent_policy_loader=agent_policy_loader,
             )
             self.sql_store.set_memory_recall(
                 memory_uow.memory_recall_service(
@@ -203,6 +247,9 @@ class AppState:
                 ),
                 "ollama": CallableProbe(self._model_ready, "provider unavailable"),
             }
+        self.memory_model_service = memory_public.MemoryModelApplicationService(
+            self.memory_repository, self.provider, self.memory_worker
+        )
         self.login = LoginService(
             LoginConfiguration(
                 self.settings.oidc_issuer,

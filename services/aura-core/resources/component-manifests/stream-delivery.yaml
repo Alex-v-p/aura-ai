@@ -15,18 +15,26 @@ dependencies:
   - aura.interaction.conversation_persistence
   - nats-jetstream
 metrics:
+  - memory_activity_publication_duration_ms
+  - memory_activity_publication_outcome
+  - memory_activity_delivery_duration_ms
+  - memory_activity_delivery_outcome
   - sse_reconnects
   - sse_connections
   - events_delivered
   - stream_delivery_duration_ms
   - errors
 metric_semantics:
+  memory_activity_publication_duration_ms: Identifier-only durable activity publication duration.
+  memory_activity_publication_outcome: Metadata-only durable activity publication outcome.
+  memory_activity_delivery_duration_ms: Identifier-only memory activity event delivery duration.
+  memory_activity_delivery_outcome: Metadata-only memory activity delivery outcome.
   sse_reconnects: Authorized stream requests carrying a valid Last-Event-ID cursor.
   events_delivered: Events serialized at the SSE boundary; event data is never telemetry.
   stream_delivery_duration_ms: Component-local serialization or delivery duration from a parented span.
 capture_policy: metadata_only
 cardinality:
-  metric_attributes: [error_class, dependency, outcome]
+  metric_attributes: [error_class, dependency, outcome, status]
   trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id]
   prohibited: [prompt, response, payload, endpoint, token, credential]
 retention:

@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/AssistantDeltaEvent" },
     { "$ref": "#/$defs/AssistantSnapshotEvent" },
     { "$ref": "#/$defs/RunErrorEvent" },
+    { "$ref": "#/$defs/MemoryActivityEvent" },
     { "$ref": "#/$defs/HeartbeatEvent" }
   ],
   "$defs": {
@@ -116,6 +117,52 @@
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
           "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.error" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/RunError" }
+        } }
+      ]
+    },
+    "MemoryScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "user" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "agentProfileId"],
+          "properties": {
+            "type": { "const": "agent" },
+            "agentProfileId": { "$ref": "#/$defs/Uuid" }
+          }
+        }
+      ]
+    },
+    "MemoryActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Identifier-only durable memory activity. Private memory, candidate, evidence, prompt, response, vector, credential, and owner content are prohibited.",
+      "required": ["id", "action", "status", "scope", "candidateId", "memoryId", "memoryRevisionId", "policyRevisionId", "embeddingGenerationId", "reconciliationStatus", "occurredAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "action": { "type": "string", "enum": ["created", "reinforced", "disputed", "recalled", "queued_for_review"] },
+        "status": { "type": "string", "enum": ["queued", "completed", "failed"] },
+        "scope": { "oneOf": [{ "$ref": "#/$defs/MemoryScope" }, { "type": "null" }] },
+        "candidateId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "memoryId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "memoryRevisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "policyRevisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "embeddingGenerationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "reconciliationStatus": { "type": "string", "enum": ["pending", "authoritative"] },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "MemoryActivityEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "memory.activity" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/MemoryActivity" }
         } }
       ]
     },

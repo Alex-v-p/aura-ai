@@ -18,6 +18,8 @@ dependencies:
   - structured_inference
   - embedding_provider
 metrics:
+  - memory_candidate_review_duration_ms
+  - memory_candidate_review_outcome
   - memory_job_outcome
   - memory_candidate_outcome
   - memory_action_outcome
@@ -38,6 +40,8 @@ metrics:
   - backlog_depth
   - backlog
 metric_semantics:
+  memory_candidate_review_duration_ms: Owner-scoped candidate review decision duration.
+  memory_candidate_review_outcome: Metadata-only candidate review decision outcome.
   memory_job_outcome: Queued, completed, retryable, or failed identifier-only job outcome.
   memory_candidate_outcome: Deterministic acceptance, review, rejection, or retry decision.
   memory_action_outcome: Durable create, reinforce, dispute, supersede, or review result.

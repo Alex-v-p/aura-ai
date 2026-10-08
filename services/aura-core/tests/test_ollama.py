@@ -29,13 +29,28 @@ def _traceback_locals(exception: BaseException) -> str:
 async def test_ollama_discovery_and_streaming() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": "chat"}, {"name": "embed"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "chat", "digest": "a" * 64, "modified_at": "chat-rev"},
+                        {"name": "embed", "digest": "b" * 64, "modified_at": "embed-rev"},
+                    ]
+                },
+            )
         if request.url.path == "/api/show":
             name = cast(str, json.loads(request.content)["name"])
             return httpx.Response(
                 200, json={"capabilities": ["chat"] if name == "chat" else ["embedding"]}
             )
+        if request.url.path == "/api/embed":
+            return httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
         if request.url.path == "/api/chat":
+            body = cast(dict[str, object], json.loads(request.content))
+            if "format" in body:
+                return httpx.Response(
+                    200, json={"message": {"content": '{"ok":true}'}}
+                )
             return httpx.Response(
                 200, content=(json.dumps({"message": {"content": "Hi"}}) + "\n").encode()
             )
@@ -49,7 +64,10 @@ async def test_ollama_discovery_and_streaming() -> None:
     try:
         models = await adapter.list_models()
         assert models[0].selectable is True
-        assert models[1].selectable is False
+        assert models[1].selectable is True
+        assert "structured_output" in models[0].capabilities
+        assert models[0].model_digest == "a" * 64
+        assert models[1].dimension == 3
         chunks = [chunk async for chunk in adapter.stream_chat("chat", [])]
         assert chunks == ["Hi"]
     finally:
@@ -57,11 +75,17 @@ async def test_ollama_discovery_and_streaming() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ollama_missing_capabilities_uses_legacy_chat_fallback() -> None:
+async def test_ollama_missing_capabilities_fail_closed_without_provider_identity() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
             return httpx.Response(
-                200, json={"models": [{"name": "legacy"}, {"name": "explicit-empty"}]}
+                200,
+                json={
+                    "models": [
+                        {"name": "legacy", "digest": "c" * 64},
+                        {"name": "explicit-empty", "digest": "d" * 64},
+                    ]
+                },
             )
         name = cast(str, json.loads(request.content)["name"])
         return httpx.Response(200, json={} if name == "legacy" else {"capabilities": []})
@@ -72,8 +96,8 @@ async def test_ollama_missing_capabilities_uses_legacy_chat_fallback() -> None:
     httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
     try:
         legacy, explicit_empty = await adapter.list_models()
-        assert legacy.selectable is True
-        assert legacy.capabilities == ("chat",)
+        assert legacy.selectable is False
+        assert legacy.capabilities == ()
         assert explicit_empty.selectable is False
         assert explicit_empty.capabilities == ()
     finally:

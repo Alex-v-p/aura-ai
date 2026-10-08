@@ -202,7 +202,7 @@ async def test_reads_are_owner_scoped_and_agent_filter_is_explicit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_none_scope_filter_cannot_enumerate_agent_records() -> None:
+async def test_none_scope_filter_resolves_owner_authorized_agent_records() -> None:
     store = MemoryStore(clock=lambda: NOW)
     agent_memory = await _create(
         store,
@@ -213,6 +213,14 @@ async def test_none_scope_filter_cannot_enumerate_agent_records() -> None:
         MemoryFilters(scope_type=None)  # type: ignore[arg-type]
     with pytest.raises(MemoryNotFound):
         await store.get_memory(ISSUER, OWNER, agent_memory.id, scope_type=None)
+    resolved = await store.get_memory(
+        ISSUER,
+        OWNER,
+        agent_memory.id,
+        scope_type=MemoryScopeType.AGENT,
+        agent_profile_id=agent_memory.scope.agent_profile_id,
+    )
+    assert resolved.id == agent_memory.id
 
 
 @pytest.mark.asyncio

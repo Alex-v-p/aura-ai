@@ -16,11 +16,19 @@ dependencies:
   - postgresql
   - memory_store
 metrics:
+  - memory_product_operation_duration_ms
+  - memory_product_operation_outcome
+  - memory_model_configuration_duration_ms
+  - memory_model_configuration_outcome
   - memory_operation_duration_ms
   - memory_operation_outcome
   - memory_lifecycle_status
   - memory_scope_type
 metric_semantics:
+  memory_product_operation_duration_ms: Owner-scoped memory product API operation duration.
+  memory_product_operation_outcome: Metadata-only memory product API operation outcome.
+  memory_model_configuration_duration_ms: Owner-scoped memory model configuration duration.
+  memory_model_configuration_outcome: Metadata-only memory model configuration outcome.
   memory_operation_duration_ms: Owner-scoped memory persistence operation duration.
   memory_operation_outcome: Metadata-only memory operation outcome.
   memory_lifecycle_status: Lifecycle status transition metadata.

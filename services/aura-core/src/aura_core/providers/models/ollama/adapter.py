@@ -6,6 +6,7 @@
 
 import json
 import math
+import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from time import monotonic
 from typing import Any, cast
@@ -33,6 +34,7 @@ STRUCTURED_INPUT_MAX_BYTES = 256 * 1024
 STRUCTURED_SCHEMA_MAX_BYTES = 64 * 1024
 STRUCTURED_OUTPUT_MAX_BYTES = 1024 * 1024
 STRUCTURED_MAX_DEPTH = 16
+STRUCTURED_PROBE_MAX_BYTES = 16 * 1024
 
 
 class OllamaUnavailable(RuntimeError):
@@ -65,11 +67,43 @@ class OllamaAdapter:
                 continue
             item_map = cast(dict[str, Any], item)
             model_name: Any = item_map["name"] if "name" in item_map else None
-            if not isinstance(model_name, str):
+            if (
+                not isinstance(model_name, str)
+                or not 1 <= len(model_name) <= 255
+                or any(ord(char) < 32 or ord(char) == 127 for char in model_name)
+            ):
                 continue
             model_id = model_name
             capabilities = await self._capabilities(model_id)
             chat_capable = "chat" in capabilities or "completion" in capabilities
+            if chat_capable or "structured_output" in capabilities:
+                if await self._supports_structured_output(model_id):
+                    capabilities.add("structured_output")
+                else:
+                    capabilities.discard("structured_output")
+            digest = item_map.get("digest")
+            candidate_digest = digest.strip().removeprefix("sha256:").lower() if isinstance(digest, str) else None
+            model_digest = (
+                candidate_digest
+                if candidate_digest is not None and re.fullmatch(r"[0-9a-f]{64}", candidate_digest)
+                else None
+            )
+            revision = item_map.get("modified_at")
+            model_revision = (
+                revision
+                if isinstance(revision, str)
+                and 1 <= len(revision) <= 255
+                and not any(ord(char) < 32 or ord(char) == 127 for char in revision)
+                else None
+            )
+            dimension = await self._embedding_dimension(model_id) if "embedding" in capabilities else None
+            identity_available = model_digest is not None and model_revision is not None
+            dimension_available = "embedding" not in capabilities or dimension is not None
+            selectable = (
+                (chat_capable or "embedding" in capabilities)
+                and identity_available
+                and dimension_available
+            )
             descriptors.append(
                 ModelDescriptor(
                     id=model_id,
@@ -77,13 +111,54 @@ class OllamaAdapter:
                     provider="ollama",
                     capabilities=tuple(sorted(capabilities)),
                     availability="available",
-                    selectable=chat_capable,
-                    disabled_reason=None
-                    if chat_capable
-                    else "model does not advertise chat capability",
+                    selectable=selectable,
+                    disabled_reason=(
+                        None
+                        if selectable
+                        else "provider identity or embedding dimension unavailable"
+                    ),
+                    model_revision=model_revision,
+                    model_digest=model_digest,
+                    dimension=dimension,
                 )
             )
         return descriptors
+
+    async def _supports_structured_output(self, model_id: str) -> bool:
+        """Verify JSON-schema output with a bounded, content-free probe."""
+
+        schema = {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                response = await client.post(
+                    "/api/chat",
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": '{"ok":true}'}],
+                        "format": schema,
+                        "stream": False,
+                        "options": {"temperature": 0, "num_predict": 8},
+                    },
+                )
+                response.raise_for_status()
+                if len(response.content) > STRUCTURED_PROBE_MAX_BYTES:
+                    return False
+                payload = cast(dict[str, Any], response.json())
+        except (httpx.HTTPError, ValueError, TypeError):
+            return False
+        message = payload.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            return False
+        try:
+            result = json.loads(message["content"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        return isinstance(result, dict) and result.get("ok") is True
 
     async def _capabilities(self, model_id: str) -> set[str]:
         try:
@@ -91,17 +166,35 @@ class OllamaAdapter:
                 response = await client.post("/api/show", json={"name": model_id})
                 response.raise_for_status()
                 payload = cast(dict[str, Any], response.json())
-        except httpx.HTTPError, ValueError:
+        except (httpx.HTTPError, ValueError):
             return set()
         if "capabilities" not in payload:
-            # Older Ollama versions predate this field but do support native
-            # chat. An explicit empty list is authoritative and must not use
-            # that compatibility fallback.
-            return {"chat"}
+            return set()
         capabilities = payload["capabilities"]
         if isinstance(capabilities, list):
             return {value for value in cast(list[Any], capabilities) if isinstance(value, str)}
         return set()
+
+    async def _embedding_dimension(self, model_id: str) -> int | None:
+        """Bounded provider probe used only to verify embedding identity."""
+
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                response = await client.post(
+                    "/api/embed", json={"model": model_id, "input": ""}
+                )
+                response.raise_for_status()
+                payload = cast(dict[str, Any], response.json())
+        except (httpx.HTTPError, ValueError):
+            return None
+        vectors = payload.get("embeddings")
+        if isinstance(vectors, list) and vectors and isinstance(vectors[0], list):
+            vector = vectors[0]
+        else:
+            vector = payload.get("embedding")
+        if not isinstance(vector, list) or not 1 <= len(vector) <= 16_384:
+            return None
+        return len(vector) if all(isinstance(value, (int, float)) for value in vector) else None
 
     async def stream_chat(
         self, model_id: str, messages: Sequence[ChatMessage]

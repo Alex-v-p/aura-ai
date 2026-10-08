@@ -228,9 +228,7 @@ class SqlAgentStore:
                     if (
                         policy_row is None
                         or policy_row.agent_profile_id != identifier
-                        or (
-                            not _policy_owner_matches(policy_row, issuer, subject)
-                        )
+                        or (not _policy_owner_matches(policy_row, issuer, subject))
                     ):
                         raise ConfigurationNotFound("memory policy revision not found")
                 session.add(
@@ -308,9 +306,7 @@ class SqlAgentStore:
                 if (
                     policy_row is None
                     or policy_row.agent_profile_id != identifier
-                    or (
-                        not _policy_owner_matches(policy_row, issuer, subject)
-                    )
+                    or (not _policy_owner_matches(policy_row, issuer, subject))
                 ):
                     raise ConfigurationNotFound("memory policy revision not found")
                 number = (
@@ -428,37 +424,75 @@ class SqlAgentStore:
             row = await session.get(MemoryPolicyRevisionRow, policy_id)
             if row is None or not _policy_owner_matches(row, issuer, subject):
                 raise ConfigurationNotFound("memory policy revision not found")
-            grants = (
-                (
-                    await session.execute(
-                        select(MemoryPolicyFallbackGrantRow.foreign_agent_profile_id).where(
-                            MemoryPolicyFallbackGrantRow.policy_id == policy_id
-                        )
+            return await self._policy_from_row(session, row)
+
+    @staticmethod
+    async def _policy_from_row(session: AsyncSession, row: MemoryPolicyRevisionRow) -> MemoryPolicy:
+        """Hydrate one policy while retaining the caller's transaction/lock."""
+
+        policy_id = row.id
+        grants = (
+            (
+                await session.execute(
+                    select(MemoryPolicyFallbackGrantRow.foreign_agent_profile_id).where(
+                        MemoryPolicyFallbackGrantRow.policy_id == policy_id
                     )
                 )
-                .scalars()
-                .all()
             )
-            return MemoryPolicy(
-                row.id,
-                row.agent_profile_id,
-                row.revision,
-                row.shared_user_read,
-                row.current_agent_read,
-                row.fallback_relevance_threshold,
-                row.max_memories,
-                row.context_budget_fraction,
-                row.allow_shared_user_promotion,
-                tuple(grants),
-                row.created_at or datetime.now(UTC),
-            )
+            .scalars()
+            .all()
+        )
+        return MemoryPolicy(
+            row.id,
+            row.agent_profile_id,
+            row.revision,
+            row.shared_user_read,
+            row.current_agent_read,
+            row.fallback_relevance_threshold,
+            row.max_memories,
+            row.context_budget_fraction,
+            row.allow_shared_user_promotion,
+            tuple(grants),
+            row.created_at or datetime.now(UTC),
+        )
 
     async def create_memory_policy(
-        self, issuer: str, subject: str, policy: MemoryPolicy
+        self, issuer: str, subject: str, policy: MemoryPolicy, key: str | None = None
     ) -> MemoryPolicy:
         if not issuer or not subject:
             raise ConfigurationNotFound("memory policy owner is required")
+        fingerprint = self._fingerprint(
+            "memory-policy",
+            policy.agent_profile_id,
+            policy.shared_user_read,
+            policy.current_agent_read,
+            policy.fallback_relevance_threshold,
+            policy.max_memories,
+            policy.context_budget_fraction,
+            policy.allow_shared_user_promotion,
+            policy.fallback_agent_profile_ids,
+        )
         async with self.sessions() as session, session.begin():
+            if key:
+                prior_response = await self._replay(session, issuer, subject, key, fingerprint)
+                if prior_response is not None:
+                    prior_id = UUID(str(prior_response["policyId"]))
+                    row = await session.get(MemoryPolicyRevisionRow, prior_id)
+                    if row is None or not _policy_owner_matches(row, issuer, subject):
+                        raise ConfigurationIdempotencyConflict("idempotency key is unavailable")
+                    return await self._policy_from_row(session, row)
+            # Serialize revision allocation per owner and agent. Different
+            # agents may each start at revision 1; concurrent writes for one
+            # agent must instead converge on one next revision.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                {
+                    "lock_key": (
+                        f"memory-policy-revision:{issuer}:{subject}:"
+                        f"{policy.agent_profile_id}"
+                    )
+                },
+            )
             prior = await session.get(MemoryPolicyRevisionRow, policy.id)
             if prior is not None:
                 if not _policy_owner_matches(prior, issuer, subject):
@@ -467,21 +501,29 @@ class SqlAgentStore:
                     )
                 return policy
             owner_policies = (
-                await session.execute(
-                    select(MemoryPolicyRevisionRow).where(
-                        MemoryPolicyRevisionRow.principal_issuer == issuer,
-                        MemoryPolicyRevisionRow.principal_subject == subject,
+                (
+                    await session.execute(
+                        select(MemoryPolicyRevisionRow).where(
+                            MemoryPolicyRevisionRow.principal_issuer == issuer,
+                            MemoryPolicyRevisionRow.principal_subject == subject,
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             migrated_defaults = (
-                await session.execute(
-                    select(MemoryPolicyRevisionRow).where(
-                        MemoryPolicyRevisionRow.principal_issuer == "",
-                        MemoryPolicyRevisionRow.principal_subject == "",
+                (
+                    await session.execute(
+                        select(MemoryPolicyRevisionRow).where(
+                            MemoryPolicyRevisionRow.principal_issuer == "",
+                            MemoryPolicyRevisionRow.principal_subject == "",
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             policies = [
                 *owner_policies,
                 *[
@@ -490,14 +532,25 @@ class SqlAgentStore:
                     if is_platform_memory_policy(item.id, item.agent_profile_id)
                 ],
             ]
+            same_agent_policies = [
+                item
+                for item in owner_policies
+                if item.agent_profile_id == policy.agent_profile_id
+            ]
+            if policy.revision != max((item.revision for item in same_agent_policies), default=0) + 1:
+                raise ConfigurationVersionConflict("memory policy revision conflict")
             policy_ids = [item.id for item in policies]
             grants = (
-                await session.execute(
-                    select(MemoryPolicyFallbackGrantRow).where(
-                        MemoryPolicyFallbackGrantRow.policy_id.in_(policy_ids)
+                (
+                    await session.execute(
+                        select(MemoryPolicyFallbackGrantRow).where(
+                            MemoryPolicyFallbackGrantRow.policy_id.in_(policy_ids)
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             edges: dict[UUID, set[UUID]] = {item.agent_profile_id: set() for item in policies}
             by_policy = {item.id: item for item in policies}
             for grant in grants:
@@ -539,12 +592,102 @@ class SqlAgentStore:
                     raise ConfigurationVersionConflict("self fallback grant is not allowed")
                 if await session.get(AgentProfileRow, foreign_agent) is None:
                     raise ConfigurationNotFound("fallback agent not found")
+                foreign_owned = (
+                    await session.execute(
+                        select(MemoryPolicyRevisionRow.id).where(
+                            MemoryPolicyRevisionRow.agent_profile_id == foreign_agent,
+                            MemoryPolicyRevisionRow.principal_issuer == issuer,
+                            MemoryPolicyRevisionRow.principal_subject == subject,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if foreign_owned is None:
+                    raise ConfigurationNotFound("fallback agent is not owner-scoped")
                 session.add(
                     MemoryPolicyFallbackGrantRow(
                         policy_id=policy.id, foreign_agent_profile_id=foreign_agent
                     )
                 )
-        return policy
+            if key:
+                await self._record_policy(session, issuer, subject, key, fingerprint, policy.id)
+            row = await session.get(MemoryPolicyRevisionRow, policy.id)
+            if row is None:
+                raise ConfigurationNotFound("memory policy revision was not persisted")
+            return await self._policy_from_row(session, row)
+
+    async def list_memory_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[MemoryPolicy]:
+        async with self.sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(MemoryPolicyRevisionRow).where(
+                            MemoryPolicyRevisionRow.agent_profile_id == agent_profile_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            result: list[MemoryPolicy] = []
+            for row in rows:
+                if not _policy_owner_matches(row, issuer, subject):
+                    continue
+                grants = (
+                    (
+                        await session.execute(
+                            select(MemoryPolicyFallbackGrantRow.foreign_agent_profile_id).where(
+                                MemoryPolicyFallbackGrantRow.policy_id == row.id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                result.append(
+                    MemoryPolicy(
+                        row.id,
+                        row.agent_profile_id,
+                        row.revision,
+                        row.shared_user_read,
+                        row.current_agent_read,
+                        row.fallback_relevance_threshold,
+                        row.max_memories,
+                        row.context_budget_fraction,
+                        row.allow_shared_user_promotion,
+                        tuple(grants),
+                        row.created_at or datetime.now(UTC),
+                    )
+                )
+            return sorted(result, key=lambda item: item.revision)
+
+    async def attach_memory_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        policy = await self.get_memory_policy(issuer, subject, policy_revision_id)
+        if policy.agent_profile_id != agent_profile_id:
+            raise ConfigurationNotFound("memory policy revision not found")
+        profile = self.catalog.get_agent(agent_profile_id)
+        revision = profile.current_revision
+        return await self.revise_agent(
+            issuer,
+            subject,
+            agent_profile_id,
+            expected_version,
+            revision.display_name,
+            revision.purpose,
+            revision.instructions,
+            revision.persona_revision_id,
+            key,
+            policy_revision_id,
+        )
 
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         """Resolve a pinned revision from the refreshed read model."""
@@ -660,5 +803,29 @@ class SqlAgentStore:
                 "key": key,
                 "fingerprint": fingerprint,
                 "response": dumps({"profileId": str(identifier)}),
+            },
+        )
+
+    async def _record_policy(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        key: str,
+        fingerprint: str,
+        policy_id: UUID,
+    ) -> None:
+        await session.execute(
+            text(
+                "INSERT INTO command_idempotency "
+                "(principal_issuer, principal_subject, idempotency_key, fingerprint, response) "
+                "VALUES (:issuer,:subject,:key,:fingerprint,CAST(:response AS JSONB))"
+            ),
+            {
+                "issuer": issuer,
+                "subject": subject,
+                "key": key,
+                "fingerprint": fingerprint,
+                "response": dumps({"policyId": str(policy_id)}),
             },
         )

@@ -782,7 +782,12 @@ class RunCoordinator:
         await self._status(run.conversation_id, run)
 
     async def _next_sequence(self, run_id: UUID) -> int:
-        return len(await self.publisher.history(run_id))
+        # Durable publishers assign the run-local sequence while appending
+        # under the run-row lock.  In-memory publishers apply the same
+        # serialization before fan-out.  Producers therefore pass only a
+        # placeholder and never derive a sequence from a racy history read.
+        del run_id
+        return 0
 
     async def _status(self, conversation_id: UUID, run: Run) -> None:
         await self._publish(

@@ -28,6 +28,7 @@ def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> No
         "/api/v1/runs/{run_id}/cancel",
         "/api/v1/runs/{run_id}/retry",
         "/api/v1/runs/{run_id}/events",
+        "/api/v1/runs/{run_id}/memory-activity",
         "/health/live",
         "/health/ready",
     }
@@ -53,7 +54,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.4.0"
+    assert contract["info"]["version"] == "1.5.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -84,17 +85,61 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
         list[dict[str, Any]], paths["/api/v1/memories/{memory_id}"]["get"]["parameters"]
     )
     detail_refs = {cast(str, parameter["$ref"]) for parameter in detail_parameters}
+    assert "#/components/parameters/MemoryCollectionScopeType" in list_refs
+    assert "#/components/parameters/MemoryCollectionAgentProfileId" in list_refs
     required_read_scope_refs = {
         "#/components/parameters/MemoryReadScopeType",
         "#/components/parameters/MemoryReadAgentProfileId",
     }
-    assert required_read_scope_refs <= list_refs
     assert required_read_scope_refs <= detail_refs
-    query = next(parameter for parameter in list_parameters if parameter.get("name") == "q")
-    assert query["schema"]["maxLength"] == 500
-
+    assert all(parameter.get("name") != "q" for parameter in list_parameters)
     schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    parameters = cast(dict[str, dict[str, Any]], contract["components"]["parameters"])
+    collection_scope = parameters["MemoryCollectionScopeType"]
+    assert collection_scope["schema"]["default"] == "user"
+    assert "all returns user and" in collection_scope["description"]
+    assert "every owner-authorized agent scope" in collection_scope["description"]
+    assert "rejects agentProfileId" in collection_scope["description"]
+    read_scope = parameters["MemoryReadScopeType"]
+    assert read_scope["schema"]["allOf"][0]["$ref"].endswith("/MemoryScopeType")
+    assert "not permitted for detail or mutations" in read_scope["description"]
+    assert "Rejected for user scope" in parameters["MemoryReadAgentProfileId"]["description"]
+    detail_description = paths["/api/v1/memories/{memory_id}"]["get"]["responses"]["200"][
+        "description"
+    ]
+    assert "scopeType=agent" in detail_description
+    assert "agentProfileId" in detail_description
+    list_description = paths["/api/v1/memories"]["get"]["responses"]["200"]["description"]
+    assert "explicit all" in list_description
+    for path, method in mutation_operations:
+        if path == "/api/v1/memories":
+            continue
+        mutation_refs = {
+            cast(str, parameter["$ref"])
+            for parameter in paths[path][method]["parameters"]
+            if "$ref" in parameter
+        }
+        assert "#/components/parameters/MemoryReadScopeType" in mutation_refs
+    search = paths["/api/v1/memories/search"]["post"]
+    search_body = search["requestBody"]["content"]["application/json"]["schema"]
+    assert search_body["$ref"].endswith("SearchMemoriesRequest")
+    search_parameters = search.get("parameters", [])
+    assert any(parameter.get("$ref", "").endswith("/CsrfToken") for parameter in search_parameters)
+    assert schemas["SearchMemoriesRequest"]["properties"]["query"]["maxLength"] == 500
+    search_scope = schemas["SearchMemoriesRequest"]["properties"]["scopeType"]
+    assert search_scope["allOf"][0]["$ref"].endswith("/MemoryCollectionScopeType")
+    assert search_scope["default"] == "user"
+    assert "all combines user and every owner-authorized agent scope" in search_scope[
+        "description"
+    ]
+    generated_client = (
+        ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
+    ).read_text()
+    assert "searchMemories:" in generated_client
+    assert "SearchMemoriesRequest" in generated_client
+
     assert schemas["MemoryScopeType"]["enum"] == ["user", "agent"]
+    assert schemas["MemoryCollectionScopeType"]["enum"] == ["user", "agent", "all"]
     assert schemas["MemoryKind"]["enum"] == [
         "episodic",
         "semantic",
@@ -145,6 +190,7 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "assistant.delta",
         "assistant.snapshot",
         "run.error",
+        "memory.activity",
         "heartbeat",
     }
     assert schema["$defs"]["AssistantDeltaEvent"]["allOf"][1]["properties"]["data"]["required"] == [
@@ -156,6 +202,34 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "run",
         "assistantMessage",
     ]
+    memory_activity = definitions["MemoryActivity"]
+    assert memory_activity["additionalProperties"] is False
+    assert set(memory_activity["properties"]) == {
+        "id",
+        "action",
+        "status",
+        "scope",
+        "candidateId",
+        "memoryId",
+        "memoryRevisionId",
+        "policyRevisionId",
+        "embeddingGenerationId",
+        "reconciliationStatus",
+        "occurredAt",
+    }
+    assert not {
+        "content",
+        "evidence",
+        "prompt",
+        "response",
+        "vector",
+        "credential",
+        "ownerSubject",
+    } & set(memory_activity["properties"])
+    assert (
+        definitions["MemoryActivityEvent"]["allOf"][1]["properties"]["eventType"]["const"]
+        == "memory.activity"
+    )
 
 
 def test_outbox_wire_command_contains_identifiers_but_no_conversation_content() -> None:

@@ -311,6 +311,8 @@ modules:
   dependencies:
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.memory-uow
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public
   - aura-core.domains.knowledge.memory.public
   - aura-core.platform.auth
@@ -839,6 +841,7 @@ modules:
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.api.errors
   root: services/aura-core/src/aura_core/entrypoints/api/errors.py
   kind: python
@@ -933,6 +936,7 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.routes.models
   dependencies:
+  - aura-core.domains.knowledge.memory.public
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.platform.auth
@@ -1002,6 +1006,8 @@ modules:
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.memory-uow
+  - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public
   - aura-core.domains.interaction.agents.adapters
   - aura-core.domains.interaction.agents.public

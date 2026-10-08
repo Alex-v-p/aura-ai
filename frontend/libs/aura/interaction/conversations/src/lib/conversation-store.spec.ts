@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
-import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, ModelCatalog, Run, RunEvent, Session } from '@aura/aura-api-client';
-import { ConversationStore } from './conversation-store';
+import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
+import { ConversationStore, memoryActivityIndicators } from './conversation-store';
 
 const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const preferredModel = { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
@@ -49,6 +49,13 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('keeps recall and creation/update indicators independent', () => {
+    const recalled = { action: 'recalled' } as MemoryActivity;
+    const created = { action: 'created' } as MemoryActivity;
+    expect(memoryActivityIndicators([recalled])).toEqual({ recalled: true, updated: false });
+    expect(memoryActivityIndicators([created])).toEqual({ recalled: false, updated: true });
+    expect(memoryActivityIndicators([recalled, created])).toEqual({ recalled: true, updated: true });
+  });
   let store: ConversationStore;
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); });
 
@@ -782,5 +789,44 @@ describe('ConversationStore', () => {
     expect(restoreStore.conversations().map((item) => [item.id, item.archivedAt])).toEqual([[archived.id, archived.archivedAt], [other.id, other.archivedAt]]);
     await expect(restoreStore.restoreConversation(archived.id)).resolves.toBe(true);
     expect(restoreStore.conversations().map((item) => item.id)).toEqual([other.id]);
+  });
+  it('authoritatively replaces queued memory activity after reconnect reconciliation', async () => {
+    const now = new Date().toISOString();
+    const assistantMessageId = 'assistant-memory-reconcile';
+    const run: Run = { id: 'run-memory-reconcile', conversationId: 'memory-reconcile', userMessageId: 'user-memory-reconcile', assistantMessageId, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'Answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+    const queued: MemoryActivity = { id: 'memory-activity-1', action: 'queued_for_review', status: 'queued', scope: { type: 'user' }, candidateId: 'candidate-1', memoryId: null, memoryRevisionId: null, policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending', occurredAt: now };
+    const authoritative: MemoryActivity = { ...queued, action: 'created', status: 'completed', memoryId: 'memory-1', memoryRevisionId: 'revision-1', reconciliationStatus: 'authoritative' };
+    const candidateActivity: MemoryActivity = { ...queued, id: 'memory-activity-candidate', memoryId: null, candidateId: 'candidate-2' };
+    let snapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'queued', items: [queued], lastEventId: 'activity-1', reconciledAt: now };
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
+    const assistantId = detail.messages[0]?.id;
+    if (!assistantId) throw new Error('Expected an assistant message.');
+    api.getRunMemoryActivity = async () => snapshot;
+    const memoryReads: string[] = [];
+    const candidateReads: string[] = [];
+    api.getMemoryDetail = async (id) => { memoryReads.push(id); return { id, provenance: [{ type: 'run' }] } as never; };
+    api.getMemoryCandidateDetail = async (id) => { candidateReads.push(id); return { id, runId: run.id, groundedMessageIds: ['message-1'] } as never; };
+    const reconcileStore = new ConversationStore(api);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(reconcileStore.selected().turns[0]?.memoryActivities?.[0]?.status).toBe('queued');
+    snapshot = { ...snapshot, processingStatus: 'settled', items: [authoritative], lastEventId: 'activity-2' };
+    await reconcileStore.retryMemoryActivity(run.id);
+    expect(reconcileStore.selected().turns[0]?.memoryActivities).toEqual([authoritative]);
+    expect(reconcileStore.memoryActivityNotice()).toBeNull();
+    await reconcileStore.loadMemoryPopup(assistantId);
+    expect(memoryReads).toEqual(['memory-1']);
+    expect(reconcileStore.memoryPopupRecord(authoritative.id)?.kind).toBe('memory');
+    snapshot = { ...snapshot, items: [candidateActivity] };
+    await reconcileStore.retryMemoryActivity(run.id);
+    await reconcileStore.loadMemoryPopup(assistantId);
+    expect(candidateReads).toEqual(['candidate-2']);
+    expect(reconcileStore.memoryPopupRecord(candidateActivity.id)?.kind).toBe('candidate');
+    api.getMemoryCandidateDetail = async () => { throw new Error('private candidate evidence'); };
+    await reconcileStore.loadMemoryPopup(assistantId);
+    expect(reconcileStore.memoryPopupError(candidateActivity.id)).toBe('Record details are temporarily unavailable.');
+    api.getRunMemoryActivity = async () => { throw new Error('temporarily unavailable'); };
+    await reconcileStore.retryMemoryActivity(run.id);
+    expect(reconcileStore.memoryActivityNotice()).toContain('transcript is preserved');
   });
 });

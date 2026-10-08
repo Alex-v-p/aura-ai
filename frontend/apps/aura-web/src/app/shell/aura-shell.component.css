@@ -38,7 +38,7 @@
 .rename-form button { background: transparent; border: 1px solid var(--border); border-radius: .35rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .65rem; padding: .35rem; }
 .load-more { margin: .45rem .35rem; }
 .sr-only { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
-.product-nav { display: grid; flex: 0 0 auto; gap: .3rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: .9rem; padding: 0; }
+.product-nav { display: grid; flex: 0 0 auto; gap: .3rem; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: .9rem; padding: 0; }
 .product-link { align-items: center; border: 0; border-radius: .7rem; color: var(--text-muted); display: flex; flex-direction: column; gap: .25rem; justify-content: center; min-height: 2.75rem; min-width: 0; padding: 0; position: relative; text-align: center; text-decoration: none; transition: color .15s; }
 .product-link:hover { color: var(--text); }
 .product-link:focus-visible { z-index: 1; }

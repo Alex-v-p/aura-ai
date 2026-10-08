@@ -176,8 +176,20 @@ class AgentConfigurationRepository(Protocol):
         self, issuer: str, subject: str, policy_id: UUID
     ) -> MemoryPolicy: ...
     async def create_memory_policy(
-        self, issuer: str, subject: str, policy: MemoryPolicy
+        self, issuer: str, subject: str, policy: MemoryPolicy, key: str | None = None
     ) -> MemoryPolicy: ...
+    async def list_memory_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[MemoryPolicy]: ...
+    async def attach_memory_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile: ...
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision: ...
     def resolve_revision(self, identifier: UUID) -> AgentRevision: ...
     def compile_prompt(
@@ -213,6 +225,7 @@ class AgentCatalog:
         self._idempotency: dict[str, tuple[str, object]] = {}
         self.persona_query = persona_query or PersonaCatalog()
         self.memory_policies: dict[UUID, MemoryPolicy] = {}
+        self.policy_idempotency: dict[str, tuple[str, MemoryPolicy]] = {}
         platform = PromptComponentRevision(PLATFORM_COMPONENT_ID, "platform", 1, "")
         governance = PromptComponentRevision(GOVERNANCE_COMPONENT_ID, "governance", 1, "")
         self.bundle = PromptBundleRevision(PROMPT_BUNDLE_ID, 1, platform, governance)
@@ -402,7 +415,26 @@ class AgentCatalog:
         context_budget_fraction: float = 0.2,
         allow_shared_user_promotion: bool = False,
         fallback_agent_profile_ids: tuple[UUID, ...] = (),
+        idempotency_key: str | None = None,
     ) -> MemoryPolicy:
+        fingerprint = _canonical_fingerprint(
+            "memory-policy",
+            {
+                "agentProfileId": str(agent_profile_id),
+                "sharedUserRead": shared_user_read,
+                "currentAgentRead": current_agent_read,
+                "sharedUserPromotion": allow_shared_user_promotion,
+                "fallbackRelevanceThreshold": fallback_relevance_threshold,
+                "maxMemories": max_memories,
+                "contextBudgetFraction": context_budget_fraction,
+                "fallbackAgentProfileIds": [str(item) for item in fallback_agent_profile_ids],
+            },
+        )
+        if idempotency_key is not None and idempotency_key in self.policy_idempotency:
+            prior_fingerprint, prior = self.policy_idempotency[idempotency_key]
+            if prior_fingerprint != fingerprint:
+                raise ConfigurationIdempotencyConflict("idempotency key payload conflict")
+            return prior
         if agent_profile_id not in self.agents:
             raise ConfigurationNotFound("agent not found")
         prior = [
@@ -417,9 +449,7 @@ class AgentCatalog:
         # and make a cross-revision cycle appear acyclic.
         edges: dict[UUID, set[UUID]] = {}
         for item in self.memory_policies.values():
-            edges.setdefault(item.agent_profile_id, set()).update(
-                item.fallback_agent_profile_ids
-            )
+            edges.setdefault(item.agent_profile_id, set()).update(item.fallback_agent_profile_ids)
         edges.setdefault(agent_profile_id, set()).update(fallback_agent_profile_ids)
         pending = list(fallback_agent_profile_ids)
         visited: set[UUID] = set()
@@ -445,7 +475,42 @@ class AgentCatalog:
             tuple(fallback_agent_profile_ids),
         )
         self.memory_policies[policy.id] = policy
+        if idempotency_key is not None:
+            self.policy_idempotency[idempotency_key] = (fingerprint, policy)
         return policy
+
+    def list_memory_policies(self, agent_profile_id: UUID) -> list[MemoryPolicy]:
+        return sorted(
+            (
+                item
+                for item in self.memory_policies.values()
+                if item.agent_profile_id == agent_profile_id
+            ),
+            key=lambda item: item.revision,
+        )
+
+    def attach_memory_policy(
+        self,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str | None = None,
+    ) -> AgentProfile:
+        profile = self.get_agent(agent_profile_id)
+        policy = self.get_memory_policy(policy_revision_id)
+        if policy.agent_profile_id != agent_profile_id:
+            raise ConfigurationNotFound("memory policy revision not found")
+        self.revise_agent(
+            agent_profile_id,
+            expected_version,
+            profile.current_revision.purpose,
+            profile.current_revision.instructions,
+            profile.current_revision.persona_revision_id,
+            idempotency_key=key,
+            display_name=profile.display_name,
+            memory_policy_revision_id=policy_revision_id,
+        )
+        return self.get_agent(agent_profile_id)
 
     def set_agent_status(
         self,
@@ -635,11 +700,57 @@ class AgentMemoryRepository:
         return self.catalog.get_memory_policy(policy_id)
 
     async def create_memory_policy(
-        self, issuer: str, subject: str, policy: MemoryPolicy
+        self, issuer: str, subject: str, policy: MemoryPolicy, key: str | None = None
     ) -> MemoryPolicy:
         del issuer, subject
+        fingerprint = _canonical_fingerprint(
+            "memory-policy",
+            {
+                "agentProfileId": str(policy.agent_profile_id),
+                "sharedUserRead": policy.shared_user_read,
+                "currentAgentRead": policy.current_agent_read,
+                "sharedUserPromotion": policy.allow_shared_user_promotion,
+                "fallbackRelevanceThreshold": policy.fallback_relevance_threshold,
+                "maxMemories": policy.max_memories,
+                "contextBudgetFraction": policy.context_budget_fraction,
+                "fallbackAgentProfileIds": [
+                    str(item) for item in policy.fallback_agent_profile_ids
+                ],
+            },
+        )
+        if key is not None and key in self.catalog.policy_idempotency:
+            prior_fingerprint, prior = self.catalog.policy_idempotency[key]
+            if prior_fingerprint != fingerprint:
+                raise ConfigurationIdempotencyConflict("idempotency key payload conflict")
+            return prior
+        prior_revisions = self.catalog.list_memory_policies(policy.agent_profile_id)
+        if policy.revision != max((item.revision for item in prior_revisions), default=0) + 1:
+            raise ConfigurationVersionConflict("memory policy revision conflict")
         self.catalog.memory_policies[policy.id] = policy
+        if key is not None:
+            self.catalog.policy_idempotency[key] = (fingerprint, policy)
         return policy
+
+    async def list_memory_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[MemoryPolicy]:
+        del issuer, subject
+        self.catalog.get_agent(agent_profile_id)
+        return self.catalog.list_memory_policies(agent_profile_id)
+
+    async def attach_memory_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        del issuer, subject
+        return self.catalog.attach_memory_policy(
+            agent_profile_id, policy_revision_id, expected_version, key
+        )
 
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         return self.catalog.resolve_revision_unchecked(identifier)
@@ -783,6 +894,33 @@ class AgentConfigurationService:
             )
             if inspect.isawaitable(value):
                 await value
+
+    async def list_memory_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[MemoryPolicy]:
+        return await self.repository.list_memory_policies(issuer, subject, agent_profile_id)
+
+    async def create_memory_policy(
+        self, issuer: str, subject: str, policy: MemoryPolicy, key: str | None = None
+    ) -> MemoryPolicy:
+        result = await self.repository.create_memory_policy(issuer, subject, policy, key)
+        await self._audit("agent.memory_policy.create", issuer, subject, result)
+        return result
+
+    async def attach_memory_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        result = await self.repository.attach_memory_policy(
+            issuer, subject, agent_profile_id, policy_revision_id, expected_version, key
+        )
+        await self._audit("agent.memory_policy.attach", issuer, subject, result)
+        return result
 
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         return self.repository.resolve_revision_unchecked(identifier)

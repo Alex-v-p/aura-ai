@@ -18,6 +18,7 @@ from aura_core.domains.interaction.agents.public import (
     ConfigurationNotFound,
     ConfigurationStatus,
     ConfigurationVersionConflict,
+    MemoryPolicy,
 )
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.entrypoints.api.state import AppState
@@ -48,6 +49,25 @@ class AgentStatusRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: ConfigurationStatus
     expectedVersion: int = Field(ge=1)
+
+
+class AgentMemoryPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    shared_user_read: bool = Field(alias="sharedUserRead")
+    current_agent_read: bool = Field(alias="currentAgentRead")
+    shared_user_promotion: bool = Field(alias="sharedUserPromotion")
+    fallback_relevance_threshold: float = Field(ge=0, le=1, alias="fallbackRelevanceThreshold")
+    max_memories: int = Field(ge=1, le=8, alias="maxMemories")
+    context_budget_fraction: float = Field(gt=0, le=0.2, alias="contextBudgetFraction")
+    fallback_agent_profile_ids: list[UUID] = Field(  # pyright: ignore[reportUnknownVariableType]
+        default_factory=list, max_length=64, alias="fallbackAgentProfileIds"
+    )
+    expected_revision: int = Field(ge=1, alias="expectedRevision")
+
+
+class AttachAgentMemoryPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    expected_agent_version: int = Field(ge=1, alias="expectedAgentVersion")
 
 
 def state(request: Request) -> AppState:
@@ -151,6 +171,22 @@ def summary_payload(profile: AgentProfile) -> dict[str, object]:
     return payload
 
 
+def memory_policy_payload(item: MemoryPolicy) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "agentProfileId": str(item.agent_profile_id),
+        "revision": item.revision,
+        "sharedUserRead": item.shared_user_read,
+        "currentAgentRead": item.current_agent_read,
+        "sharedUserPromotion": item.allow_shared_user_promotion,
+        "fallbackRelevanceThreshold": item.fallback_relevance_threshold,
+        "maxMemories": item.max_memories,
+        "contextBudgetFraction": item.context_budget_fraction,
+        "fallbackAgentProfileIds": [str(value) for value in item.fallback_agent_profile_ids],
+        "createdAt": item.created_at.isoformat(),
+    }
+
+
 @router.get("")
 async def list_agents(request: Request, _: Session = Depends(require_session)) -> dict[str, object]:
     return {"items": [summary_payload(item) for item in await agent_call(request, "list_agents")]}
@@ -226,7 +262,10 @@ async def revise_agent(
         )
     except Exception as exc:
         record_configuration_failure(request, "agent.revise", timer, trace_id, exc)
-        if isinstance(exc, ConfigurationIdempotencyConflict | ConfigurationVersionConflict | ConfigurationDisabled):
+        if isinstance(
+            exc,
+            ConfigurationIdempotencyConflict | ConfigurationVersionConflict | ConfigurationDisabled,
+        ):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if isinstance(exc, ConfigurationNotFound):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -265,3 +304,95 @@ async def update_agent_status(
         raise
     record_configuration(request, "agent.status", timer, profile, trace_id)
     return profile_payload(profile)
+
+
+@router.get("/{agent_profile_id}/memory-policies")
+async def list_agent_memory_policies(
+    request: Request, agent_profile_id: UUID, session: Session = Depends(require_session)
+) -> dict[str, object]:
+    try:
+        profile = await agent_call(request, "get_agent", agent_profile_id)
+        policies = await agent_call(
+            request,
+            "list_memory_policies",
+            session.principal.issuer,
+            session.principal.subject,
+            agent_profile_id,
+        )
+    except ConfigurationNotFound as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
+    return {
+        "items": [memory_policy_payload(item) for item in policies],
+        "attachedPolicyRevisionId": str(profile.current_revision.memory_policy_revision_id),
+        "agentVersion": profile.version,
+    }
+
+
+@router.post("/{agent_profile_id}/memory-policies", status_code=status.HTTP_201_CREATED)
+async def create_agent_memory_policy(
+    request: Request,
+    agent_profile_id: UUID,
+    body: AgentMemoryPolicyRequest,
+    session: Session = Depends(require_csrf),
+    idempotency_key: UUID = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    try:
+        profile = await agent_call(request, "get_agent", agent_profile_id)
+        policy = MemoryPolicy(
+            uuid4(),
+            agent_profile_id,
+            body.expected_revision + 1,
+            body.shared_user_read,
+            body.current_agent_read,
+            body.fallback_relevance_threshold,
+            body.max_memories,
+            body.context_budget_fraction,
+            body.shared_user_promotion,
+            tuple(body.fallback_agent_profile_ids),
+        )
+        result = await agent_call(
+            request,
+            "create_memory_policy",
+            session.principal.issuer,
+            session.principal.subject,
+            policy,
+            str(idempotency_key),
+        )
+    except ConfigurationVersionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConfigurationIdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except (ConfigurationNotFound, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="memory policy rejected") from exc
+    del profile
+    return memory_policy_payload(result)
+
+
+@router.post(
+    "/{agent_profile_id}/memory-policies/{policy_revision_id}/attach",
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_agent_memory_policy(
+    request: Request,
+    agent_profile_id: UUID,
+    policy_revision_id: UUID,
+    body: AttachAgentMemoryPolicyRequest,
+    session: Session = Depends(require_csrf),
+    idempotency_key: UUID = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    try:
+        result = await agent_call(
+            request,
+            "attach_memory_policy",
+            session.principal.issuer,
+            session.principal.subject,
+            agent_profile_id,
+            policy_revision_id,
+            body.expected_agent_version,
+            str(idempotency_key),
+        )
+    except ConfigurationVersionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConfigurationNotFound as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
+    return profile_payload(result)

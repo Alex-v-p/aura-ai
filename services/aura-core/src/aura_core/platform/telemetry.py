@@ -47,7 +47,12 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
 
 _METRICS: Mapping[str, frozenset[str]] = {
     "aura.interaction.agent_configuration": frozenset(
-        {"configuration_outcome", "operation_duration_ms"}
+        {
+            "configuration_outcome",
+            "operation_duration_ms",
+            "memory_policy_configuration_duration_ms",
+            "memory_policy_configuration_outcome",
+        }
     ),
     "aura.execution.run_coordinator": frozenset(
         {
@@ -107,6 +112,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
         {
             "errors",
             "events_delivered",
+            "memory_activity_publication_duration_ms",
+            "memory_activity_publication_outcome",
+            "memory_activity_delivery_duration_ms",
+            "memory_activity_delivery_outcome",
             "sse_connections",
             "sse_reconnects",
             "stream_delivery_duration_ms",
@@ -114,6 +123,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
     ),
     "aura.knowledge.memory_persistence": frozenset(
         {
+            "memory_product_operation_duration_ms",
+            "memory_product_operation_outcome",
+            "memory_model_configuration_duration_ms",
+            "memory_model_configuration_outcome",
             "memory_operation_duration_ms",
             "memory_operation_outcome",
             "memory_lifecycle_status",
@@ -130,6 +143,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
         "consumer_acknowledged",
         "consumer_redelivered", "outbox_duplicates", "consumer_nacked", "consumer_rejected",
         "operation_duration_ms",
+        "memory_candidate_review_duration_ms", "memory_candidate_review_outcome",
     }),
     "aura.knowledge.memory_maintenance": frozenset({
         "memory_maintenance_transition", "maintenance_duration_ms", "retry_count", "backlog",
@@ -193,7 +207,16 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.runtime.model_routing": frozenset({"model.route", "model.selection.persist"}),
     "aura.runtime.prompt_compilation": frozenset({"prompt.compile"}),
     "aura.runtime.stream_delivery": frozenset(
-        {"event.publish", "sse.connect", "sse.deliver", "sse.reconnect"}
+        {
+            "event.publish",
+            "memory.activity.publish",
+            "memory.activity.reconcile",
+            "memory.activity.replay",
+            "memory.activity.cursor_expired",
+            "sse.connect",
+            "sse.deliver",
+            "sse.reconnect",
+        }
     ),
     "aura.knowledge.memory_persistence": frozenset(
         {
@@ -218,6 +241,13 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "memory.job.settle",
             "memory.candidate.persist",
             "memory.candidate.get",
+            "memory.candidate.list",
+            "memory.candidate.detail",
+            "memory.candidate.approve",
+            "memory.candidate.reject",
+            "memory.retrieval.generation",
+            "memory.retrieval.lexical",
+            "memory.retrieval.vector",
             "memory.outcome.record",
             "memory.embedding.queue",
             "memory.embedding.settle",
@@ -225,7 +255,8 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     ),
     "aura.knowledge.memory_extraction": frozenset({
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
-        "memory.candidate", "memory.action", "memory.policy", "memory.embedding",
+        "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
+        "memory.action", "memory.policy", "memory.embedding",
         "memory.retry", "memory.error",
     }),
     "aura.knowledge.memory_maintenance": frozenset({
@@ -264,6 +295,8 @@ _SPAN_METRICS: Mapping[str, str] = {
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
+    ("aura.runtime.stream_delivery", "memory.activity.publish"):
+        "memory_activity_publication_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.job.queue"): "memory_job_queue_wait_ms",
     ("aura.knowledge.memory_extraction", "memory.job"): "memory_job_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.extraction"): "memory_extraction_duration_ms",
@@ -437,6 +470,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "lifecycle",
             "dimension",
             "identity_mismatch",
+            "cursor_expired",
+            "run_not_found",
+            "serialization",
             "unknown",
         }
     ),
@@ -444,7 +480,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
         {
             "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
             "ok", "retryable", "review", "skipped", "used", "not_needed",
-            "denied", "degraded", "truncated", "empty", "not_granted", "unknown",
+            "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
+            "expired", "unknown",
         }
     ),
     "status": frozenset(
@@ -786,7 +823,8 @@ class MetadataMetrics:
                 kind="span",
                 component_id=component,
                 component_version=COMPONENT_VERSIONS[component],
-                metric=metric_name or _SPAN_METRICS[component],
+                metric=metric_name
+                or _OPERATION_SPAN_METRICS.get((component, operation), _SPAN_METRICS[component]),
                 value=float(duration_ms),
                 observed_at=datetime.now(UTC),
                 dimensions=normalized[0],
@@ -1085,22 +1123,25 @@ def record_memory_operation(
         trace_id=trace_id, span_id=new_span_id(), parent_span_id=None,
         dependency=dependency, outcome=outcome, error_class=error_class, **identifiers,
     )
-    common = {"trace_id": trace_id, **identifiers}
+    # ``trace_id`` is a first-class call argument.  Keeping it out of the
+    # attribute map avoids an unregistered duplicate trace dimension and
+    # prevents valid memory operations from incrementing telemetry rejection.
+    common = dict(identifiers)
     metrics.observe(
         "aura.knowledge.memory_persistence", "memory_operation_duration_ms",
-        timer.elapsed_ms(), outcome=outcome, dependency=dependency, **common,
+        timer.elapsed_ms(), trace_id=trace_id, outcome=outcome, dependency=dependency, **common,
     )
     metrics.increment(
         "aura.knowledge.memory_persistence", "memory_operation_outcome",
-        outcome=outcome, dependency=dependency, **common,
+        trace_id=trace_id, outcome=outcome, dependency=dependency, **common,
     )
     metrics.increment(
         "aura.knowledge.memory_persistence", "memory_lifecycle_status",
-        status=bounded_status, **common,
+        trace_id=trace_id, status=bounded_status, **common,
     )
     metrics.increment(
         "aura.knowledge.memory_persistence", "memory_scope_type",
-        scope_type=bounded_scope, **common,
+        trace_id=trace_id, scope_type=bounded_scope, **common,
     )
 
 

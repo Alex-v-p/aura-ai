@@ -11,9 +11,13 @@ import {
   type ConversationArchiveState,
   type ConversationRunAccepted,
   type ConversationSummary,
+  type MemoryCandidateDetail,
+  type MemoryDetail,
+  type MemoryScope,
   type ModelCatalog,
   type Run,
   type RunEvent,
+  type RunMemoryActivitySnapshot,
   type Session,
 } from '@aura/aura-api-client';
 
@@ -75,6 +79,10 @@ export interface ConversationApi {
   createRun(conversationId: string, message: string, version: number, idempotencyKey: string): Promise<ConversationRunAccepted>;
   cancelRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<Run>;
   retryRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<ConversationRunAccepted>;
+  getRunMemoryActivity?(runId: string): Promise<RunMemoryActivitySnapshot>;
+  /** Owner-authorized popup detail reads; content remains in session memory. */
+  getMemoryDetail?(memoryId: string, scope?: MemoryScope): Promise<MemoryDetail>;
+  getMemoryCandidateDetail?(candidateId: string): Promise<MemoryCandidateDetail>;
   streamRunEvents(runId: string, lastEventId: string | undefined, onEvent: RunEventHandler, onError: (error: ConversationApiError) => void): RunEventSubscription;
 }
 
@@ -143,6 +151,18 @@ export class AuraConversationApi implements ConversationApi {
     return this.client.execute('retryRun', { ...emptyInput(), path: { run_id: runId }, headers: { 'X-CSRF-Token': csrfToken, 'Idempotency-Key': idempotencyKey } });
   }
 
+  getRunMemoryActivity(runId: string): Promise<RunMemoryActivitySnapshot> {
+    return this.client.execute('getRunMemoryActivity', { ...emptyInput(), path: { run_id: runId } });
+  }
+
+  getMemoryDetail(memoryId: string, scope?: MemoryScope): Promise<MemoryDetail> {
+    return this.client.execute('getMemory', { ...emptyInput(), path: { memory_id: memoryId }, query: memoryScopeQuery(scope) });
+  }
+
+  getMemoryCandidateDetail(candidateId: string): Promise<MemoryCandidateDetail> {
+    return this.client.execute('getMemoryCandidate', { ...emptyInput(), path: { candidate_id: candidateId } });
+  }
+
   streamRunEvents(runId: string, lastEventId: string | undefined, onEvent: RunEventHandler, onError: (error: ConversationApiError) => void): RunEventSubscription {
     const controller = new AbortController();
     const headers = lastEventId ? { 'Last-Event-ID': lastEventId } : undefined;
@@ -157,6 +177,10 @@ export class AuraConversationApi implements ConversationApi {
   }
 
   private sessionToken = '';
+}
+
+function memoryScopeQuery(scope?: MemoryScope): { readonly scopeType?: MemoryScope['type']; readonly agentProfileId?: string } {
+  return scope?.type === 'agent' ? { scopeType: 'agent', agentProfileId: scope.agentProfileId } : scope ? { scopeType: 'user' } : {};
 }
 
 class FetchAuraTransport {

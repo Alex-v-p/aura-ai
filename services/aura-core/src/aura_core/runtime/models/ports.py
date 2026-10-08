@@ -19,6 +19,11 @@ class ModelDescriptor:
     availability: str = "available"
     selectable: bool = True
     disabled_reason: str | None = None
+    # Provider-observed identity.  A missing digest/revision is not replaced
+    # by a local synthetic value at the memory product boundary.
+    model_revision: str | None = None
+    model_digest: str | None = None
+    dimension: int | None = None
 
 
 class ChatModelPort(Protocol):

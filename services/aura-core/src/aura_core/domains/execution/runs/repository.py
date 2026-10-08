@@ -176,19 +176,51 @@ class SqlRunRepository:
             "trace_id": error.trace_id,
         }
 
-    async def persist_event(self, session: AsyncSession, event: RunEvent) -> None:
-        if await session.get(RunEventRow, event.event_id) is None:
-            session.add(
-                RunEventRow(
-                    id=event.event_id,
-                    run_id=event.run_id,
-                    conversation_id=event.conversation_id,
-                    sequence=event.sequence,
-                    event_type=event.event_type,
-                    payload=cast(dict[str, object], event.payload()),
-                    occurred_at=event.occurred_at,
-                )
+    async def append_event(self, session: AsyncSession, event: RunEvent) -> RunEvent:
+        """Append an event with a transaction-serialized run-local sequence.
+
+        Event producers may construct an event with a placeholder sequence.  The
+        run row lock is the serialization point shared by the coordinator and
+        memory worker, so concurrent writers cannot both observe the same max
+        sequence.  Replays return the original durable event unchanged.
+        """
+
+        existing = await session.get(RunEventRow, event.event_id)
+        if existing is not None:
+            return self._event(existing)
+        run = await session.get(RunRow, event.run_id, with_for_update=True)
+        if run is None:
+            raise LookupError("run not found for event append")
+        value = await session.scalar(
+            select(func.max(RunEventRow.sequence)).where(RunEventRow.run_id == event.run_id)
+        )
+        persisted = RunEvent(
+            event.event_id,
+            int(value or -1) + 1,
+            event.event_type,
+            event.run_id,
+            event.conversation_id,
+            event.occurred_at,
+            event.data,
+            event.schema_version,
+        )
+        session.add(
+            RunEventRow(
+                id=persisted.event_id,
+                run_id=persisted.run_id,
+                conversation_id=persisted.conversation_id,
+                sequence=persisted.sequence,
+                event_type=persisted.event_type,
+                payload=cast(dict[str, object], persisted.payload()),
+                occurred_at=persisted.occurred_at,
             )
+        )
+        return persisted
+
+    async def persist_event(self, session: AsyncSession, event: RunEvent) -> RunEvent:
+        """Compatibility alias for the atomic append operation."""
+
+        return await self.append_event(session, event)
 
     async def event_history(self, session: AsyncSession, run_id: UUID) -> list[RunEvent]:
         rows = (
