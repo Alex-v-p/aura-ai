@@ -9,9 +9,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
+import aura_core.bootstrap.memory_uow as memory_uow
 import pytest
 from aura_core.bootstrap.memory_uow import memory_command_factory
 from aura_core.domains.execution.runs.dto import Run, RunStatus
@@ -50,6 +51,8 @@ from aura_core.domains.knowledge.memory.public import (
 )
 from aura_core.entrypoints.worker.app import run_memory_once
 from aura_core.platform.outbox import InMemoryOutbox
+from aura_core.platform.telemetry import MetadataMetrics
+from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.runtime.models.ports import EmbeddingResult, ModelDescriptor
 
 ISSUER = "https://issuer.example"
@@ -87,14 +90,24 @@ class _Inference:
 
 class _Embedding:
     def __init__(
-        self, vector: Sequence[float] = (0.1, 0.2, 0.3), *, error: Exception | None = None
+        self,
+        vector: Sequence[float] = (0.1, 0.2, 0.3),
+        *,
+        error: Exception | None = None,
+        model_revision: str | None = None,
+        model_digest: str = "a" * 64,
     ) -> None:
         self.vector = tuple(vector)
         self.digest = "a" * 64
+        self.model_id = ""
+        self.model_revision = model_revision
+        self.model_digest = model_digest
+        self.dimension = len(self.vector)
         self.error = error
         self.calls: list[str] = []
 
     async def embed(self, model_id: str, content: str) -> object:
+        self.model_id = model_id
         self.calls.append(content)
         if self.error is not None:
             raise self.error
@@ -105,7 +118,8 @@ class _Embedding:
                 "vector": self.vector,
                 "digest": self.digest,
                 "model_id": model_id,
-                "model_revision": "test-revision",
+                "model_revision": self.model_revision,
+                "model_digest": self.model_digest,
                 "dimension": len(self.vector),
             },
         )()
@@ -1730,6 +1744,58 @@ async def test_processing_lease_is_single_owner_and_requires_fresh_capability() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allow_shared_user_promotion", "expected_state"),
+    [
+        (True, CandidateState.ACCEPTED),
+        (False, CandidateState.REVIEW),
+    ],
+)
+async def test_direct_process_job_uses_claimed_policy_snapshot(
+    allow_shared_user_promotion: bool, expected_state: CandidateState
+) -> None:
+    """A direct worker claim must retain the pinned promotion capability."""
+
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    generation = await _ready_generation(repository)
+    message_id = uuid4()
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(_candidate(scope=MemoryScope(MemoryScopeType.USER), message_id=message_id)),
+        _Embedding(),
+        clock=lambda: NOW,
+        evidence_loader=lambda loaded: _evidence_for(
+            loaded, "The owner prefers concise answers.", "Noted."
+        ),
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_generation=generation.id,
+        )
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_ids=(message_id,),
+        agent_profile_id=CURRENT_AGENT,
+        memory_policy_revision_id=uuid4(),
+        allow_shared_user_promotion=allow_shared_user_promotion,
+    )
+    result = await processor.process_job(job.id)
+    assert result is not None and result.state is expected_state
+    assert repository.processing_jobs[job.id].status is ProcessingJobStatus.COMPLETED
+    claimed = repository.processing_jobs[job.id]
+    assert claimed.allow_shared_user_promotion is allow_shared_user_promotion
+    assert claimed.memory_policy_revision_id == job.memory_policy_revision_id
+
+
+@pytest.mark.asyncio
 async def test_evidence_mismatch_settles_lease_without_provider_invocation() -> None:
     message_id = uuid4()
     expected_digest = hashlib.sha256(b"expected user evidence").hexdigest()
@@ -1982,6 +2048,8 @@ async def test_agent_scope_background_embedding_uses_owner_and_agent_capabilitie
     await repository.attach_embedding(
         ISSUER, OWNER, record.id, revision_id=record.current_revision_id,
         generation_id=generation.id, vector=vector.vector, digest=vector.digest,
+        model_id=vector.model_id, model_revision=vector.model_revision,
+        model_digest=vector.model_digest,
         scope_type=MemoryScopeType.AGENT, agent_profile_id=CURRENT_AGENT,
     )
     settled = await repository.settle_embedding_job(
@@ -1990,6 +2058,89 @@ async def test_agent_scope_background_embedding_uses_owner_and_agent_capabilitie
     assert settled.status is ProcessingJobStatus.COMPLETED
     assert repository.embedding_jobs[queued.id].status is ProcessingJobStatus.COMPLETED
     assert record.embeddings[0].generation_id == generation.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("observed_digest", "succeeds"),
+    [("a" * 64, True), ("b" * 64, False)],
+)
+async def test_composed_embedding_work_requires_provider_verified_generation_identity(
+    monkeypatch: pytest.MonkeyPatch, observed_digest: str, succeeds: bool
+) -> None:
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    generation = await repository.register_embedding_generation(
+        ISSUER,
+        OWNER,
+        generation=1,
+        model_id="embedder",
+        dimension=2,
+        model_digest="a" * 64,
+    )
+    await repository.activate_embedding_generation(ISSUER, OWNER, generation.id)
+    record = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        content="A composed-worker fact.",
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        confidence=0.9,
+        importance=0.8,
+        half_life_days=30,
+    )
+    queued = await repository.queue_embedding_job(
+        ISSUER,
+        OWNER,
+        memory_id=record.id,
+        revision_id=record.current_revision_id,
+        generation_id=generation.id,
+    )
+    repository.embedding_jobs[queued.id] = replace(queued, available_at=NOW)
+    claimed = await repository.claim_embedding_job(ISSUER, OWNER)
+    assert claimed is not None
+
+    async def embed(
+        _provider: OllamaEmbeddingAdapter,
+        model_id: str,
+        _text: str,
+        *,
+        context: object | None = None,
+    ) -> EmbeddingResult:
+        del context
+        return EmbeddingResult(
+            (0.1, 0.2),
+            model_id,
+            None,
+            2,
+            observed_digest,
+            "c" * 64,
+        )
+
+    monkeypatch.setattr(OllamaEmbeddingAdapter, "embed", embed)
+
+    def use_repository(
+        _sessions: object,
+        *,
+        testing: bool = False,
+        metrics: MetadataMetrics | None = None,
+    ) -> _DurableMemoryStore:
+        del _sessions, testing, metrics
+        return repository
+
+    monkeypatch.setattr(
+        memory_uow,
+        "memory_repository",
+        use_repository,
+    )
+    worker = memory_uow.memory_processing_service(None, metrics=MetadataMetrics())
+    process = cast(Any, worker)._process_embedding_job
+    assert await process(claimed) is succeeds
+    current = await repository.get_memory(ISSUER, OWNER, record.id)
+    assert bool(current.embeddings) is succeeds
+    settled = repository.embedding_jobs[queued.id]
+    assert settled.status is (
+        ProcessingJobStatus.COMPLETED if succeeds else ProcessingJobStatus.RETRYABLE
+    )
 
 
 @pytest.mark.asyncio
@@ -2083,7 +2234,7 @@ async def test_model_change_keeps_inline_embedding_on_old_selected_generation() 
 async def test_every_accepted_revision_is_embedded_with_recorded_generation_metadata() -> None:
     message_id = uuid4()
     repository = _GenerationMemoryStore(clock=lambda: NOW)
-    embedding = _Embedding()
+    embedding = _Embedding(model_revision="rev-1", model_digest="b" * 64)
     generation = await repository.register_embedding_generation(
         ISSUER,
         OWNER,

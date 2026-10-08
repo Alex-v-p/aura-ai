@@ -89,6 +89,15 @@ class RunCoordinator:
             self._error(run, "queue")
             raise
 
+    @staticmethod
+    def _provider_messages(context: list[tuple[str, str]]) -> list[ChatMessage]:
+        """Translate internal evidence components to provider-safe roles."""
+
+        return [
+            ChatMessage("user" if role == "memory" else role, content)
+            for role, content in context
+        ]
+
     async def cancel(self, run_id: UUID, subject: str, issuer: str, idempotency_key: str) -> Run:
         run = await self.store.request_cancel(run_id, subject, idempotency_key, issuer)
         return run
@@ -406,7 +415,7 @@ class RunCoordinator:
             raise RunExecutionFailure("persistence")
         if provenance_getter is not None and not _provenance_matches(run, provenance):
             raise RunExecutionFailure("persistence")
-        messages = [ChatMessage(role, content) for role, content in context]
+        messages = self._provider_messages(context)
         inference_started = perf_counter()
         inference_span_id = secrets.token_hex(8)
         inference_outcome = "error"

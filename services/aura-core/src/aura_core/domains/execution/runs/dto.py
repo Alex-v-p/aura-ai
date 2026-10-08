@@ -54,6 +54,14 @@ class Run:
     persona_revision_id: UUID | None = None
     prompt_bundle_revision_id: UUID | None = None
     prompt_hash: str | None = None
+    # The exact immutable memory-policy revision admitted with this run.  It
+    # is deliberately separate from the agent revision: retries must reuse the
+    # run snapshot even when the agent's current configuration changes.
+    memory_policy_revision_id: UUID | None = None
+    memory_embedding_generation_id: UUID | None = None
+    # Identifier-only recall metadata.  Memory text and vectors never belong
+    # in a run DTO; the memory domain owns the durable snapshot projection.
+    memory_recall_metadata: dict[str, object] | None = None
 
 
 class RunClaim(NamedTuple):

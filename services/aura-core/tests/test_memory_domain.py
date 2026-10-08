@@ -440,6 +440,9 @@ async def test_agent_scope_filters_keep_two_agents_separate_and_embedding_metada
         generation_id=generation.id,
         vector=(0.1, 0.2, 0.3),
         digest="b" * 64,
+        model_id=generation.model_id,
+        model_revision=generation.model_revision,
+        model_digest=generation.model_digest,
     )
     assert len(first.embeddings) == 1
     assert first.embeddings[0].revision_id == first.current_revision_id
@@ -455,6 +458,9 @@ async def test_agent_scope_filters_keep_two_agents_separate_and_embedding_metada
             generation_id=generation.id,
             vector=(0.1, 0.2, 0.3),
             digest="c" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
         )
 
     other = await _create(store, content="A second memory revision.")
@@ -467,6 +473,9 @@ async def test_agent_scope_filters_keep_two_agents_separate_and_embedding_metada
             revision_id=other.current_revision_id,
             vector=(0.1, 0.2, 0.3),
             digest="d" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
         )
     with pytest.raises(MemoryValidationError):
         await store.register_embedding_generation(
@@ -502,6 +511,9 @@ async def test_non_finite_embedding_vectors_are_rejected_before_memory_mutation(
                 generation_id=generation.id,
                 vector=(invalid, 0.2, 0.3),
                 digest=f"{index + 1:064x}",
+                model_id=generation.model_id,
+                model_revision=generation.model_revision,
+                model_digest=generation.model_digest,
             )
         current = await store.get_memory(ISSUER, OWNER, memory.id)
         assert current.embeddings == []

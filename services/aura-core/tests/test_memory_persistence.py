@@ -362,6 +362,9 @@ async def test_composed_repository_traces_bounded_operations_and_identifiers_sep
             revision_id=historical_revision_id,
             vector=(0.1, 0.2, 0.3),
             digest="b" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
         ),
     )
     assert embedding_attributes["memory_id"] == str(memory.id)
@@ -376,6 +379,9 @@ async def test_composed_repository_traces_bounded_operations_and_identifiers_sep
             revision_id=revised.current_revision_id,
             vector=(0.1, 0.2, 0.3),
             digest="c" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
         ),
     )
     activation_attributes, _ = await invoke(
@@ -707,6 +713,9 @@ async def test_sql_and_memory_embedding_metadata_are_per_revision_and_generation
             revision_id=memory.current_revision_id,
             vector=(0.1, 0.2, 0.3),
             digest="c" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
         )
         assert len(current.embeddings) == 1
         assert current.embeddings[0].generation == 1
@@ -723,6 +732,9 @@ async def test_sql_and_memory_embedding_metadata_are_per_revision_and_generation
                 revision_id=foreign.current_revision_id,
                 vector=(0.1, 0.2, 0.3),
                 digest="e" * 64,
+                model_id=generation.model_id,
+                model_revision=generation.model_revision,
+                model_digest=generation.model_digest,
             )
 
 
@@ -751,6 +763,9 @@ async def test_non_finite_embedding_vectors_are_rejected_before_adapter_mutation
                     generation_id=generation.id,
                     vector=(invalid, 0.2, 0.3),
                     digest=f"{index + 1:064x}",
+                    model_id=generation.model_id,
+                    model_revision=generation.model_revision,
+                    model_digest=generation.model_digest,
                 )
             current = await store.get_memory(ISSUER, OWNER, memory.id)
             assert current.embeddings == []
@@ -902,6 +917,35 @@ async def test_postgres_terminal_processing_rows_are_content_free_and_owner_scop
 
 
 @pytest.mark.asyncio
+async def test_postgres_claim_paths_preserve_pinned_policy_snapshot(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _engine = sql_memory_store
+    policy_by_id = uuid4()
+    policy_general = uuid4()
+    first = MemoryProcessingJob(
+        uuid4(), ISSUER, OWNER, uuid4(), uuid4(),
+        allow_shared_user_promotion=True,
+        memory_policy_revision_id=policy_by_id,
+    )
+    second = MemoryProcessingJob(
+        uuid4(), ISSUER, OWNER, uuid4(), uuid4(),
+        allow_shared_user_promotion=False,
+        memory_policy_revision_id=policy_general,
+    )
+    await store.enqueue_processing_job(first)
+    await store.enqueue_processing_job(second)
+    claimed_by_id = await store.claim_processing_job_by_id(first.id, ISSUER, OWNER)
+    assert claimed_by_id is not None
+    assert claimed_by_id.allow_shared_user_promotion is True
+    assert claimed_by_id.memory_policy_revision_id == policy_by_id
+    claimed_general = await store.claim_processing_job(ISSUER, OWNER)
+    assert claimed_general is not None
+    assert claimed_general.allow_shared_user_promotion is False
+    assert claimed_general.memory_policy_revision_id == policy_general
+
+
+@pytest.mark.asyncio
 async def test_postgres_generation_owner_numbering_first_generation_completeness_and_fences(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:
@@ -928,12 +972,16 @@ async def test_postgres_generation_owner_numbering_first_generation_completeness
     await store.attach_embedding(
         ISSUER, OWNER, memory.id, revision_id=memory.current_revision_id,
         generation_id=owner_generation.id, vector=(0.1, 0.2), digest="c" * 64,
+        model_id=owner_generation.model_id, model_revision=owner_generation.model_revision,
+        model_digest=owner_generation.model_digest,
     )
     await store.activate_embedding_generation(ISSUER, OWNER, owner_generation.id)
     with pytest.raises(MemoryNotFound):
         await store.attach_embedding(
             ISSUER, OTHER_OWNER, memory.id, revision_id=memory.current_revision_id,
             generation_id=owner_generation.id, vector=(0.1, 0.2), digest="d" * 64,
+            model_id=owner_generation.model_id, model_revision=owner_generation.model_revision,
+            model_digest=owner_generation.model_digest,
         )
 
 
@@ -949,6 +997,8 @@ async def test_postgres_embedding_queue_is_idempotent_and_retry_rows_remain_owne
     await store.attach_embedding(
         ISSUER, OWNER, memory.id, revision_id=memory.current_revision_id,
         generation_id=generation.id, vector=(0.1, 0.2), digest="f" * 64,
+        model_id=generation.model_id, model_revision=generation.model_revision,
+        model_digest=generation.model_digest,
     )
     await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
     first = await store.queue_embedding_job(

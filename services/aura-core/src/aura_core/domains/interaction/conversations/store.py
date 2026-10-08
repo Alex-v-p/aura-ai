@@ -10,7 +10,7 @@ import binascii
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import cast
@@ -32,7 +32,12 @@ from aura_core.domains.interaction.agents.public import (
     ConfigurationDisabled,
     ConfigurationNotFound,
 )
-from aura_core.domains.interaction.conversations.context import build_context
+from aura_core.domains.interaction.conversations.context import (
+    build_context_with_admission,
+    normalize_memory_evidence,
+    record_memory_context_admission,
+    serialize_memory_recall_metadata,
+)
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
@@ -59,6 +64,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaRevisionQueryPort,
 )
+from aura_core.domains.knowledge.memory.recall import MemoryRecallRequest, MemoryRecallResult
 from aura_core.platform.outbox import OutboxCommand
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
@@ -125,6 +131,7 @@ class ConversationStore:
         default_model: str | None = None,
         agents: AgentCatalog | None = None,
         personas: PersonaRevisionQueryPort | None = None,
+        memory_recall: object | None = None,
     ) -> None:
         self.default_model = default_model
         self.agents = agents or AgentCatalog()
@@ -140,6 +147,7 @@ class ConversationStore:
             Callable[[Conversation, Run, Message], OutboxCommand] | None
         ) = None
         self.memory_outbox: object | None = None
+        self.memory_recall = memory_recall
 
     def set_memory_command_factory(
         self,
@@ -155,6 +163,88 @@ class ConversationStore:
         """Attach the application metadata-only prompt telemetry sink."""
 
         self.prompt_metrics = metrics
+
+    def set_memory_recall(self, recall: object | None) -> None:
+        """Attach the knowledge.memory public recall port at composition time."""
+
+        self.memory_recall = recall
+
+    @staticmethod
+    def _memory_policy_revision(revision: AgentRevision) -> UUID | None:
+        value = getattr(revision, "memory_policy_revision_id", None)
+        return value if isinstance(value, UUID) else None
+
+    async def _recall_context(
+        self,
+        conversation: Conversation,
+        run: Run,
+        query: str,
+        budget: int,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> tuple[Sequence[object], float]:
+        """Call memory only through its public recall seam.
+
+        Recall is advisory to a conversation.  A provider outage, malformed
+        result, or stale authorization snapshot therefore degrades to the
+        ordinary conversation context and never fails the response.
+        """
+
+        recall = self.memory_recall
+        if recall is None or run.memory_policy_revision_id is None:
+            return [], 0.2
+        method = getattr(recall, "recall", None)
+        if not callable(method):
+            return [], 0.2
+        try:
+            pinned_revision = self._revision_unchecked(run.agent_revision_id)
+            agent_profile_id = pinned_revision.profile_id
+            policy = self.agents.get_memory_policy(run.memory_policy_revision_id)
+            recall_method = cast(Callable[[MemoryRecallRequest], Awaitable[object]], method)
+            result = cast(MemoryRecallResult, await recall_method(
+                MemoryRecallRequest(
+                    issuer=conversation.principal_issuer,
+                    subject=conversation.principal_subject,
+                    agent_profile_id=agent_profile_id,
+                    query=query,
+                    policy=policy,
+                    context_token_budget=budget,
+                    run_id=run.id,
+                    conversation_id=conversation.id,
+                    trace_id=trace_id or run.id.hex,
+                    parent_span_id=parent_span_id,
+                )
+            ))
+            raw_items: Sequence[object] = tuple(result.memories)
+            items = normalize_memory_evidence(raw_items)
+            run.memory_embedding_generation_id = result.embedding_generation_id
+            # Metadata is explicitly identifier/score-only.  The in-memory
+            # repository is the durable run seam used by unit/system tests.
+            degraded = bool(getattr(result, "degraded", False))
+            degradation_reason = getattr(result, "degradation_reason", None)
+            run.memory_recall_metadata = serialize_memory_recall_metadata(
+                items,
+                policy_revision_id=run.memory_policy_revision_id,
+                embedding_generation_id=result.embedding_generation_id,
+                retrieval_version=str(
+                    getattr(result, "retrieval_version", "memory-retrieval-v1")
+                ),
+                outcome="degraded" if degraded else "ok",
+                fallback_used=bool(getattr(result, "fallback_used", False)),
+                degradation_reason=degradation_reason,
+            )
+            return items, policy.context_budget_fraction
+        except Exception:
+            run.memory_recall_metadata = serialize_memory_recall_metadata(
+                (),
+                policy_revision_id=run.memory_policy_revision_id,
+                embedding_generation_id=None,
+                retrieval_version="memory-retrieval-v1",
+                outcome="degraded",
+                fallback_used=False,
+                degradation_reason="recall_failed",
+            )
+            return [], 0.2
 
     async def record_auth_audit(
         self,
@@ -405,6 +495,7 @@ class ConversationStore:
             persona_revision_id=effective_persona,
             prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
             prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
+            memory_policy_revision_id=self._memory_policy_revision(revision),
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
@@ -862,6 +953,7 @@ class ConversationStore:
                 prompt_hash=self.agents.compilation(
                     current_revision.id, effective_persona
                 ).prompt_hash,
+                memory_policy_revision_id=self._memory_policy_revision(current_revision),
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -938,6 +1030,7 @@ class ConversationStore:
                 prompt_bundle_revision_id=prompt_bundle_revision_id,
                 prompt_hash=prompt_hash,
                 retry_of_run_id=prior.id,
+                memory_policy_revision_id=prior.memory_policy_revision_id,
             )
             conversation.runs.append(run)
             conversation.version += 1
@@ -1125,10 +1218,16 @@ class ConversationStore:
         parent_span_id: str | None = None,
     ) -> list[tuple[str, str]]:
         conversation = await self.get(conversation_id, subject, issuer)
+        run = next(
+            (item for item in conversation.runs if item.id.hex == trace_id),
+            conversation.current_run,
+        )
         # The conversation assignment is mutable.  A queued run is not: its
         # pinned revision is the only authority for provider context.
         revision = self._revision_unchecked(
-            agent_revision_id or conversation.agent_revision_id
+            run.agent_revision_id
+            if run is not None
+            else agent_revision_id or conversation.agent_revision_id
         )
         prompt = self._compile_prompt(
             revision.id,
@@ -1138,7 +1237,42 @@ class ConversationStore:
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
-        return build_context(conversation, prompt, budget)
+        query = ""
+        if run is not None:
+            query = next(
+                (
+                    item.content
+                    for item in conversation.messages
+                    if item.id == run.user_message_id
+                    and item.state is MessageState.COMPLETE
+                    and item.role is MessageRole.USER
+                ),
+                "",
+            )
+        memory: Sequence[object]
+        memory_fraction = 0.2
+        if run:
+            memory, memory_fraction = await self._recall_context(
+                conversation, run, query, budget, trace_id, parent_span_id
+            )
+        else:
+            memory = []
+        render_started = perf_counter()
+        context, admitted_memory_count = build_context_with_admission(
+            conversation, prompt, budget, memory, memory_fraction
+        )
+        record_memory_context_admission(
+            self.prompt_metrics,
+            context=context,
+            trace_id=trace_id or (run.id.hex if run is not None else conversation.id.hex),
+            parent_span_id=parent_span_id,
+            run_id=str(run.id) if run is not None else None,
+            conversation_id=str(conversation.id),
+            span_id_factory=new_span_id,
+            admitted_memory_count=admitted_memory_count,
+            duration_ms=(perf_counter() - render_started) * 1000,
+        )
+        return context
 
     def prompt_provenance(
         self, revision_id: UUID, persona_revision_id: UUID | None = None

@@ -413,7 +413,9 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.personas.public
+  - aura-core.domains.knowledge.memory.recall
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
   - aura-core.runtime.models.capacity
@@ -461,8 +463,10 @@ modules:
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
   - aura-core.domains.knowledge.memory.repository
+  - aura-core.domains.knowledge.memory.recall
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.identity.public
+  - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
@@ -494,6 +498,15 @@ modules:
   dependencies:
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
+- id: aura-core.domains.knowledge.memory.recall
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.recall
+  dependencies:
+  - aura-core.domains.knowledge.memory.public
+  - aura-core.domains.interaction.agents.public
 - id: aura-core.domains.execution.runs.dto
   root: services/aura-core/src/aura_core/domains/execution/runs/dto.py
   kind: python
@@ -801,6 +814,7 @@ modules:
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.personas.public
   - aura-core.domains.interaction.conversations.titles
+  - aura-core.domains.knowledge.memory.recall
   - aura-core.platform.telemetry
   - aura-core.platform.outbox
   - aura-core.runtime.models.capacity

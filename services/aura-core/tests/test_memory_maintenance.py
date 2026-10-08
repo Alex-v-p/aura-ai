@@ -29,10 +29,22 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 class _Embedding:
     async def embed(self, model_id: str, content: str) -> object:
         del content
+        model_digest = {
+            "embed-c": "d" * 64,
+            "embedder-new": "c" * 64,
+        }.get(model_id, "a" * 64)
+        model_revision = "rev-new" if model_id == "embedder-new" else None
         return type(
             "EmbeddingResult",
             (),
-            {"vector": (0.1, 0.2), "digest": "f" * 64, "model_id": model_id},
+            {
+                "vector": (0.1, 0.2),
+                "digest": "f" * 64,
+                "model_id": model_id,
+                "model_revision": model_revision,
+                "model_digest": model_digest,
+                "dimension": 2,
+            },
         )()
 
 
@@ -71,6 +83,9 @@ async def test_reindex_generation_stays_parallel_until_complete() -> None:
         revision_id=first.current_revision_id,  # type: ignore[attr-defined]
         vector=(0.1, 0.2, 0.3),
         digest="b" * 64,
+        model_id=old.model_id,
+        model_revision=old.model_revision,
+        model_digest=old.model_digest,
     )
     await store.attach_embedding(
         ISSUER,
@@ -80,6 +95,9 @@ async def test_reindex_generation_stays_parallel_until_complete() -> None:
         revision_id=second.current_revision_id,  # type: ignore[attr-defined]
         vector=(0.1, 0.2, 0.3),
         digest="c" * 64,
+        model_id=old.model_id,
+        model_revision=old.model_revision,
+        model_digest=old.model_digest,
     )
     active_old = await store.activate_embedding_generation(ISSUER, OWNER, old.id)
     replacement = await store.register_embedding_generation(
@@ -112,6 +130,8 @@ async def test_newer_model_cutover_retires_obsolete_building_generation() -> Non
     await store.attach_embedding(
         ISSUER, OWNER, memory.id, generation_id=first.id,
         revision_id=memory.current_revision_id, vector=(0.1, 0.2), digest="b" * 64,
+        model_id=first.model_id, model_revision=first.model_revision,
+        model_digest=first.model_digest,
     )
     await store.save_model_configuration(
         ISSUER, OWNER,
@@ -189,8 +209,11 @@ async def test_reindex_rejects_mixed_dimensions_and_keeps_prior_generation_usabl
         memory.id,
         generation_id=generation.id,
         revision_id=memory.current_revision_id,
-        vector=(0.1, 0.2, 0.3),
-        digest="b" * 64,
+            vector=(0.1, 0.2, 0.3),
+            digest="b" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
     )
     await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
     replacement = await store.register_embedding_generation(
@@ -211,6 +234,9 @@ async def test_reindex_rejects_mixed_dimensions_and_keeps_prior_generation_usabl
             revision_id=memory.current_revision_id,
             vector=(0.1, 0.2),
             digest="d" * 64,
+            model_id=replacement.model_id,
+            model_revision=replacement.model_revision,
+            model_digest=replacement.model_digest,
         )
     assert (await store.get_memory(ISSUER, OWNER, memory.id)).status is MemoryLifecycleStatus.ACTIVE
 
@@ -234,8 +260,11 @@ async def test_generation_failure_can_roll_back_without_deleting_prior_embedding
         memory.id,
         generation_id=generation.id,
         revision_id=memory.current_revision_id,
-        vector=(0.1, 0.2, 0.3),
-        digest="b" * 64,
+            vector=(0.1, 0.2, 0.3),
+            digest="b" * 64,
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
     )
     await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
     replacement = await store.register_embedding_generation(
@@ -284,14 +313,21 @@ async def test_reindex_transient_failure_keeps_building_generation_resumable() -
             self.calls = 0
 
         async def embed(self, model_id: str, content: str) -> object:
-            del model_id, content
+            del content
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("temporary embedding outage")
             return type(
                 "EmbeddingResult",
                 (),
-                {"vector": (0.1, 0.2), "digest": "b" * 64},
+                {
+                    "vector": (0.1, 0.2),
+                    "digest": "b" * 64,
+                    "model_id": model_id,
+                    "model_revision": None,
+                    "model_digest": "a" * 64,
+                    "dimension": 2,
+                },
             )()
 
     embedder = FlakyEmbedder()
@@ -325,8 +361,11 @@ async def test_manual_create_and_revision_are_both_reembedded_in_replacement_gen
         memory.id,
         revision_id=memory.current_revision_id,
         generation_id=first.id,
-        vector=(0.1, 0.2),
-        digest="b" * 64,
+            vector=(0.1, 0.2),
+            digest="b" * 64,
+            model_id=first.model_id,
+            model_revision=first.model_revision,
+            model_digest=first.model_digest,
     )
     await store.save_model_configuration(
         ISSUER,
@@ -380,6 +419,8 @@ async def test_reindex_progress_counts_existing_target_embeddings() -> None:
     await store.attach_embedding(
         ISSUER, OWNER, first.id, revision_id=first.current_revision_id,
         generation_id=generation.id, vector=(0.1, 0.2), digest="b" * 64,
+        model_id=generation.model_id, model_revision=generation.model_revision,
+        model_digest=generation.model_digest,
     )
     telemetry: list[dict[str, object]] = []
 

@@ -31,7 +31,7 @@ from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.interaction.agent_configuration": "1.1.0",
-    "aura.execution.run_coordinator": "1.3.0",
+    "aura.execution.run_coordinator": "1.4.0",
     "aura.interaction.conversation_persistence": "1.6.0",
     "aura.runtime.model_inference": "1.4.0",
     "aura.runtime.model_routing": "1.2.0",
@@ -42,6 +42,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.0.0",
     "aura.runtime.embedding_gateway": "1.0.0",
+    "aura.knowledge.memory_retrieval": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -147,6 +148,21 @@ _METRICS: Mapping[str, frozenset[str]] = {
         "embedding_duration_ms", "provider_errors", "errors", "retry_count", "backlog",
         "duration_ms", "backlog_depth",
     }),
+    # Retrieval metrics intentionally contain no memory text, vectors, owner
+    # subjects, or provider payloads.  Stage and scope are bounded dimensions;
+    # identifiers are retained only as trace attributes where a caller opts in.
+    "aura.knowledge.memory_retrieval": frozenset({
+        "memory_retrieval_duration_ms",
+        "memory_lexical_search_duration_ms",
+        "memory_vector_search_duration_ms",
+        "memory_rerank_duration_ms",
+        "memory_query_embedding_duration_ms",
+        "memory_retrieval_candidate_count",
+        "memory_recall_count",
+        "memory_fallback_outcome",
+        "memory_context_tokens",
+        "memory_retrieval_errors",
+    }),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -218,6 +234,18 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     }),
     "aura.runtime.structured_inference": frozenset({"structured.inference"}),
     "aura.runtime.embedding_gateway": frozenset({"embedding.generate", "embedding.retry"}),
+    "aura.knowledge.memory_retrieval": frozenset({
+        "memory.retrieval",
+        "memory.query_embedding",
+        "memory.lexical",
+        "memory.vector",
+        "memory.fusion",
+        "memory.rerank",
+        "memory.selection",
+        "memory.context_budget",
+        "memory.fallback",
+        "memory.degradation",
+    }),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -249,6 +277,16 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "memory_reindex_switch_duration_ms",
     ("aura.knowledge.memory_maintenance", "memory.embedding"):
         "embedding_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.retrieval"):
+        "memory_retrieval_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.lexical"):
+        "memory_lexical_search_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.vector"):
+        "memory_vector_search_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.rerank"):
+        "memory_rerank_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.query_embedding"):
+        "memory_query_embedding_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -263,6 +301,8 @@ _DIMENSION_KEYS = frozenset(
         "status",
         "token_estimator",
         "scope_type",
+        "retrieval_stage",
+        "degradation",
     }
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
@@ -300,6 +340,14 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "user_message_id",
         "title_input_size",
         "title_output_size",
+        "memory_policy_revision_id",
+        "embedding_generation_id",
+        "retrieval_version",
+        "selection_order",
+        "candidate_count",
+        "recalled_count",
+        "context_tokens",
+        "fallback_grant_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -322,6 +370,9 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "retry_of_run_id",
         "run_id",
         "user_message_id",
+        "memory_policy_revision_id",
+        "embedding_generation_id",
+        "fallback_grant_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -336,6 +387,10 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "title_input_size",
         "title_output_size",
         "result_count",
+        "selection_order",
+        "candidate_count",
+        "recalled_count",
+        "context_tokens",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -353,6 +408,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "memory_store",
             "structured_inference",
             "embedding_provider",
+            "query_embedding",
             "memory_worker",
         }
     ),
@@ -373,12 +429,22 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "queue",
             "timeout",
             "validation",
+            "query_embedding",
+            "database",
+            "telemetry",
+            "budget",
+            "scope",
+            "lifecycle",
+            "dimension",
+            "identity_mismatch",
+            "unknown",
         }
     ),
     "outcome": frozenset(
         {
             "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
-            "ok", "retryable", "review", "skipped",
+            "ok", "retryable", "review", "skipped", "used", "not_needed",
+            "denied", "degraded", "truncated", "empty", "not_granted", "unknown",
         }
     ),
     "status": frozenset(
@@ -401,7 +467,15 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
-    "scope_type": frozenset({"user", "agent", "owner", "unknown"}),
+    "scope_type": frozenset({
+        "user", "agent", "owner", "shared_user", "current_agent",
+        "foreign_agent", "unknown",
+    }),
+    "retrieval_stage": frozenset({
+        "primary", "query_embedding", "lexical", "vector", "fusion", "rerank", "selection",
+        "context_budget", "fallback", "degradation", "unknown",
+    }),
+    "degradation": frozenset({"none", "query_embedding", "database", "telemetry", "budget"}),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
@@ -651,6 +725,9 @@ class MetadataMetrics:
         outcome: str,
         error_class: str | None = None,
         provider: str | None = None,
+        retrieval_stage: str | None = None,
+        scope_type: str | None = None,
+        degradation: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
         metric_name: str | None = None,
@@ -664,6 +741,7 @@ class MetadataMetrics:
             "aura.runtime.structured_inference",
             "aura.runtime.embedding_gateway",
             "aura.knowledge.memory_persistence",
+            "aura.knowledge.memory_retrieval",
         }:
             trace_id = memory_context.trace_id
             parent_span_id = parent_span_id or memory_context.span_id
@@ -679,6 +757,12 @@ class MetadataMetrics:
             dimensions["error_class"] = error_class
         if provider is not None:
             dimensions["provider"] = provider
+        if retrieval_stage is not None:
+            dimensions["retrieval_stage"] = retrieval_stage
+        if scope_type is not None:
+            dimensions["scope_type"] = scope_type
+        if degradation is not None:
+            dimensions["degradation"] = degradation
         normalized = self._normalize(
             component,
             trace_id,
@@ -749,6 +833,7 @@ class MetadataMetrics:
             "aura.runtime.structured_inference",
             "aura.runtime.embedding_gateway",
             "aura.knowledge.memory_persistence",
+            "aura.knowledge.memory_retrieval",
         }:
             trace_id = memory_context.trace_id
             run_id = memory_context.run_id or run_id
@@ -1023,7 +1108,7 @@ def record_memory_processing(
     metrics: MetadataMetrics,
     *,
     component: str,
-    operation: str,
+    operation: str = "retrieval",
     duration_ms: float,
     trace_id: str,
     outcome: str,
@@ -1121,4 +1206,257 @@ def record_memory_processing(
         metrics.observe(
             effective_component, "backlog", float(max(0, backlog)), trace_id=trace_id,
             dependency=dependency,
+        )
+
+
+_RETRIEVAL_OPERATION_ALIASES: Mapping[str, str] = {
+    "retrieval": "memory.retrieval",
+    "memory.retrieval": "memory.retrieval",
+    "memory.retrieval.generation": "memory.retrieval",
+    "primary": "memory.retrieval",
+    "memory.retrieval.primary": "memory.retrieval",
+    "query_embedding": "memory.query_embedding",
+    "memory.retrieval.query_embedding": "memory.query_embedding",
+    "memory.query_embedding": "memory.query_embedding",
+    "lexical": "memory.lexical",
+    "memory.retrieval.lexical": "memory.lexical",
+    "memory.lexical": "memory.lexical",
+    "vector": "memory.vector",
+    "memory.retrieval.vector": "memory.vector",
+    "memory.vector": "memory.vector",
+    "fusion": "memory.fusion",
+    "memory.retrieval.fusion": "memory.fusion",
+    "memory.fusion": "memory.fusion",
+    "rerank": "memory.rerank",
+    "memory.retrieval.rerank": "memory.rerank",
+    "memory.rerank": "memory.rerank",
+    "selection": "memory.selection",
+    "memory.retrieval.selection": "memory.selection",
+    "memory.selection": "memory.selection",
+    "context_budget": "memory.context_budget",
+    "memory.retrieval.context_budget": "memory.context_budget",
+    "memory.context_budget": "memory.context_budget",
+    "memory.context_budget.post_render": "memory.context_budget",
+    "memory.retrieval.context_budget.post_render": "memory.context_budget",
+    "fallback": "memory.fallback",
+    "memory.retrieval.fallback": "memory.fallback",
+    "memory.fallback": "memory.fallback",
+    "degradation": "memory.degradation",
+    "memory.retrieval.degradation": "memory.degradation",
+    "memory.degradation": "memory.degradation",
+}
+_RETRIEVAL_SPAN_METRICS: Mapping[str, str] = {
+    "memory.retrieval": "memory_retrieval_duration_ms",
+    "memory.query_embedding": "memory_query_embedding_duration_ms",
+    "memory.lexical": "memory_lexical_search_duration_ms",
+    "memory.vector": "memory_vector_search_duration_ms",
+    "memory.rerank": "memory_rerank_duration_ms",
+    # Fusion, selection, budget, fallback, and degradation are represented by
+    # bounded stage dimensions and use the enclosing retrieval duration name.
+    "memory.fusion": "memory_retrieval_duration_ms",
+    "memory.selection": "memory_retrieval_duration_ms",
+    "memory.context_budget": "memory_retrieval_duration_ms",
+    "memory.fallback": "memory_retrieval_duration_ms",
+    "memory.degradation": "memory_retrieval_duration_ms",
+}
+
+
+def record_memory_retrieval(
+    metrics: MetadataMetrics,
+    *,
+    operation: str = "retrieval",
+    duration_ms: float,
+    trace_id: str,
+    outcome: str,
+    dependency: str = "memory_store",
+    parent_span_id: str | None = None,
+    error_class: str | None = None,
+    retrieval_stage: str | None = None,
+    scope_type: str | None = None,
+    degradation: str | None = None,
+    candidate_count: int | None = None,
+    recall_count: int | None = None,
+    fallback_outcome: str | None = None,
+    context_tokens: int | None = None,
+    memory_id: str | None = None,
+    memory_revision_id: str | None = None,
+    memory_policy_revision_id: str | None = None,
+    generation_id: str | None = None,
+    embedding_generation_id: str | None = None,
+    run_id: str | None = None,
+    conversation_id: str | None = None,
+    retrieval_version: str | None = None,
+    selection_order: int | None = None,
+    fallback_grant_id: str | None = None,
+) -> None:
+    """Record one retrieval boundary and its bounded recall metadata.
+
+    This is the only telemetry seam retrieval code needs.  It deliberately
+    accepts identifiers and counts, never memory text, evidence, vectors,
+    prompts, responses, credentials, or owner subjects.  A caller can emit
+    stage-specific observations without coupling Core retrieval code to the
+    platform metric registry.
+    """
+
+    span_operation = _RETRIEVAL_OPERATION_ALIASES.get(operation, operation)
+    if span_operation not in _RETRIEVAL_OPERATION_ALIASES.values():
+        # Let MetadataMetrics apply its normal rejection accounting while
+        # retaining the no-I/O property of the recording path.
+        metrics.record_span(
+            "aura.knowledge.memory_retrieval",
+            span_operation,
+            duration_ms,
+            trace_id=trace_id,
+            span_id=new_span_id(),
+            parent_span_id=None,
+            dependency=dependency,
+            outcome=outcome,
+            error_class=error_class,
+        )
+        return
+
+    # Provider and driver exceptions may arrive as arbitrary class names.
+    # Keep those names out of bounded labels and map unknown values to stable
+    # privacy-safe buckets before recording.
+    bounded_dependency = (
+        dependency if dependency in _ENUM_DIMENSIONS["dependency"] else "memory_store"
+    )
+    bounded_outcome = outcome if outcome in _ENUM_DIMENSIONS["outcome"] else "unknown"
+    bounded_error = (
+        error_class
+        if error_class in _ENUM_DIMENSIONS["error_class"]
+        else ("unknown" if error_class is not None else None)
+    )
+    bounded_fallback = (
+        fallback_outcome
+        if fallback_outcome in _ENUM_DIMENSIONS["outcome"]
+        else ("unknown" if fallback_outcome is not None else None)
+    )
+    bounded_parent = (
+        parent_span_id
+        if parent_span_id is not None and _valid_span_id(parent_span_id)
+        else None
+    )
+    # The in-memory recall seam may not have a run trace.  Keep the callback
+    # valid without serializing the caller's fallback label as a trace id.
+    trace_id = trace_id if _valid_trace_id(trace_id) else secrets.token_hex(16)
+
+    bounded_stage = retrieval_stage or {
+        "memory.retrieval": "primary",
+        "memory.query_embedding": "query_embedding",
+        "memory.lexical": "lexical",
+        "memory.vector": "vector",
+        "memory.fusion": "fusion",
+        "memory.rerank": "rerank",
+        "memory.selection": "selection",
+        "memory.context_budget": "context_budget",
+        "memory.fallback": "fallback",
+        "memory.degradation": "degradation",
+    }[span_operation]
+    trace_attributes: dict[str, str] = {}
+    for key, value in {
+        "memory_id": memory_id,
+        "memory_revision_id": memory_revision_id,
+        "memory_policy_revision_id": memory_policy_revision_id,
+        "generation_id": generation_id,
+        "embedding_generation_id": embedding_generation_id,
+        "retrieval_version": retrieval_version,
+        "fallback_grant_id": fallback_grant_id,
+    }.items():
+        if value is not None:
+            trace_attributes[key] = value
+    for key, value in {
+        "selection_order": selection_order,
+        "candidate_count": candidate_count,
+        "recalled_count": recall_count,
+        "context_tokens": context_tokens,
+    }.items():
+        if value is not None:
+            trace_attributes[key] = str(max(0, value))
+
+    metrics.record_span(
+        "aura.knowledge.memory_retrieval",
+        span_operation,
+        duration_ms,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=bounded_parent,
+        dependency=bounded_dependency,
+        outcome=bounded_outcome,
+        error_class=bounded_error,
+        retrieval_stage=bounded_stage,
+        scope_type=scope_type,
+        degradation=degradation,
+        run_id=run_id,
+        conversation_id=conversation_id,
+        metric_name=_RETRIEVAL_SPAN_METRICS[span_operation],
+        **trace_attributes,
+    )
+    common: dict[str, str] = {
+        "outcome": bounded_outcome,
+        "dependency": bounded_dependency,
+        "retrieval_stage": bounded_stage,
+    }
+    if scope_type is not None:
+        common["scope_type"] = scope_type
+    if degradation is not None:
+        common["degradation"] = degradation
+    if bounded_error is not None:
+        common["error_class"] = bounded_error
+    common.update(trace_attributes)
+
+    if candidate_count is not None:
+        metrics.observe(
+            "aura.knowledge.memory_retrieval",
+            "memory_retrieval_candidate_count",
+            float(max(0, candidate_count)),
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            **common,
+        )
+    if recall_count is not None:
+        metrics.observe(
+            "aura.knowledge.memory_retrieval",
+            "memory_recall_count",
+            float(max(0, recall_count)),
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            **common,
+        )
+    if fallback_outcome is not None:
+        metrics.increment(
+            "aura.knowledge.memory_retrieval",
+            "memory_fallback_outcome",
+            outcome=bounded_fallback or "unknown",
+            retrieval_stage="fallback",
+            dependency=bounded_dependency,
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            **{key: value for key, value in trace_attributes.items()},
+        )
+    if context_tokens is not None:
+        metrics.observe(
+            "aura.knowledge.memory_retrieval",
+            "memory_context_tokens",
+            float(max(0, context_tokens)),
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            **common,
+        )
+    if bounded_error is not None or bounded_outcome in {"error", "degraded"}:
+        metrics.increment(
+            "aura.knowledge.memory_retrieval",
+            "memory_retrieval_errors",
+            outcome=bounded_outcome,
+            dependency=bounded_dependency,
+            error_class=bounded_error or "persistence",
+            retrieval_stage=bounded_stage,
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            **{key: value for key, value in trace_attributes.items()},
         )

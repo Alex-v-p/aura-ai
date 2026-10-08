@@ -1,0 +1,74 @@
+[
+  {
+    "id": "family-fact",
+    "query": "when does Maya start university",
+    "content": "Maya starts university in September.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "long"
+  },
+  {
+    "id": "changing-project",
+    "query": "what is blocking the migration",
+    "content": "The database review is the current migration blocker.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "short"
+  },
+  {
+    "id": "meal-context",
+    "query": "what am I making for lunch",
+    "content": "I am making lentil soup for lunch.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "short"
+  },
+  {
+    "id": "preference",
+    "query": "how should answers be written",
+    "content": "The owner prefers concise answers and metric units.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "long"
+  },
+  {
+    "id": "correction",
+    "query": "Thursday Tuesday",
+    "content": "The review is on Thursday, not Tuesday.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "contradiction",
+    "query": "Atlas project",
+    "content": "The owner no longer works on the Atlas project.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "agent-private",
+    "query": "what is in the launch checklist",
+    "content": "The planning agent keeps a draft launch checklist.",
+    "scope": "agent",
+    "relevant": true,
+    "expected_horizon": "medium"
+  },
+  {
+    "id": "shared-user",
+    "query": "weekly summary",
+    "content": "The owner prefers a short weekly summary across agents.",
+    "scope": "user",
+    "relevant": true,
+    "expected_horizon": "long"
+  },
+  {
+    "id": "unrelated",
+    "query": "what is the weather",
+    "content": "The owner prefers dark mode in the editor.",
+    "scope": "user",
+    "relevant": false,
+    "expected_horizon": "long"
+  }
+]

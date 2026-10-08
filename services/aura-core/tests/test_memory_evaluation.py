@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,9 +13,11 @@ from uuid import UUID, uuid4
 
 import pytest
 import yaml
+from aura_core.domains.interaction.agents.public import MemoryPolicy
 from aura_core.domains.knowledge.memory.public import (
     MemoryAction,
     MemoryCandidate,
+    MemoryEmbeddingGeneration,
     MemoryEmbeddingJob,
     MemoryKind,
     MemoryLifecycleStatus,
@@ -22,11 +25,21 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryNotFound,
     MemoryProcessingJob,
     MemoryProcessingService,
+    MemoryRecord,
     MemoryReindexService,
+    MemoryRepository,
     MemoryScope,
     MemoryScopeType,
     MemoryStore,
     decide_candidate,
+)
+from aura_core.domains.knowledge.memory.recall import (
+    RETRIEVAL_VERSION,
+    RRF_K,
+    MemoryQueryEmbedding,
+    MemoryRecallCandidate,
+    MemoryRecallRequest,
+    MemoryRecallService,
 )
 from aura_core.platform.outbox.service import make_identifier_command
 from aura_core.platform.telemetry import (
@@ -232,6 +245,10 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
         generation_id=generation.id,
         vector=(0.1, 0.2),
         digest="b" * 64,
+        model_id=generation.model_id,
+        model_revision=generation.model_revision,
+        model_digest=generation.model_digest,
+        dimension=generation.dimension,
     )
     await store.activate_embedding_generation("https://issuer.example", "owner", generation.id)
     class Embedder:
@@ -240,7 +257,14 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
             return type(
                 "EmbeddingResult",
                 (),
-                {"vector": (0.2, 0.3), "digest": "c" * 64, "model_id": model_id},
+                {
+                    "vector": (0.2, 0.3),
+                    "digest": "c" * 64,
+                    "model_id": model_id,
+                    "model_revision": "rev-2",
+                    "model_digest": "d" * 64,
+                    "dimension": 2,
+                },
             )()
 
     replacement = await store.register_embedding_generation(
@@ -474,7 +498,17 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
             return type(
                 "EmbeddingResult",
                 (),
-                {"vector": (0.1, 0.2), "digest": "a" * 64, "model_id": model_id},
+                {
+                    "vector": (0.1, 0.2),
+                    "digest": "a" * 64,
+                    "model_id": model_id,
+                    "model_revision": None,
+                    "model_digest": {
+                        "embedder": "b" * 64,
+                        "embedder-new": "c" * 64,
+                    }[model_id],
+                    "dimension": 2,
+                },
             )()
 
     class ProcessingStore(MemoryStore):
@@ -756,8 +790,16 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
         del self, model_id, text
         return embedding_responses.pop(0)
 
+    async def inventory_fetch(self: OllamaEmbeddingAdapter) -> dict[str, object]:
+        del self
+        # The selected replacement generation is embedder-new@d…d.  The
+        # adapter must verify that exact model artifact before accepting a
+        # vector; a bare embedding response is not sufficient.
+        return {"models": [{"name": "embedder-new", "digest": "d" * 64}]}
+
     monkeypatch.setattr(OllamaAdapter, "_fetch_bounded_json", structured_fetch)
     monkeypatch.setattr(OllamaEmbeddingAdapter, "_request_embedding", embedding_fetch)
+    monkeypatch.setattr(OllamaEmbeddingAdapter, "_request_inventory", inventory_fetch)
     structured_provider = OllamaAdapter("http://test", telemetry=metrics)
     await structured_provider.infer(
         StructuredInferenceRequest(
@@ -771,9 +813,9 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
             )
         )
     embedding_provider = OllamaEmbeddingAdapter("http://test", telemetry=metrics)
-    await embedding_provider.embed("embedder", "safe text", context=provider_trace)
+    await embedding_provider.embed("embedder-new", "safe text", context=provider_trace)
     with pytest.raises(Exception, match="embedding unavailable"):
-        await embedding_provider.embed("embedder", "safe text", context=provider_trace)
+        await embedding_provider.embed("embedder-new", "safe text", context=provider_trace)
     # The composed repository generated the persistence and queue call-site
     # telemetry; the wire command is exercised without carrying content.
     command = make_identifier_command(
@@ -883,3 +925,568 @@ def test_memory_lifecycle_telemetry_separates_sweep_duration_from_transitions() 
     assert len(sweep) == 1
     assert sweep[0].metric == "memory_maintenance_duration_ms"
     assert len(transitions) == 2
+
+
+# AURA-0039 retrieval evaluation -------------------------------------------------
+#
+# These fixtures deliberately exercise the public retrieval port with a tiny
+# deterministic repository.  They are not a second implementation of the
+# ranking algorithm: lexical and vector channels only provide ranked records;
+# MemoryRecallService remains the system under test for authorization, RRF,
+# lifecycle gates, reranking, fallback, and budget selection.
+
+RECALL_FIXTURE_REVISION = "memory-retrieval-fixtures-v1"
+RECALL_POLICY_REVISION = "memory-policy-eval-v1"
+RECALL_GENERATION_REVISION = "embedding-generation-eval-v1"
+MAX_FIXTURE_CASE_ID_LENGTH = 64
+RECALL_ISSUER = "https://issuer.example"
+RECALL_OWNER = "owner"
+RECALL_AGENT = UUID("11111111-1111-4111-8111-111111111111")
+RECALL_FOREIGN_AGENT = UUID("22222222-2222-4222-8222-222222222222")
+QUALITY_EVALUATOR_ID = "memory_retrieval_quality"
+AUTHORIZATION_EVALUATOR_ID = "memory_scope_authorization"
+BUDGET_EVALUATOR_ID = "memory_context_budget_compliance"
+
+
+@dataclass(frozen=True, slots=True)
+class RecallEvaluationMetrics:
+    component_id: str
+    component_version: str
+    fixture_revision: str
+    retrieval_version: str
+    policy_revision: str
+    embedding_generation_revision: str
+    fixture_case_id: str
+    recall_at_k: float
+    precision_at_k: float
+    reciprocal_rank: float
+    stale_result_rate: float
+    irrelevant_context_rate: float
+    latency_ms: float
+    fallback_correct: bool
+    token_budget_compliant: bool
+
+    def __post_init__(self) -> None:
+        if not self.fixture_case_id or len(self.fixture_case_id) > MAX_FIXTURE_CASE_ID_LENGTH:
+            raise ValueError("fixture case identity must be bounded and non-empty")
+
+    def metadata(self) -> dict[str, object]:
+        """Return evaluator output without memory text or owner identifiers."""
+
+        return {
+            "componentId": self.component_id,
+            "componentVersion": self.component_version,
+            "fixtureRevision": self.fixture_revision,
+            "retrievalVersion": self.retrieval_version,
+            "policyRevision": self.policy_revision,
+            "embeddingGenerationRevision": self.embedding_generation_revision,
+            "fixtureCaseId": self.fixture_case_id,
+            "recallAtK": self.recall_at_k,
+            "precisionAtK": self.precision_at_k,
+            "reciprocalRank": self.reciprocal_rank,
+            "staleResultRate": self.stale_result_rate,
+            "irrelevantContextRate": self.irrelevant_context_rate,
+            "latencyMs": self.latency_ms,
+            "fallbackCorrect": self.fallback_correct,
+            "tokenBudgetCompliant": self.token_budget_compliant,
+            "evaluators": {
+                QUALITY_EVALUATOR_ID: {
+                    "recallAtK": self.recall_at_k,
+                    "precisionAtK": self.precision_at_k,
+                    "reciprocalRank": self.reciprocal_rank,
+                    "staleResultRate": self.stale_result_rate,
+                    "irrelevantContextRate": self.irrelevant_context_rate,
+                },
+                AUTHORIZATION_EVALUATOR_ID: {
+                    "fallbackCorrect": self.fallback_correct,
+                },
+                BUDGET_EVALUATOR_ID: {
+                    "tokenBudgetCompliant": self.token_budget_compliant,
+                },
+            },
+        }
+
+
+class _FixtureRecallRepository:
+    def __init__(self, records: list[MemoryRecord], generation: MemoryEmbeddingGeneration) -> None:
+        self.records = records
+        self.generation = generation
+        self._last_query_terms: set[str] = set()
+
+    async def get_active_embedding_generation(
+        self, issuer: str, subject: str
+    ) -> MemoryEmbeddingGeneration | None:
+        if (issuer, subject) != (RECALL_ISSUER, RECALL_OWNER):
+            return None
+        return self.generation
+
+    async def search_lexical(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        query: str,
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...],
+        generation: MemoryEmbeddingGeneration,
+        now: datetime,
+        historical: bool,
+        statuses: frozenset[MemoryLifecycleStatus],
+        limit: int = 50,
+    ) -> list[MemoryRecord]:
+        del generation, now, historical
+        terms = _fixture_terms(query)
+        self._last_query_terms = terms
+        allowed = set(scopes)
+        matching = [
+            record
+            for record in self.records
+            if record.issuer == issuer
+            and record.subject == subject
+            and (record.scope.type, record.scope.agent_profile_id) in allowed
+            and record.status in statuses
+            and bool(terms & _fixture_terms(record.content))
+        ]
+        return sorted(
+            matching,
+            key=lambda record: (
+                -len(terms & _fixture_terms(record.content)),
+                str(record.id),
+            ),
+        )[:limit]
+
+    async def search_vector(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        vector: tuple[float, ...],
+        generation: MemoryEmbeddingGeneration,
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...],
+        now: datetime,
+        historical: bool,
+        statuses: frozenset[MemoryLifecycleStatus],
+        limit: int = 50,
+    ) -> list[MemoryRecord]:
+        del vector, generation, now, historical
+        allowed = set(scopes)
+        return [
+            record
+            for record in self.records
+            if record.issuer == issuer
+            and record.subject == subject
+            and (record.scope.type, record.scope.agent_profile_id) in allowed
+            and record.status in statuses
+            and bool(self._last_query_terms & _fixture_terms(record.content))
+        ][:limit]
+
+
+def _retrieval_fixture() -> list[dict[str, object]]:
+    path = Path(__file__).parent / "fixtures" / "memory" / "retrieval_cases.json"
+    payload = json.loads(path.read_text())
+    assert isinstance(payload, list)
+    return cast(list[dict[str, object]], payload)
+
+
+_FIXTURE_STOPWORDS = frozenset(
+    {"a", "am", "and", "does", "for", "how", "i", "in", "is", "my", "on", "the", "what", "when"}
+)
+
+
+def _fixture_terms(value: str) -> set[str]:
+    return {
+        term for term in re.findall(r"[a-z0-9]+", value.casefold())
+        if term not in _FIXTURE_STOPWORDS
+    }
+
+
+async def _build_recall_repository() -> tuple[
+    _FixtureRecallRepository, MemoryEmbeddingGeneration, datetime
+]:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    store = MemoryStore(clock=lambda: now)
+    generation = await store.register_embedding_generation(
+        RECALL_ISSUER,
+        RECALL_OWNER,
+        generation=1,
+        model_id="qwen3-embedding:4b",
+        model_revision=RECALL_GENERATION_REVISION,
+        dimension=2,
+        model_digest="e" * 64,
+    )
+    records: list[MemoryRecord] = []
+    for index, case in enumerate(_retrieval_fixture()):
+        scope = MemoryScope(
+            MemoryScopeType.AGENT,
+            RECALL_FOREIGN_AGENT if case["id"] == "agent-private" else RECALL_AGENT,
+        ) if case["scope"] == "agent" else MemoryScope(MemoryScopeType.USER)
+        record = await store.create_memory(
+            RECALL_ISSUER,
+            RECALL_OWNER,
+            content=cast(str, case["content"]),
+            kind=MemoryKind.SEMANTIC,
+            scope=scope,
+            confidence=0.95,
+            importance=0.8,
+            half_life_days=365.0 if case["expected_horizon"] == "long" else 5.0,
+            idempotency_key=f"recall-fixture-{index}",
+        )
+        authorized_agents: frozenset[UUID] = (
+            frozenset({scope.agent_profile_id})
+            if scope.agent_profile_id is not None
+            else frozenset()
+        )
+        record = await store.attach_embedding(
+            RECALL_ISSUER,
+            RECALL_OWNER,
+            record.id,
+            revision_id=record.current_revision_id,
+            generation_id=generation.id,
+            vector=(1.0, 0.0),
+            digest=f"{index + 1:064x}",
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
+            dimension=generation.dimension,
+            scope_type=scope.type,
+            agent_profile_id=scope.agent_profile_id,
+            authorized_agent_ids=authorized_agents,
+        )
+        records.append(record)
+    return _FixtureRecallRepository(records, generation), generation, now
+
+
+def _metrics_for_result(
+    *,
+    candidates: Sequence[MemoryRecallCandidate],
+    relevant_ids: set[UUID],
+    stale_ids: set[UUID],
+    latency_ms: float,
+    fallback_correct: bool,
+    token_count: int,
+    token_limit: int,
+    policy_revision: UUID,
+    embedding_generation_revision: str,
+    fixture_case_id: str,
+    k: int = 3,
+) -> RecallEvaluationMetrics:
+    top = list(candidates[:k])
+    hits = [item for item in top if item.memory_id in relevant_ids]
+    first_hit = next(
+        (index + 1 for index, item in enumerate(top) if item.memory_id in relevant_ids),
+        None,
+    )
+    return RecallEvaluationMetrics(
+        component_id="aura.knowledge.memory_retrieval",
+        component_version="1.0.0",
+        fixture_revision=RECALL_FIXTURE_REVISION,
+        retrieval_version=RETRIEVAL_VERSION,
+        policy_revision=str(policy_revision),
+        embedding_generation_revision=embedding_generation_revision,
+        fixture_case_id=fixture_case_id,
+        recall_at_k=(1.0 if not relevant_ids else len(hits) / len(relevant_ids)),
+        precision_at_k=(1.0 if not top else len(hits) / len(top)),
+        reciprocal_rank=1 / first_hit if first_hit else 0.0,
+        stale_result_rate=(
+            sum(item.memory_id in stale_ids for item in top) / len(top) if top else 0.0
+        ),
+        irrelevant_context_rate=(
+            sum(item.memory_id not in relevant_ids for item in top) / len(top)
+            if top
+            else 0.0
+        ),
+        latency_ms=latency_ms,
+        fallback_correct=fallback_correct,
+        token_budget_compliant=token_count <= token_limit,
+    )
+
+
+@pytest.mark.asyncio
+async def test_retrieval_evaluation_covers_facts_horizons_and_metadata_only_scores() -> None:
+    repository, generation, now = await _build_recall_repository()
+    policy = MemoryPolicy(
+        id=UUID("33333333-3333-4333-8333-333333333333"),
+        agent_profile_id=RECALL_AGENT,
+        revision=1,
+        fallback_relevance_threshold=0.5,
+        fallback_agent_profile_ids=(RECALL_FOREIGN_AGENT,),
+    )
+    observed: list[tuple[str, RecallEvaluationMetrics]] = []
+    for case in _retrieval_fixture():
+        started = datetime.now(UTC)
+        result = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+            MemoryRecallRequest(
+                issuer=RECALL_ISSUER,
+                subject=RECALL_OWNER,
+                agent_profile_id=RECALL_AGENT,
+                query=cast(str, case["query"]),
+                policy=policy,
+                now=now,
+                context_token_budget=200,
+                query_embedding=MemoryQueryEmbedding(
+                    (1.0, 0.0), generation.id, generation.model_id, generation.model_revision,
+                    generation.dimension, model_digest=generation.model_digest,
+                ),
+            )
+        )
+        expected_record = next(
+            (
+                record
+                for record in repository.records
+                if record.content == case["content"]
+            ),
+            None,
+        )
+        relevant_ids: set[UUID] = (
+            {expected_record.id}
+            if bool(case["relevant"]) and expected_record is not None
+            else set()
+        )
+        metrics = _metrics_for_result(
+            candidates=result.candidates,
+            relevant_ids=relevant_ids,
+            stale_ids={
+                item.memory_id
+                for item in result.candidates
+                if item.relevance < 0.10
+            },
+            latency_ms=(datetime.now(UTC) - started).total_seconds() * 1000,
+            fallback_correct=(
+                case["id"] == "agent-private" and result.fallback_used
+            ) or (case["id"] != "agent-private" and not result.fallback_used),
+            token_count=sum(max(1, (len(item.content) + 3) // 4) for item in result.candidates),
+            token_limit=40,
+            policy_revision=policy.id,
+            embedding_generation_revision=cast(str, generation.model_revision),
+            fixture_case_id=cast(str, case["id"]),
+        )
+        observed.append((cast(str, case["id"]), metrics))
+        assert len(cast(str, case["id"])) <= MAX_FIXTURE_CASE_ID_LENGTH
+        assert metrics.metadata()["fixtureCaseId"] == case["id"]
+        assert result.retrieval_version == RETRIEVAL_VERSION
+        assert all("content" not in item for item in result.metadata)
+        assert all("provenanceIds" in item and "revisionId" in item for item in result.metadata)
+        if bool(case["relevant"]):
+            assert result.candidates
+            assert abs(result.candidates[0].reciprocal_rank_score - 2 / (RRF_K + 1)) < 1e-12
+        assert {
+            "componentId", "componentVersion", "fixtureRevision", "retrievalVersion",
+            "policyRevision", "embeddingGenerationRevision", "recallAtK", "precisionAtK",
+            "fixtureCaseId",
+            "reciprocalRank", "staleResultRate", "irrelevantContextRate", "latencyMs",
+            "fallbackCorrect", "tokenBudgetCompliant",
+            "evaluators",
+        } == set(metrics.metadata())
+        evaluator_metadata = cast(dict[str, object], metrics.metadata()["evaluators"])
+        assert set(evaluator_metadata) == {
+            QUALITY_EVALUATOR_ID,
+            AUTHORIZATION_EVALUATOR_ID,
+            BUDGET_EVALUATOR_ID,
+        }
+        assert "content" not in repr(metrics.metadata())
+        assert metrics.latency_ms >= 0
+        assert metrics.token_budget_compliant
+    assert observed
+    assert all(metrics.recall_at_k == 1.0 for _, metrics in observed)
+    assert all(metrics.precision_at_k == 1.0 for _, metrics in observed)
+    assert all(
+        metrics.reciprocal_rank == 1.0
+        for case_id, metrics in observed
+        if case_id != "unrelated"
+    )
+    assert all(metrics.stale_result_rate == 0.0 for _, metrics in observed)
+    assert all(metrics.irrelevant_context_rate == 0.0 for _, metrics in observed)
+    assert all(metrics.fallback_correct for _, metrics in observed)
+
+
+@pytest.mark.asyncio
+async def test_retrieval_scope_security_blocks_ungranted_foreign_agent_and_keeps_fallback_bounded(
+) -> None:
+    repository, generation, now = await _build_recall_repository()
+    query = "what is in the launch checklist"
+    embedding = MemoryQueryEmbedding(
+        (1.0, 0.0), generation.id, generation.model_id, generation.model_revision,
+        generation.dimension, model_digest=generation.model_digest,
+    )
+    denied = MemoryPolicy(
+        id=UUID("44444444-4444-4444-8444-444444444444"),
+        agent_profile_id=RECALL_AGENT,
+        revision=1,
+    )
+    denied_result = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER, RECALL_OWNER, RECALL_AGENT, query, denied,
+            now=now, query_embedding=embedding,
+        )
+    )
+    assert denied_result.candidates == ()
+    assert not denied_result.fallback_used
+    assert all(item.agent_profile_id != RECALL_FOREIGN_AGENT for item in denied_result.candidates)
+
+    granted = replace(denied, fallback_agent_profile_ids=(RECALL_FOREIGN_AGENT,))
+    granted_result = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER, RECALL_OWNER, RECALL_AGENT, query, granted,
+            now=now, query_embedding=embedding,
+        )
+    )
+    assert granted_result.fallback_used
+    assert len(granted_result.candidates) == 1
+    assert granted_result.candidates[0].agent_profile_id == RECALL_FOREIGN_AGENT
+    assert granted_result.candidates[0].scope_type is MemoryScopeType.AGENT
+    assert all("content" not in item for item in granted_result.metadata)
+    assert RRF_K == 60
+
+
+@pytest.mark.asyncio
+async def test_retrieval_security_filters_owner_guessing_lifecycle_and_generation_mismatch(
+) -> None:
+    repository, generation, now = await _build_recall_repository()
+    family = next(record for record in repository.records if "Maya" in record.content)
+    disabled_revision = replace(
+        family.current_revision, id=uuid4(), memory_id=uuid4()
+    )
+    disabled = replace(
+        family,
+        id=uuid4(),
+        current_revision_id=disabled_revision.id,
+        status=MemoryLifecycleStatus.DISABLED,
+        revisions=[disabled_revision],
+    )
+    expired_revision = replace(
+        family.current_revision,
+        id=uuid4(),
+        memory_id=uuid4(),
+        valid_to=now - timedelta(days=1),
+    )
+    expired = replace(
+        family,
+        id=uuid4(),
+        current_revision_id=expired_revision.id,
+        revisions=[expired_revision],
+    )
+    repository.records.extend(
+        [
+            replace(family, subject="other-owner"),
+            disabled,
+            expired,
+        ]
+    )
+    policy = MemoryPolicy(
+        id=UUID("55555555-5555-4555-8555-555555555555"),
+        agent_profile_id=RECALL_AGENT,
+        revision=1,
+    )
+    embedding = MemoryQueryEmbedding(
+        (1.0, 0.0), generation.id, generation.model_id, generation.model_revision,
+        generation.dimension, model_digest=generation.model_digest,
+    )
+    owner_result = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER, RECALL_OWNER, RECALL_AGENT, "Maya university", policy,
+            now=now, query_embedding=embedding,
+        )
+    )
+    assert len(owner_result.candidates) == 1
+    assert owner_result.candidates[0].content == family.content
+
+    guessed_owner = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER, "other-owner", RECALL_AGENT, "Maya university", policy,
+            now=now, query_embedding=embedding,
+        )
+    )
+    assert guessed_owner.candidates == ()
+    assert guessed_owner.degraded
+
+    wrong_generation = replace(embedding, generation_id=uuid4())
+    mismatched = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER, RECALL_OWNER, RECALL_AGENT, "Maya university", policy,
+            now=now, query_embedding=wrong_generation,
+        )
+    )
+    assert mismatched.candidates == ()
+    assert mismatched.degraded
+    assert mismatched.degradation_reason == "query_embedding_identity_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_metrics_report_actual_stale_irrelevant_latency_and_token_compliance(
+) -> None:
+    repository, generation, now = await _build_recall_repository()
+    policy = MemoryPolicy(
+        id=UUID("66666666-6666-4666-8666-666666666666"),
+        agent_profile_id=RECALL_AGENT,
+        revision=1,
+    )
+    started = datetime.now(UTC)
+    result = await MemoryRecallService(cast(MemoryRepository, repository)).recall(
+        MemoryRecallRequest(
+            RECALL_ISSUER,
+            RECALL_OWNER,
+            RECALL_AGENT,
+            "owner",
+            policy,
+            now=now,
+            context_token_budget=200,
+            query_embedding=MemoryQueryEmbedding(
+                (1.0, 0.0), generation.id, generation.model_id,
+                generation.model_revision, generation.dimension,
+                model_digest=generation.model_digest,
+            ),
+        )
+    )
+    relevant = next(
+        record for record in repository.records
+        if record.content.startswith("The owner prefers concise")
+    )
+    stale_ids = {
+        item.memory_id for item in result.candidates if item.relevance < 0.10
+    }
+    metrics = _metrics_for_result(
+        candidates=result.candidates,
+        relevant_ids={relevant.id},
+        stale_ids=stale_ids,
+        latency_ms=(datetime.now(UTC) - started).total_seconds() * 1000,
+        fallback_correct=not result.fallback_used,
+        token_count=sum(max(1, (len(item.content) + 3) // 4) for item in result.candidates),
+        token_limit=40,
+        policy_revision=policy.id,
+        embedding_generation_revision=cast(str, generation.model_revision),
+        fixture_case_id="aggregate-owner-query-v1",
+    )
+    assert metrics.recall_at_k == 1.0
+    assert metrics.precision_at_k == sum(
+        item.memory_id in {relevant.id} for item in result.candidates[:3]
+    ) / max(1, len(result.candidates[:3]))
+    first_hit = next(
+        index + 1
+        for index, item in enumerate(result.candidates[:3])
+        if item.memory_id == relevant.id
+    )
+    assert metrics.reciprocal_rank == 1 / first_hit
+    assert metrics.stale_result_rate == sum(
+        item.memory_id in stale_ids for item in result.candidates[:3]
+    ) / max(1, len(result.candidates[:3]))
+    assert metrics.irrelevant_context_rate == sum(
+        item.memory_id not in {relevant.id} for item in result.candidates[:3]
+    ) / max(1, len(result.candidates[:3]))
+    assert metrics.latency_ms >= 0
+    assert metrics.fallback_correct
+    assert metrics.token_budget_compliant
+    assert metrics.metadata()["fixtureRevision"] == RECALL_FIXTURE_REVISION
+    assert metrics.metadata()["retrievalVersion"] == RETRIEVAL_VERSION
+    assert metrics.metadata()["fixtureCaseId"] == "aggregate-owner-query-v1"
+    assert len(cast(str, metrics.metadata()["fixtureCaseId"])) <= MAX_FIXTURE_CASE_ID_LENGTH
+
+
+def test_retrieval_fixture_is_versioned_and_covers_required_categories() -> None:
+    cases = _retrieval_fixture()
+    assert RECALL_FIXTURE_REVISION.endswith("-v1")
+    assert RECALL_POLICY_REVISION.endswith("-v1")
+    assert RECALL_GENERATION_REVISION.endswith("-v1")
+    assert {case["id"] for case in cases} >= {
+        "family-fact", "changing-project", "meal-context", "preference",
+        "correction", "contradiction", "agent-private", "shared-user", "unrelated",
+    }
+    assert {case["expected_horizon"] for case in cases} == {"short", "medium", "long"}

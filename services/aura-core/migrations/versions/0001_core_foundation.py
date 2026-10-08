@@ -4,6 +4,7 @@ Revision ID: 0001_core_foundation
 """
 
 from alembic import op
+from sqlalchemy import text
 
 revision = "0001_core_foundation"
 down_revision = None
@@ -18,6 +19,7 @@ def upgrade() -> None:
     from aura_core.bootstrap.database import metadata
 
     bind = op.get_bind()
+    op.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     metadata().create_all(bind=bind)
     # Cross-domain identifiers deliberately remain plain UUIDs in the runtime
     # mappings.  That keeps an owning repository's flush independent of whether

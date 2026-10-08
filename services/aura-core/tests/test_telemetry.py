@@ -31,6 +31,7 @@ from aura_core.platform.telemetry import (
     TelemetryBatch,
     TelemetryLifecycle,
     new_span_id,
+    record_memory_retrieval,
     root_span_id,
 )
 from aura_core.providers.models.ollama.fake import FakeChatModel
@@ -401,6 +402,126 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
 
 def test_title_inference_component_version_remains_explicit() -> None:
     assert COMPONENT_VERSIONS["aura.runtime.model_inference"] == "1.4.0"
+
+
+def test_memory_retrieval_telemetry_is_bounded_and_metadata_only() -> None:
+    metrics = MetadataMetrics()
+    run_id, memory_id = uuid4(), uuid4()
+    record_memory_retrieval(
+        metrics,
+        operation="vector",
+        duration_ms=4.5,
+        trace_id=run_id.hex,
+        outcome="ok",
+        dependency="memory_store",
+        scope_type="agent",
+        candidate_count=50,
+        recall_count=3,
+        context_tokens=120,
+        memory_id=str(memory_id),
+        memory_revision_id=str(uuid4()),
+        memory_policy_revision_id=str(uuid4()),
+        embedding_generation_id=str(uuid4()),
+        run_id=str(run_id),
+    )
+
+    measurements = metrics.snapshot()
+    assert measurements[0].component_id == "aura.knowledge.memory_retrieval"
+    assert measurements[0].metric == "memory_vector_search_duration_ms"
+    assert dict(measurements[0].dimensions)["retrieval_stage"] == "vector"
+    assert {item.metric for item in measurements} >= {
+        "memory_vector_search_duration_ms",
+        "memory_retrieval_candidate_count",
+        "memory_recall_count",
+        "memory_context_tokens",
+    }
+    rendered = json.dumps(
+        [
+            {
+                "metric": item.metric,
+                "dimensions": dict(item.dimensions),
+                "trace": dict(item.trace_attributes),
+            }
+            for item in measurements
+        ]
+    )
+    assert all(
+        secret not in rendered
+        for secret in ('"content":', '"prompt":', '"response":', '"vector":')
+    )
+
+
+def test_memory_retrieval_production_stage_shapes_preserve_parent_and_bound_labels() -> None:
+    metrics = MetadataMetrics()
+    trace_id, parent_span_id = uuid4().hex, new_span_id()
+    record_memory_retrieval(
+        metrics,
+        operation="memory.retrieval.lexical",
+        duration_ms=2.0,
+        trace_id=trace_id,
+        parent_span_id=parent_span_id,
+        outcome="ok",
+        dependency="postgresql",
+        candidate_count=50,
+    )
+    record_memory_retrieval(
+        metrics,
+        operation="memory.retrieval.fallback",
+        duration_ms=1.0,
+        trace_id=trace_id,
+        parent_span_id=parent_span_id,
+        outcome="ok",
+        dependency="foreign-store-driver",
+        fallback_outcome="empty",
+        error_class="RuntimeError",
+    )
+
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert len(spans) == 2
+    assert spans[0].parent_span_id == parent_span_id
+    assert spans[0].metric == "memory_lexical_search_duration_ms"
+    assert dict(spans[1].dimensions)["dependency"] == "memory_store"
+    assert dict(spans[1].dimensions)["error_class"] == "unknown"
+    assert metrics.stats().rejected == 0
+
+
+def test_memory_retrieval_query_embedding_primary_and_post_render_budget_shapes() -> None:
+    metrics = MetadataMetrics()
+    trace_id, parent_span_id = uuid4().hex, new_span_id()
+    for operation, stage, fallback in (
+        ("memory.retrieval.query_embedding", "query_embedding", None),
+        ("memory.retrieval", "primary", "not_needed"),
+        ("memory.retrieval.context_budget", "context_budget", "not_granted"),
+    ):
+        record_memory_retrieval(
+            metrics,
+            operation=operation,
+            duration_ms=1.0,
+            trace_id=trace_id,
+            parent_span_id=parent_span_id,
+            outcome="ok",
+            dependency="query_embedding" if stage == "query_embedding" else "memory_store",
+            retrieval_stage=stage,
+            fallback_outcome=fallback,
+            context_tokens=96 if stage == "context_budget" else None,
+        )
+
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert [item.metric for item in spans] == [
+        "memory_query_embedding_duration_ms",
+        "memory_retrieval_duration_ms",
+        "memory_retrieval_duration_ms",
+    ]
+    assert all(item.parent_span_id == parent_span_id for item in spans)
+    fallback = [
+        item for item in metrics.snapshot() if item.metric == "memory_fallback_outcome"
+    ]
+    assert {dict(item.dimensions)["outcome"] for item in fallback} == {
+        "not_needed",
+        "not_granted",
+    }
+    assert any(item.metric == "memory_context_tokens" for item in metrics.snapshot())
+    assert metrics.stats().rejected == 0
 
 
 def test_conversation_list_telemetry_is_postgresql_bound_and_metadata_only() -> None:

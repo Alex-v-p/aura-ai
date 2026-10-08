@@ -39,6 +39,9 @@ class SqlRunRepository:
             row.persona_revision_id,
             row.prompt_bundle_revision_id,
             row.prompt_hash,
+            row.memory_policy_revision_id,
+            row.memory_embedding_generation_id,
+            row.memory_recall_metadata,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -129,6 +132,9 @@ class SqlRunRepository:
                 persona_revision_id=run.persona_revision_id,
                 prompt_bundle_revision_id=run.prompt_bundle_revision_id,
                 prompt_hash=run.prompt_hash,
+                memory_policy_revision_id=run.memory_policy_revision_id,
+                memory_embedding_generation_id=run.memory_embedding_generation_id,
+                memory_recall_metadata=run.memory_recall_metadata,
                 provider=run.provider,
                 model_id=run.model_id,
                 retry_of_run_id=run.retry_of_run_id,
@@ -155,6 +161,9 @@ class SqlRunRepository:
         row.lease_expires_at = run.lease_expires_at
         row.started_at = run.started_at
         row.finished_at = run.finished_at
+        row.memory_policy_revision_id = run.memory_policy_revision_id
+        row.memory_embedding_generation_id = run.memory_embedding_generation_id
+        row.memory_recall_metadata = run.memory_recall_metadata
 
     @staticmethod
     def _error(error: RunError | None) -> dict[str, object] | None:

@@ -349,6 +349,7 @@ async def test_retry_is_pinned_to_original_revision_and_owner_isolation_holds() 
     )
     assert retry_conversation.id == conversation.id
     assert retry.agent_revision_id == original_run.agent_revision_id == GENERAL_REVISION_ID
+    assert retry.memory_policy_revision_id == original_run.memory_policy_revision_id
 
     partial = await store.append_assistant(retry.id, "partial", MessageState.PARTIAL)
     assert partial.state is MessageState.PARTIAL

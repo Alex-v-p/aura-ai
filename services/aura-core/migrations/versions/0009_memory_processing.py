@@ -218,6 +218,11 @@ def upgrade() -> None:
             END IF;
         END $$
     """))
+    # 0008 only made memories.id primary. PostgreSQL requires a matching
+    # owner-qualified unique key before the composite memory FK below can be
+    # created. The idempotent index also accommodates databases where current
+    # ORM metadata already created the equivalent constraint.
+    op.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_owner ON memories(id, principal_issuer, principal_subject)"))
     op.execute(text("""
         DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_embedding_jobs_memory_owner_fkey') THEN

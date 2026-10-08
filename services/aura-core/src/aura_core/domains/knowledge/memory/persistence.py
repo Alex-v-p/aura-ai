@@ -82,9 +82,7 @@ class MemoryRevisionRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     provenance_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     correction_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    __table_args__ = (
-        UniqueConstraint("memory_id", "revision", name="uq_memory_revision_number"),
-    )
+    __table_args__ = (UniqueConstraint("memory_id", "revision", name="uq_memory_revision_number"),)
 
 
 class MemoryProvenanceRow(Base):
@@ -114,6 +112,7 @@ class MemoryEmbeddingRow(Base):
     model_revision: Mapped[str | None] = mapped_column(String(255), nullable=True)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     vector: Mapped[list[float]] = mapped_column(VectorType(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
@@ -165,8 +164,12 @@ class MemoryEmbeddingGenerationRow(Base):
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, server_default="")
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     __table_args__ = (
-        UniqueConstraint("id", "principal_issuer", "principal_subject", name="uq_memory_generation_id_owner"),
-        UniqueConstraint("generation", "principal_issuer", "principal_subject", name="uq_memory_generation_owner"),
+        UniqueConstraint(
+            "id", "principal_issuer", "principal_subject", name="uq_memory_generation_id_owner"
+        ),
+        UniqueConstraint(
+            "generation", "principal_issuer", "principal_subject", name="uq_memory_generation_owner"
+        ),
     )
 
 
@@ -178,13 +181,19 @@ class MemoryModelConfigurationRow(Base):
     extraction_model_revision: Mapped[str | None] = mapped_column(String(255), nullable=True)
     embedding_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     embedding_model_revision: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    embedding_generation: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    embedding_generation: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
         ForeignKeyConstraint(
             ["embedding_generation", "principal_issuer", "principal_subject"],
-            ["memory_embedding_generations.id", "memory_embedding_generations.principal_issuer", "memory_embedding_generations.principal_subject"],
+            [
+                "memory_embedding_generations.id",
+                "memory_embedding_generations.principal_issuer",
+                "memory_embedding_generations.principal_subject",
+            ],
             name="memory_model_config_generation_owner_fkey",
         ),
     )
@@ -201,13 +210,21 @@ class MemoryProcessingJobRow(Base):
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     agent_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     agent_profile_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    allow_shared_user_promotion: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    memory_policy_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     user_message_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     assistant_message_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     evidence_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="queued")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -215,7 +232,9 @@ class MemoryProcessingJobRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
-        UniqueConstraint("id", "principal_issuer", "principal_subject", name="uq_memory_processing_job_owner"),
+        UniqueConstraint(
+            "id", "principal_issuer", "principal_subject", name="uq_memory_processing_job_owner"
+        ),
     )
 
 
@@ -270,13 +289,21 @@ class MemoryEmbeddingJobRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="queued")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_error_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
-        UniqueConstraint("revision_id", "generation_id", "principal_issuer", "principal_subject", name="uq_memory_embedding_job_owner"),
+        UniqueConstraint(
+            "revision_id",
+            "generation_id",
+            "principal_issuer",
+            "principal_subject",
+            name="uq_memory_embedding_job_owner",
+        ),
     )
 
 
@@ -286,7 +313,9 @@ class MemoryMaintenanceStateRow(Base):
     principal_subject: Mapped[str] = mapped_column(String(255), primary_key=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reindex_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reindex_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reindex_generation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     reindex_cursor: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     reindex_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -303,6 +332,20 @@ class MemoryPurgeFenceRow(Base):
 
 
 __all__ = [
-    "MemoryActionOutcomeRow", "MemoryCandidateRow", "MemoryEmbeddingGenerationRow", "MemoryEmbeddingJobRow", "MemoryEmbeddingRow", "MemoryIdempotencyRow", "MemoryMaintenanceStateRow", "MemoryModelConfigurationRow", "MemoryProcessingJobRow", "MemoryProvenanceRow", "MemoryPurgeAuditRow", "MemoryPurgeFenceRow", "MemoryRelationRow",
-    "MemoryRevisionRow", "MemoryRow", "VectorType",
+    "MemoryActionOutcomeRow",
+    "MemoryCandidateRow",
+    "MemoryEmbeddingGenerationRow",
+    "MemoryEmbeddingJobRow",
+    "MemoryEmbeddingRow",
+    "MemoryIdempotencyRow",
+    "MemoryMaintenanceStateRow",
+    "MemoryModelConfigurationRow",
+    "MemoryProcessingJobRow",
+    "MemoryProvenanceRow",
+    "MemoryPurgeAuditRow",
+    "MemoryPurgeFenceRow",
+    "MemoryRelationRow",
+    "MemoryRevisionRow",
+    "MemoryRow",
+    "VectorType",
 ]

@@ -119,7 +119,11 @@ MEMORY_ACTION_SCHEMA: Mapping[str, object] = {
         "agent_profile_id": {"type": ["string", "null"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "importance": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-        "half_life_days": {"type": ["number", "null"], "minimum": MIN_HALF_LIFE_DAYS, "maximum": MAX_HALF_LIFE_DAYS},
+        "half_life_days": {
+            "type": ["number", "null"],
+            "minimum": MIN_HALF_LIFE_DAYS,
+            "maximum": MAX_HALF_LIFE_DAYS,
+        },
         "valid_to": {"type": ["string", "null"]},
         "sensitivity": {"type": "string"},
         "grounded_evidence_handles": {"type": "array", "items": {"type": "string"}},
@@ -175,8 +179,15 @@ class MemoryProcessingCommand:
     @classmethod
     def from_payload(cls, payload: Mapping[str, object]) -> MemoryProcessingCommand:
         required = {
-            "schemaVersion", "commandId", "jobId", "runId", "conversationId",
-            "correlationId", "causationId", "agentRevisionId", "userMessageId",
+            "schemaVersion",
+            "commandId",
+            "jobId",
+            "runId",
+            "conversationId",
+            "correlationId",
+            "causationId",
+            "agentRevisionId",
+            "userMessageId",
             "assistantMessageId",
         }
         optional = {"createdAt", "attemptId", "generationId"}
@@ -187,6 +198,7 @@ class MemoryProcessingCommand:
         ):
             raise MemoryValidationError("invalid memory processing command metadata")
         try:
+
             def required_uuid(key: str) -> UUID:
                 value = payload.get(key)
                 if type(value) is not str or not value:
@@ -195,10 +207,15 @@ class MemoryProcessingCommand:
 
             created_at = payload.get("createdAt")
             return cls(
-                required_uuid("commandId"), required_uuid("jobId"), required_uuid("runId"),
-                required_uuid("conversationId"), required_uuid("correlationId"),
-                required_uuid("causationId"), required_uuid("agentRevisionId"),
-                required_uuid("userMessageId"), required_uuid("assistantMessageId"),
+                required_uuid("commandId"),
+                required_uuid("jobId"),
+                required_uuid("runId"),
+                required_uuid("conversationId"),
+                required_uuid("correlationId"),
+                required_uuid("causationId"),
+                required_uuid("agentRevisionId"),
+                required_uuid("userMessageId"),
+                required_uuid("assistantMessageId"),
                 datetime.fromisoformat(created_at) if isinstance(created_at, str) else None,
                 required_uuid("attemptId") if "attemptId" in payload else None,
                 required_uuid("generationId") if "generationId" in payload else None,
@@ -230,7 +247,13 @@ class MemoryProcessingCommand:
         for name in ("created_at", "attempt_id", "generation_id"):
             value = getattr(command, name, None)
             if value is not None:
-                payload[{"created_at": "createdAt", "attempt_id": "attemptId", "generation_id": "generationId"}[name]] = value.isoformat() if isinstance(value, datetime) else str(value)
+                payload[
+                    {
+                        "created_at": "createdAt",
+                        "attempt_id": "attemptId",
+                        "generation_id": "generationId",
+                    }[name]
+                ] = value.isoformat() if isinstance(value, datetime) else str(value)
         if any(type(value) is not str or not value for value in payload.values()):
             raise MemoryValidationError("memory command identifiers are incomplete")
         return cls.from_payload(payload)
@@ -275,6 +298,10 @@ class MemoryProcessingJob:
     lease_until: datetime | None = None
     agent_profile_id: UUID | None = None
     memory_id: UUID | None = None
+    # Captured from the run-pinned agent memory policy at admission.  It is
+    # intentionally false when a legacy/unenriched job lacks that snapshot.
+    allow_shared_user_promotion: bool = False
+    memory_policy_revision_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,17 +349,26 @@ class MemoryTurnEvidence:
     evidence_digest: str
 
     def validate_for(self, job: MemoryProcessingJob) -> None:
-        if (self.issuer, self.subject, self.run_id, self.conversation_id) != (job.issuer, job.subject, job.run_id, job.conversation_id):
+        if (self.issuer, self.subject, self.run_id, self.conversation_id) != (
+            job.issuer,
+            job.subject,
+            job.run_id,
+            job.conversation_id,
+        ):
             raise MemoryValidationError("memory evidence owner or run mismatch")
         if job.agent_revision_id is not None and self.agent_revision_id != job.agent_revision_id:
             raise MemoryValidationError("memory evidence agent revision mismatch")
-        if tuple(self.user_message_ids) != tuple(job.user_message_ids) or tuple(self.assistant_message_ids) != tuple(job.assistant_message_ids):
+        if tuple(self.user_message_ids) != tuple(job.user_message_ids) or tuple(
+            self.assistant_message_ids
+        ) != tuple(job.assistant_message_ids):
             raise MemoryValidationError("memory evidence message set mismatch")
         # The evidence digest is deliberately over authenticated user-authored
         # evidence only.  Assistant text is retained as extraction context but
         # cannot qualify or alter the evidence identity.
         digest = hashlib.sha256(self.user_content.encode()).hexdigest()
-        if digest != self.evidence_digest or (job.evidence_digest is not None and digest != job.evidence_digest):
+        if digest != self.evidence_digest or (
+            job.evidence_digest is not None and digest != job.evidence_digest
+        ):
             raise MemoryValidationError("memory evidence digest mismatch")
 
 
@@ -364,14 +400,33 @@ class MemoryCandidate:
             raise MemoryValidationError("candidate confidence must be between zero and one")
         if self.content is not None:
             if len(self.content.strip()) == 0 or len(self.content) > 32768:
-                raise MemoryValidationError("candidate content must be between 1 and 32768 characters")
+                raise MemoryValidationError(
+                    "candidate content must be between 1 and 32768 characters"
+                )
             if self.importance is not None and not 0 <= self.importance <= 1:
                 raise MemoryValidationError("candidate importance must be between zero and one")
-            if self.half_life_days is not None and not MIN_HALF_LIFE_DAYS <= self.half_life_days <= MAX_HALF_LIFE_DAYS:
+            if (
+                self.half_life_days is not None
+                and not MIN_HALF_LIFE_DAYS <= self.half_life_days <= MAX_HALF_LIFE_DAYS
+            ):
                 raise MemoryValidationError("candidate half-life is outside the supported range")
-        if self.state in {CandidateState.PROPOSED, CandidateState.ACCEPTED} and self.action in {MemoryAction.CREATE, MemoryAction.REINFORCE, MemoryAction.SUPERSEDE, MemoryAction.DISPUTE} and not self.content:
+        if (
+            self.state in {CandidateState.PROPOSED, CandidateState.ACCEPTED}
+            and self.action
+            in {
+                MemoryAction.CREATE,
+                MemoryAction.REINFORCE,
+                MemoryAction.SUPERSEDE,
+                MemoryAction.DISPUTE,
+            }
+            and not self.content
+        ):
             raise MemoryValidationError("memory actions require canonical content")
-        if self.scope is not None and self.scope.type is MemoryScopeType.AGENT and self.scope.agent_profile_id is None:
+        if (
+            self.scope is not None
+            and self.scope.type is MemoryScopeType.AGENT
+            and self.scope.agent_profile_id is None
+        ):
             raise MemoryValidationError("agent candidate scope requires an agent profile")
 
 
@@ -386,9 +441,23 @@ def _content_free_candidate(candidate: MemoryCandidate) -> MemoryCandidate:
 
     if candidate.state in {CandidateState.REJECTED, CandidateState.RETRYABLE}:
         return MemoryCandidate(
-            candidate.id, candidate.job_id, candidate.issuer, candidate.subject,
-            candidate.action, None, None, None, candidate.confidence, None, None,
-            None, candidate.sensitivity, (), None, candidate.state, candidate.decision_reason,
+            candidate.id,
+            candidate.job_id,
+            candidate.issuer,
+            candidate.subject,
+            candidate.action,
+            None,
+            None,
+            None,
+            candidate.confidence,
+            None,
+            None,
+            None,
+            candidate.sensitivity,
+            (),
+            None,
+            candidate.state,
+            candidate.decision_reason,
         )
     return candidate
 
@@ -400,6 +469,7 @@ def decide_candidate(
     run_agent_profile_id: UUID | None = None,
     existing_conflict: bool = False,
     user_content: str | None = None,
+    allow_shared_user_promotion: bool = False,
 ) -> CandidateDecision:
     """Apply deterministic guardrails after untrusted structured inference."""
 
@@ -420,7 +490,12 @@ def decide_candidate(
         MemorySensitivity.UNKNOWN_RISK,
     }
     if classified in sensitive_categories or candidate.sensitivity in sensitive_categories:
-        return CandidateDecision(CandidateState.REVIEW, classified.value if classified is not MemorySensitivity.ORDINARY else candidate.sensitivity.value)
+        return CandidateDecision(
+            CandidateState.REVIEW,
+            classified.value
+            if classified is not MemorySensitivity.ORDINARY
+            else candidate.sensitivity.value,
+        )
     if candidate.content is None or contains_secret(candidate.content):
         return CandidateDecision(CandidateState.REJECTED, "secret_or_empty")
     if not set(candidate.grounded_message_ids).issubset(user_message_ids):
@@ -435,18 +510,35 @@ def decide_candidate(
         overlap = candidate_terms.intersection(source_terms)
         if len(candidate_terms) < 2 or len(overlap) < max(2, math.ceil(len(candidate_terms) * 0.8)):
             return CandidateDecision(CandidateState.REVIEW, "insufficient_grounding")
-        if re.search(r"\b(?:maybe|might|perhaps|possibly|not sure|i think|i believe|could be)\b", candidate.content.casefold()):
+        if re.search(
+            r"\b(?:maybe|might|perhaps|possibly|not sure|i think|i believe|could be)\b",
+            candidate.content.casefold(),
+        ):
             return CandidateDecision(CandidateState.REVIEW, "uncertain_evidence")
         # A high lexical overlap is not support when a claim reverses the
         # source polarity (for example, "I like coffee" vs "I do not like
         # coffee").  Keep this conservative and review ambiguous language.
-        source_negated = bool(re.search(r"\b(?:no|not|never|don't|doesn't|isn't|can't|won't)\b", user_content.casefold()))
-        candidate_negated = bool(re.search(r"\b(?:no|not|never|don't|doesn't|isn't|can't|won't)\b", candidate.content.casefold()))
+        source_negated = bool(
+            re.search(
+                r"\b(?:no|not|never|don't|doesn't|isn't|can't|won't)\b", user_content.casefold()
+            )
+        )
+        candidate_negated = bool(
+            re.search(
+                r"\b(?:no|not|never|don't|doesn't|isn't|can't|won't)\b",
+                candidate.content.casefold(),
+            )
+        )
         if source_negated != candidate_negated:
             return CandidateDecision(CandidateState.REVIEW, "negation_conflict")
-    if candidate.scope is None or candidate.scope.type is MemoryScopeType.USER:
+    if candidate.scope is None or (
+        candidate.scope.type is MemoryScopeType.USER and not allow_shared_user_promotion
+    ):
         return CandidateDecision(CandidateState.REVIEW, "shared_scope_requires_policy")
-    if candidate.scope.type is MemoryScopeType.AGENT and candidate.scope.agent_profile_id != run_agent_profile_id:
+    if (
+        candidate.scope.type is MemoryScopeType.AGENT
+        and candidate.scope.agent_profile_id != run_agent_profile_id
+    ):
         return CandidateDecision(CandidateState.REVIEW, "risky_scope")
     if existing_conflict or candidate.action in {MemoryAction.DISPUTE, MemoryAction.SUPERSEDE}:
         return CandidateDecision(CandidateState.REVIEW, "conflict")
@@ -460,7 +552,10 @@ def decide_candidate(
 # Short, conservative credential patterns are applied before a memory reaches
 # either adapter.  This is intentionally a deny rule, not a secret detector.
 _SECRET_PATTERNS = (
-    re.compile(r"(?:api[_ -]?key|access[_ -]?token|client[_ -]?secret|secret|password|private[_ -]?key|credential)\s*[:=]", re.I),
+    re.compile(
+        r"(?:api[_ -]?key|access[_ -]?token|client[_ -]?secret|secret|password|private[_ -]?key|credential)\s*[:=]",
+        re.I,
+    ),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.I),
     re.compile(r"\b(?:sk|pk)_[A-Za-z0-9]{16,}\b", re.I),
     re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b", re.I),
@@ -469,7 +564,10 @@ _SECRET_PATTERNS = (
     re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b", re.I),
     re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b", re.I),
     re.compile(r"\b(?:glpat-|pat_|token_)[A-Za-z0-9_-]{16,}\b", re.I),
-    re.compile(r"\b(?:otp|one[- ]time password|pin|passcode|recovery code|seed phrase|mnemonic)\s*[:=]?\s*[A-Za-z0-9 -]{4,}", re.I),
+    re.compile(
+        r"\b(?:otp|one[- ]time password|pin|passcode|recovery code|seed phrase|mnemonic)\s*[:=]?\s*[A-Za-z0-9 -]{4,}",
+        re.I,
+    ),
     re.compile(r"\b(?:ya29\.|1//)[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.I),
     re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
@@ -480,10 +578,18 @@ _SECRET_PATTERNS = (
 # machine-token prefix.  Keep this detector shared by pre-inference admission
 # and every persistence validator; provider labels are never authoritative.
 _CREDENTIAL_VALUE_PATTERNS = (
-    re.compile(r"\b(?:password|passphrase|api[_ -]?key|access[_ -]?token|client[_ -]?secret|private[_ -]?key|credential|secret)\s*(?:is|:|=)\s*[^\s,.;]{4,}", re.I),
-    re.compile(r"\b(?:one[- ]time|verification|security|authentication)\s+(?:code|passcode|password|pin|otp)\s*(?:is|:|=)?\s*[A-Za-z0-9]{4,}", re.I),
+    re.compile(
+        r"\b(?:password|passphrase|api[_ -]?key|access[_ -]?token|client[_ -]?secret|private[_ -]?key|credential|secret)\s*(?:is|:|=)\s*[^\s,.;]{4,}",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:one[- ]time|verification|security|authentication)\s+(?:code|passcode|password|pin|otp)\s*(?:is|:|=)?\s*[A-Za-z0-9]{4,}",
+        re.I,
+    ),
     re.compile(r"\b(?:otp|pin|passcode|recovery code)\s*(?:is|:|=)\s*[A-Za-z0-9]{4,}", re.I),
-    re.compile(r"\b(?:recovery|seed)\s+phrase\s*(?:is|:|=)\s*(?:[A-Za-z]{2,}\s+){2,}[A-Za-z]{2,}", re.I),
+    re.compile(
+        r"\b(?:recovery|seed)\s+phrase\s*(?:is|:|=)\s*(?:[A-Za-z]{2,}\s+){2,}[A-Za-z]{2,}", re.I
+    ),
 )
 
 
@@ -551,7 +657,9 @@ class MemoryProvenance:
             raise MemoryValidationError("unsupported memory provenance type")
         if self.evidence is not None and contains_secret(self.evidence):
             raise MemoryValidationError("credential-like provenance evidence is not accepted")
-        if self.evidence_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.evidence_digest):
+        if self.evidence_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.evidence_digest
+        ):
             raise MemoryValidationError("provenance digest must be a sha256 digest")
 
 
@@ -581,10 +689,12 @@ class MemoryEmbedding:
     model_id: str
     model_revision: str | None
     dimension: int
+    # Vector digest and model identity digest are intentionally distinct.
     digest: str
     created_at: datetime
     vector: tuple[float, ...] | None = None
     generation_id: UUID | None = None
+    model_digest: str | None = None
 
 
 @dataclass(slots=True)
@@ -680,21 +790,58 @@ class MemoryFilters:
 
 
 def contains_secret(value: str) -> bool:
-    return any(pattern.search(value) for pattern in (*_SECRET_PATTERNS, *_CREDENTIAL_VALUE_PATTERNS))
+    return any(
+        pattern.search(value) for pattern in (*_SECRET_PATTERNS, *_CREDENTIAL_VALUE_PATTERNS)
+    )
 
 
 _SENSITIVE_PATTERNS: tuple[tuple[MemorySensitivity, re.Pattern[str]], ...] = (
-    (MemorySensitivity.CREDENTIAL, re.compile(r"\b(password|token|api[ -]?key|secret|private key|oauth|credential)\b", re.I)),
-    (MemorySensitivity.HEALTH, re.compile(r"\b(diabetes|diagnos(?:is|ed)|cancer|oncolog(?:y|ist)|medication|prescription|severe depression|major depression|depression|suicid(?:al|e)|病|health|medical)\b", re.I)),
-    (MemorySensitivity.FINANCE, re.compile(r"\b(bank|iban|credit[ -]?card|salary|income|tax|finance|routing number|account number|mortgage|balance|financial|loan)\b", re.I)),
-    (MemorySensitivity.IDENTITY, re.compile(r"\b(passport|social[ -]?security|ssn|national id(?:entification)?|identity number|driver(?:'s)? license|date of birth)\b|\b\d{3}-\d{2}-\d{4}\b", re.I)),
-    (MemorySensitivity.INTIMATE, re.compile(r"\b(sexual|intimate|pregnan(?:t|cy)|relationship abuse|sexual orientation|abortion)\b", re.I)),
-    (MemorySensitivity.PRECISE_LOCATION, re.compile(r"\b(latitude|longitude|gps|home address|street address|precise location|coordinates|geolocation)\b|\b\d{1,5}\s+[A-Za-z0-9.'-]+\s+(?:street|st|road|rd|avenue|ave|lane|ln|boulevard|blvd)\b", re.I)),
+    (
+        MemorySensitivity.CREDENTIAL,
+        re.compile(r"\b(password|token|api[ -]?key|secret|private key|oauth|credential)\b", re.I),
+    ),
+    (
+        MemorySensitivity.HEALTH,
+        re.compile(
+            r"\b(diabetes|diagnos(?:is|ed)|cancer|oncolog(?:y|ist)|medication|prescription|severe depression|major depression|depression|suicid(?:al|e)|病|health|medical)\b",
+            re.I,
+        ),
+    ),
+    (
+        MemorySensitivity.FINANCE,
+        re.compile(
+            r"\b(bank|iban|credit[ -]?card|salary|income|tax|finance|routing number|account number|mortgage|balance|financial|loan)\b",
+            re.I,
+        ),
+    ),
+    (
+        MemorySensitivity.IDENTITY,
+        re.compile(
+            r"\b(passport|social[ -]?security|ssn|national id(?:entification)?|identity number|driver(?:'s)? license|date of birth)\b|\b\d{3}-\d{2}-\d{4}\b",
+            re.I,
+        ),
+    ),
+    (
+        MemorySensitivity.INTIMATE,
+        re.compile(
+            r"\b(sexual|intimate|pregnan(?:t|cy)|relationship abuse|sexual orientation|abortion)\b",
+            re.I,
+        ),
+    ),
+    (
+        MemorySensitivity.PRECISE_LOCATION,
+        re.compile(
+            r"\b(latitude|longitude|gps|home address|street address|precise location|coordinates|geolocation)\b|\b\d{1,5}\s+[A-Za-z0-9.'-]+\s+(?:street|st|road|rd|avenue|ave|lane|ln|boulevard|blvd)\b",
+            re.I,
+        ),
+    ),
 )
 
 # Provider credentials are rejected before inference.  Unknown token-like
 # values fail closed as UNKNOWN_RISK rather than relying on provider labels.
-_UNKNOWN_TOKEN_PATTERN = re.compile(r"\b(?=[A-Za-z0-9_-]{20,}\b)(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b")
+_UNKNOWN_TOKEN_PATTERN = re.compile(
+    r"\b(?=[A-Za-z0-9_-]{20,}\b)(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b"
+)
 
 
 def classify_sensitivity(content: str | None) -> MemorySensitivity:
@@ -711,7 +858,10 @@ def classify_sensitivity(content: str | None) -> MemorySensitivity:
 
 
 def validate_provenance(provenance: MemoryProvenance) -> None:
-    if provenance.evidence is not None and (contains_secret(provenance.evidence) or classify_sensitivity(provenance.evidence) is MemorySensitivity.CREDENTIAL):
+    if provenance.evidence is not None and (
+        contains_secret(provenance.evidence)
+        or classify_sensitivity(provenance.evidence) is MemorySensitivity.CREDENTIAL
+    ):
         raise MemoryValidationError("credential-like provenance evidence is not accepted")
 
 
@@ -741,23 +891,76 @@ def validate_memory_text(value: str, field: str = "memory text") -> None:
 
 
 class MemoryRepository(Protocol):
-    async def list_memories(self, issuer: str, subject: str, filters: MemoryFilters) -> list[MemoryRecord]: ...
-    async def get_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
+    async def list_memories(
+        self, issuer: str, subject: str, filters: MemoryFilters
+    ) -> list[MemoryRecord]: ...
+    async def get_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
     async def create_memory(self, issuer: str, subject: str, **kwargs: object) -> MemoryRecord: ...
-    async def reinforce_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
-    async def revise_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
-    async def set_status(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
-    async def set_pinned(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
-    async def purge(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryAuditRecord: ...
-    async def register_embedding_generation(self, issuer: str, subject: str, **kwargs: object) -> MemoryEmbeddingGeneration: ...
-    async def activate_embedding_generation(self, issuer: str, subject: str, generation_id: UUID) -> MemoryEmbeddingGeneration: ...
-    async def attach_embedding(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord: ...
-    async def save_model_configuration(self, issuer: str, subject: str, configuration: MemoryModelConfiguration, **kwargs: object) -> MemoryModelConfiguration: ...
-    async def get_model_configuration(self, issuer: str, subject: str) -> MemoryModelConfiguration: ...
-    async def get_processing_job(self, job_id: UUID, issuer: str, subject: str) -> MemoryProcessingJob: ...
-    async def settle_processing_job(self, job_id: UUID, lease_id: UUID, *, issuer: str, subject: str, retryable: bool = False, error_class: str | None = None) -> MemoryProcessingJob: ...
-    async def settle_embedding_job(self, job_id: UUID, *, issuer: str, subject: str, lease_id: UUID, retryable: bool = False, failed: bool = False, error_class: str | None = None) -> MemoryEmbeddingJob: ...
-    async def claim_embedding_job_for_revision(self, issuer: str, subject: str, *, revision_id: UUID, generation_id: UUID, lease_seconds: float = 60.0) -> MemoryEmbeddingJob | None: ...
+    async def reinforce_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
+    async def revise_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
+    async def set_status(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
+    async def set_pinned(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
+    async def purge(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryAuditRecord: ...
+    async def register_embedding_generation(
+        self, issuer: str, subject: str, **kwargs: object
+    ) -> MemoryEmbeddingGeneration: ...
+    async def activate_embedding_generation(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration: ...
+    async def attach_embedding(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord: ...
+    async def save_model_configuration(
+        self, issuer: str, subject: str, configuration: MemoryModelConfiguration, **kwargs: object
+    ) -> MemoryModelConfiguration: ...
+    async def get_model_configuration(
+        self, issuer: str, subject: str
+    ) -> MemoryModelConfiguration: ...
+    async def get_processing_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryProcessingJob: ...
+    async def settle_processing_job(
+        self,
+        job_id: UUID,
+        lease_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        retryable: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryProcessingJob: ...
+    async def settle_embedding_job(
+        self,
+        job_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        lease_id: UUID,
+        retryable: bool = False,
+        failed: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryEmbeddingJob: ...
+    async def claim_embedding_job_for_revision(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        revision_id: UUID,
+        generation_id: UUID,
+        lease_seconds: float = 60.0,
+    ) -> MemoryEmbeddingJob | None: ...
 
 
 def _fingerprint(operation: str, values: object) -> str:
@@ -770,9 +973,7 @@ def _command_values(values: dict[str, object]) -> dict[str, object]:
     """Return stable command input, excluding generated provenance metadata."""
 
     return {
-        key: value
-        for key, value in values.items()
-        if key not in {"idempotency_key", "provenance"}
+        key: value for key, value in values.items() if key not in {"idempotency_key", "provenance"}
     }
 
 
@@ -791,10 +992,7 @@ def _scope_authorized(
     return (
         scope_type is MemoryScopeType.AGENT
         and agent_profile_id == record.scope.agent_profile_id
-        and (
-            not authorized_agent_ids
-            or record.scope.agent_profile_id in authorized_agent_ids
-        )
+        and (not authorized_agent_ids or record.scope.agent_profile_id in authorized_agent_ids)
     )
 
 
@@ -819,6 +1017,23 @@ class _MemoryStoreBase:
         value = self._clock()
         return value if value.tzinfo else value.replace(tzinfo=UTC)
 
+    async def get_active_embedding_generation(
+        self, issuer: str, subject: str
+    ) -> MemoryEmbeddingGeneration | None:
+        """Return the generation atomically selected for this owner."""
+        configuration = self.model_configurations.get((issuer, subject))
+        if configuration is None or configuration.embedding_generation is None:
+            return None
+        generation = self.embedding_generations.get(configuration.embedding_generation)
+        if (
+            generation is None
+            or generation.status != "active"
+            or generation.issuer != issuer
+            or generation.subject != subject
+        ):
+            return None
+        return generation
+
     def _find(
         self,
         issuer: str,
@@ -830,8 +1045,10 @@ class _MemoryStoreBase:
         authorized_agent_ids: frozenset[UUID] = frozenset(),
     ) -> MemoryRecord:
         record = self.memories.get(memory_id)
-        if record is None or not _owner(record, issuer, subject) or not _scope_authorized(
-            record, scope_type, agent_profile_id, authorized_agent_ids
+        if (
+            record is None
+            or not _owner(record, issuer, subject)
+            or not _scope_authorized(record, scope_type, agent_profile_id, authorized_agent_ids)
         ):
             raise MemoryNotFound("memory not found")
         return record
@@ -857,7 +1074,10 @@ class MemoryProcessingService:
         embedder: Any,
         *,
         clock: Callable[[], datetime] | None = None,
-        evidence_loader: Callable[[MemoryProcessingJob], Awaitable[MemoryTurnEvidence | tuple[str, str]]] | None = None,
+        evidence_loader: Callable[
+            [MemoryProcessingJob], Awaitable[MemoryTurnEvidence | tuple[str, str]]
+        ]
+        | None = None,
         job_loader: Callable[[UUID], Awaitable[MemoryProcessingJob]] | None = None,
         telemetry: MemoryTelemetry | None = None,
         maintenance_telemetry: MemoryTelemetry | None = None,
@@ -916,12 +1136,21 @@ class MemoryProcessingService:
             # processing state or provider retry behavior.
             return
 
-    def _emit_maintenance_transition(self, started: float, *, trace_id: str, memory_id: UUID | None, destination_status: MemoryLifecycleStatus | None = None) -> None:
+    def _emit_maintenance_transition(
+        self,
+        started: float,
+        *,
+        trace_id: str,
+        memory_id: UUID | None,
+        destination_status: MemoryLifecycleStatus | None = None,
+    ) -> None:
         """Route one lifecycle transition to the maintenance telemetry sink."""
 
         operation = (
-            "memory.decay" if destination_status is MemoryLifecycleStatus.DORMANT
-            else "memory.archive" if destination_status is MemoryLifecycleStatus.ARCHIVED
+            "memory.decay"
+            if destination_status is MemoryLifecycleStatus.DORMANT
+            else "memory.archive"
+            if destination_status is MemoryLifecycleStatus.ARCHIVED
             else "memory.maintenance"
         )
         if self._maintenance_telemetry is None:
@@ -947,15 +1176,22 @@ class MemoryProcessingService:
                 raise
             return await embed(model_id, content)
 
-    async def _selected_generation(self, issuer: str, subject: str, configuration: MemoryModelConfiguration) -> MemoryEmbeddingGeneration | None:
+    async def _selected_generation(
+        self, issuer: str, subject: str, configuration: MemoryModelConfiguration
+    ) -> MemoryEmbeddingGeneration | None:
         generation_id = configuration.embedding_generation
         if not isinstance(generation_id, UUID):
             return None
-        loader = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_embedding_generation", None))
+        loader = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "get_embedding_generation", None),
+        )
         if not callable(loader):
             return None
         try:
-            generation = cast(MemoryEmbeddingGeneration, await loader(issuer, subject, generation_id))
+            generation = cast(
+                MemoryEmbeddingGeneration, await loader(issuer, subject, generation_id)
+            )
         except MemoryNotFound:
             return None
         return generation if generation.status == "active" else None
@@ -963,19 +1199,33 @@ class MemoryProcessingService:
     def _job_provenance(self, job: MemoryProcessingJob) -> tuple[MemoryProvenance, ...]:
         return tuple(
             MemoryProvenance(
-                uuid5(MEMORY_ID_NAMESPACE, f"provenance:{job.id}:{message_id}:{job.evidence_digest or ''}"),
-                "conversation_message", source_id=message_id,
-                conversation_id=job.conversation_id, run_id=job.run_id,
-                message_id=message_id, observed_at=self._now(),
+                uuid5(
+                    MEMORY_ID_NAMESPACE,
+                    f"provenance:{job.id}:{message_id}:{job.evidence_digest or ''}",
+                ),
+                "conversation_message",
+                source_id=message_id,
+                conversation_id=job.conversation_id,
+                run_id=job.run_id,
+                message_id=message_id,
+                observed_at=self._now(),
                 evidence_digest=job.evidence_digest,
             )
             for message_id in sorted(job.user_message_ids, key=str)
         )
 
-    async def configure_models(self, configuration: MemoryModelConfiguration) -> MemoryModelConfiguration:
-        save = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "save_model_configuration", None))
+    async def configure_models(
+        self, configuration: MemoryModelConfiguration
+    ) -> MemoryModelConfiguration:
+        save = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "save_model_configuration", None),
+        )
         if callable(save):
-            saved = cast(MemoryModelConfiguration, await save(configuration.issuer, configuration.subject, configuration))
+            saved = cast(
+                MemoryModelConfiguration,
+                await save(configuration.issuer, configuration.subject, configuration),
+            )
             configuration = saved
         self.configurations[(configuration.issuer, configuration.subject)] = configuration
         return configuration
@@ -984,7 +1234,10 @@ class MemoryProcessingService:
         try:
             return self.configurations[(issuer, subject)]
         except KeyError as exc:
-            load = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_model_configuration", None))
+            load = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "get_model_configuration", None),
+            )
             if callable(load):
                 configuration = cast(MemoryModelConfiguration, await load(issuer, subject))
                 self.configurations[(issuer, subject)] = configuration
@@ -1005,6 +1258,8 @@ class MemoryProcessingService:
         assistant_message_ids: tuple[UUID, ...] = (),
         evidence_digest: str | None = None,
         agent_profile_id: UUID | None = None,
+        allow_shared_user_promotion: bool = False,
+        memory_policy_revision_id: UUID | None = None,
     ) -> MemoryProcessingJob:
         key = (issuer, subject, run_id)
         prior = self.jobs.get(key)
@@ -1012,17 +1267,26 @@ class MemoryProcessingService:
             return prior
         job = MemoryProcessingJob(
             uuid5(MEMORY_ID_NAMESPACE, f"job:{issuer}:{subject}:{run_id}"),
-            issuer, subject, run_id, conversation_id,
-            correlation_id=correlation_id, causation_id=causation_id,
+            issuer,
+            subject,
+            run_id,
+            conversation_id,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
             available_at=self._now(),
             agent_revision_id=agent_revision_id,
             user_message_ids=user_message_ids,
             assistant_message_ids=assistant_message_ids,
             evidence_digest=evidence_digest,
             agent_profile_id=agent_profile_id,
+            allow_shared_user_promotion=allow_shared_user_promotion,
+            memory_policy_revision_id=memory_policy_revision_id,
         )
         self.jobs[key] = job
-        persist = cast(Callable[[MemoryProcessingJob], Awaitable[object]] | None, getattr(self.repository, "enqueue_processing_job", None))
+        persist = cast(
+            Callable[[MemoryProcessingJob], Awaitable[object]] | None,
+            getattr(self.repository, "enqueue_processing_job", None),
+        )
         if callable(persist):
             job = cast(MemoryProcessingJob, await persist(job))
             self.jobs[key] = job
@@ -1046,10 +1310,23 @@ class MemoryProcessingService:
                     raise MemoryValidationError("agent scope cannot be resolved")
                 resolved_scope = MemoryScope(MemoryScopeType.AGENT, resolved_agent)
             return MemoryCandidate(
-                candidate_id, job.id, job.issuer, job.subject, raw.action, raw.content,
-                raw.kind, resolved_scope, raw.confidence, raw.importance, raw.half_life_days,
-                raw.valid_to, raw.sensitivity, raw.grounded_message_ids, raw.related_memory_id,
-                raw.state, raw.decision_reason,
+                candidate_id,
+                job.id,
+                job.issuer,
+                job.subject,
+                raw.action,
+                raw.content,
+                raw.kind,
+                resolved_scope,
+                raw.confidence,
+                raw.importance,
+                raw.half_life_days,
+                raw.valid_to,
+                raw.sensitivity,
+                raw.grounded_message_ids,
+                raw.related_memory_id,
+                raw.state,
+                raw.decision_reason,
             )
         payload_method = getattr(raw, "as_payload", None)
         data: Mapping[str, object] | None
@@ -1062,8 +1339,17 @@ class MemoryProcessingService:
         if not isinstance(data, Mapping):
             raise MemoryValidationError("structured memory action is malformed")
         allowed = {
-            "action", "content", "kind", "scope_type", "agent_profile_id", "confidence",
-            "importance", "half_life_days", "valid_to", "sensitivity", "grounded_message_ids",
+            "action",
+            "content",
+            "kind",
+            "scope_type",
+            "agent_profile_id",
+            "confidence",
+            "importance",
+            "half_life_days",
+            "valid_to",
+            "sensitivity",
+            "grounded_message_ids",
             "grounded_evidence_handles",
             "related_memory_id",
         }
@@ -1096,17 +1382,28 @@ class MemoryProcessingService:
                 raise MemoryValidationError("grounded message identifiers are malformed")
             if raw_grounded:
                 grounded = ()
-            related = UUID(str(data["related_memory_id"])) if data.get("related_memory_id") else None
+            related = (
+                UUID(str(data["related_memory_id"])) if data.get("related_memory_id") else None
+            )
             valid_to = data.get("valid_to")
             if isinstance(valid_to, str):
                 valid_to = datetime.fromisoformat(valid_to)
             return MemoryCandidate(
-                candidate_id, job.id, job.issuer, job.subject, action,
+                candidate_id,
+                job.id,
+                job.issuer,
+                job.subject,
+                action,
                 str(data["content"]) if data.get("content") is not None else None,
-                kind, scope, float(data.get("confidence", 0.0)),
+                kind,
+                scope,
+                float(data.get("confidence", 0.0)),
                 float(data["importance"]) if data.get("importance") is not None else None,
                 float(data["half_life_days"]) if data.get("half_life_days") is not None else None,
-                valid_to, MemorySensitivity(str(data.get("sensitivity", "ordinary"))), grounded, related,
+                valid_to,
+                MemorySensitivity(str(data.get("sensitivity", "ordinary"))),
+                grounded,
+                related,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise MemoryValidationError("structured memory action is malformed") from exc
@@ -1120,6 +1417,7 @@ class MemoryProcessingService:
         user_message_ids: frozenset[UUID],
         run_agent_profile_id: UUID | None = None,
         provenance: Iterable[MemoryProvenance] = (),
+        allow_shared_user_promotion: bool = False,
     ) -> MemoryCandidate:
         trace_id = (job.correlation_id or job.id).hex
         process_started = monotonic()
@@ -1145,29 +1443,52 @@ class MemoryProcessingService:
             return prior
         # Secrets are rejected from the turn before constructing an inference
         # request.  Persist only the deterministic, content-free outcome.
-        if (
-            classify_sensitivity(user_content) is MemorySensitivity.CREDENTIAL
-            or contains_secret(assistant_content)
+        if classify_sensitivity(user_content) is MemorySensitivity.CREDENTIAL or contains_secret(
+            assistant_content
         ):
             candidate = MemoryCandidate(
-                uuid5(MEMORY_ID_NAMESPACE, f"candidate:{job.id}"), job.id,
-                job.issuer, job.subject, MemoryAction.IGNORE, None, None, None,
-                0.0, state=CandidateState.REJECTED,
+                uuid5(MEMORY_ID_NAMESPACE, f"candidate:{job.id}"),
+                job.id,
+                job.issuer,
+                job.subject,
+                MemoryAction.IGNORE,
+                None,
+                None,
+                None,
+                0.0,
+                state=CandidateState.REJECTED,
                 decision_reason="credential",
                 sensitivity=MemorySensitivity.CREDENTIAL,
             )
             self.candidates[candidate.id] = candidate
-            persist_candidate = cast(Callable[[MemoryCandidate], Awaitable[object]] | None, getattr(self.repository, "persist_candidate", None))
+            persist_candidate = cast(
+                Callable[[MemoryCandidate], Awaitable[object]] | None,
+                getattr(self.repository, "persist_candidate", None),
+            )
             if callable(persist_candidate):
                 await persist_candidate(candidate)
-            record_outcome = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "record_action_outcome", None))
+            record_outcome = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "record_action_outcome", None),
+            )
             if callable(record_outcome):
                 await record_outcome(
-                    candidate_id=candidate.id, job_id=job.id, issuer=job.issuer,
-                    subject=job.subject, action=MemoryAction.IGNORE.value,
-                    outcome="ignored", error_class="credential",
+                    candidate_id=candidate.id,
+                    job_id=job.id,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    action=MemoryAction.IGNORE.value,
+                    outcome="ignored",
+                    error_class="credential",
                 )
-            self._emit("memory.candidate", process_started, trace_id=trace_id, outcome="rejected", error_class="credential", attempt_count=job.attempt_count)
+            self._emit(
+                "memory.candidate",
+                process_started,
+                trace_id=trace_id,
+                outcome="rejected",
+                error_class="credential",
+                attempt_count=job.attempt_count,
+            )
             return candidate
         # Evidence handles are intentionally invocation-local capabilities.
         # They contain no durable identifiers and cannot be replayed by a
@@ -1175,18 +1496,30 @@ class MemoryProcessingService:
         ordered_message_ids = sorted(user_message_ids, key=str)
         segment_count = max(1, math.ceil(len(user_content) / 8192))
         invocation_nonce = secrets.token_urlsafe(18)
-        evidence_handles = {
-            secrets.token_urlsafe(18): ordered_message_ids[min(index, len(ordered_message_ids) - 1)]
-            for index in range(segment_count)
-        } if ordered_message_ids else {}
+        evidence_handles = (
+            {
+                secrets.token_urlsafe(18): ordered_message_ids[
+                    min(index, len(ordered_message_ids) - 1)
+                ]
+                for index in range(segment_count)
+            }
+            if ordered_message_ids
+            else {}
+        )
         request_segments: list[dict[str, str]] = []
         handle_values = tuple(evidence_handles)
         for index in range(segment_count):
-            handle = handle_values[index] if index < len(handle_values) else f"opaque:{invocation_nonce}:{index}"
-            request_segments.append({
-                "handle": handle,
-                "text": user_content[index * 8192 : (index + 1) * 8192],
-            })
+            handle = (
+                handle_values[index]
+                if index < len(handle_values)
+                else f"opaque:{invocation_nonce}:{index}"
+            )
+            request_segments.append(
+                {
+                    "handle": handle,
+                    "text": user_content[index * 8192 : (index + 1) * 8192],
+                }
+            )
         request = StructuredInferenceRequest(
             model_id=config.extraction_model_id,
             schema=MEMORY_ACTION_SCHEMA,
@@ -1198,7 +1531,8 @@ class MemoryProcessingService:
                 trace_id=trace_id,
                 correlation_id=str(job.correlation_id) if job.correlation_id else None,
                 causation_id=str(job.causation_id) if job.causation_id else None,
-                job_id=str(job.id), run_id=str(job.run_id),
+                job_id=str(job.id),
+                run_id=str(job.run_id),
                 conversation_id=str(job.conversation_id),
             ),
         )
@@ -1211,7 +1545,13 @@ class MemoryProcessingService:
             if not callable(infer):
                 raise MemoryValidationError("structured inference provider is unavailable")
             raw = await infer(request)
-            self._emit("memory.extraction", extraction_started, trace_id=trace_id, outcome="ok", attempt_count=job.attempt_count)
+            self._emit(
+                "memory.extraction",
+                extraction_started,
+                trace_id=trace_id,
+                outcome="ok",
+                attempt_count=job.attempt_count,
+            )
             candidate = self._action_from_provider(
                 raw,
                 job,
@@ -1225,89 +1565,325 @@ class MemoryProcessingService:
                 raise MemoryValidationError("structured action owner mismatch")
             if candidate.job_id != job.id:
                 candidate = MemoryCandidate(
-                    candidate.id, job.id, job.issuer, job.subject, candidate.action,
-                    candidate.content, candidate.kind, candidate.scope,
-                    candidate.confidence, candidate.importance, candidate.half_life_days,
-                    candidate.valid_to, candidate.sensitivity, candidate.grounded_message_ids,
-                    candidate.related_memory_id, candidate.state, candidate.decision_reason,
+                    candidate.id,
+                    job.id,
+                    job.issuer,
+                    job.subject,
+                    candidate.action,
+                    candidate.content,
+                    candidate.kind,
+                    candidate.scope,
+                    candidate.confidence,
+                    candidate.importance,
+                    candidate.half_life_days,
+                    candidate.valid_to,
+                    candidate.sensitivity,
+                    candidate.grounded_message_ids,
+                    candidate.related_memory_id,
+                    candidate.state,
+                    candidate.decision_reason,
                 )
         except Exception:
-            self._emit("memory.extraction", extraction_started, trace_id=trace_id, outcome="error", error_class="provider", attempt_count=job.attempt_count)
-            candidate = MemoryCandidate(uuid5(MEMORY_ID_NAMESPACE, f"candidate:{job.id}"), job.id, job.issuer, job.subject, MemoryAction.REVIEW, None, None, None, 0.0, state=CandidateState.RETRYABLE, decision_reason="provider_error")
+            self._emit(
+                "memory.extraction",
+                extraction_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="provider",
+                attempt_count=job.attempt_count,
+            )
+            candidate = MemoryCandidate(
+                uuid5(MEMORY_ID_NAMESPACE, f"candidate:{job.id}"),
+                job.id,
+                job.issuer,
+                job.subject,
+                MemoryAction.REVIEW,
+                None,
+                None,
+                None,
+                0.0,
+                state=CandidateState.RETRYABLE,
+                decision_reason="provider_error",
+            )
         if candidate.state is CandidateState.RETRYABLE:
             self.candidates[candidate.id] = candidate
-            persist_candidate = cast(Callable[[MemoryCandidate], Awaitable[object]] | None, getattr(self.repository, "persist_candidate", None))
+            persist_candidate = cast(
+                Callable[[MemoryCandidate], Awaitable[object]] | None,
+                getattr(self.repository, "persist_candidate", None),
+            )
             if callable(persist_candidate):
                 await persist_candidate(candidate)
-            self._emit("memory.error", process_started, trace_id=trace_id, outcome="error", error_class="provider", attempt_count=job.attempt_count)
-            self._emit("memory.retry", process_started, trace_id=trace_id, outcome="retryable", error_class="provider", attempt_count=job.attempt_count)
-            self._emit("memory.job", process_started, trace_id=trace_id, outcome="retryable", error_class="provider", attempt_count=job.attempt_count, backlog=len(self.jobs))
+            self._emit(
+                "memory.error",
+                process_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="provider",
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.retry",
+                process_started,
+                trace_id=trace_id,
+                outcome="retryable",
+                error_class="provider",
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.job",
+                process_started,
+                trace_id=trace_id,
+                outcome="retryable",
+                error_class="provider",
+                attempt_count=job.attempt_count,
+                backlog=len(self.jobs),
+            )
             self.outcomes.append({"job_id": job.id, "action": "review", "outcome": "retryable"})
             return candidate
         conflict = False
         if candidate.content:
-            existing = await self.repository.list_memories(job.issuer, job.subject, MemoryFilters(scope_type=MemoryScopeType.USER, include_historical=True, limit=200))
-            conflict = any(item.content == candidate.content and item.scope != (candidate.scope or MemoryScope(MemoryScopeType.USER)) for item in existing)
+            existing = await self.repository.list_memories(
+                job.issuer,
+                job.subject,
+                MemoryFilters(scope_type=MemoryScopeType.USER, include_historical=True, limit=200),
+            )
+            conflict = any(
+                item.content == candidate.content
+                and item.scope != (candidate.scope or MemoryScope(MemoryScopeType.USER))
+                for item in existing
+            )
         policy_started = monotonic()
-        decision = decide_candidate(candidate, user_message_ids=user_message_ids, run_agent_profile_id=run_agent_profile_id or job.agent_profile_id, existing_conflict=conflict, user_content=user_content)
-        self._emit("memory.policy", policy_started, trace_id=trace_id, outcome=decision.state.value, attempt_count=job.attempt_count)
+        decision = decide_candidate(
+            candidate,
+            user_message_ids=user_message_ids,
+            run_agent_profile_id=run_agent_profile_id or job.agent_profile_id,
+            existing_conflict=conflict,
+            user_content=user_content,
+            allow_shared_user_promotion=allow_shared_user_promotion,
+        )
+        self._emit(
+            "memory.policy",
+            policy_started,
+            trace_id=trace_id,
+            outcome=decision.state.value,
+            attempt_count=job.attempt_count,
+        )
         candidate = replace(candidate, state=decision.state, decision_reason=decision.reason)
         candidate = _content_free_candidate(candidate)
         self.candidates[candidate.id] = candidate
-        persist_candidate = cast(Callable[[MemoryCandidate], Awaitable[object]] | None, getattr(self.repository, "persist_candidate", None))
+        persist_candidate = cast(
+            Callable[[MemoryCandidate], Awaitable[object]] | None,
+            getattr(self.repository, "persist_candidate", None),
+        )
         if callable(persist_candidate):
             await persist_candidate(candidate)
         if decision.state is not CandidateState.ACCEPTED:
-            self._emit("memory.candidate", process_started, trace_id=trace_id, outcome=decision.state.value, attempt_count=job.attempt_count)
-            self._emit("memory.job", process_started, trace_id=trace_id, outcome=decision.state.value, attempt_count=job.attempt_count, backlog=len(self.jobs))
-            self.outcomes.append({"job_id": job.id, "action": candidate.action.value, "outcome": "review" if decision.state is CandidateState.REVIEW else "ignored"})
-            record_outcome = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "record_action_outcome", None))
+            self._emit(
+                "memory.candidate",
+                process_started,
+                trace_id=trace_id,
+                outcome=decision.state.value,
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.job",
+                process_started,
+                trace_id=trace_id,
+                outcome=decision.state.value,
+                attempt_count=job.attempt_count,
+                backlog=len(self.jobs),
+            )
+            self.outcomes.append(
+                {
+                    "job_id": job.id,
+                    "action": candidate.action.value,
+                    "outcome": "review" if decision.state is CandidateState.REVIEW else "ignored",
+                }
+            )
+            record_outcome = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "record_action_outcome", None),
+            )
             if callable(record_outcome):
-                await record_outcome(candidate_id=candidate.id, job_id=job.id, issuer=job.issuer, subject=job.subject, action=candidate.action.value, outcome="review" if decision.state is CandidateState.REVIEW else "ignored")
+                await record_outcome(
+                    candidate_id=candidate.id,
+                    job_id=job.id,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    action=candidate.action.value,
+                    outcome="review" if decision.state is CandidateState.REVIEW else "ignored",
+                )
             return candidate
         scope = candidate.scope or MemoryScope(MemoryScopeType.USER)
         prov = tuple(provenance)
         action_started = monotonic()
-        matches = await self.repository.list_memories(job.issuer, job.subject, MemoryFilters(scope_type=scope.type, agent_profile_id=scope.agent_profile_id, include_historical=True, limit=100000))
-        duplicate = next((item for item in matches if candidate.content and item.content == candidate.content), None)
-        if duplicate is not None and candidate.action in {MemoryAction.CREATE, MemoryAction.REINFORCE}:
-            reinforce = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "reinforce_memory", None))
+        matches = await self.repository.list_memories(
+            job.issuer,
+            job.subject,
+            MemoryFilters(
+                scope_type=scope.type,
+                agent_profile_id=scope.agent_profile_id,
+                include_historical=True,
+                limit=100000,
+            ),
+        )
+        duplicate = next(
+            (item for item in matches if candidate.content and item.content == candidate.content),
+            None,
+        )
+        if duplicate is not None and candidate.action in {
+            MemoryAction.CREATE,
+            MemoryAction.REINFORCE,
+        }:
+            reinforce = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "reinforce_memory", None),
+            )
             if callable(reinforce):
-                record = cast(MemoryRecord, await reinforce(job.issuer, job.subject, duplicate.id, provenance=prov, idempotency_key=f"memory-action:{candidate.id}", scope_type=scope.type, agent_profile_id=scope.agent_profile_id, authorized_agent_ids=frozenset({scope.agent_profile_id}) if scope.agent_profile_id else frozenset()))
+                record = cast(
+                    MemoryRecord,
+                    await reinforce(
+                        job.issuer,
+                        job.subject,
+                        duplicate.id,
+                        provenance=prov,
+                        idempotency_key=f"memory-action:{candidate.id}",
+                        scope_type=scope.type,
+                        agent_profile_id=scope.agent_profile_id,
+                        authorized_agent_ids=frozenset({scope.agent_profile_id})
+                        if scope.agent_profile_id
+                        else frozenset(),
+                    ),
+                )
             else:
                 record = duplicate
                 record.reinforced_at = self._now()
                 record.status = MemoryLifecycleStatus.ACTIVE
                 record.provenance.extend(prov)
         elif candidate.action is MemoryAction.CREATE:
-            record = await self.repository.create_memory(job.issuer, job.subject, kind=candidate.kind or MemoryKind.SEMANTIC, scope=scope, content=candidate.content, confidence=candidate.confidence, importance=candidate.importance or 0.5, half_life_days=candidate.half_life_days or 30.0, valid_to=candidate.valid_to, provenance=prov, idempotency_key=f"memory-job:{job.id}", agent_profile_id=scope.agent_profile_id)
+            record = await self.repository.create_memory(
+                job.issuer,
+                job.subject,
+                kind=candidate.kind or MemoryKind.SEMANTIC,
+                scope=scope,
+                content=candidate.content,
+                confidence=candidate.confidence,
+                importance=candidate.importance or 0.5,
+                half_life_days=candidate.half_life_days or 30.0,
+                valid_to=candidate.valid_to,
+                provenance=prov,
+                idempotency_key=f"memory-job:{job.id}",
+                agent_profile_id=scope.agent_profile_id,
+            )
         else:
-            record = next((item for item in matches if candidate.content and item.content == candidate.content), None)
+            record = next(
+                (
+                    item
+                    for item in matches
+                    if candidate.content and item.content == candidate.content
+                ),
+                None,
+            )
             if record is None:
-                if candidate.action in {MemoryAction.SUPERSEDE, MemoryAction.DISPUTE} and candidate.related_memory_id:
-                    related = await self.repository.get_memory(job.issuer, job.subject, candidate.related_memory_id, scope_type=scope.type, agent_profile_id=scope.agent_profile_id)
-                    transition = MemoryLifecycleStatus.SUPERSEDED if candidate.action is MemoryAction.SUPERSEDE else MemoryLifecycleStatus.DISPUTED
-                    record = await self.repository.set_status(job.issuer, job.subject, candidate.related_memory_id, status=transition, expected_version=related.version, scope_type=scope.type, agent_profile_id=scope.agent_profile_id)
+                if (
+                    candidate.action in {MemoryAction.SUPERSEDE, MemoryAction.DISPUTE}
+                    and candidate.related_memory_id
+                ):
+                    related = await self.repository.get_memory(
+                        job.issuer,
+                        job.subject,
+                        candidate.related_memory_id,
+                        scope_type=scope.type,
+                        agent_profile_id=scope.agent_profile_id,
+                    )
+                    transition = (
+                        MemoryLifecycleStatus.SUPERSEDED
+                        if candidate.action is MemoryAction.SUPERSEDE
+                        else MemoryLifecycleStatus.DISPUTED
+                    )
+                    record = await self.repository.set_status(
+                        job.issuer,
+                        job.subject,
+                        candidate.related_memory_id,
+                        status=transition,
+                        expected_version=related.version,
+                        scope_type=scope.type,
+                        agent_profile_id=scope.agent_profile_id,
+                    )
                 else:
-                    record = await self.repository.create_memory(job.issuer, job.subject, kind=candidate.kind or MemoryKind.SEMANTIC, scope=scope, content=candidate.content, confidence=candidate.confidence, importance=candidate.importance or 0.5, half_life_days=candidate.half_life_days or 30.0, provenance=prov, idempotency_key=f"memory-job:{job.id}", agent_profile_id=scope.agent_profile_id)
+                    record = await self.repository.create_memory(
+                        job.issuer,
+                        job.subject,
+                        kind=candidate.kind or MemoryKind.SEMANTIC,
+                        scope=scope,
+                        content=candidate.content,
+                        confidence=candidate.confidence,
+                        importance=candidate.importance or 0.5,
+                        half_life_days=candidate.half_life_days or 30.0,
+                        provenance=prov,
+                        idempotency_key=f"memory-job:{job.id}",
+                        agent_profile_id=scope.agent_profile_id,
+                    )
             else:
                 record.reinforced_at = self._now()
                 record.status = MemoryLifecycleStatus.ACTIVE
                 record.provenance.extend(prov)
         candidate = replace(candidate, memory_id=record.id)
-        link_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "link_processing_job_memory", None))
+        link_job = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "link_processing_job_memory", None),
+        )
         if callable(link_job):
             await link_job(job.id, job.issuer, job.subject, record.id)
         self.candidates[candidate.id] = candidate
-        persist_candidate = cast(Callable[[MemoryCandidate], Awaitable[object]] | None, getattr(self.repository, "persist_candidate", None))
+        persist_candidate = cast(
+            Callable[[MemoryCandidate], Awaitable[object]] | None,
+            getattr(self.repository, "persist_candidate", None),
+        )
         if callable(persist_candidate):
             await persist_candidate(candidate)
-        self.outcomes.append({"job_id": job.id, "action": candidate.action.value, "outcome": "created", "memory_id": record.id, "revision_id": record.current_revision_id})
-        record_outcome = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "record_action_outcome", None))
+        self.outcomes.append(
+            {
+                "job_id": job.id,
+                "action": candidate.action.value,
+                "outcome": "created",
+                "memory_id": record.id,
+                "revision_id": record.current_revision_id,
+            }
+        )
+        record_outcome = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "record_action_outcome", None),
+        )
         if callable(record_outcome):
-            await record_outcome(candidate_id=candidate.id, job_id=job.id, issuer=job.issuer, subject=job.subject, action=candidate.action.value, outcome="created", memory_id=record.id, revision_id=record.current_revision_id)
-        self._emit("memory.candidate", process_started, trace_id=trace_id, outcome="accepted", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count)
-        self._emit("memory.action", action_started, trace_id=trace_id, outcome="accepted", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count)
+            await record_outcome(
+                candidate_id=candidate.id,
+                job_id=job.id,
+                issuer=job.issuer,
+                subject=job.subject,
+                action=candidate.action.value,
+                outcome="created",
+                memory_id=record.id,
+                revision_id=record.current_revision_id,
+            )
+        self._emit(
+            "memory.candidate",
+            process_started,
+            trace_id=trace_id,
+            outcome="accepted",
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            attempt_count=job.attempt_count,
+        )
+        self._emit(
+            "memory.action",
+            action_started,
+            trace_id=trace_id,
+            outcome="accepted",
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            attempt_count=job.attempt_count,
+        )
         # Embedding failures remain retryable worker work; the accepted memory
         # is already durable and never turns a completed conversation into an error.
         embedding_job: MemoryEmbeddingJob | None = None
@@ -1316,17 +1892,33 @@ class MemoryProcessingService:
             selected_generation = await self._selected_generation(job.issuer, job.subject, config)
             generation_id = selected_generation.id if selected_generation is not None else None
             if selected_generation is not None:
-                queue_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "queue_embedding_job", None))
+                queue_embedding = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "queue_embedding_job", None),
+                )
                 if callable(queue_embedding):
                     queued_embedding = cast(
                         MemoryEmbeddingJob,
-                        await queue_embedding(job.issuer, job.subject, memory_id=record.id, revision_id=record.current_revision_id, generation_id=generation_id),
+                        await queue_embedding(
+                            job.issuer,
+                            job.subject,
+                            memory_id=record.id,
+                            revision_id=record.current_revision_id,
+                            generation_id=generation_id,
+                        ),
                     )
-                    claim_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "claim_embedding_job_by_id", None))
+                    claim_embedding = cast(
+                        Callable[..., Awaitable[object]] | None,
+                        getattr(self.repository, "claim_embedding_job_by_id", None),
+                    )
                     if callable(claim_embedding):
-                        claimed_embedding = await claim_embedding(queued_embedding.id, job.issuer, job.subject)
+                        claimed_embedding = await claim_embedding(
+                            queued_embedding.id, job.issuer, job.subject
+                        )
                         if claimed_embedding is None:
-                            raise MemoryValidationError("embedding work is already claimed or settled")
+                            raise MemoryValidationError(
+                                "embedding work is already claimed or settled"
+                            )
                         embedding_job = cast(MemoryEmbeddingJob, claimed_embedding)
                     else:
                         raise MemoryValidationError("embedding claim capability is unavailable")
@@ -1340,48 +1932,143 @@ class MemoryProcessingService:
                     or embedding_job.generation_id != generation_id
                 ):
                     raise MemoryValidationError("embedding work does not match accepted revision")
-                embedding = cast(Any, await self._embed(
-                    selected_generation.model_id,
-                    record.content,
-                    ProviderTraceContext(
-                        trace_id=trace_id,
-                        correlation_id=str(job.correlation_id) if job.correlation_id else None,
-                        causation_id=str(job.causation_id) if job.causation_id else None,
-                        job_id=str(job.id), run_id=str(job.run_id),
-                        conversation_id=str(job.conversation_id),
-                        generation_id=str(generation_id),
+                embedding = cast(
+                    Any,
+                    await self._embed(
+                        selected_generation.model_id,
+                        record.content,
+                        ProviderTraceContext(
+                            trace_id=trace_id,
+                            correlation_id=str(job.correlation_id) if job.correlation_id else None,
+                            causation_id=str(job.causation_id) if job.causation_id else None,
+                            job_id=str(job.id),
+                            run_id=str(job.run_id),
+                            conversation_id=str(job.conversation_id),
+                            generation_id=str(generation_id),
+                        ),
                     ),
-                ))
+                )
                 if (
-                    getattr(embedding, "model_id", selected_generation.model_id) != selected_generation.model_id
-                    or getattr(embedding, "dimension", len(embedding.vector)) != selected_generation.dimension
+                    embedding.model_id != selected_generation.model_id
+                    or embedding.model_revision != selected_generation.model_revision
+                    or embedding.model_digest != selected_generation.model_digest
+                    or embedding.dimension != selected_generation.dimension
                 ):
                     raise MemoryValidationError("embedding provider identity or dimension mismatch")
-                self._emit("memory.embedding", embedding_started, trace_id=trace_id, outcome="ok", memory_id=record.id, revision_id=record.current_revision_id, generation_id=generation_id, attempt_count=job.attempt_count, backlog=0)
-                await self.repository.attach_embedding(job.issuer, job.subject, record.id, revision_id=record.current_revision_id, generation_id=UUID(str(generation_id)), vector=embedding.vector, digest=embedding.digest, scope_type=scope.type, agent_profile_id=scope.agent_profile_id)
-                settle_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                self._emit(
+                    "memory.embedding",
+                    embedding_started,
+                    trace_id=trace_id,
+                    outcome="ok",
+                    memory_id=record.id,
+                    revision_id=record.current_revision_id,
+                    generation_id=generation_id,
+                    attempt_count=job.attempt_count,
+                    backlog=0,
+                )
+                await self.repository.attach_embedding(
+                    job.issuer,
+                    job.subject,
+                    record.id,
+                    revision_id=record.current_revision_id,
+                    generation_id=UUID(str(generation_id)),
+                    vector=embedding.vector,
+                    digest=embedding.digest,
+                    model_id=embedding.model_id,
+                    model_revision=embedding.model_revision,
+                    model_digest=embedding.model_digest,
+                    scope_type=scope.type,
+                    agent_profile_id=scope.agent_profile_id,
+                )
+                settle_embedding = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "settle_embedding_job", None),
+                )
                 if callable(settle_embedding):
-                    await settle_embedding(embedding_job.id, issuer=job.issuer, subject=job.subject, lease_id=embedding_job.lease_id)
+                    await settle_embedding(
+                        embedding_job.id,
+                        issuer=job.issuer,
+                        subject=job.subject,
+                        lease_id=embedding_job.lease_id,
+                    )
             else:
                 # The accepted revision is durable, but without a selected
                 # active generation it remains an explicit missing-embedding
                 # backlog item for maintenance/reindex.
                 self._emit(
-                    "memory.embedding", embedding_started, trace_id=trace_id,
-                    outcome="retryable", memory_id=record.id,
-                    revision_id=record.current_revision_id, backlog=1,
+                    "memory.embedding",
+                    embedding_started,
+                    trace_id=trace_id,
+                    outcome="retryable",
+                    memory_id=record.id,
+                    revision_id=record.current_revision_id,
+                    backlog=1,
                 )
         except Exception:
-            self._emit("memory.embedding", embedding_started, trace_id=trace_id, outcome="error", error_class="provider", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count, backlog=1)
-            self._emit("memory.error", process_started, trace_id=trace_id, outcome="error", error_class="provider", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count)
-            self._emit("memory.retry", process_started, trace_id=trace_id, outcome="retryable", error_class="provider", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count)
-            self.outcomes.append({"job_id": job.id, "action": "embedding", "outcome": "retryable", "memory_id": record.id})
+            self._emit(
+                "memory.embedding",
+                embedding_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="provider",
+                memory_id=record.id,
+                revision_id=record.current_revision_id,
+                attempt_count=job.attempt_count,
+                backlog=1,
+            )
+            self._emit(
+                "memory.error",
+                process_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="provider",
+                memory_id=record.id,
+                revision_id=record.current_revision_id,
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.retry",
+                process_started,
+                trace_id=trace_id,
+                outcome="retryable",
+                error_class="provider",
+                memory_id=record.id,
+                revision_id=record.current_revision_id,
+                attempt_count=job.attempt_count,
+            )
+            self.outcomes.append(
+                {
+                    "job_id": job.id,
+                    "action": "embedding",
+                    "outcome": "retryable",
+                    "memory_id": record.id,
+                }
+            )
             if embedding_job is not None:
-                settle_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                settle_embedding = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "settle_embedding_job", None),
+                )
                 if callable(settle_embedding):
                     if embedding_job.lease_id is not None:
-                        await settle_embedding(embedding_job.id, issuer=job.issuer, subject=job.subject, lease_id=embedding_job.lease_id, retryable=True, error_class="provider")
-        self._emit("memory.job", process_started, trace_id=trace_id, outcome="accepted", memory_id=record.id, revision_id=record.current_revision_id, attempt_count=job.attempt_count, backlog=len(self.jobs))
+                        await settle_embedding(
+                            embedding_job.id,
+                            issuer=job.issuer,
+                            subject=job.subject,
+                            lease_id=embedding_job.lease_id,
+                            retryable=True,
+                            error_class="provider",
+                        )
+        self._emit(
+            "memory.job",
+            process_started,
+            trace_id=trace_id,
+            outcome="accepted",
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            attempt_count=job.attempt_count,
+            backlog=len(self.jobs),
+        )
         return candidate
 
     async def _resume_accepted_candidate(
@@ -1394,7 +2081,8 @@ class MemoryProcessingService:
         if candidate.content is None or candidate.scope is None:
             raise MemoryValidationError("accepted candidate is incomplete")
         matches = await self.repository.list_memories(
-            job.issuer, job.subject,
+            job.issuer,
+            job.subject,
             MemoryFilters(
                 scope_type=candidate.scope.type,
                 agent_profile_id=candidate.scope.agent_profile_id,
@@ -1405,40 +2093,62 @@ class MemoryProcessingService:
         record = next((item for item in matches if item.content == candidate.content), None)
         if record is None:
             record = await self.repository.create_memory(
-                job.issuer, job.subject, kind=candidate.kind or MemoryKind.SEMANTIC,
-                scope=candidate.scope, content=candidate.content,
-                confidence=candidate.confidence, importance=candidate.importance or 0.5,
+                job.issuer,
+                job.subject,
+                kind=candidate.kind or MemoryKind.SEMANTIC,
+                scope=candidate.scope,
+                content=candidate.content,
+                confidence=candidate.confidence,
+                importance=candidate.importance or 0.5,
                 half_life_days=candidate.half_life_days or 30.0,
-                valid_to=candidate.valid_to, provenance=self._job_provenance(job),
+                valid_to=candidate.valid_to,
+                provenance=self._job_provenance(job),
                 idempotency_key=f"memory-job:{job.id}",
                 agent_profile_id=candidate.scope.agent_profile_id,
             )
         else:
             record = await self.repository.reinforce_memory(
-                job.issuer, job.subject, record.id,
+                job.issuer,
+                job.subject,
+                record.id,
                 provenance=self._job_provenance(job),
                 idempotency_key=f"memory-action:{candidate.id}",
                 scope_type=candidate.scope.type,
                 agent_profile_id=candidate.scope.agent_profile_id,
             )
         candidate = replace(candidate, memory_id=record.id)
-        link_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "link_processing_job_memory", None))
+        link_job = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "link_processing_job_memory", None),
+        )
         if callable(link_job):
             await link_job(job.id, job.issuer, job.subject, record.id)
-        persist = cast(Callable[[MemoryCandidate], Awaitable[object]] | None, getattr(self.repository, "persist_candidate", None))
+        persist = cast(
+            Callable[[MemoryCandidate], Awaitable[object]] | None,
+            getattr(self.repository, "persist_candidate", None),
+        )
         if callable(persist):
             await persist(candidate)
-        record_outcome = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "record_action_outcome", None))
+        record_outcome = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "record_action_outcome", None),
+        )
         if callable(record_outcome):
             await record_outcome(
-                candidate_id=candidate.id, job_id=job.id, issuer=job.issuer,
-                subject=job.subject, action=candidate.action.value,
-                outcome="created", memory_id=record.id,
+                candidate_id=candidate.id,
+                job_id=job.id,
+                issuer=job.issuer,
+                subject=job.subject,
+                action=candidate.action.value,
+                outcome="created",
+                memory_id=record.id,
                 revision_id=record.current_revision_id,
             )
         return candidate
 
-    async def process_job(self, job_id: UUID, *, lease_id: UUID | None = None) -> MemoryCandidate | None:
+    async def process_job(
+        self, job_id: UUID, *, lease_id: UUID | None = None
+    ) -> MemoryCandidate | None:
         """Process a previously enqueued job when its evidence is available.
 
         Durable deployments hydrate the evidence through the conversation
@@ -1452,18 +2162,28 @@ class MemoryProcessingService:
             if loader is not None:
                 job = await loader(job_id)
             else:
-                raise MemoryValidationError("owner-scoped memory processing lookup requires a job loader")
+                raise MemoryValidationError(
+                    "owner-scoped memory processing lookup requires a job loader"
+                )
             self.jobs[(job.issuer, job.subject, job.run_id)] = job
         elif lease_id is not None:
             # A worker may pass a lease obtained from a fresh claim while the
             # process-local cache still contains an older retryable snapshot.
             # Replace that snapshot before validating the capability.
-            durable_loader = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_processing_job", None))
+            durable_loader = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "get_processing_job", None),
+            )
             if callable(durable_loader):
-                job = cast(MemoryProcessingJob, await durable_loader(job.id, job.issuer, job.subject))
+                job = cast(
+                    MemoryProcessingJob, await durable_loader(job.id, job.issuer, job.subject)
+                )
         job_started = monotonic()
         trace_id = (job.correlation_id or job.id).hex
-        claim = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "claim_processing_job_by_id", None))
+        claim = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "claim_processing_job_by_id", None),
+        )
         if callable(claim):
             # A loaded job is only a snapshot.  Never reuse its lease: every
             # delivery must obtain a fresh capability from the durable owner
@@ -1480,13 +2200,24 @@ class MemoryProcessingService:
             elif job.lease_id != lease_id:
                 raise MemoryValidationError("processing job lease capability is stale")
             self.jobs[(job.issuer, job.subject, job.run_id)] = job
+
         async def settle_evidence_rejection() -> None:
             capability = lease_id or job.lease_id
             if capability is None:
                 return
-            settle = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_processing_job", None))
+            settle = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "settle_processing_job", None),
+            )
             if callable(settle):
-                settled = await settle(job.id, capability, issuer=job.issuer, subject=job.subject, retryable=False, error_class="evidence")
+                settled = await settle(
+                    job.id,
+                    capability,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    retryable=False,
+                    error_class="evidence",
+                )
                 if isinstance(settled, MemoryProcessingJob):
                     self.jobs[(settled.issuer, settled.subject, settled.run_id)] = settled
 
@@ -1494,15 +2225,28 @@ class MemoryProcessingService:
             capability = lease_id or job.lease_id
             if capability is None:
                 return
-            settle = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_processing_job", None))
+            settle = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "settle_processing_job", None),
+            )
             if callable(settle):
-                settled = await settle(job.id, capability, issuer=job.issuer, subject=job.subject, retryable=True, error_class=error_class)
+                settled = await settle(
+                    job.id,
+                    capability,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    retryable=True,
+                    error_class=error_class,
+                )
                 if isinstance(settled, MemoryProcessingJob):
                     self.jobs[(settled.issuer, settled.subject, settled.run_id)] = settled
 
         prior = next((item for item in self.candidates.values() if item.job_id == job.id), None)
         if prior is None:
-            durable_candidate_loader = cast(Callable[[UUID, str, str], Awaitable[object]] | None, getattr(self.repository, "get_candidate_for_job", None))
+            durable_candidate_loader = cast(
+                Callable[[UUID, str, str], Awaitable[object]] | None,
+                getattr(self.repository, "get_candidate_for_job", None),
+            )
             if callable(durable_candidate_loader):
                 prior_value = await durable_candidate_loader(job.id, job.issuer, job.subject)
                 if prior_value is not None:
@@ -1518,25 +2262,66 @@ class MemoryProcessingService:
             if prior.state is CandidateState.ACCEPTED and prior.memory_id is not None:
                 try:
                     config = await self.model_configuration(job.issuer, job.subject)
-                    selected_generation = await self._selected_generation(job.issuer, job.subject, config)
-                    generation_id = selected_generation.id if selected_generation is not None else None
+                    selected_generation = await self._selected_generation(
+                        job.issuer, job.subject, config
+                    )
+                    generation_id = (
+                        selected_generation.id if selected_generation is not None else None
+                    )
                     if selected_generation is not None:
-                        record = await self.repository.get_memory(job.issuer, job.subject, prior.memory_id, scope_type=prior.scope.type if prior.scope else None, agent_profile_id=prior.scope.agent_profile_id if prior.scope else None)
-                        if not any(item.revision_id == record.current_revision_id and item.generation_id == generation_id for item in record.embeddings):
-                            queue_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "queue_embedding_job", None))
-                            queued_embedding = cast(MemoryEmbeddingJob | None, await queue_embedding(job.issuer, job.subject, memory_id=record.id, revision_id=record.current_revision_id, generation_id=generation_id)) if callable(queue_embedding) else None
+                        record = await self.repository.get_memory(
+                            job.issuer,
+                            job.subject,
+                            prior.memory_id,
+                            scope_type=prior.scope.type if prior.scope else None,
+                            agent_profile_id=prior.scope.agent_profile_id if prior.scope else None,
+                        )
+                        if not any(
+                            item.revision_id == record.current_revision_id
+                            and item.generation_id == generation_id
+                            for item in record.embeddings
+                        ):
+                            queue_embedding = cast(
+                                Callable[..., Awaitable[object]] | None,
+                                getattr(self.repository, "queue_embedding_job", None),
+                            )
+                            queued_embedding = (
+                                cast(
+                                    MemoryEmbeddingJob | None,
+                                    await queue_embedding(
+                                        job.issuer,
+                                        job.subject,
+                                        memory_id=record.id,
+                                        revision_id=record.current_revision_id,
+                                        generation_id=generation_id,
+                                    ),
+                                )
+                                if callable(queue_embedding)
+                                else None
+                            )
                             if queued_embedding is None:
                                 raise MemoryValidationError("embedding work was not durably queued")
-                            claim_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "claim_embedding_job_by_id", None))
+                            claim_embedding = cast(
+                                Callable[..., Awaitable[object]] | None,
+                                getattr(self.repository, "claim_embedding_job_by_id", None),
+                            )
                             if callable(claim_embedding):
-                                claimed_embedding = await claim_embedding(queued_embedding.id, job.issuer, job.subject)
+                                claimed_embedding = await claim_embedding(
+                                    queued_embedding.id, job.issuer, job.subject
+                                )
                                 if claimed_embedding is None:
-                                    raise MemoryValidationError("embedding work is already claimed or settled")
+                                    raise MemoryValidationError(
+                                        "embedding work is already claimed or settled"
+                                    )
                                 embedding_job = cast(MemoryEmbeddingJob, claimed_embedding)
                             else:
-                                raise MemoryValidationError("embedding claim capability is unavailable")
+                                raise MemoryValidationError(
+                                    "embedding claim capability is unavailable"
+                                )
                             if embedding_job.lease_id is None:
-                                raise MemoryValidationError("embedding work was not durably claimed")
+                                raise MemoryValidationError(
+                                    "embedding work was not durably claimed"
+                                )
                             if (
                                 embedding_job.issuer != job.issuer
                                 or embedding_job.subject != job.subject
@@ -1544,28 +2329,63 @@ class MemoryProcessingService:
                                 or embedding_job.revision_id != record.current_revision_id
                                 or embedding_job.generation_id != generation_id
                             ):
-                                raise MemoryValidationError("embedding work does not match accepted revision")
-                            embedding = cast(Any, await self._embed(
-                                selected_generation.model_id,
-                                record.content,
-                                ProviderTraceContext(
-                                    trace_id=trace_id,
-                                    correlation_id=str(job.correlation_id) if job.correlation_id else None,
-                                    causation_id=str(job.causation_id) if job.causation_id else None,
-                                    job_id=str(job.id), run_id=str(job.run_id),
-                                    conversation_id=str(job.conversation_id),
-                                    generation_id=str(generation_id),
+                                raise MemoryValidationError(
+                                    "embedding work does not match accepted revision"
+                                )
+                            embedding = cast(
+                                Any,
+                                await self._embed(
+                                    selected_generation.model_id,
+                                    record.content,
+                                    ProviderTraceContext(
+                                        trace_id=trace_id,
+                                        correlation_id=str(job.correlation_id)
+                                        if job.correlation_id
+                                        else None,
+                                        causation_id=str(job.causation_id)
+                                        if job.causation_id
+                                        else None,
+                                        job_id=str(job.id),
+                                        run_id=str(job.run_id),
+                                        conversation_id=str(job.conversation_id),
+                                        generation_id=str(generation_id),
+                                    ),
                                 ),
-                            ))
+                            )
                             if (
-                                getattr(embedding, "model_id", selected_generation.model_id) != selected_generation.model_id
-                                or getattr(embedding, "dimension", len(embedding.vector)) != selected_generation.dimension
+                                embedding.model_id != selected_generation.model_id
+                                or embedding.model_revision != selected_generation.model_revision
+                                or embedding.model_digest != selected_generation.model_digest
+                                or embedding.dimension != selected_generation.dimension
                             ):
-                                raise MemoryValidationError("embedding provider identity or dimension mismatch")
-                            await self.repository.attach_embedding(job.issuer, job.subject, record.id, revision_id=record.current_revision_id, generation_id=generation_id, vector=embedding.vector, digest=embedding.digest, scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id)
-                            settle_embedding = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                                raise MemoryValidationError(
+                                    "embedding provider identity or dimension mismatch"
+                                )
+                            await self.repository.attach_embedding(
+                                job.issuer,
+                                job.subject,
+                                record.id,
+                                revision_id=record.current_revision_id,
+                                generation_id=generation_id,
+                                vector=embedding.vector,
+                                digest=embedding.digest,
+                                model_id=embedding.model_id,
+                                model_revision=embedding.model_revision,
+                                model_digest=embedding.model_digest,
+                                scope_type=record.scope.type,
+                                agent_profile_id=record.scope.agent_profile_id,
+                            )
+                            settle_embedding = cast(
+                                Callable[..., Awaitable[object]] | None,
+                                getattr(self.repository, "settle_embedding_job", None),
+                            )
                             if callable(settle_embedding):
-                                await settle_embedding(embedding_job.id, issuer=job.issuer, subject=job.subject, lease_id=embedding_job.lease_id)
+                                await settle_embedding(
+                                    embedding_job.id,
+                                    issuer=job.issuer,
+                                    subject=job.subject,
+                                    lease_id=embedding_job.lease_id,
+                                )
                 except Exception:
                     # The accepted memory remains durable; the embedding job
                     # remains retryable for maintenance and is not a second
@@ -1584,9 +2404,31 @@ class MemoryProcessingService:
             # job with metadata-only retry state and avoid loading content or
             # invoking either provider until maintenance can retry it.
             await settle_parked("unconfigured")
-            self._emit("memory.error", job_started, trace_id=trace_id, outcome="error", error_class="queue", attempt_count=job.attempt_count)
-            self._emit("memory.retry", job_started, trace_id=trace_id, outcome="retryable", error_class="queue", attempt_count=job.attempt_count)
-            self._emit("memory.job", job_started, trace_id=trace_id, outcome="retryable", error_class="queue", attempt_count=job.attempt_count, backlog=len(self.jobs))
+            self._emit(
+                "memory.error",
+                job_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="queue",
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.retry",
+                job_started,
+                trace_id=trace_id,
+                outcome="retryable",
+                error_class="queue",
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.job",
+                job_started,
+                trace_id=trace_id,
+                outcome="retryable",
+                error_class="queue",
+                attempt_count=job.attempt_count,
+                backlog=len(self.jobs),
+            )
             return None
 
         if self._evidence_loader is None:
@@ -1596,8 +2438,23 @@ class MemoryProcessingService:
             evidence = await self._evidence_loader(job)
         except MemoryValidationError:
             await settle_evidence_rejection()
-            self._emit("memory.error", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count)
-            self._emit("memory.job", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count, backlog=len(self.jobs))
+            self._emit(
+                "memory.error",
+                job_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="validation",
+                attempt_count=job.attempt_count,
+            )
+            self._emit(
+                "memory.job",
+                job_started,
+                trace_id=trace_id,
+                outcome="error",
+                error_class="validation",
+                attempt_count=job.attempt_count,
+                backlog=len(self.jobs),
+            )
             return None
         if isinstance(evidence, MemoryTurnEvidence):
             try:
@@ -1607,8 +2464,23 @@ class MemoryProcessingService:
                 # never reach an inference provider.  Keep the outcome
                 # content-free so callers can safely acknowledge the job.
                 await settle_evidence_rejection()
-                self._emit("memory.error", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count)
-                self._emit("memory.job", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count, backlog=len(self.jobs))
+                self._emit(
+                    "memory.error",
+                    job_started,
+                    trace_id=trace_id,
+                    outcome="error",
+                    error_class="validation",
+                    attempt_count=job.attempt_count,
+                )
+                self._emit(
+                    "memory.job",
+                    job_started,
+                    trace_id=trace_id,
+                    outcome="error",
+                    error_class="validation",
+                    attempt_count=job.attempt_count,
+                    backlog=len(self.jobs),
+                )
                 return None
             user_content, assistant_content = evidence.user_content, evidence.assistant_content
             message_ids = frozenset(evidence.user_message_ids)
@@ -1617,7 +2489,10 @@ class MemoryProcessingService:
             # contains identifiers/digests only (not turn text).
             provenance = tuple(
                 MemoryProvenance(
-                    uuid5(MEMORY_ID_NAMESPACE, f"provenance:{job.id}:{message_id}:{evidence.evidence_digest}"),
+                    uuid5(
+                        MEMORY_ID_NAMESPACE,
+                        f"provenance:{job.id}:{message_id}:{evidence.evidence_digest}",
+                    ),
                     "conversation_message",
                     source_id=message_id,
                     conversation_id=job.conversation_id,
@@ -1640,13 +2515,31 @@ class MemoryProcessingService:
                 digest = hashlib.sha256(user_content.encode()).hexdigest()
                 if digest != job.evidence_digest:
                     await settle_evidence_rejection()
-                    self._emit("memory.error", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count)
-                    self._emit("memory.job", job_started, trace_id=trace_id, outcome="error", error_class="validation", attempt_count=job.attempt_count, backlog=len(self.jobs))
+                    self._emit(
+                        "memory.error",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="error",
+                        error_class="validation",
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.job",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="error",
+                        error_class="validation",
+                        attempt_count=job.attempt_count,
+                        backlog=len(self.jobs),
+                    )
                     return None
             message_ids = frozenset(job.user_message_ids)
             provenance = tuple(
                 MemoryProvenance(
-                    uuid5(MEMORY_ID_NAMESPACE, f"provenance:{job.id}:{message_id}:{job.evidence_digest or ''}"),
+                    uuid5(
+                        MEMORY_ID_NAMESPACE,
+                        f"provenance:{job.id}:{message_id}:{job.evidence_digest or ''}",
+                    ),
                     "conversation_message",
                     source_id=message_id,
                     conversation_id=job.conversation_id,
@@ -1664,12 +2557,23 @@ class MemoryProcessingService:
             user_message_ids=message_ids,
             run_agent_profile_id=job.agent_profile_id,
             provenance=provenance,
+            allow_shared_user_promotion=job.allow_shared_user_promotion,
         )
         capability = lease_id or job.lease_id
         if capability is not None:
-            settle = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_processing_job", None))
+            settle = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "settle_processing_job", None),
+            )
             if callable(settle):
-                settled = await settle(job.id, capability, issuer=job.issuer, subject=job.subject, retryable=result.state is CandidateState.RETRYABLE, error_class="provider" if result.state is CandidateState.RETRYABLE else None)
+                settled = await settle(
+                    job.id,
+                    capability,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    retryable=result.state is CandidateState.RETRYABLE,
+                    error_class="provider" if result.state is CandidateState.RETRYABLE else None,
+                )
                 if isinstance(settled, MemoryProcessingJob):
                     self.jobs[(settled.issuer, settled.subject, settled.run_id)] = settled
         return result
@@ -1677,7 +2581,10 @@ class MemoryProcessingService:
     async def process_command(self, command: MemoryProcessingCommand) -> MemoryProcessingSettlement:
         """Validate an identifier envelope and return durable settlement."""
 
-        loader = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_processing_job", None))
+        loader = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "get_processing_job", None),
+        )
         # The command is identifier-only; production resolves the owner from
         # the authenticated run loader before using the owner-required SQL
         # lookup.  This prevents an ownerless repository read.
@@ -1685,10 +2592,14 @@ class MemoryProcessingService:
             job = await self._job_loader(command.job_id)
         elif callable(loader):
             try:
-                cached = next((item for item in self.jobs.values() if item.id == command.job_id), None)
+                cached = next(
+                    (item for item in self.jobs.values() if item.id == command.job_id), None
+                )
                 if cached is None:
                     raise MemoryNotFound("memory processing job not found")
-                job = cast(MemoryProcessingJob, await loader(command.job_id, cached.issuer, cached.subject))
+                job = cast(
+                    MemoryProcessingJob, await loader(command.job_id, cached.issuer, cached.subject)
+                )
             except MemoryNotFound:
                 raise
         else:
@@ -1711,7 +2622,9 @@ class MemoryProcessingService:
         settled_job = job
         if callable(loader) and job.issuer and job.subject:
             try:
-                settled_job = cast(MemoryProcessingJob, await loader(command.job_id, job.issuer, job.subject))
+                settled_job = cast(
+                    MemoryProcessingJob, await loader(command.job_id, job.issuer, job.subject)
+                )
             except MemoryNotFound:
                 pass
         else:
@@ -1721,7 +2634,11 @@ class MemoryProcessingService:
             )
         terminal = settled_job.status in {ProcessingJobStatus.COMPLETED, ProcessingJobStatus.FAILED}
         return MemoryProcessingSettlement(
-            command.command_id, command.job_id, settled_job.status, terminal, result,
+            command.command_id,
+            command.job_id,
+            settled_job.status,
+            terminal,
+            result,
         )
 
     async def maintain(self, issuer: str, subject: str, *, now: datetime | None = None) -> int:
@@ -1729,27 +2646,90 @@ class MemoryProcessingService:
         trace_id = uuid5(MEMORY_ID_NAMESPACE, f"maintenance:{issuer}:{subject}").hex
         stamp = now or self._now()
         changed = 0
-        records = await self.repository.list_memories(issuer, subject, MemoryFilters(scope_type=None, include_all_scopes=True, include_historical=True, limit=100000))
+        records = await self.repository.list_memories(
+            issuer,
+            subject,
+            MemoryFilters(
+                scope_type=None, include_all_scopes=True, include_historical=True, limit=100000
+            ),
+        )
         for record in records:
-            if record.pinned or record.status in {MemoryLifecycleStatus.DISABLED, MemoryLifecycleStatus.DISPUTED, MemoryLifecycleStatus.SUPERSEDED, MemoryLifecycleStatus.ARCHIVED}:
+            if record.pinned or record.status in {
+                MemoryLifecycleStatus.DISABLED,
+                MemoryLifecycleStatus.DISPUTED,
+                MemoryLifecycleStatus.SUPERSEDED,
+                MemoryLifecycleStatus.ARCHIVED,
+            }:
                 continue
-            if record.current_revision.valid_to is not None and record.current_revision.valid_to <= stamp:
+            if (
+                record.current_revision.valid_to is not None
+                and record.current_revision.valid_to <= stamp
+            ):
                 if record.status is MemoryLifecycleStatus.ACTIVE:
                     transition_started = monotonic()
-                    await self.repository.set_status(issuer, subject, record.id, status=MemoryLifecycleStatus.DORMANT, expected_version=record.version, scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id)
+                    await self.repository.set_status(
+                        issuer,
+                        subject,
+                        record.id,
+                        status=MemoryLifecycleStatus.DORMANT,
+                        expected_version=record.version,
+                        scope_type=record.scope.type,
+                        agent_profile_id=record.scope.agent_profile_id,
+                    )
                     changed += 1
-                    self._emit_maintenance_transition(transition_started, trace_id=trace_id, memory_id=record.id, destination_status=MemoryLifecycleStatus.DORMANT)
-            elif record.status is MemoryLifecycleStatus.ACTIVE and record.relevance(stamp) < DORMANT_THRESHOLD:
+                    self._emit_maintenance_transition(
+                        transition_started,
+                        trace_id=trace_id,
+                        memory_id=record.id,
+                        destination_status=MemoryLifecycleStatus.DORMANT,
+                    )
+            elif (
+                record.status is MemoryLifecycleStatus.ACTIVE
+                and record.relevance(stamp) < DORMANT_THRESHOLD
+            ):
                 transition_started = monotonic()
-                await self.repository.set_status(issuer, subject, record.id, status=MemoryLifecycleStatus.DORMANT, expected_version=record.version, scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id)
+                await self.repository.set_status(
+                    issuer,
+                    subject,
+                    record.id,
+                    status=MemoryLifecycleStatus.DORMANT,
+                    expected_version=record.version,
+                    scope_type=record.scope.type,
+                    agent_profile_id=record.scope.agent_profile_id,
+                )
                 changed += 1
-                self._emit_maintenance_transition(transition_started, trace_id=trace_id, memory_id=record.id, destination_status=MemoryLifecycleStatus.DORMANT)
-            elif record.status is MemoryLifecycleStatus.DORMANT and record.dormant_at and (stamp - record.dormant_at).total_seconds() >= ARCHIVE_AFTER_DAYS * 86400:
+                self._emit_maintenance_transition(
+                    transition_started,
+                    trace_id=trace_id,
+                    memory_id=record.id,
+                    destination_status=MemoryLifecycleStatus.DORMANT,
+                )
+            elif (
+                record.status is MemoryLifecycleStatus.DORMANT
+                and record.dormant_at
+                and (stamp - record.dormant_at).total_seconds() >= ARCHIVE_AFTER_DAYS * 86400
+            ):
                 transition_started = monotonic()
-                await self.repository.set_status(issuer, subject, record.id, status=MemoryLifecycleStatus.ARCHIVED, expected_version=record.version, scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id)
+                await self.repository.set_status(
+                    issuer,
+                    subject,
+                    record.id,
+                    status=MemoryLifecycleStatus.ARCHIVED,
+                    expected_version=record.version,
+                    scope_type=record.scope.type,
+                    agent_profile_id=record.scope.agent_profile_id,
+                )
                 changed += 1
-                self._emit_maintenance_transition(transition_started, trace_id=trace_id, memory_id=record.id, destination_status=MemoryLifecycleStatus.ARCHIVED)
-        save_state = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "save_maintenance_state", None))
+                self._emit_maintenance_transition(
+                    transition_started,
+                    trace_id=trace_id,
+                    memory_id=record.id,
+                    destination_status=MemoryLifecycleStatus.ARCHIVED,
+                )
+        save_state = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "save_maintenance_state", None),
+        )
         if callable(save_state):
             await save_state(issuer, subject, ran_at=stamp)
         # Transition telemetry is emitted once per dormant/archive record;
@@ -1777,11 +2757,25 @@ class MemoryReindexService:
         # platform telemetry into the domain.
         self._trace_context_factory = trace_context_factory
 
-    def _emit(self, operation: str, started: float, *, trace_id: str, outcome: str, generation_id: UUID | None = None, memory_id: UUID | None = None, revision_id: UUID | None = None, backlog: int | None = None, progress: float | None = None) -> None:
+    def _emit(
+        self,
+        operation: str,
+        started: float,
+        *,
+        trace_id: str,
+        outcome: str,
+        generation_id: UUID | None = None,
+        memory_id: UUID | None = None,
+        revision_id: UUID | None = None,
+        backlog: int | None = None,
+        progress: float | None = None,
+    ) -> None:
         if self._telemetry is None:
             return
         try:
-            normalized_outcome = {"received": "ok", "rejected": "error", "parked": "retryable"}.get(outcome, outcome)
+            normalized_outcome = {"received": "ok", "rejected": "error", "parked": "retryable"}.get(
+                outcome, outcome
+            )
             self._telemetry(
                 operation=operation,
                 duration_ms=max(0.0, (monotonic() - started) * 1000),
@@ -1799,11 +2793,23 @@ class MemoryReindexService:
 
     async def resume(self, issuer: str, subject: str, generation_id: UUID) -> int:
         trace_id = uuid5(MEMORY_ID_NAMESPACE, f"reindex:{issuer}:{subject}:{generation_id}").hex
-        generation = next((item for item in getattr(self.repository, "embedding_generations", {}).values() if item.id == generation_id), None)
+        generation = next(
+            (
+                item
+                for item in getattr(self.repository, "embedding_generations", {}).values()
+                if item.id == generation_id
+            ),
+            None,
+        )
         if generation is None:
-            load_generation = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_embedding_generation", None))
+            load_generation = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "get_embedding_generation", None),
+            )
             if callable(load_generation):
-                generation = cast(MemoryEmbeddingGeneration, await load_generation(issuer, subject, generation_id))
+                generation = cast(
+                    MemoryEmbeddingGeneration, await load_generation(issuer, subject, generation_id)
+                )
         if generation is None:
             raise MemoryNotFound("embedding generation not found")
         if generation.status != "building":
@@ -1812,54 +2818,95 @@ class MemoryReindexService:
             if generation.status == "active":
                 return 0
             raise MemoryValidationError("embedding generation is not resumable")
-        load_configuration = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "get_model_configuration", None))
+        load_configuration = cast(
+            Callable[..., Awaitable[object]] | None,
+            getattr(self.repository, "get_model_configuration", None),
+        )
         if callable(load_configuration):
             try:
-                configuration = cast(MemoryModelConfiguration, await load_configuration(issuer, subject))
+                configuration = cast(
+                    MemoryModelConfiguration, await load_configuration(issuer, subject)
+                )
             except MemoryNotFound:
                 configuration = None
-            if configuration is not None and configuration.embedding_generation != generation_id and (
-                generation.model_id != configuration.embedding_model_id
-                or generation.model_revision != configuration.embedding_model_revision
+            if (
+                configuration is not None
+                and configuration.embedding_generation != generation_id
+                and (
+                    generation.model_id != configuration.embedding_model_id
+                    or generation.model_revision != configuration.embedding_model_revision
+                )
             ):
                 raise MemoryValidationError("embedding generation does not match configured target")
         records = await self.repository.list_memories(
-            issuer, subject, MemoryFilters(scope_type=None, include_all_scopes=True, include_historical=True, limit=100000)
+            issuer,
+            subject,
+            MemoryFilters(
+                scope_type=None, include_all_scopes=True, include_historical=True, limit=100000
+            ),
         )
         retained_revisions = [
-            (record, revision)
-            for record in records
-            for revision in record.revisions
+            (record, revision) for record in records for revision in record.revisions
         ]
         processed = sum(
             1
             for record, revision in retained_revisions
-            if any(item.revision_id == revision.id and item.generation_id == generation_id for item in record.embeddings)
+            if any(
+                item.revision_id == revision.id and item.generation_id == generation_id
+                for item in record.embeddings
+            )
         )
         pending_revisions = [
             (record, revision)
             for record, revision in retained_revisions
-            if not any(item.revision_id == revision.id and item.generation_id == generation_id for item in record.embeddings)
+            if not any(
+                item.revision_id == revision.id and item.generation_id == generation_id
+                for item in record.embeddings
+            )
         ]
         total_revisions = len(retained_revisions)
         try:
             for record, revision in pending_revisions:
                 chunk_started = monotonic()
-                claim_revision = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "claim_embedding_job_for_revision", None))
+                claim_revision = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "claim_embedding_job_for_revision", None),
+                )
                 if not callable(claim_revision):
                     raise MemoryValidationError("embedding claim capability is unavailable")
-                claimed_job = cast(MemoryEmbeddingJob | None, await claim_revision(issuer, subject, revision_id=revision.id, generation_id=generation_id))
+                claimed_job = cast(
+                    MemoryEmbeddingJob | None,
+                    await claim_revision(
+                        issuer, subject, revision_id=revision.id, generation_id=generation_id
+                    ),
+                )
                 if claimed_job is None:
-                    queue_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "queue_embedding_job", None))
+                    queue_job = cast(
+                        Callable[..., Awaitable[object]] | None,
+                        getattr(self.repository, "queue_embedding_job", None),
+                    )
                     if not callable(queue_job):
                         raise MemoryValidationError("embedding work is not durably queued")
-                    await queue_job(issuer, subject, memory_id=record.id, revision_id=revision.id, generation_id=generation_id)
-                    claimed_job = cast(MemoryEmbeddingJob | None, await claim_revision(issuer, subject, revision_id=revision.id, generation_id=generation_id))
+                    await queue_job(
+                        issuer,
+                        subject,
+                        memory_id=record.id,
+                        revision_id=revision.id,
+                        generation_id=generation_id,
+                    )
+                    claimed_job = cast(
+                        MemoryEmbeddingJob | None,
+                        await claim_revision(
+                            issuer, subject, revision_id=revision.id, generation_id=generation_id
+                        ),
+                    )
                 if claimed_job is None or claimed_job.lease_id is None:
                     # Another worker owns this revision or its retry is not
                     # available yet; never invoke a provider without a lease.
                     continue
-                revision_trace_id = uuid5(MEMORY_ID_NAMESPACE, f"reindex:{generation_id}:{record.id}:{revision.id}").hex
+                revision_trace_id = uuid5(
+                    MEMORY_ID_NAMESPACE, f"reindex:{generation_id}:{record.id}:{revision.id}"
+                ).hex
                 trace_scope = (
                     self._trace_context_factory(
                         revision_trace_id,
@@ -1874,10 +2921,30 @@ class MemoryReindexService:
                 with trace_scope:
                     embed = cast(Callable[..., Awaitable[object]], self.embedder.embed)
                     if classify_sensitivity(revision.content) is MemorySensitivity.CREDENTIAL:
-                        settle_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                        settle_job = cast(
+                            Callable[..., Awaitable[object]] | None,
+                            getattr(self.repository, "settle_embedding_job", None),
+                        )
                         if callable(settle_job):
-                            await settle_job(claimed_job.id, issuer=issuer, subject=subject, lease_id=claimed_job.lease_id, failed=True, error_class="credential")
-                        self._emit("memory.reindex.chunk", chunk_started, trace_id=revision_trace_id, outcome="error", generation_id=generation_id, memory_id=record.id, revision_id=revision.id, backlog=max(0, total_revisions - processed), progress=processed / max(1, total_revisions))
+                            await settle_job(
+                                claimed_job.id,
+                                issuer=issuer,
+                                subject=subject,
+                                lease_id=claimed_job.lease_id,
+                                failed=True,
+                                error_class="credential",
+                            )
+                        self._emit(
+                            "memory.reindex.chunk",
+                            chunk_started,
+                            trace_id=revision_trace_id,
+                            outcome="error",
+                            generation_id=generation_id,
+                            memory_id=record.id,
+                            revision_id=revision.id,
+                            backlog=max(0, total_revisions - processed),
+                            progress=processed / max(1, total_revisions),
+                        )
                         raise MemoryValidationError("credential memory revision cannot be embedded")
                     try:
                         context = ProviderTraceContext(
@@ -1886,46 +2953,122 @@ class MemoryReindexService:
                             generation_id=str(generation_id),
                         )
                         try:
-                            result = cast(Any, await embed(generation.model_id, revision.content, context=context))
+                            result = cast(
+                                Any,
+                                await embed(generation.model_id, revision.content, context=context),
+                            )
                         except TypeError as exc:
                             if "context" not in str(exc):
                                 raise
                             result = cast(Any, await embed(generation.model_id, revision.content))
                         if (
-                            getattr(result, "model_id", generation.model_id) != generation.model_id
-                            or getattr(result, "dimension", len(result.vector)) != generation.dimension
+                            result.model_id != generation.model_id
+                            or result.model_revision != generation.model_revision
+                            or result.model_digest != generation.model_digest
+                            or result.dimension != generation.dimension
                         ):
-                            raise MemoryValidationError("embedding provider identity or dimension mismatch")
+                            raise MemoryValidationError(
+                                "embedding provider identity or dimension mismatch"
+                            )
                         await self.repository.attach_embedding(
-                            issuer, subject, record.id, revision_id=revision.id,
-                            generation_id=generation_id, vector=result.vector, digest=result.digest,
-                            scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id,
+                            issuer,
+                            subject,
+                            record.id,
+                            revision_id=revision.id,
+                            generation_id=generation_id,
+                            vector=result.vector,
+                            digest=result.digest,
+                            model_id=result.model_id,
+                            model_revision=result.model_revision,
+                            model_digest=result.model_digest,
+                            scope_type=record.scope.type,
+                            agent_profile_id=record.scope.agent_profile_id,
                         )
                     except Exception:
-                        settle_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                        settle_job = cast(
+                            Callable[..., Awaitable[object]] | None,
+                            getattr(self.repository, "settle_embedding_job", None),
+                        )
                         if callable(settle_job):
-                            await settle_job(claimed_job.id, issuer=issuer, subject=subject, lease_id=claimed_job.lease_id, retryable=True, error_class="provider")
-                        self._emit("memory.reindex.chunk", chunk_started, trace_id=revision_trace_id, outcome="error", generation_id=generation_id, memory_id=record.id, revision_id=revision.id, backlog=max(0, total_revisions - processed), progress=processed / max(1, total_revisions))
+                            await settle_job(
+                                claimed_job.id,
+                                issuer=issuer,
+                                subject=subject,
+                                lease_id=claimed_job.lease_id,
+                                retryable=True,
+                                error_class="provider",
+                            )
+                        self._emit(
+                            "memory.reindex.chunk",
+                            chunk_started,
+                            trace_id=revision_trace_id,
+                            outcome="error",
+                            generation_id=generation_id,
+                            memory_id=record.id,
+                            revision_id=revision.id,
+                            backlog=max(0, total_revisions - processed),
+                            progress=processed / max(1, total_revisions),
+                        )
                         raise
-                    settle_job = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "settle_embedding_job", None))
+                    settle_job = cast(
+                        Callable[..., Awaitable[object]] | None,
+                        getattr(self.repository, "settle_embedding_job", None),
+                    )
                     if callable(settle_job):
-                        await settle_job(claimed_job.id, issuer=issuer, subject=subject, lease_id=claimed_job.lease_id)
+                        await settle_job(
+                            claimed_job.id,
+                            issuer=issuer,
+                            subject=subject,
+                            lease_id=claimed_job.lease_id,
+                        )
                     processed += 1
-                    save_state = cast(Callable[..., Awaitable[object]] | None, getattr(self.repository, "save_maintenance_state", None))
+                    save_state = cast(
+                        Callable[..., Awaitable[object]] | None,
+                        getattr(self.repository, "save_maintenance_state", None),
+                    )
                     if callable(save_state):
                         await save_state(
-                            issuer, subject, ran_at=datetime.now(UTC),
-                            generation=generation.generation, generation_id=generation_id,
-                            cursor=record.id, completed=processed,
+                            issuer,
+                            subject,
+                            ran_at=datetime.now(UTC),
+                            generation=generation.generation,
+                            generation_id=generation_id,
+                            cursor=record.id,
+                            completed=processed,
                         )
-                    self._emit("memory.reindex.chunk", chunk_started, trace_id=revision_trace_id, outcome="ok", generation_id=generation_id, memory_id=record.id, revision_id=revision.id, backlog=max(0, total_revisions - processed), progress=processed / max(1, total_revisions))
+                    self._emit(
+                        "memory.reindex.chunk",
+                        chunk_started,
+                        trace_id=revision_trace_id,
+                        outcome="ok",
+                        generation_id=generation_id,
+                        memory_id=record.id,
+                        revision_id=revision.id,
+                        backlog=max(0, total_revisions - processed),
+                        progress=processed / max(1, total_revisions),
+                    )
             switch_started = monotonic()
             try:
                 await self.repository.activate_embedding_generation(issuer, subject, generation_id)
             except Exception:
-                self._emit("memory.reindex.switch", switch_started, trace_id=trace_id, outcome="error", generation_id=generation_id, backlog=max(0, total_revisions - processed), progress=processed / max(1, total_revisions))
+                self._emit(
+                    "memory.reindex.switch",
+                    switch_started,
+                    trace_id=trace_id,
+                    outcome="error",
+                    generation_id=generation_id,
+                    backlog=max(0, total_revisions - processed),
+                    progress=processed / max(1, total_revisions),
+                )
                 raise
-            self._emit("memory.reindex.switch", switch_started, trace_id=trace_id, outcome="ok", generation_id=generation_id, backlog=0)
+            self._emit(
+                "memory.reindex.switch",
+                switch_started,
+                trace_id=trace_id,
+                outcome="ok",
+                generation_id=generation_id,
+                backlog=0,
+            )
         except Exception:
             # A provider outage or worker interruption must leave a building
             # generation resumable.  It is not a terminal generation state;
@@ -1940,7 +3083,9 @@ MemoryProcessor = MemoryProcessingService
 # The in-memory adapter is split only to keep the worker orchestration above
 # the adapter methods; the public class remains one deterministic store.
 class MemoryStore(_MemoryStoreBase):
-    async def list_memories(self, issuer: str, subject: str, filters: MemoryFilters | None = None) -> list[MemoryRecord]:
+    async def list_memories(
+        self, issuer: str, subject: str, filters: MemoryFilters | None = None
+    ) -> list[MemoryRecord]:
         criteria = filters or MemoryFilters()
         results: list[MemoryRecord] = []
         for item in self.memories.values():
@@ -1948,11 +3093,23 @@ class MemoryStore(_MemoryStoreBase):
                 continue
             if criteria.kind and item.kind is not criteria.kind:
                 continue
-            if criteria.scope_type and not criteria.include_all_scopes and item.scope.type is not criteria.scope_type:
+            if (
+                criteria.scope_type
+                and not criteria.include_all_scopes
+                and item.scope.type is not criteria.scope_type
+            ):
                 continue
-            if criteria.agent_profile_id and item.scope.agent_profile_id != criteria.agent_profile_id:
+            if (
+                criteria.agent_profile_id
+                and item.scope.agent_profile_id != criteria.agent_profile_id
+            ):
                 continue
-            if item.scope.type is MemoryScopeType.AGENT and not criteria.include_all_scopes and criteria.authorized_agent_ids and item.scope.agent_profile_id not in criteria.authorized_agent_ids:
+            if (
+                item.scope.type is MemoryScopeType.AGENT
+                and not criteria.include_all_scopes
+                and criteria.authorized_agent_ids
+                and item.scope.agent_profile_id not in criteria.authorized_agent_ids
+            ):
                 continue
             if criteria.status and item.status is not criteria.status:
                 continue
@@ -1970,15 +3127,21 @@ class MemoryStore(_MemoryStoreBase):
         results.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         return results[: max(1, min(criteria.limit, 100_000))]
 
-    async def get_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def get_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         return self._find(
-            issuer, subject, memory_id,
+            issuer,
+            subject,
+            memory_id,
             scope_type=kwargs.get("scope_type"),
             agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
 
-    def _replay(self, issuer: str, subject: str, key: str | None, fingerprint: str) -> object | None:
+    def _replay(
+        self, issuer: str, subject: str, key: str | None, fingerprint: str
+    ) -> object | None:
         if not key:
             return None
         prior = self._idempotency.get((issuer, subject, key))
@@ -1994,7 +3157,9 @@ class MemoryStore(_MemoryStoreBase):
         if key and (issuer, subject, str(key)) in self._purge_tombstones:
             raise MemoryPurgeReplayNotFound("memory not found")
 
-    def _record_replay(self, issuer: str, subject: str, key: str | None, fingerprint: str, value: object) -> None:
+    def _record_replay(
+        self, issuer: str, subject: str, key: str | None, fingerprint: str, value: object
+    ) -> None:
         if key:
             self._idempotency[(issuer, subject, key)] = (fingerprint, value)
 
@@ -2024,24 +3189,66 @@ class MemoryStore(_MemoryStoreBase):
         memory_id = UUID(str(kwargs["memory_id"])) if kwargs.get("memory_id") else uuid4()
         self._assert_not_fenced(issuer, subject, memory_id)
         revision_id = uuid4()
-        provenance = list(kwargs.get("provenance", []))
+        provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", [])))
         for item in provenance:
             validate_provenance(item)
-        revision = MemoryRevision(revision_id, memory_id, 1, kind, content, kwargs.get("observed_at") or now, now, confidence, importance, half_life, valid_from, valid_to, tuple(item.id for item in provenance))  # type: ignore[arg-type]
-        record = MemoryRecord(memory_id, issuer, subject, kind, scope, MemoryLifecycleStatus.ACTIVE, bool(kwargs.get("pinned", False)), 1, revision_id, [revision], provenance, list(kwargs.get("embeddings", [])), tuple(kwargs.get("related_memory_ids", ())), [], now, None, None, now, now)
+        revision = MemoryRevision(
+            revision_id,
+            memory_id,
+            1,
+            kind,
+            content,
+            kwargs.get("observed_at") or now,
+            now,
+            confidence,
+            importance,
+            half_life,
+            valid_from,
+            valid_to,
+            tuple(item.id for item in provenance),
+        )  # type: ignore[arg-type]
+        record = MemoryRecord(
+            memory_id,
+            issuer,
+            subject,
+            kind,
+            scope,
+            MemoryLifecycleStatus.ACTIVE,
+            bool(kwargs.get("pinned", False)),
+            1,
+            revision_id,
+            [revision],
+            provenance,
+            list(kwargs.get("embeddings", [])),
+            tuple(kwargs.get("related_memory_ids", ())),
+            [],
+            now,
+            None,
+            None,
+            now,
+            now,
+        )
         self.memories[memory_id] = record
         self._record_replay(issuer, subject, str(key) if key else None, fingerprint, record)
         return record
 
-    async def reinforce_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def reinforce_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         record = self._find(
-            issuer, subject, memory_id,
-            scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"),
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
         key = kwargs.get("idempotency_key")
         provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
-        fp = _fingerprint("reinforce", {"memory_id": str(memory_id), "provenance": [str(item.id) for item in provenance]})
+        fp = _fingerprint(
+            "reinforce",
+            {"memory_id": str(memory_id), "provenance": [str(item.id) for item in provenance]},
+        )
         prior = self._replay(issuer, subject, str(key) if key else None, fp)
         if prior is not None:
             assert isinstance(prior, MemoryRecord)
@@ -2058,10 +3265,15 @@ class MemoryStore(_MemoryStoreBase):
         self._record_replay(issuer, subject, str(key) if key else None, fp, record)
         return record
 
-    async def revise_memory(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def revise_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         record = self._find(
-            issuer, subject, memory_id,
-            scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"),
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
         expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
@@ -2070,10 +3282,20 @@ class MemoryStore(_MemoryStoreBase):
         if reason is not None:
             validate_memory_text(str(reason), "correction reason")
         current = record.current_revision
-        confidence = float(current.confidence if kwargs.get("confidence") is None else kwargs["confidence"])
-        importance = float(current.importance if kwargs.get("importance") is None else kwargs["importance"])
-        half_life = float(current.half_life_days if kwargs.get("half_life_days") is None else kwargs["half_life_days"])
-        valid_from = current.valid_from if kwargs.get("valid_from") is None else kwargs["valid_from"]
+        confidence = float(
+            current.confidence if kwargs.get("confidence") is None else kwargs["confidence"]
+        )
+        importance = float(
+            current.importance if kwargs.get("importance") is None else kwargs["importance"]
+        )
+        half_life = float(
+            current.half_life_days
+            if kwargs.get("half_life_days") is None
+            else kwargs["half_life_days"]
+        )
+        valid_from = (
+            current.valid_from if kwargs.get("valid_from") is None else kwargs["valid_from"]
+        )
         valid_to = current.valid_to if kwargs.get("valid_to") is None else kwargs["valid_to"]
         validate_revision(content, confidence, importance, half_life, valid_from, valid_to)  # type: ignore[arg-type]
         key = kwargs.get("idempotency_key")
@@ -2085,11 +3307,26 @@ class MemoryStore(_MemoryStoreBase):
         if expected != record.version:
             raise MemoryVersionConflict("memory version conflict")
         now = self._now()
-        provenance = list(kwargs.get("provenance", []))
+        provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", [])))
         for item in provenance:
             validate_provenance(item)
         kind = MemoryKind(str(kwargs["kind"])) if kwargs.get("kind") is not None else record.kind
-        revision = MemoryRevision(uuid4(), memory_id, len(record.revisions) + 1, kind, content, kwargs.get("observed_at") or now, now, confidence, importance, half_life, valid_from, valid_to, tuple(item.id for item in provenance), str(reason) if reason is not None else None)  # type: ignore[arg-type]
+        revision = MemoryRevision(
+            uuid4(),
+            memory_id,
+            len(record.revisions) + 1,
+            kind,
+            content,
+            kwargs.get("observed_at") or now,
+            now,
+            confidence,
+            importance,
+            half_life,
+            valid_from,
+            valid_to,
+            tuple(item.id for item in provenance),
+            str(reason) if reason is not None else None,
+        )  # type: ignore[arg-type]
         record.revisions.append(revision)
         record.provenance.extend(provenance)
         record.current_revision_id = revision.id
@@ -2100,16 +3337,31 @@ class MemoryStore(_MemoryStoreBase):
         self._record_replay(issuer, subject, str(key) if key else None, fp, record)
         return record
 
-    async def set_status(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def set_status(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         record = self._find(
-            issuer, subject, memory_id,
-            scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"),
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
         expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
         status = MemoryLifecycleStatus(str(kwargs["status"]))
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint("status", {"memory": str(memory_id), "status": status.value, "expected": expected, "related": kwargs.get("related_memory_id"), "scope_type": kwargs.get("scope_type"), "agent_profile_id": kwargs.get("agent_profile_id")})
+        fp = _fingerprint(
+            "status",
+            {
+                "memory": str(memory_id),
+                "status": status.value,
+                "expected": expected,
+                "related": kwargs.get("related_memory_id"),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
         prior = self._replay(issuer, subject, str(key) if key else None, fp)
         if prior is not None:
             assert isinstance(prior, MemoryRecord)
@@ -2118,8 +3370,10 @@ class MemoryStore(_MemoryStoreBase):
             raise MemoryVersionConflict("memory version conflict")
         related = kwargs.get("related_memory_id")
         relation = (
-            "disputes" if status is MemoryLifecycleStatus.DISPUTED
-            else "supersedes" if status is MemoryLifecycleStatus.SUPERSEDED
+            "disputes"
+            if status is MemoryLifecycleStatus.DISPUTED
+            else "supersedes"
+            if status is MemoryLifecycleStatus.SUPERSEDED
             else None
         )
         related_record: MemoryRecord | None = None
@@ -2131,7 +3385,9 @@ class MemoryStore(_MemoryStoreBase):
                 if related_record is None or not _owner(related_record, issuer, subject):
                     raise MemoryNotFound("related memory not found")
                 self._find(
-                    issuer, subject, related,
+                    issuer,
+                    subject,
+                    related,
                     scope_type=related_record.scope.type,
                     agent_profile_id=related_record.scope.agent_profile_id,
                     authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
@@ -2153,15 +3409,29 @@ class MemoryStore(_MemoryStoreBase):
         self._record_replay(issuer, subject, str(key) if key else None, fp, record)
         return record
 
-    async def set_pinned(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def set_pinned(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         record = self._find(
-            issuer, subject, memory_id,
-            scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"),
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
         expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint("pin", {"memory": str(memory_id), "expected": expected, "pinned": bool(kwargs["pinned"]), "scope_type": kwargs.get("scope_type"), "agent_profile_id": kwargs.get("agent_profile_id")})
+        fp = _fingerprint(
+            "pin",
+            {
+                "memory": str(memory_id),
+                "expected": expected,
+                "pinned": bool(kwargs["pinned"]),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
         prior = self._replay(issuer, subject, str(key) if key else None, fp)
         if prior is not None:
             assert isinstance(prior, MemoryRecord)
@@ -2174,20 +3444,34 @@ class MemoryStore(_MemoryStoreBase):
         self._record_replay(issuer, subject, str(key) if key else None, fp, record)
         return record
 
-    async def purge(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryAuditRecord:
+    async def purge(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryAuditRecord:
         if kwargs.get("confirmation") != PURGE_CONFIRMATION:
             raise MemoryPurgeConfirmationRequired("exact purge confirmation is required")
         expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint("purge", {"memory": str(memory_id), "expected": expected, "confirmation": kwargs.get("confirmation"), "scope_type": kwargs.get("scope_type"), "agent_profile_id": kwargs.get("agent_profile_id")})
+        fp = _fingerprint(
+            "purge",
+            {
+                "memory": str(memory_id),
+                "expected": expected,
+                "confirmation": kwargs.get("confirmation"),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
         self._purge_tombstone(issuer, subject, key)
         prior = self._replay(issuer, subject, str(key) if key else None, fp)
         if prior is not None:
             assert isinstance(prior, MemoryAuditRecord)
             return prior
         record = self._find(
-            issuer, subject, memory_id,
-            scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"),
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
             authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
         )
         if expected != record.version:
@@ -2196,7 +3480,8 @@ class MemoryStore(_MemoryStoreBase):
         candidate_ids = {
             candidate.id
             for candidate in self.candidates.values()
-            if candidate.issuer == issuer and candidate.subject == subject
+            if candidate.issuer == issuer
+            and candidate.subject == subject
             and (candidate.memory_id == memory_id or candidate.related_memory_id == memory_id)
         }
         job_ids = {
@@ -2207,7 +3492,9 @@ class MemoryStore(_MemoryStoreBase):
         # Derive deterministic action links before scrubbing the memory.  This
         # covers a crash after create/reinforce committed but before candidate
         # or job linkage was written.
-        for (id_issuer, id_subject, idempotency_key), (_, value) in tuple(self._idempotency.items()):
+        for (id_issuer, id_subject, idempotency_key), (_, value) in tuple(
+            self._idempotency.items()
+        ):
             if (id_issuer, id_subject) != (issuer, subject):
                 continue
             if isinstance(value, MemoryRecord) and value.id == memory_id:
@@ -2226,7 +3513,8 @@ class MemoryStore(_MemoryStoreBase):
                     if candidate is not None:
                         job_ids.add(candidate.job_id)
         job_ids.update(
-            candidate.job_id for candidate in self.candidates.values()
+            candidate.job_id
+            for candidate in self.candidates.values()
             if candidate.id in candidate_ids
         )
         job_ids.update(
@@ -2241,10 +3529,15 @@ class MemoryStore(_MemoryStoreBase):
         for job_id, job in tuple(self.processing_jobs.items()):
             if job_id in job_ids:
                 self.processing_jobs[job_id] = replace(
-                    job, status=ProcessingJobStatus.FAILED,
-                    last_error_class="purged", lease_id=None, lease_until=None,
-                    user_message_ids=(), assistant_message_ids=(),
-                    evidence_digest=None, memory_id=None,
+                    job,
+                    status=ProcessingJobStatus.FAILED,
+                    last_error_class="purged",
+                    lease_id=None,
+                    lease_until=None,
+                    user_message_ids=(),
+                    assistant_message_ids=(),
+                    evidence_digest=None,
+                    memory_id=None,
                 )
         self.candidates = {
             candidate_id: candidate
@@ -2252,11 +3545,16 @@ class MemoryStore(_MemoryStoreBase):
             if candidate_id not in candidate_ids and candidate.job_id not in job_ids
         }
         self.outcomes = [
-            outcome for outcome in self.outcomes
+            outcome
+            for outcome in self.outcomes
             if outcome.get("memory_id") != memory_id and outcome.get("job_id") not in job_ids
         ]
         for embedding_id, embedding_job in tuple(self.embedding_jobs.items()):
-            if embedding_job.issuer == issuer and embedding_job.subject == subject and embedding_job.memory_id == memory_id:
+            if (
+                embedding_job.issuer == issuer
+                and embedding_job.subject == subject
+                and embedding_job.memory_id == memory_id
+            ):
                 del self.embedding_jobs[embedding_id]
         del self.memories[memory_id]
         stale_keys: list[tuple[str, str, str]] = []
@@ -2279,7 +3577,9 @@ class MemoryStore(_MemoryStoreBase):
         self._record_replay(issuer, subject, str(key) if key else None, fp, audit)
         return audit
 
-    async def link_processing_job_memory(self, job_id: UUID, issuer: str, subject: str, memory_id: UUID) -> None:
+    async def link_processing_job_memory(
+        self, job_id: UUID, issuer: str, subject: str, memory_id: UUID
+    ) -> None:
         try:
             job = await self.get_processing_job(job_id, issuer, subject)
         except MemoryNotFound:
@@ -2305,7 +3605,9 @@ class MemoryStore(_MemoryStoreBase):
         await self.get_processing_job(job_id, issuer, subject)
         self.outcomes.append(dict(kwargs))
 
-    async def register_embedding_generation(self, issuer: str, subject: str, **kwargs: object) -> MemoryEmbeddingGeneration:
+    async def register_embedding_generation(
+        self, issuer: str, subject: str, **kwargs: object
+    ) -> MemoryEmbeddingGeneration:
         now = self._now()
         generation = int(kwargs["generation"])
         model_id = str(kwargs["model_id"])
@@ -2315,13 +3617,30 @@ class MemoryStore(_MemoryStoreBase):
         digest = kwargs.get("model_digest")
         if digest is not None and not re.fullmatch(r"[0-9a-f]{64}", str(digest)):
             raise MemoryValidationError("embedding model digest must be sha256")
-        if any(item.generation == generation and item.issuer == issuer and item.subject == subject for item in self.embedding_generations.values()):
+        if any(
+            item.generation == generation and item.issuer == issuer and item.subject == subject
+            for item in self.embedding_generations.values()
+        ):
             raise MemoryValidationError("embedding generation number already exists")
-        item = MemoryEmbeddingGeneration(uuid4(), generation, model_id, kwargs.get("model_revision"), dimension, "building", now, None, str(digest) if digest else None, issuer, subject)
+        item = MemoryEmbeddingGeneration(
+            uuid4(),
+            generation,
+            model_id,
+            kwargs.get("model_revision"),
+            dimension,
+            "building",
+            now,
+            None,
+            str(digest) if digest else None,
+            issuer,
+            subject,
+        )
         self.embedding_generations[item.id] = item
         return item
 
-    async def activate_embedding_generation(self, issuer: str, subject: str, generation_id: UUID) -> MemoryEmbeddingGeneration:
+    async def activate_embedding_generation(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration:
         try:
             item = self.embedding_generations[generation_id]
         except KeyError as exc:
@@ -2330,21 +3649,40 @@ class MemoryStore(_MemoryStoreBase):
             raise MemoryNotFound("embedding generation not found")
         if item.status != "building":
             raise MemoryValidationError("only a building embedding generation can be activated")
-        retained = [revision.id for record in self.memories.values() if _owner(record, issuer, subject) for revision in record.revisions]
-        embedded = {embedding.revision_id for record in self.memories.values() if _owner(record, issuer, subject) for embedding in record.embeddings if embedding.generation_id == generation_id}
+        retained = [
+            revision.id
+            for record in self.memories.values()
+            if _owner(record, issuer, subject)
+            for revision in record.revisions
+        ]
+        embedded = {
+            embedding.revision_id
+            for record in self.memories.values()
+            if _owner(record, issuer, subject)
+            for embedding in record.embeddings
+            if embedding.generation_id == generation_id
+        }
         if set(retained) - embedded:
             raise MemoryValidationError("embedding generation is incomplete")
         configuration = self.model_configurations.get((issuer, subject))
-        if configuration is not None and configuration.embedding_generation != generation_id and (
-            item.model_id != configuration.embedding_model_id
-            or item.model_revision != configuration.embedding_model_revision
+        if (
+            configuration is not None
+            and configuration.embedding_generation != generation_id
+            and (
+                item.model_id != configuration.embedding_model_id
+                or item.model_revision != configuration.embedding_model_revision
+            )
         ):
             raise MemoryValidationError("embedding generation does not match configured target")
         if configuration is not None:
             previous_id = configuration.embedding_generation
             if isinstance(previous_id, UUID) and previous_id != generation_id:
                 previous = self.embedding_generations.get(previous_id)
-                if previous is not None and previous.issuer == issuer and previous.subject == subject:
+                if (
+                    previous is not None
+                    and previous.issuer == issuer
+                    and previous.subject == subject
+                ):
                     previous.status = "retired"
             self.model_configurations[(issuer, subject)] = replace(
                 configuration,
@@ -2362,7 +3700,9 @@ class MemoryStore(_MemoryStoreBase):
             ]
         return activated
 
-    async def mark_embedding_generation_failed(self, issuer: str, subject: str, generation_id: UUID) -> MemoryEmbeddingGeneration:
+    async def mark_embedding_generation_failed(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration:
         item = self.embedding_generations.get(generation_id)
         if item is None or item.issuer != issuer or item.subject != subject:
             raise MemoryNotFound("embedding generation not found")
@@ -2371,9 +3711,18 @@ class MemoryStore(_MemoryStoreBase):
         item.status = "failed"
         return item
 
-    async def attach_embedding(self, issuer: str, subject: str, memory_id: UUID, **kwargs: object) -> MemoryRecord:
+    async def attach_embedding(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
         self._assert_not_fenced(issuer, subject, memory_id)
-        record = self._find(issuer, subject, memory_id, scope_type=kwargs.get("scope_type"), agent_profile_id=kwargs.get("agent_profile_id"), authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())))
+        record = self._find(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=kwargs.get("scope_type"),
+            agent_profile_id=kwargs.get("agent_profile_id"),
+            authorized_agent_ids=frozenset(kwargs.get("authorized_agent_ids", frozenset())),
+        )
         revision_id = kwargs.get("revision_id", record.current_revision_id)
         if revision_id not in {item.id for item in record.revisions}:
             raise MemoryNotFound("memory revision not found")
@@ -2389,17 +3738,44 @@ class MemoryStore(_MemoryStoreBase):
         digest = str(kwargs.get("digest", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise MemoryValidationError("embedding digest must be sha256")
+        if not {"model_id", "model_revision", "model_digest"} <= kwargs.keys():
+            raise MemoryValidationError("observed embedding identity is required")
+        model_id = str(kwargs["model_id"])
+        model_revision = kwargs["model_revision"]
+        model_digest = kwargs["model_digest"]
+        if (
+            model_id != generation.model_id
+            or model_revision != generation.model_revision
+            or model_digest != generation.model_digest
+        ):
+            raise MemoryValidationError("embedding provider identity does not match generation")
         if any(
             item.revision_id == revision_id and item.generation_id == generation.id
             for item in record.embeddings
         ):
             raise MemoryValidationError("embedding already exists for revision and generation")
-        record.embeddings.append(MemoryEmbedding(uuid4(), revision_id, generation.generation, generation.model_id, generation.model_revision, generation.dimension, digest, self._now(), vector, generation.id))
+        record.embeddings.append(
+            MemoryEmbedding(
+                uuid4(),
+                revision_id,
+                generation.generation,
+                model_id,
+                model_revision,
+                generation.dimension,
+                digest,
+                self._now(),
+                vector,
+                generation.id,
+                model_digest,
+            )
+        )
         if all(item.id != generation.id for item in record.embedding_generations):
             record.embedding_generations.append(generation)
         return record
 
-    async def save_model_configuration(self, issuer: str, subject: str, configuration: MemoryModelConfiguration, **kwargs: object) -> MemoryModelConfiguration:
+    async def save_model_configuration(
+        self, issuer: str, subject: str, configuration: MemoryModelConfiguration, **kwargs: object
+    ) -> MemoryModelConfiguration:
         if configuration.issuer != issuer or configuration.subject != subject:
             raise MemoryScopeAuthorizationRequired("model configuration owner mismatch")
         expected = kwargs.get("expected_version")
@@ -2425,15 +3801,37 @@ class MemoryStore(_MemoryStoreBase):
                     and existing_generation.status == "building"
                 ):
                     existing_generation.status = "retired"
-            previous = self.embedding_generations.get(prior.embedding_generation) if prior.embedding_generation else None
+            previous = (
+                self.embedding_generations.get(prior.embedding_generation)
+                if prior.embedding_generation
+                else None
+            )
             dimension = int(kwargs.get("dimension", previous.dimension if previous else 0))
             if dimension > 0:
-                next_number = max((item.generation for item in self.embedding_generations.values() if item.issuer == issuer and item.subject == subject), default=0) + 1
+                next_number = (
+                    max(
+                        (
+                            item.generation
+                            for item in self.embedding_generations.values()
+                            if item.issuer == issuer and item.subject == subject
+                        ),
+                        default=0,
+                    )
+                    + 1
+                )
                 generation_id = uuid4()
                 self.embedding_generations[generation_id] = MemoryEmbeddingGeneration(
-                    generation_id, next_number, configuration.embedding_model_id,
-                    configuration.embedding_model_revision, dimension, "building", self._now(), None,
-                    str(kwargs["model_digest"]) if kwargs.get("model_digest") else None, issuer, subject,
+                    generation_id,
+                    next_number,
+                    configuration.embedding_model_id,
+                    configuration.embedding_model_revision,
+                    dimension,
+                    "building",
+                    self._now(),
+                    None,
+                    str(kwargs["model_digest"]) if kwargs.get("model_digest") else None,
+                    issuer,
+                    subject,
                 )
                 selected = prior.embedding_generation
         saved = replace(configuration, embedding_generation=selected)
@@ -2446,7 +3844,9 @@ class MemoryStore(_MemoryStoreBase):
         except KeyError as exc:
             raise MemoryNotFound("memory model configuration not found") from exc
 
-    async def queue_embedding_job(self, issuer: str, subject: str, *, memory_id: UUID, revision_id: UUID, generation_id: UUID) -> MemoryEmbeddingJob:
+    async def queue_embedding_job(
+        self, issuer: str, subject: str, *, memory_id: UUID, revision_id: UUID, generation_id: UUID
+    ) -> MemoryEmbeddingJob:
         self._assert_not_fenced(issuer, subject, memory_id)
         record = self.memories.get(memory_id)
         if record is None or not _owner(record, issuer, subject):
@@ -2456,13 +3856,17 @@ class MemoryStore(_MemoryStoreBase):
         generation = self.embedding_generations.get(generation_id)
         if generation is None or generation.issuer != issuer or generation.subject != subject:
             raise MemoryNotFound("embedding generation not found")
-        job_id = uuid5(MEMORY_ID_NAMESPACE, f"embedding-job:{issuer}:{subject}:{revision_id}:{generation_id}")
+        job_id = uuid5(
+            MEMORY_ID_NAMESPACE, f"embedding-job:{issuer}:{subject}:{revision_id}:{generation_id}"
+        )
         existing = self.embedding_jobs.get(job_id)
         if existing is not None:
             # Queue/replay is not a lease capability; the current lease, if
             # any, belongs to the worker that claimed the durable row.
             return replace(existing, lease_id=None, lease_until=None)
-        item = MemoryEmbeddingJob(job_id, issuer, subject, memory_id, revision_id, generation_id, available_at=self._now())
+        item = MemoryEmbeddingJob(
+            job_id, issuer, subject, memory_id, revision_id, generation_id, available_at=self._now()
+        )
         self.embedding_jobs[job_id] = item
         return item
 
@@ -2477,34 +3881,69 @@ class MemoryStore(_MemoryStoreBase):
         self.processing_jobs[job.id] = job
         return job
 
-    async def get_processing_job(self, job_id: UUID, issuer: str, subject: str) -> MemoryProcessingJob:
+    async def get_processing_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryProcessingJob:
         job = self.processing_jobs.get(job_id)
         if job is None or (job.issuer, job.subject) != (issuer, subject):
             raise MemoryNotFound("memory processing job not found")
         return job
 
-    async def claim_processing_job_by_id(self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0) -> MemoryProcessingJob | None:
+    async def claim_processing_job_by_id(
+        self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryProcessingJob | None:
         job = await self.get_processing_job(job_id, issuer, subject)
         now = self._now()
         if job.available_at > now:
             return None
-        if job.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (job.status is ProcessingJobStatus.RUNNING and job.lease_until is not None and job.lease_until <= now):
+        if job.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (
+            job.status is ProcessingJobStatus.RUNNING
+            and job.lease_until is not None
+            and job.lease_until <= now
+        ):
             return None
-        claimed = replace(job, status=ProcessingJobStatus.RUNNING, attempt_count=job.attempt_count + 1, lease_id=uuid4(), lease_until=now + timedelta(seconds=max(1.0, lease_seconds)))
+        claimed = replace(
+            job,
+            status=ProcessingJobStatus.RUNNING,
+            attempt_count=job.attempt_count + 1,
+            lease_id=uuid4(),
+            lease_until=now + timedelta(seconds=max(1.0, lease_seconds)),
+        )
         self.processing_jobs[job_id] = claimed
         return claimed
 
-    async def settle_processing_job(self, job_id: UUID, lease_id: UUID, *, issuer: str, subject: str, retryable: bool = False, error_class: str | None = None) -> MemoryProcessingJob:
+    async def settle_processing_job(
+        self,
+        job_id: UUID,
+        lease_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        retryable: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryProcessingJob:
         job = await self.get_processing_job(job_id, issuer, subject)
         if job.status is not ProcessingJobStatus.RUNNING or job.lease_id != lease_id:
             raise MemoryValidationError("processing job lease is stale")
-        settled = replace(job, status=ProcessingJobStatus.RETRYABLE if retryable else ProcessingJobStatus.COMPLETED, last_error_class=error_class, lease_id=None, lease_until=None)
+        settled = replace(
+            job,
+            status=ProcessingJobStatus.RETRYABLE if retryable else ProcessingJobStatus.COMPLETED,
+            last_error_class=error_class,
+            lease_id=None,
+            lease_until=None,
+        )
         if retryable:
-            settled = replace(settled, available_at=self._now() + timedelta(seconds=min(3600, 2 ** min(job.attempt_count, 10))))
+            settled = replace(
+                settled,
+                available_at=self._now()
+                + timedelta(seconds=min(3600, 2 ** min(job.attempt_count, 10))),
+            )
         self.processing_jobs[job_id] = settled
         return settled
 
-    async def claim_embedding_job(self, issuer: str, subject: str, *, lease_seconds: float = 60.0) -> MemoryEmbeddingJob | None:
+    async def claim_embedding_job(
+        self, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryEmbeddingJob | None:
         now = self._now()
         for item in sorted(self.embedding_jobs.values(), key=lambda value: value.available_at):
             if item.issuer != issuer or item.subject != subject or item.available_at > now:
@@ -2512,58 +3951,127 @@ class MemoryStore(_MemoryStoreBase):
             generation = self.embedding_generations.get(item.generation_id)
             if generation is None or generation.status != "active":
                 continue
-            if item.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (item.status is ProcessingJobStatus.RUNNING and item.lease_until and item.lease_until <= now):
+            if item.status not in {
+                ProcessingJobStatus.QUEUED,
+                ProcessingJobStatus.RETRYABLE,
+            } and not (
+                item.status is ProcessingJobStatus.RUNNING
+                and item.lease_until
+                and item.lease_until <= now
+            ):
                 continue
-            claimed = replace(item, status=ProcessingJobStatus.RUNNING, attempt_count=item.attempt_count + 1, lease_id=uuid4(), lease_until=now + timedelta(seconds=max(1.0, lease_seconds)))
+            claimed = replace(
+                item,
+                status=ProcessingJobStatus.RUNNING,
+                attempt_count=item.attempt_count + 1,
+                lease_id=uuid4(),
+                lease_until=now + timedelta(seconds=max(1.0, lease_seconds)),
+            )
             self.embedding_jobs[item.id] = claimed
             return claimed
         return None
 
-    async def settle_embedding_job(self, job_id: UUID, *, issuer: str, subject: str, lease_id: UUID, retryable: bool = False, failed: bool = False, error_class: str | None = None) -> MemoryEmbeddingJob:
+    async def settle_embedding_job(
+        self,
+        job_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        lease_id: UUID,
+        retryable: bool = False,
+        failed: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryEmbeddingJob:
         item = self.embedding_jobs.get(job_id)
         if item is None or (issuer, subject) != (item.issuer, item.subject):
             raise MemoryNotFound("embedding job not found")
         if item.status is not ProcessingJobStatus.RUNNING or item.lease_id != lease_id:
             raise MemoryValidationError("embedding job lease is stale")
         provider_retry = failed and error_class == "provider"
-        settled = replace(item, status=ProcessingJobStatus.FAILED if failed and not provider_retry else (ProcessingJobStatus.RETRYABLE if retryable or provider_retry else ProcessingJobStatus.COMPLETED), last_error_class=error_class, lease_id=None, lease_until=None)
+        settled = replace(
+            item,
+            status=ProcessingJobStatus.FAILED
+            if failed and not provider_retry
+            else (
+                ProcessingJobStatus.RETRYABLE
+                if retryable or provider_retry
+                else ProcessingJobStatus.COMPLETED
+            ),
+            last_error_class=error_class,
+            lease_id=None,
+            lease_until=None,
+        )
         if retryable or provider_retry:
-            settled = replace(settled, available_at=self._now() + timedelta(seconds=min(3600, 2 ** min(item.attempt_count, 10))))
+            settled = replace(
+                settled,
+                available_at=self._now()
+                + timedelta(seconds=min(3600, 2 ** min(item.attempt_count, 10))),
+            )
         self.embedding_jobs[job_id] = settled
         return settled
 
-    async def claim_embedding_job_by_id(self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0) -> MemoryEmbeddingJob | None:
+    async def claim_embedding_job_by_id(
+        self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryEmbeddingJob | None:
         item = self.embedding_jobs.get(job_id)
         now = self._now()
-        if item is None or (item.issuer, item.subject) != (issuer, subject) or item.available_at > now:
+        if (
+            item is None
+            or (item.issuer, item.subject) != (issuer, subject)
+            or item.available_at > now
+        ):
             return None
-        if item.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (item.status is ProcessingJobStatus.RUNNING and item.lease_until is not None and item.lease_until <= now):
+        if item.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (
+            item.status is ProcessingJobStatus.RUNNING
+            and item.lease_until is not None
+            and item.lease_until <= now
+        ):
             return None
         self._assert_not_fenced(issuer, subject, item.memory_id)
-        claimed = replace(item, status=ProcessingJobStatus.RUNNING, attempt_count=item.attempt_count + 1, lease_id=uuid4(), lease_until=now + timedelta(seconds=max(1.0, lease_seconds)))
+        claimed = replace(
+            item,
+            status=ProcessingJobStatus.RUNNING,
+            attempt_count=item.attempt_count + 1,
+            lease_id=uuid4(),
+            lease_until=now + timedelta(seconds=max(1.0, lease_seconds)),
+        )
         self.embedding_jobs[job_id] = claimed
         return claimed
 
     async def claim_embedding_job_for_revision(
-        self, issuer: str, subject: str, *, revision_id: UUID, generation_id: UUID,
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        revision_id: UUID,
+        generation_id: UUID,
         lease_seconds: float = 60.0,
     ) -> MemoryEmbeddingJob | None:
         now = self._now()
         for item in sorted(self.embedding_jobs.values(), key=lambda value: value.available_at):
             if (
-                item.issuer != issuer or item.subject != subject
-                or item.revision_id != revision_id or item.generation_id != generation_id
+                item.issuer != issuer
+                or item.subject != subject
+                or item.revision_id != revision_id
+                or item.generation_id != generation_id
                 or item.available_at > now
             ):
                 continue
-            if item.status not in {ProcessingJobStatus.QUEUED, ProcessingJobStatus.RETRYABLE} and not (
-                item.status is ProcessingJobStatus.RUNNING and item.lease_until is not None and item.lease_until <= now
+            if item.status not in {
+                ProcessingJobStatus.QUEUED,
+                ProcessingJobStatus.RETRYABLE,
+            } and not (
+                item.status is ProcessingJobStatus.RUNNING
+                and item.lease_until is not None
+                and item.lease_until <= now
             ):
                 continue
             self._assert_not_fenced(issuer, subject, item.memory_id)
             claimed = replace(
-                item, status=ProcessingJobStatus.RUNNING,
-                attempt_count=item.attempt_count + 1, lease_id=uuid4(),
+                item,
+                status=ProcessingJobStatus.RUNNING,
+                attempt_count=item.attempt_count + 1,
+                lease_id=uuid4(),
                 lease_until=now + timedelta(seconds=max(1.0, lease_seconds)),
             )
             self.embedding_jobs[item.id] = claimed
@@ -2576,11 +4084,59 @@ MemoryService = MemoryStore
 
 
 __all__ = [
-    "ARCHIVE_AFTER_DAYS", "DORMANT_THRESHOLD", "MAX_HALF_LIFE_DAYS", "MIN_HALF_LIFE_DAYS",
-    "PURGE_CONFIRMATION", "CandidateDecision", "CandidateState", "MemoryAction", "MemoryAuditRecord", "MemoryCandidate", "MemoryCatalog", "MemoryEmbedding", "MemoryError",
-    "MemoryEmbeddingGeneration", "MemoryFilters", "MemoryIdempotencyConflict", "MemoryKind", "MemoryLifecycleStatus",
-    "MemoryNotFound", "MemoryProvenance", "MemoryPurgeConfirmationRequired", "MemoryPurgeReplayNotFound", "MemoryRecord", "MemoryRelation", "MemoryScopeAuthorizationRequired",
-    "MemoryRepository", "MemoryRevision", "MemoryScope", "MemoryScopeType", "MemoryService",
-    "MEMORY_ACTION_SCHEMA", "MEMORY_ID_NAMESPACE", "MEMORY_PROCESSING_SCHEMA_VERSION", "MEMORY_PROCESSING_TOPIC", "SENSITIVITY_POLICY_VERSION", "MemoryEmbeddingJob", "MemoryModelConfiguration", "MemoryProcessingCommand", "MemoryProcessingJob", "MemoryProcessingService", "MemoryProcessingSettlement", "MemoryProcessor", "MemoryReindexService", "MemorySensitivity", "MemoryStore", "MemoryTurnEvidence", "MemoryValidationError", "MemoryVersionConflict", "ProcessingJobStatus", "classify_sensitivity", "contains_secret", "decide_candidate",
-    "validate_memory_text", "validate_provenance", "validate_revision",
+    "ARCHIVE_AFTER_DAYS",
+    "DORMANT_THRESHOLD",
+    "MAX_HALF_LIFE_DAYS",
+    "MIN_HALF_LIFE_DAYS",
+    "PURGE_CONFIRMATION",
+    "CandidateDecision",
+    "CandidateState",
+    "MemoryAction",
+    "MemoryAuditRecord",
+    "MemoryCandidate",
+    "MemoryCatalog",
+    "MemoryEmbedding",
+    "MemoryError",
+    "MemoryEmbeddingGeneration",
+    "MemoryFilters",
+    "MemoryIdempotencyConflict",
+    "MemoryKind",
+    "MemoryLifecycleStatus",
+    "MemoryNotFound",
+    "MemoryProvenance",
+    "MemoryPurgeConfirmationRequired",
+    "MemoryPurgeReplayNotFound",
+    "MemoryRecord",
+    "MemoryRelation",
+    "MemoryScopeAuthorizationRequired",
+    "MemoryRepository",
+    "MemoryRevision",
+    "MemoryScope",
+    "MemoryScopeType",
+    "MemoryService",
+    "MEMORY_ACTION_SCHEMA",
+    "MEMORY_ID_NAMESPACE",
+    "MEMORY_PROCESSING_SCHEMA_VERSION",
+    "MEMORY_PROCESSING_TOPIC",
+    "SENSITIVITY_POLICY_VERSION",
+    "MemoryEmbeddingJob",
+    "MemoryModelConfiguration",
+    "MemoryProcessingCommand",
+    "MemoryProcessingJob",
+    "MemoryProcessingService",
+    "MemoryProcessingSettlement",
+    "MemoryProcessor",
+    "MemoryReindexService",
+    "MemorySensitivity",
+    "MemoryStore",
+    "MemoryTurnEvidence",
+    "MemoryValidationError",
+    "MemoryVersionConflict",
+    "ProcessingJobStatus",
+    "classify_sensitivity",
+    "contains_secret",
+    "decide_candidate",
+    "validate_memory_text",
+    "validate_provenance",
+    "validate_revision",
 ]

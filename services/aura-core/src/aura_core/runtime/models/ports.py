@@ -109,6 +109,8 @@ class EmbeddingResult:
     model_id: str
     model_revision: str | None
     dimension: int
+    # Provider-verified artifact identity, distinct from the vector digest.
+    model_digest: str
     digest: str
 
 

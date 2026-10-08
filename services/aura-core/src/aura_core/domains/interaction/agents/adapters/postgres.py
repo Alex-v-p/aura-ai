@@ -5,11 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aura_core.domains.interaction.agents.persistence import (
     AgentProfileRow,
     AgentRevisionRow,
+    MemoryPolicyRevisionRow,
     ModelPolicyRevisionRow,
     PromptBundleRevisionRow,
     PromptComponentRevisionRow,
 )
 from aura_core.domains.interaction.agents.public import (
+    GENERAL_MEMORY_POLICY_ID,
     GOVERNANCE_COMPONENT_ID,
     NEUTRAL_PERSONA_REVISION_ID,
     PLATFORM_COMPONENT_ID,
@@ -63,6 +65,21 @@ class SqlAgentSeeder:
                 )
             )
             session.add(
+                MemoryPolicyRevisionRow(
+                    id=GENERAL_MEMORY_POLICY_ID,
+                    principal_issuer="",
+                    principal_subject="",
+                    agent_profile_id=GENERAL_AGENT.profile_id,
+                    revision=1,
+                    shared_user_read=True,
+                    current_agent_read=True,
+                    fallback_relevance_threshold=0.5,
+                    max_memories=8,
+                    context_budget_fraction=0.2,
+                    allow_shared_user_promotion=False,
+                )
+            )
+            session.add(
                 AgentRevisionRow(
                     id=GENERAL_AGENT.revision_id,
                     agent_profile_id=GENERAL_AGENT.profile_id,
@@ -74,5 +91,6 @@ class SqlAgentSeeder:
                     persona_revision_id=NEUTRAL_PERSONA_REVISION_ID,
                     prompt_bundle_revision_id=PROMPT_BUNDLE_ID,
                     model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
+                    memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
                 )
             )

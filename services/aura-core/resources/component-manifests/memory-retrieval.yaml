@@ -1,0 +1,64 @@
+component:
+  id: aura.knowledge.memory_retrieval
+  version: 1.0.0
+  owner: knowledge.memory
+  category: retrieval
+input:
+  schema: memory-retrieval-query-v1
+  replayable: false
+  replay_reason: Retrieval queries private memory and provider/database state; replay requires an owner-authorized evaluation fixture.
+output:
+  schema: memory-retrieval-snapshot-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - memory_store
+  - embedding_provider
+metrics:
+  - memory_retrieval_duration_ms
+  - memory_lexical_search_duration_ms
+  - memory_vector_search_duration_ms
+  - memory_rerank_duration_ms
+  - memory_query_embedding_duration_ms
+  - memory_retrieval_candidate_count
+  - memory_recall_count
+  - memory_fallback_outcome
+  - memory_context_tokens
+  - memory_retrieval_errors
+metric_semantics:
+  memory_retrieval_duration_ms: End-to-end owner-authorized retrieval boundary duration.
+  memory_lexical_search_duration_ms: PostgreSQL full-text candidate search duration.
+  memory_vector_search_duration_ms: Exact active-generation pgvector candidate search duration.
+  memory_rerank_duration_ms: Deterministic fusion and reranking duration.
+  memory_query_embedding_duration_ms: Query embedding duration for the active owner generation; distinct from persisted-vector search.
+  memory_retrieval_candidate_count: Bounded candidate count after policy and lifecycle filters.
+  memory_recall_count: Number of selected memory revisions admitted to context.
+  memory_fallback_outcome: Bounded primary-result fallback decision; never reveals foreign-scope existence.
+  memory_context_tokens: Estimated metadata-only token count admitted to the memory evidence budget.
+  memory_retrieval_errors: Count of fail-closed retrieval or telemetry errors by bounded class.
+evaluators:
+  - memory_retrieval_quality
+  - memory_scope_authorization
+  - memory_context_budget_compliance
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, retrieval_stage, scope_type, degradation]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, memory_id, memory_revision_id, memory_policy_revision_id, generation_id, embedding_generation_id, fallback_grant_id, retrieval_version, selection_order, candidate_count, recalled_count, context_tokens]
+  prohibited: [content, memory_text, evidence, provenance, prompt, response, vector, payload, endpoint, token, credential, owner_subject, owner, subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]
+failure_behavior:
+  retrieval: fail_closed_without_memory_context
+  telemetry: never_block_or_fail_conversation
+  fallback: bounded_authorized_scopes_only
+evaluation:
+  support: synthetic_fixtures_only
+  required_metadata: [retrieval_version, policy_revision, embedding_generation, fixture_case]

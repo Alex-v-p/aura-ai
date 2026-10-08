@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, cast
@@ -15,6 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.execution.runs.public import Run, RunStatus, SqlRunRepository
 from aura_core.domains.governance.identity.public import SqlIdentityRepository
+from aura_core.domains.interaction.agents.public import (
+    AgentConfigurationRepository,
+    AgentRevision,
+    MemoryPolicy,
+)
 from aura_core.domains.interaction.conversations.public import (
     Conversation,
     Message,
@@ -49,6 +55,13 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryVersionConflict,
     classify_sensitivity,
 )
+from aura_core.domains.knowledge.memory.recall import (
+    MemoryQueryEmbedding,
+    MemoryQueryEmbeddingPort,
+    MemoryRecallService,
+    MemoryRecallTelemetryEvent,
+    MemoryRecallTelemetryPort,
+)
 from aura_core.domains.knowledge.memory.repository import SqlMemoryRepository
 from aura_core.platform.outbox import OutboxCommand, make_identifier_command
 from aura_core.platform.telemetry import (
@@ -58,6 +71,7 @@ from aura_core.platform.telemetry import (
     memory_trace_context,
     record_memory_operation,
     record_memory_processing,
+    record_memory_retrieval,
 )
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
@@ -68,6 +82,27 @@ from aura_core.runtime.models.ports import ProviderTraceContext
 _ = memory_persistence
 
 _MEMORY_COMMAND_NAMESPACE = UUID("4c2a5df3-8b07-4a6d-a9ca-3d19f4ee0d4e")
+
+
+def make_agent_policy_loader(
+    agents: AgentConfigurationRepository,
+) -> Callable[[str, str, UUID], Awaitable[tuple[AgentRevision, MemoryPolicy]]]:
+    """Build the authenticated pinned-agent resolver for worker composition.
+
+    The adapter remains owned by the agent domain; memory only consumes this
+    public query seam and never reaches into agent persistence mappings.
+    """
+
+    async def resolve(
+        issuer: str, subject: str, agent_revision_id: UUID
+    ) -> tuple[AgentRevision, MemoryPolicy]:
+        revision = agents.resolve_revision_unchecked(agent_revision_id)
+        policy = await agents.get_memory_policy(
+            issuer, subject, revision.memory_policy_revision_id
+        )
+        return revision, policy
+
+    return resolve
 
 
 def memory_command_factory(conversation: Conversation, run: Run, assistant: Message) -> OutboxCommand:
@@ -102,6 +137,10 @@ def memory_command_factory(conversation: Conversation, run: Run, assistant: Mess
 def _production_memory_loaders(
     sessions: async_sessionmaker[AsyncSession],
     repository: MemoryRepository,
+    *,
+    agent_policy_loader: Callable[
+        [str, str, UUID], Awaitable[tuple[AgentRevision, MemoryPolicy]]
+    ] | None = None,
 ) -> tuple[
     Callable[[UUID], Awaitable[MemoryProcessingJob]],
     Callable[[MemoryProcessingJob], Awaitable[MemoryTurnEvidence]],
@@ -135,6 +174,20 @@ def _production_memory_loaders(
                 raise MemoryValidationError("memory evidence conversation mismatch")
             if expected is not None and expected.agent_revision_id != run.agent_revision_id:
                 raise MemoryValidationError("memory evidence agent revision mismatch")
+            pinned_agent: AgentRevision | None = None
+            pinned_policy: MemoryPolicy | None = None
+            if agent_policy_loader is not None:
+                pinned_agent, pinned_policy = await agent_policy_loader(
+                    issuer, subject, run.agent_revision_id
+                )
+                if pinned_agent.memory_policy_revision_id != run.memory_policy_revision_id:
+                    raise MemoryValidationError("run memory policy is not pinned to its agent revision")
+            if (
+                expected is not None
+                and expected.memory_policy_revision_id is not None
+                and expected.memory_policy_revision_id != run.memory_policy_revision_id
+            ):
+                raise MemoryValidationError("memory policy revision mismatch")
             user_ids = expected.user_message_ids if expected is not None else (run.user_message_id,)
             assistant_ids = expected.assistant_message_ids if expected is not None else (
                 (run.assistant_message_id,) if run.assistant_message_id is not None else ()
@@ -163,11 +216,28 @@ def _production_memory_loaders(
             job = expected or MemoryProcessingJob(
                 run.id, issuer, subject, run.id, run.conversation_id,
                 agent_revision_id=run.agent_revision_id,
-                agent_profile_id=conversation.agent_profile_id,
+                agent_profile_id=(
+                    pinned_agent.profile_id
+                    if pinned_agent is not None
+                    else conversation.agent_profile_id
+                ),
                 user_message_ids=tuple(user_ids), assistant_message_ids=tuple(assistant_ids),
                 evidence_digest=digest, correlation_id=run.attempt_id or run.id,
                 causation_id=run.id, available_at=datetime.now(UTC),
+                memory_policy_revision_id=run.memory_policy_revision_id,
+                allow_shared_user_promotion=(
+                    pinned_policy.allow_shared_user_promotion
+                    if pinned_policy is not None
+                    else False
+                ),
             )
+            if job.memory_policy_revision_id is None:
+                job = replace(job, memory_policy_revision_id=run.memory_policy_revision_id)
+            if pinned_policy is not None and pinned_agent is not None:
+                if job.allow_shared_user_promotion != pinned_policy.allow_shared_user_promotion:
+                    raise MemoryValidationError("memory job promotion flag does not match pinned policy")
+                if job.agent_profile_id != pinned_agent.profile_id:
+                    raise MemoryValidationError("memory job agent profile is not pinned")
             evidence = MemoryTurnEvidence(
                 issuer, subject, run.id, run.conversation_id, run.agent_revision_id,
                 tuple(user_ids), tuple(assistant_ids), user_content, assistant_content, digest,
@@ -323,6 +393,32 @@ class InstrumentedMemoryRepository:
         method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "list_embedding_generations"))
         return cast(list[MemoryEmbeddingGeneration], await method(issuer, subject, status=status))
 
+    async def get_active_embedding_generation(
+        self, issuer: str, subject: str
+    ) -> MemoryEmbeddingGeneration | None:
+        method = cast(
+            Callable[..., Awaitable[object]],
+            getattr(self._inner, "get_active_embedding_generation"),
+        )
+        result = await self._invoke(
+            "memory.retrieval.generation", method, (None, None, None), issuer, subject
+        )
+        return cast(MemoryEmbeddingGeneration | None, result)
+
+    async def search_lexical(self, issuer: str, subject: str, **kwargs: object) -> list[MemoryRecord]:
+        method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "search_lexical"))
+        result = await self._invoke(
+            "memory.retrieval.lexical", method, (None, None, None), issuer, subject, **kwargs
+        )
+        return cast(list[MemoryRecord], result)
+
+    async def search_vector(self, issuer: str, subject: str, **kwargs: object) -> list[MemoryRecord]:
+        method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "search_vector"))
+        result = await self._invoke(
+            "memory.retrieval.vector", method, (None, None, None), issuer, subject, **kwargs
+        )
+        return cast(list[MemoryRecord], result)
+
     async def activate_embedding_generation(self, issuer: str, subject: str, generation_id: UUID) -> MemoryEmbeddingGeneration:
         result = await self._invoke("memory.embedding.activate", self._inner.activate_embedding_generation, (None, None, str(generation_id)), issuer, subject, generation_id)
         return result  # type: ignore[return-value]
@@ -449,12 +545,118 @@ def memory_repository(
     return InstrumentedMemoryRepository(repository, metrics or MetadataMetrics(), dependency)
 
 
+class _OllamaMemoryQueryEmbeddingPort(MemoryQueryEmbeddingPort):
+    """Composition adapter from the configured Ollama embedding port."""
+
+    def __init__(self, provider: OllamaEmbeddingAdapter) -> None:
+        self.provider = provider
+
+    async def embed_query(
+        self, query: str, generation: MemoryEmbeddingGeneration
+    ) -> MemoryQueryEmbedding:
+        result = await self.provider.embed(
+            generation.model_id,
+            query,
+            context=ProviderTraceContext(generation_id=str(generation.id)),
+        )
+        if (
+            result.model_id != generation.model_id
+            or result.dimension != generation.dimension
+            or (
+                generation.model_revision is not None
+                and result.model_revision != generation.model_revision
+            )
+            or result.model_digest != generation.model_digest
+        ):
+            raise MemoryValidationError("query embedding identity does not match active generation")
+        return MemoryQueryEmbedding(
+            result.vector,
+            generation.id,
+            result.model_id,
+            result.model_revision,
+            result.dimension,
+            result.digest,
+            result.model_digest,
+        )
+
+
+def memory_recall_service(
+    repository: MemoryRepository,
+    *,
+    settings: object | None = None,
+    metrics: MetadataMetrics | None = None,
+) -> MemoryRecallService:
+    """Compose owner-scoped recall with the configured embedding provider.
+
+    The provider is invoked only after recall resolves the owner-selected
+    active generation.  Provider and database failures are converted by the
+    recall service into a degraded empty result, so context assembly remains
+    independent from memory availability.
+    """
+
+    endpoint = str(getattr(settings, "ollama_url", "http://ollama:11434"))
+    timeout = float(getattr(settings, "ollama_run_timeout_seconds", 30.0))
+    telemetry_metrics = metrics or MetadataMetrics()
+    provider = OllamaEmbeddingAdapter(endpoint, timeout, telemetry=telemetry_metrics)
+
+    class _RecallTelemetry(MemoryRecallTelemetryPort):
+        def record(self, event: MemoryRecallTelemetryEvent) -> None:
+            try:
+                record_memory_retrieval(
+                    telemetry_metrics,
+                    operation=event.operation,
+                    duration_ms=event.duration_ms,
+                    trace_id=event.trace_id,
+                    parent_span_id=event.parent_span_id,
+                    outcome=event.outcome,
+                    dependency=event.dependency,
+                    error_class=event.error_class,
+                    retrieval_stage=event.retrieval_stage,
+                    degradation=event.degradation,
+                    candidate_count=event.candidate_count,
+                    # Selection happens before context rendering.  The
+                    # provider-bound admitted revision count is emitted by
+                    # the conversation context boundary instead.
+                    recall_count=(
+                        None
+                        if event.retrieval_stage == "selection"
+                        else event.recall_count
+                    ),
+                    fallback_outcome=event.fallback_outcome,
+                    # Recall estimates content before context delimiters and
+                    # trimming.  Final admitted tokens are emitted by the
+                    # conversation context boundary.
+                    context_tokens=(
+                        None
+                        if event.retrieval_stage == "selection"
+                        else event.context_tokens
+                    ),
+                    memory_policy_revision_id=event.memory_policy_revision_id,
+                    generation_id=event.generation_id,
+                    run_id=event.run_id,
+                    conversation_id=event.conversation_id,
+                    retrieval_version=event.retrieval_version,
+                )
+            except Exception:
+                # Telemetry is strictly advisory to the conversation path.
+                return
+
+    return MemoryRecallService(
+        repository,
+        embedding_port=_OllamaMemoryQueryEmbeddingPort(provider),
+        telemetry=_RecallTelemetry(),
+    )
+
+
 def memory_processing_service(
     sessions: async_sessionmaker[AsyncSession] | None,
     *,
     metrics: MetadataMetrics | None = None,
     settings: object | None = None,
     evidence_loader: Callable[..., Awaitable[object]] | None = None,
+    agent_policy_loader: Callable[
+        [str, str, UUID], Awaitable[tuple[AgentRevision, MemoryPolicy]]
+    ] | None = None,
 ) -> object:
     """Compose the worker memory processor without introducing a service."""
 
@@ -467,7 +669,9 @@ def memory_processing_service(
     job_loader: Callable[[UUID], Awaitable[MemoryProcessingJob]] | None = None
     production_evidence_loader: Callable[[MemoryProcessingJob], Awaitable[MemoryTurnEvidence]] | None = None
     if sessions is not None:
-        job_loader, production_evidence_loader = _production_memory_loaders(sessions, repository)
+        job_loader, production_evidence_loader = _production_memory_loaders(
+            sessions, repository, agent_policy_loader=agent_policy_loader
+        )
     effective_evidence_loader = cast(
         Callable[[MemoryProcessingJob], Awaitable[MemoryTurnEvidence | tuple[str, str]]] | None,
         evidence_loader or production_evidence_loader,
@@ -632,9 +836,21 @@ def memory_processing_service(
                             job_id=str(job.id), generation_id=str(job.generation_id),
                         ),
                     )
+                    if (
+                        embedded.model_id != generation.model_id
+                        or embedded.model_revision != generation.model_revision
+                        or embedded.model_digest != generation.model_digest
+                        or embedded.dimension != generation.dimension
+                    ):
+                        raise MemoryValidationError(
+                            "embedding provider identity does not match active generation"
+                        )
                     await repository.attach_embedding(
                         job.issuer, job.subject, job.memory_id, revision_id=job.revision_id,
                         generation_id=job.generation_id, vector=embedded.vector, digest=embedded.digest,
+                        model_id=embedded.model_id,
+                        model_revision=embedded.model_revision,
+                        model_digest=embedded.model_digest,
                         scope_type=record.scope.type, agent_profile_id=record.scope.agent_profile_id,
                     )
                     if callable(settle):
@@ -742,6 +958,7 @@ def memory_processing_service(
 __all__ = [
     "MEMORY_PROCESSING_TOPIC",
     "memory_command_factory",
+    "make_agent_policy_loader",
     "memory_processing_service",
     "memory_repository",
 ]

@@ -114,6 +114,11 @@ class AppState:
             self.memory_repository = memory_uow.memory_repository(
                 None, testing=True, metrics=self.metrics
             )
+            self.store.set_memory_recall(
+                memory_uow.memory_recall_service(
+                    self.memory_repository, settings=self.settings, metrics=self.metrics
+                )
+            )
             command_factory = getattr(memory_uow, "memory_command_factory", None)
             if callable(command_factory):
                 self.store.set_memory_command_factory(
@@ -172,6 +177,11 @@ class AppState:
             self.oidc_states = RedisLoginStateBackend(redis_client)
             self.memory_repository = memory_uow.memory_repository(
                 self.sessions_factory, metrics=self.metrics
+            )
+            self.sql_store.set_memory_recall(
+                memory_uow.memory_recall_service(
+                    self.memory_repository, settings=self.settings, metrics=self.metrics
+                )
             )
             command_factory = getattr(memory_uow, "memory_command_factory", None)
             if callable(command_factory):

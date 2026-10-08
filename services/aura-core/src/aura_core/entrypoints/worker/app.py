@@ -310,7 +310,12 @@ async def run_forever(settings: Settings | None = None) -> None:
     try:
         factory = getattr(memory_uow, "memory_processing_service", None)
         if callable(factory):
-            candidate = factory(sessions, metrics=metrics, settings=config)
+            candidate = factory(
+                sessions,
+                metrics=metrics,
+                settings=config,
+                agent_policy_loader=memory_uow.make_agent_policy_loader(agent_store),
+            )
             if callable(getattr(candidate, "process_command", None)):
                 memory_processor = cast(MemoryJobProcessor, candidate)
     except (AttributeError, TypeError):

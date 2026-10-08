@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from time import monotonic
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -79,6 +80,16 @@ class OllamaEmbeddingAdapter:
             )
             raise OllamaEmbeddingUnavailable("embedding response malformed")
         values, model_revision = parsed
+        model_digest = await self._request_model_artifact(model_id)
+        if model_digest is None:
+            payload = None
+            model_id = ""
+            text = ""
+            self._record_telemetry(
+                started, context, model_id=requested_model_id,
+                outcome="error", error_class="provider"
+            )
+            raise OllamaEmbeddingUnavailable("embedding model artifact unavailable")
         digest = hashlib.sha256(
             json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -88,6 +99,7 @@ class OllamaEmbeddingAdapter:
             model_id=model_id,
             model_revision=model_revision,
             dimension=len(values),
+            model_digest=model_digest,
             digest=digest,
         )
 
@@ -179,6 +191,30 @@ class OllamaEmbeddingAdapter:
             return cast(dict[str, object], payload) if isinstance(payload, dict) else None
         except Exception:
             return None
+
+    async def _request_model_artifact(self, model_id: str) -> str | None:
+        """Read one unambiguous artifact digest from Ollama's model inventory."""
+
+        payload = await self._request_inventory()
+        if payload is None or not isinstance(payload.get("models"), list):
+            return None
+        matches: list[dict[str, object]] = []
+        for item in cast(list[object], payload["models"]):
+            if isinstance(item, dict) and cast(dict[str, object], item).get("name") == model_id:
+                matches.append(cast(dict[str, object], item))
+        # Multiple tags with the same name are ambiguous: fail closed instead
+        # of selecting a digest that might not have generated the vector.
+        if len(matches) != 1:
+            return None
+        value: object = matches[0].get("digest")
+        if value is None and isinstance(matches[0].get("details"), dict):
+            value = cast(dict[str, object], matches[0]["details"]).get("digest")
+        if not isinstance(value, str):
+            return None
+        digest = value.strip().lower()
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        return digest if re.fullmatch(r"[0-9a-f]{64}", digest) else None
 
     @classmethod
     def _parse_embedding(cls, payload: object) -> tuple[tuple[float, ...], str | None] | None:

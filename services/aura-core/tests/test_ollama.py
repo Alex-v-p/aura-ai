@@ -6,6 +6,7 @@ import pytest
 from aura_core.platform.telemetry import MetadataMetrics
 from aura_core.providers.embeddings.ollama.adapter import (
     OllamaEmbeddingAdapter,
+    OllamaEmbeddingUnavailable,
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter, OllamaUnavailable
 from aura_core.runtime.models.ports import (
@@ -326,6 +327,11 @@ async def test_ollama_memory_inference_malformed_and_oversized_responses_are_con
 @pytest.mark.asyncio
 async def test_ollama_embedding_returns_finite_vector_metadata_without_text_leakage() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": "qwen3-embedding:4b", "digest": "sha256:" + "a" * 64}]},
+            )
         assert request.url.path == "/api/embed"
         body = cast(dict[str, object], json.loads(request.content))
         assert body["model"] == "qwen3-embedding:4b"
@@ -340,8 +346,36 @@ async def test_ollama_embedding_returns_finite_vector_metadata_without_text_leak
         result = await adapter.embed("qwen3-embedding:4b", "private memory text")
         assert result.vector == (0.1, 0.2, 0.3)
         assert result.dimension == 3
+        assert result.model_digest == "a" * 64
         assert len(result.digest) == 64
         assert "private memory text" not in repr(result)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_embedding_fails_closed_for_ambiguous_model_inventory() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/embed":
+            return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"name": "embedder", "digest": "sha256:" + "a" * 64},
+                    {"name": "embedder", "digest": "sha256:" + "b" * 64},
+                ]
+            },
+        )
+
+    adapter = OllamaEmbeddingAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        with pytest.raises(OllamaEmbeddingUnavailable, match="artifact unavailable"):
+            await adapter.embed("embedder", "safe text")
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
 
@@ -356,6 +390,11 @@ async def test_ollama_provider_telemetry_is_correlated_and_metadata_only() -> No
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/chat":
             return httpx.Response(200, json={"message": {"content": '{"answer":"ok"}'}})
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": "qwen3-embedding:4b", "digest": "sha256:" + "a" * 64}]},
+            )
         assert request.url.path == "/api/embed"
         return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
 

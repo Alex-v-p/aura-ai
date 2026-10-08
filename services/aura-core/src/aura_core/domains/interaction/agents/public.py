@@ -31,11 +31,30 @@ NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 GENERAL_PROFILE_ID = uuid5(NAMESPACE, "general-assistant")
 GENERAL_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-1")
 GENERAL_POLICY_ID = uuid5(NAMESPACE, "ollama-model-policy-1")
+GENERAL_MEMORY_POLICY_ID = uuid5(NAMESPACE, "general-assistant-memory-policy-1")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
 GOVERNANCE_COMPONENT_ID = uuid5(NAMESPACE, "prompt-governance-1")
 PROMPT_BUNDLE_ID = uuid5(NAMESPACE, "prompt-bundle-1")
+
+
+def platform_memory_policy_id(agent_profile_id: UUID) -> UUID:
+    """Return the deterministic blank-principal policy seeded for a legacy agent.
+
+    Legacy agent rows predate owner association, so migration 0010 gives each
+    profile an isolated platform-default policy.  Callers must still verify
+    that the returned policy is pinned by the requested agent revision; this
+    helper only prevents treating arbitrary blank-principal rows as defaults.
+    """
+
+    return uuid5(NAMESPACE, f"agent-memory-policy:{agent_profile_id}:1")
+
+
+def is_platform_memory_policy(policy_id: UUID, agent_profile_id: UUID) -> bool:
+    """Check the narrow, deterministic legacy policy identity."""
+
+    return policy_id == platform_memory_policy_id(agent_profile_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +70,45 @@ class AgentRevision:
     model_policy_revision_id: UUID
     system_prompt: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Every immutable agent revision pins the memory policy it was admitted
+    # with.  The default keeps old callers source-compatible while all
+    # catalog-created revisions use the deterministic seeded policy.
+    memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPolicy:
+    """Immutable, owner-scoped memory access policy revision."""
+
+    id: UUID
+    agent_profile_id: UUID
+    revision: int
+    shared_user_read: bool = True
+    current_agent_read: bool = True
+    fallback_relevance_threshold: float = 0.5
+    max_memories: int = 8
+    context_budget_fraction: float = 0.2
+    allow_shared_user_promotion: bool = False
+    fallback_agent_profile_ids: tuple[UUID, ...] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.fallback_relevance_threshold <= 1:
+            raise ValueError("fallback relevance threshold must be between zero and one")
+        if not 1 <= self.max_memories <= 8:
+            raise ValueError("memory policy maximum must be between one and eight")
+        if not 0 < self.context_budget_fraction <= 0.2:
+            raise ValueError("memory context fraction must be between zero and 20 percent")
+        if self.agent_profile_id in self.fallback_agent_profile_ids:
+            raise ValueError("an agent cannot grant itself as a fallback")
+        if len(set(self.fallback_agent_profile_ids)) != len(self.fallback_agent_profile_ids):
+            raise ValueError("fallback grants must be unique")
+
+
+# More explicit aliases make the public boundary easy to discover without
+# duplicating policy semantics across the memory and agent domains.
+AgentMemoryPolicy = MemoryPolicy
+MemoryPolicyRevision = MemoryPolicy
 
 
 @dataclass(slots=True)
@@ -87,6 +145,7 @@ class AgentConfigurationRepository(Protocol):
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
     ) -> AgentProfile: ...
     async def revise_agent(
         self,
@@ -99,6 +158,7 @@ class AgentConfigurationRepository(Protocol):
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID | None = None,
     ) -> AgentProfile: ...
     async def set_status(
         self,
@@ -112,6 +172,12 @@ class AgentConfigurationRepository(Protocol):
     async def require_active_revision_in_transaction(
         self, session: Any, identifier: UUID
     ) -> AgentRevision: ...
+    async def get_memory_policy(
+        self, issuer: str, subject: str, policy_id: UUID
+    ) -> MemoryPolicy: ...
+    async def create_memory_policy(
+        self, issuer: str, subject: str, policy: MemoryPolicy
+    ) -> MemoryPolicy: ...
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision: ...
     def resolve_revision(self, identifier: UUID) -> AgentRevision: ...
     def compile_prompt(
@@ -146,6 +212,7 @@ class AgentCatalog:
     def __init__(self, persona_query: PersonaRevisionQueryPort | None = None) -> None:
         self._idempotency: dict[str, tuple[str, object]] = {}
         self.persona_query = persona_query or PersonaCatalog()
+        self.memory_policies: dict[UUID, MemoryPolicy] = {}
         platform = PromptComponentRevision(PLATFORM_COMPONENT_ID, "platform", 1, "")
         governance = PromptComponentRevision(GOVERNANCE_COMPONENT_ID, "governance", 1, "")
         self.bundle = PromptBundleRevision(PROMPT_BUNDLE_ID, 1, platform, governance)
@@ -161,6 +228,10 @@ class AgentCatalog:
             PROMPT_BUNDLE_ID,
             GENERAL_POLICY_ID,
             "You are Aura, a helpful local-first household assistant.",
+            memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+        )
+        self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
+            GENERAL_MEMORY_POLICY_ID, GENERAL_PROFILE_ID, 1
         )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
@@ -206,6 +277,7 @@ class AgentCatalog:
         persona_revision_id: UUID = NEUTRAL_PERSONA_REVISION_ID,
         model_policy_revision_id: UUID = GENERAL_POLICY_ID,
         idempotency_key: str | None = None,
+        memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
     ) -> AgentProfile:
         fingerprint = _canonical_fingerprint(
             "agent",
@@ -215,6 +287,7 @@ class AgentCatalog:
                 "purpose": purpose,
                 "instructions": instructions,
                 "personaRevisionId": str(persona_revision_id),
+                "memoryPolicyRevisionId": str(memory_policy_revision_id),
             },
         )
         if idempotency_key is not None and idempotency_key in self._idempotency:
@@ -226,6 +299,14 @@ class AgentCatalog:
         if persona.status != ConfigurationStatus.ACTIVE:
             raise ConfigurationDisabled("persona is disabled")
         profile_id = uuid4()
+        if memory_policy_revision_id == GENERAL_MEMORY_POLICY_ID:
+            memory_policy_revision_id = uuid5(NAMESPACE, f"agent-memory-policy:{profile_id}:1")
+            self.memory_policies[memory_policy_revision_id] = MemoryPolicy(
+                memory_policy_revision_id, profile_id, 1
+            )
+        policy = self.memory_policies.get(memory_policy_revision_id)
+        if policy is None or policy.agent_profile_id != profile_id:
+            raise ConfigurationNotFound("memory policy revision not found")
         revision = self._new_agent_revision(
             profile_id,
             1,
@@ -234,6 +315,7 @@ class AgentCatalog:
             instructions,
             persona_revision_id,
             model_policy_revision_id,
+            memory_policy_revision_id=memory_policy_revision_id,
         )
         profile = AgentProfile(
             profile_id, slug, display_name, current_revision_id=revision.id, revisions=[revision]
@@ -252,6 +334,7 @@ class AgentCatalog:
         persona_revision_id: UUID,
         idempotency_key: str | None = None,
         display_name: str | None = None,
+        memory_policy_revision_id: UUID | None = None,
     ) -> AgentRevision:
         profile = self.get_agent(profile_id)
         fingerprint = _canonical_fingerprint(
@@ -263,6 +346,9 @@ class AgentCatalog:
                 "purpose": purpose,
                 "instructions": instructions,
                 "personaRevisionId": str(persona_revision_id),
+                "memoryPolicyRevisionId": str(
+                    memory_policy_revision_id or profile.current_revision.memory_policy_revision_id
+                ),
             },
         )
         if idempotency_key is not None and idempotency_key in self._idempotency:
@@ -274,6 +360,12 @@ class AgentCatalog:
         persona = self.persona_query.find_revision(persona_revision_id)[0]
         if persona.status != ConfigurationStatus.ACTIVE:
             raise ConfigurationDisabled("persona is disabled")
+        chosen_memory_policy = (
+            memory_policy_revision_id or profile.current_revision.memory_policy_revision_id
+        )
+        policy = self.memory_policies.get(chosen_memory_policy)
+        if policy is None or policy.agent_profile_id != profile_id:
+            raise ConfigurationNotFound("memory policy revision not found")
         revision = self._new_agent_revision(
             profile.id,
             len(profile.revisions) + 1,
@@ -283,6 +375,7 @@ class AgentCatalog:
             persona_revision_id,
             profile.current_revision.model_policy_revision_id,
             display_name or profile.display_name,
+            chosen_memory_policy,
         )
         profile.revisions.append(revision)
         profile.current_revision_id = revision.id
@@ -291,6 +384,68 @@ class AgentCatalog:
         if idempotency_key is not None:
             self._idempotency[idempotency_key] = (fingerprint, revision)
         return revision
+
+    def get_memory_policy(self, policy_id: UUID) -> MemoryPolicy:
+        try:
+            return self.memory_policies[policy_id]
+        except KeyError as exc:
+            raise ConfigurationNotFound("memory policy revision not found") from exc
+
+    def create_memory_policy(
+        self,
+        agent_profile_id: UUID,
+        *,
+        shared_user_read: bool = True,
+        current_agent_read: bool = True,
+        fallback_relevance_threshold: float = 0.5,
+        max_memories: int = 8,
+        context_budget_fraction: float = 0.2,
+        allow_shared_user_promotion: bool = False,
+        fallback_agent_profile_ids: tuple[UUID, ...] = (),
+    ) -> MemoryPolicy:
+        if agent_profile_id not in self.agents:
+            raise ConfigurationNotFound("agent not found")
+        prior = [
+            item
+            for item in self.memory_policies.values()
+            if item.agent_profile_id == agent_profile_id
+        ]
+        if any(item not in self.agents for item in fallback_agent_profile_ids):
+            raise ConfigurationNotFound("fallback agent not found")
+        # Preserve every immutable policy revision.  Collapsing by agent with
+        # a dict comprehension would let a newer revision hide an older edge
+        # and make a cross-revision cycle appear acyclic.
+        edges: dict[UUID, set[UUID]] = {}
+        for item in self.memory_policies.values():
+            edges.setdefault(item.agent_profile_id, set()).update(
+                item.fallback_agent_profile_ids
+            )
+        edges.setdefault(agent_profile_id, set()).update(fallback_agent_profile_ids)
+        pending = list(fallback_agent_profile_ids)
+        visited: set[UUID] = set()
+        while pending:
+            current = pending.pop()
+            if current == agent_profile_id:
+                raise ValueError("fallback grants cannot form a cycle")
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(edges.get(current, ()))
+        number = max((item.revision for item in prior), default=0) + 1
+        policy = MemoryPolicy(
+            uuid4(),
+            agent_profile_id,
+            number,
+            shared_user_read,
+            current_agent_read,
+            fallback_relevance_threshold,
+            max_memories,
+            context_budget_fraction,
+            allow_shared_user_promotion,
+            tuple(fallback_agent_profile_ids),
+        )
+        self.memory_policies[policy.id] = policy
+        return policy
 
     def set_agent_status(
         self,
@@ -374,6 +529,7 @@ class AgentCatalog:
         persona_revision_id: UUID,
         policy_id: UUID,
         revision_display_name: str | None = None,
+        memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
     ) -> AgentRevision:
         return AgentRevision(
             uuid4(),
@@ -386,6 +542,7 @@ class AgentCatalog:
             PROMPT_BUNDLE_ID,
             policy_id,
             instructions or purpose,
+            memory_policy_revision_id=memory_policy_revision_id,
         )
 
     @staticmethod
@@ -416,6 +573,7 @@ class AgentMemoryRepository:
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
     ) -> AgentProfile:
         del issuer, subject
         return self.catalog.create_agent(
@@ -425,6 +583,7 @@ class AgentMemoryRepository:
             instructions,
             persona_revision_id,
             idempotency_key=key,
+            memory_policy_revision_id=memory_policy_revision_id,
         )
 
     async def revise_agent(
@@ -438,6 +597,7 @@ class AgentMemoryRepository:
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID | None = None,
     ) -> AgentProfile:
         del issuer, subject
         self.catalog.revise_agent(
@@ -448,6 +608,7 @@ class AgentMemoryRepository:
             persona_revision_id,
             idempotency_key=key,
             display_name=display_name,
+            memory_policy_revision_id=memory_policy_revision_id,
         )
         return self.catalog.get_agent(identifier)
 
@@ -468,6 +629,17 @@ class AgentMemoryRepository:
     ) -> AgentRevision:
         del session
         return self.catalog.resolve_revision(identifier)
+
+    async def get_memory_policy(self, issuer: str, subject: str, policy_id: UUID) -> MemoryPolicy:
+        del issuer, subject
+        return self.catalog.get_memory_policy(policy_id)
+
+    async def create_memory_policy(
+        self, issuer: str, subject: str, policy: MemoryPolicy
+    ) -> MemoryPolicy:
+        del issuer, subject
+        self.catalog.memory_policies[policy.id] = policy
+        return policy
 
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         return self.catalog.resolve_revision_unchecked(identifier)
@@ -531,6 +703,7 @@ class AgentConfigurationService:
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
     ) -> AgentProfile:
         result = await self.repository.create_agent(
             issuer,
@@ -541,6 +714,7 @@ class AgentConfigurationService:
             instructions,
             persona_revision_id,
             key,
+            memory_policy_revision_id,
         )
         await self._audit("agent.create", issuer, subject, result)
         return result
@@ -556,6 +730,7 @@ class AgentConfigurationService:
         instructions: str,
         persona_revision_id: UUID,
         key: str,
+        memory_policy_revision_id: UUID | None = None,
     ) -> AgentProfile:
         result = await self.repository.revise_agent(
             issuer,
@@ -567,6 +742,7 @@ class AgentConfigurationService:
             instructions,
             persona_revision_id,
             key,
+            memory_policy_revision_id,
         )
         await self._audit("agent.revise", issuer, subject, result)
         return result
@@ -657,6 +833,12 @@ __all__ = [
     "ConfigurationStatus",
     "ConfigurationVersionConflict",
     "GENERAL_POLICY_ID",
+    "GENERAL_MEMORY_POLICY_ID",
+    "platform_memory_policy_id",
+    "is_platform_memory_policy",
+    "MemoryPolicy",
+    "AgentMemoryPolicy",
+    "MemoryPolicyRevision",
     "GENERAL_PROFILE_ID",
     "GENERAL_REVISION_ID",
     "NEUTRAL_PERSONA_ID",
