@@ -7,7 +7,7 @@ const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', c
 const preferredModel = { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const session: Session = { principal: { issuer: 'https://authentik.test', subject: 'owner' }, csrfToken: 'csrf', idleExpiresAt: '2026-10-05T20:00:00Z', absoluteExpiresAt: '2026-10-06T12:00:00Z' };
 
-function fakeApi(listConversations: ConversationApi['listConversations'] = async () => ({ items: [], nextCursor: null }), initialDetails: ReadonlyArray<ConversationDetail> = [], initialRuns: ReadonlyArray<Run> = [], streamRunEvents?: ConversationApi['streamRunEvents'], getConversation?: ConversationApi['getConversation'], modelCatalog?: ModelCatalog, createConversationOverride?: ConversationApi['createConversation']): ConversationApi {
+function fakeApi(listConversations: ConversationApi['listConversations'] = async () => ({ items: [], nextCursor: null }), initialDetails: ReadonlyArray<ConversationDetail> = [], initialRuns: ReadonlyArray<Run> = [], streamRunEvents?: ConversationApi['streamRunEvents'], getConversation?: ConversationApi['getConversation'], modelCatalog?: ModelCatalog, createConversationOverride?: ConversationApi['createConversation'], listModelsOverride?: ConversationApi['listModels']): ConversationApi {
   let sequence = 0;
   const runs = new Map<string, Run>();
   const details = new Map<string, ConversationDetail>();
@@ -17,7 +17,7 @@ function fakeApi(listConversations: ConversationApi['listConversations'] = async
     getSession: async () => session,
     startLogin: () => undefined,
     logout: async () => undefined,
-    listModels: async (): Promise<ModelCatalog> => modelCatalog ?? ({ models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() }),
+    listModels: listModelsOverride ?? (async (): Promise<ModelCatalog> => modelCatalog ?? ({ models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() })),
     listConversations,
     getConversation: getConversation ?? (async (id) => { const detail = details.get(id); if (!detail) throw new Error('missing detail'); return detail; }),
     createConversation: createConversationOverride ?? (async (message, modelId) => accepted(`conversation-${++sequence}`, message, modelId)),
@@ -93,6 +93,118 @@ describe('ConversationStore', () => {
     expect(raceStore.notice()).toContain('disabled');
   });
   it('uses the server model catalog default for new drafts', () => { expect(store.selectedModelId()).toBe(preferredModel.id); store.create(); expect(store.selectedModelId()).toBe(preferredModel.id); });
+  it('hydrates the transcript without waiting for model discovery', async () => {
+    let resolveModels!: (catalog: ModelCatalog) => void;
+    const now = new Date().toISOString();
+    const detail = { ...summary('hydrated-before-models'), messages: [{ id: 'message-hydrated', conversationId: 'hydrated-before-models', role: 'user' as const, content: 'Loaded while Ollama is unavailable', state: 'complete' as const, runId: null, createdAt: now, updatedAt: now }], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [], undefined, undefined, undefined, undefined, () => new Promise<ModelCatalog>((resolve) => { resolveModels = resolve; }));
+    const hydratedStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(hydratedStore.loading()).toBe(false));
+
+    expect(hydratedStore.selected().id).toBe(detail.id);
+    expect(hydratedStore.selected().turns[0]?.text).toBe('Loaded while Ollama is unavailable');
+    expect(hydratedStore.modelCatalogNotice()).toBeNull();
+    resolveModels({ models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: now });
+    await vi.waitFor(() => expect(hydratedStore.models()).toHaveLength(2));
+    hydratedStore.create();
+    expect(hydratedStore.selectedModelId()).toBe(preferredModel.id);
+  });
+  it('keeps conversation loading non-blocking when model discovery fails', async () => {
+    const detail = { ...summary('loaded-without-models'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [], undefined, undefined, undefined, undefined, async () => { throw { status: 503, message: 'Ollama is unavailable' }; });
+    const degradedStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(degradedStore.loading()).toBe(false));
+
+    expect(degradedStore.selected().id).toBe(detail.id);
+    expect(degradedStore.authState()).toBe('authenticated');
+    expect(degradedStore.notice()).toContain('Model discovery is temporarily unavailable');
+  });
+  it('does not replace a conversation error with a model discovery notice', async () => {
+    const api = fakeApi(async () => { throw { status: 503, message: 'Conversation history is unavailable' }; }, [], [], undefined, undefined, undefined, undefined, async () => { throw { status: 503, message: 'Ollama is unavailable' }; });
+    const failedStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(failedStore.loading()).toBe(false));
+
+    expect(failedStore.notice()).toBe('Conversation history is unavailable');
+    expect(failedStore.notice()).not.toContain('Model discovery');
+  });
+  it('ignores a stale model catalog success after a newer load fails discovery', async () => {
+    let calls = 0;
+    let resolveFirst!: (catalog: ModelCatalog) => void;
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, undefined, () => {
+      calls += 1;
+      if (calls === 1) return new Promise<ModelCatalog>((resolve) => { resolveFirst = resolve; });
+      return Promise.reject({ status: 503, message: 'Ollama is unavailable' });
+    });
+    const raceStore = new ConversationStore(api);
+    await vi.waitFor(() => expect(calls).toBe(1));
+
+    const currentLoad = raceStore.load();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    await currentLoad;
+    await vi.waitFor(() => expect(raceStore.modelCatalogNotice()).toContain('Model discovery is temporarily unavailable'));
+
+    resolveFirst({ models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() });
+    await Promise.resolve();
+    expect(raceStore.models()).toEqual([]);
+    expect(raceStore.modelCatalogNotice()).toContain('Model discovery is temporarily unavailable');
+  });
+  it('ignores a stale model catalog auth failure after a newer load succeeds', async () => {
+    let calls = 0;
+    let rejectFirst!: (error: unknown) => void;
+    const catalog: ModelCatalog = { models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() };
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, undefined, () => {
+      calls += 1;
+      if (calls === 1) return new Promise<ModelCatalog>((_resolve, reject) => { rejectFirst = reject; });
+      return Promise.resolve(catalog);
+    });
+    const raceStore = new ConversationStore(api);
+    await vi.waitFor(() => expect(calls).toBe(1));
+
+    const currentLoad = raceStore.load();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    await currentLoad;
+    await vi.waitFor(() => expect(raceStore.models()).toEqual(catalog.models));
+    expect(raceStore.authState()).toBe('authenticated');
+
+    rejectFirst({ status: 401, message: 'Session expired' });
+    await Promise.resolve();
+    expect(raceStore.authState()).toBe('authenticated');
+    expect(raceStore.models()).toEqual(catalog.models);
+  });
+  it.each([401, 403])('keeps current model discovery $0 responses as authentication failures', async (status) => {
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, undefined, async () => { throw { status, message: 'Authentication required' }; });
+    const authStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(authStore.authState()).toBe('unauthenticated'));
+    expect(authStore.loading()).toBe(false);
+  });
+  it('preserves an explicitly selected draft model and notice when delayed discovery completes', async () => {
+    let calls = 0;
+    let resolveSecond!: (catalog: ModelCatalog) => void;
+    const catalog: ModelCatalog = { models: [model, preferredModel], defaultModelId: preferredModel.id, observedAt: new Date().toISOString() };
+    const api = fakeApi(undefined, [], [], undefined, undefined, undefined, undefined, () => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(catalog);
+      return new Promise<ModelCatalog>((resolve) => { resolveSecond = resolve; });
+    });
+    const draftStore = new ConversationStore(api);
+    await vi.waitFor(() => expect(draftStore.models()).toEqual(catalog.models));
+    draftStore.create();
+    await draftStore.selectModel(model.id);
+    draftStore.showRouteNotice('Keep this conversation notice');
+
+    const currentLoad = draftStore.load();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    await currentLoad;
+    resolveSecond(catalog);
+    await vi.waitFor(() => expect(draftStore.models()).toEqual(catalog.models));
+
+    expect(draftStore.selectedModelId()).toBe(model.id);
+    expect(draftStore.notice()).toBe('Keep this conversation notice');
+  });
   it('reuses one draft while preserving its text and configuration', async () => {
     const agent = { profileId: 'agent-profile', revisionId: 'agent-revision-2', revision: 2, displayName: 'Researcher', status: 'active' as const };
     const persona = { profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Focused', status: 'active' as const, newerRevisionAvailable: false };

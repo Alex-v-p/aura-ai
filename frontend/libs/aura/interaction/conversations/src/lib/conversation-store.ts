@@ -39,11 +39,13 @@ export class ConversationStore {
   readonly selectedId = signal(emptyDraft.id);
   readonly drafts = signal<Readonly<Record<string, string>>>({ [emptyDraft.id]: '' });
   readonly notices = signal<Readonly<Record<string, string | null>>>({});
+  /** Provider discovery is advisory: it must not replace a conversation error. */
+  readonly modelCatalogNotice = signal<string | null>(null);
   readonly runStates = signal<Readonly<Record<string, RunState>>>({ [emptyDraft.id]: 'idle' });
   readonly lastPersistedDraftId = signal<string | null>(null);
   readonly selected = computed(() => this.conversations().find((conversation) => conversation.id === this.selectedId()) ?? emptyDraft);
   readonly draft = computed(() => this.drafts()[this.selectedId()] ?? '');
-  readonly notice = computed(() => this.notices()[this.selectedId()] ?? null);
+  readonly notice = computed(() => this.notices()[this.selectedId()] ?? this.modelCatalogNotice());
   readonly runState = computed<RunState>(() => this.runStates()[this.selectedId()] ?? this.statusToState(this.selected().currentRun?.status));
   readonly selectedModelId = computed(() => this.selected().modelId);
   readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
@@ -75,20 +77,28 @@ export class ConversationStore {
   private conversationListWarning = false;
   private filterTimer: ReturnType<typeof setTimeout> | null = null;
   private libraryRequestGeneration = 0;
+  private loadGeneration = 0;
+  private modelCatalogRequestGeneration = 0;
   private readonly api: ConversationApi;
 
   constructor(@Inject(AuraConversationApi) api?: ConversationApi) { this.api = api ?? new AuraConversationApi(); void this.load(); }
 
   async load(): Promise<void> {
+    const loadGeneration = ++this.loadGeneration;
+    const modelCatalogGeneration = ++this.modelCatalogRequestGeneration;
     this.loading.set(true);
     try {
       const session = await this.api.getSession();
+      if (loadGeneration !== this.loadGeneration) return;
       this.session.set(session); this.authState.set('authenticated');
-      const catalog = await this.api.listModels(); this.models.set(catalog.models); this.modelCatalogDefaultId.set(catalog.defaultModelId);
+      // Model discovery depends on the local provider and is deliberately
+      // advisory. Start it after authentication, but let transcript hydration
+      // finish independently when Ollama is slow or unavailable.
+      void this.loadModelCatalog(modelCatalogGeneration, loadGeneration);
       this.conversationListWarning = false;
       const generation = ++this.libraryRequestGeneration;
       const pageItems = await this.loadConversationPage(generation);
-      if (generation !== this.libraryRequestGeneration) return;
+      if (loadGeneration !== this.loadGeneration || generation !== this.libraryRequestGeneration) return;
       const loaded = pageItems.map((item) => this.fromSummary(item));
       if (loaded.length === 0) this.ensureDraftModel();
       else {
@@ -99,9 +109,32 @@ export class ConversationStore {
       }
     } catch (error: unknown) {
       const apiError = this.toApiError(error);
+      if (loadGeneration !== this.loadGeneration) return;
       if (apiError.status === 401 || apiError.status === 403) this.authState.set('unauthenticated');
       else { this.authState.set('error'); this.setNotice(this.selectedId(), apiError.message); }
-    } finally { this.loading.set(false); }
+    } finally { if (loadGeneration === this.loadGeneration) this.loading.set(false); }
+  }
+
+  private async loadModelCatalog(modelCatalogGeneration: number, loadGeneration: number): Promise<void> {
+    try {
+      const catalog = await this.api.listModels();
+      if (modelCatalogGeneration !== this.modelCatalogRequestGeneration || loadGeneration !== this.loadGeneration || this.authState() !== 'authenticated') return;
+      this.models.set(catalog.models);
+      this.modelCatalogDefaultId.set(catalog.defaultModelId);
+      this.modelCatalogNotice.set(null);
+      this.ensureDraftModel();
+    } catch (error: unknown) {
+      if (modelCatalogGeneration !== this.modelCatalogRequestGeneration || loadGeneration !== this.loadGeneration || this.authState() !== 'authenticated') return;
+      const apiError = this.toApiError(error);
+      // Keep the existing authentication contract for provider endpoints. A
+      // provider outage, however, is recoverable and must not turn the whole
+      // conversation surface into an error state.
+      if (apiError.status === 401 || apiError.status === 403) {
+        this.authState.set('unauthenticated');
+        return;
+      }
+      this.modelCatalogNotice.set('Model discovery is temporarily unavailable. Your conversations are still available; choose a model when the provider is ready.');
+    }
   }
 
   setLibraryFilters(filters: ConversationListFilters): void {
@@ -712,7 +745,13 @@ export class ConversationStore {
   private setRunState(id: string, state: RunState): void { this.runStates.update((states) => ({ ...states, [id]: state })); }
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
   private setMemoryActivityNotice(id: string, notice: string | null): void { this.memoryActivityNotices.update((notices) => ({ ...notices, [id]: notice })); }
-  private ensureDraftModel(): void { const modelId = this.defaultModelId(); const current = this.find(emptyDraft.id); if (current) { this.replaceConversation({ ...current, modelId }); if (!modelId) this.setNotice(emptyDraft.id, 'The configured default model is unavailable. Choose an available model to continue.'); } }
+  private ensureDraftModel(): void {
+    const modelId = this.defaultModelId();
+    const drafts = this.conversations().filter((conversation) => conversation.id.startsWith('draft-') && !conversation.modelId);
+    for (const current of drafts) this.replaceConversation({ ...current, modelId });
+    if (!modelId && !this.modelCatalogNotice()) this.modelCatalogNotice.set('The configured default model is unavailable. Choose an available model to continue.');
+    else if (this.modelCatalogNotice() === 'The configured default model is unavailable. Choose an available model to continue.') this.modelCatalogNotice.set(null);
+  }
   private canRunWithSelectedAgent(id: string): boolean {
     const conversation = this.find(id);
     // A brand-new draft intentionally omits an agent reference for backward

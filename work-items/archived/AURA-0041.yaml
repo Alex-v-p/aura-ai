@@ -1,0 +1,91 @@
+id: AURA-0041
+title: Keep conversation loading independent from model discovery
+status: integrated
+change_class: bugfix
+intent: >
+  Load authenticated conversation history without waiting for Ollama model
+  discovery, and surface provider unavailability as a recoverable model-selection
+  limitation instead of an indefinitely loading transcript.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - User-reported local stack hang on Loading your conversation
+    - Docker evidence that model discovery is canceled after provider timeouts
+  contracts: []
+feature_references: [CONV-001, MOD-001]
+ownership_zones:
+  - frontend.aura.interaction.conversations
+allowed_paths:
+  - work-items/active/AURA-0041.yaml
+  - work-items/archived/AURA-0041.yaml
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - compose.yaml
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/apps/**
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: frontend.aura.interaction.conversations
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: none
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation: [frontend_worker]
+  review: [general_reviewer]
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 2
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Authenticated conversation summaries and the selected transcript render without waiting for model discovery.
+  - A pending or failed model catalog request never leaves Loading your conversation visible.
+  - Model discovery success still supplies the configured default model to a new draft.
+  - Model discovery failure preserves existing conversations and shows a recoverable, non-blocking notice.
+  - Focused frontend tests and repository checks pass before one local commit.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0041.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0041.yaml
+  - pnpm --dir frontend exec vitest run --config vitest.workspace.ts libs/aura/interaction/conversations/src
+  - pnpm --dir frontend exec nx lint aura-interaction-conversations
+  - pnpm --dir frontend exec nx build aura-web --configuration=production
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0041.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
