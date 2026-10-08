@@ -3,6 +3,14 @@ import { AuraApiClient, type AuraOperationDescriptor, type AuraOperationId, type
 import type { MemoryApi, MemoryFilters } from './memory-models';
 import type { MemoryCandidateEdit } from '@aura/aura-api-client';
 
+/** A safe, status-aware transport error used for expected first-run states. */
+export class MemoryApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = 'MemoryApiError';
+  }
+}
+
 type Input = { path: Record<string, string>; query: Record<string, unknown>; headers: Record<string, string>; body: unknown };
 function emptyInput(): { path: Record<string, never>; query: Record<string, never>; headers: Record<string, never>; body: never } { return { path: {}, query: {}, headers: {}, body: undefined as never }; }
 function key(): string { return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `aura-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -51,7 +59,7 @@ class GeneratedAuraTransport {
     const query = new URLSearchParams();
     for (const [name, value] of Object.entries(request.query)) if (value !== undefined && value !== null && value !== '') query.set(name, String(value));
     const response = await fetch(`${path}${query.size ? `?${query.toString()}` : ''}`, { method: descriptor.method, credentials: 'include', headers: { Accept: 'application/json', ...(request.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...request.headers }, body: request.body === undefined ? undefined : JSON.stringify(request.body) });
-    if (!response.ok) { let detail = ''; try { const body = await response.json() as { detail?: string; message?: string }; detail = body.message ?? body.detail ?? ''; } catch { /* safe fallback */ } throw new Error(detail || (response.status === 401 ? 'Sign in to manage memory.' : 'We could not complete that memory request.')); }
+    if (!response.ok) { let detail = ''; try { const body = await response.json() as { detail?: string; message?: string }; detail = body.message ?? body.detail ?? ''; } catch { /* safe fallback */ } throw new MemoryApiError(response.status, detail || (response.status === 401 ? 'Sign in to manage memory.' : 'We could not complete that memory request.')); }
     return response.status === 204 ? undefined as AuraOperationResponse<K> : await response.json() as AuraOperationResponse<K>;
   }
 }

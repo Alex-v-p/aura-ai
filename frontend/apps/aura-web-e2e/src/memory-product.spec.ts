@@ -1,6 +1,44 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+const inventory = {
+  observedAt: '2026-10-08T09:00:00Z',
+  models: [
+    { id: 'qwen3:8b', displayName: 'Qwen 3 · 8B', provider: 'ollama', modelRevision: 'qwen3-8b-r1', modelDigest: 'sha256:qwen-extraction', capabilities: ['structured_output'], dimension: null, available: true, disabledReason: null },
+    { id: 'qwen3-embedding:4b', displayName: 'Qwen 3 Embedding · 4B', provider: 'ollama', modelRevision: 'qwen3-embedding-4b-r1', modelDigest: 'sha256:qwen-embedding', capabilities: ['embedding'], dimension: 2560, available: true, disabledReason: null },
+  ],
+};
+
+const idleReindex = {
+  phase: 'idle', activeGeneration: null, replacementGeneration: null,
+  processedRevisionCount: 0, totalRevisionCount: 0, startedAt: null, updatedAt: null,
+  completedAt: null, retryable: false,
+};
+
+const configured = (version = 1) => ({
+  version,
+  extraction: { modelId: 'qwen3:8b', modelRevision: 'qwen3-8b-r1', modelDigest: 'sha256:qwen-extraction' },
+  embedding: { modelId: 'qwen3-embedding:4b', modelRevision: 'qwen3-embedding-4b-r1', modelDigest: 'sha256:qwen-embedding' },
+  activeGeneration: null, buildingGeneration: null, updatedAt: '2026-10-08T09:00:00Z',
+});
+
+async function mockShellApi(page: Page, feature: (route: Route, url: URL) => Promise<void>): Promise<void> {
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: {
+      principal: { issuer: 'https://authentik.test', subject: 'fixture-owner', displayName: 'Fixture Owner' },
+      csrfToken: 'fixture-csrf', idleExpiresAt: '2099-10-08T10:00:00Z', absoluteExpiresAt: '2099-10-09T10:00:00Z',
+    } });
+    if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [{ id: 'fixture-model', displayName: 'Fixture model', provider: 'fixture', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-model' } });
+    if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [], nextCursor: null } });
+    if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [] } });
+    return feature(route, url);
+  });
+}
 
 test.describe('memory product', () => {
+  test.describe.configure({ mode: 'serial' });
+
   test('browses owner memory with session-only search and inert content', async ({ page }) => {
     const memory = {
       id: 'memory-family', scope: { type: 'user' }, status: 'active', pinned: false, version: 1,
@@ -9,7 +47,7 @@ test.describe('memory product', () => {
     };
     await page.route('**/api/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { authenticated: true, csrfToken: 'fixture-csrf', subject: 'fixture-owner' } });
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'fixture-owner', displayName: 'Fixture Owner' }, csrfToken: 'fixture-csrf', idleExpiresAt: '2099-10-08T10:00:00Z', absoluteExpiresAt: '2099-10-09T10:00:00Z' } });
       if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [{ id: 'fixture-model', displayName: 'Fixture model', provider: 'fixture', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-model' } });
       if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [], nextCursor: null } });
       if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [] } });
@@ -21,12 +59,17 @@ test.describe('memory product', () => {
     await page.goto('/memory');
     await expect(page.getByRole('heading', { name: 'Memory', exact: true })).toBeVisible();
     await expect(page.getByText('<not-an-instruction>', { exact: true })).toBeVisible();
-    expect(await page.locator('script').count()).toBe(0);
-    const search = page.getByRole('searchbox', { name: 'Search' });
+    // The application bundles scripts; the user-authored memory must never
+    // become executable markup or inline script content.
+    expect(await page.locator('script').filter({ hasText: '<not-an-instruction>' }).count()).toBe(0);
+    const search = page.locator('input[type="search"][placeholder="Search memory"]');
     await search.fill('family');
     await expect(search).toHaveValue('family');
     expect(page.url()).not.toContain('family');
-    await page.getByRole('button', { name: '<not-an-instruction>' }).click();
+    // Search results are intentionally session-only. Navigate to the stable
+    // record URL for the detail assertion instead of racing the debounced
+    // list reload after clearing the query.
+    await page.goto('/memory/memory-family');
     await expect(page.getByRole('heading', { name: '<not-an-instruction>', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Review queue' })).toBeVisible();
   });
@@ -40,7 +83,7 @@ test.describe('memory product', () => {
     let detailScope = '';
     await page.route('**/api/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { authenticated: true, csrfToken: 'fixture-csrf', subject: 'fixture-owner' } });
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'fixture-owner', displayName: 'Fixture Owner' }, csrfToken: 'fixture-csrf', idleExpiresAt: '2099-10-08T10:00:00Z', absoluteExpiresAt: '2099-10-09T10:00:00Z' } });
       if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [{ id: 'agent-research', status: 'active', version: 1, currentRevision: { id: 'agent-revision', profileId: 'agent-research', revision: 1, displayName: 'Researcher', purpose: 'Private research', instructions: 'Fixture', personaRevisionId: 'persona-1', promptBundleRevisionId: 'prompt-1', modelPolicyRevisionId: 'model-1', createdAt: '2026-10-08T09:00:00Z' }, createdAt: '2026-10-08T09:00:00Z', updatedAt: '2026-10-08T09:00:00Z' }] } });
       if (url.pathname.endsWith('/memories')) return route.fulfill({ json: { items: [memory], nextCursor: null } });
       if (url.pathname.endsWith('/memories/memory-agent')) { detailScope = url.search; return route.fulfill({ json: { ...memory, revisions: [memory.currentRevision], provenance: [], embeddingGenerations: [], embeddings: [], relations: [] } }); }
@@ -60,7 +103,7 @@ test.describe('memory product', () => {
     const detail = { ...summary, messages: [{ id: 'user-memory-popup', conversationId: summary.id, role: 'user', content: 'Remember this', state: 'complete', runId: run.id, createdAt: now, updatedAt: now }, { id: 'assistant-memory-popup', conversationId: summary.id, role: 'assistant', content: 'I will use that context.', state: 'complete', runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null };
     await page.route('**/api/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'fixture-owner' }, csrfToken: 'fixture-csrf', idleExpiresAt: now, absoluteExpiresAt: now } });
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'fixture-owner', displayName: 'Fixture Owner' }, csrfToken: 'fixture-csrf', idleExpiresAt: '2099-10-08T10:00:00Z', absoluteExpiresAt: '2099-10-09T10:00:00Z' } });
       if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [{ id: 'fixture-model', displayName: 'Fixture model', provider: 'fixture', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-model', observedAt: now } });
       if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [] } });
       if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [summary], nextCursor: null } });
@@ -70,7 +113,7 @@ test.describe('memory product', () => {
       if (url.pathname.endsWith('/memory-candidates/candidate-popup')) return route.fulfill({ json: { id: 'candidate-popup', jobId: 'job-popup', runId: run.id, version: 1, action: 'create', state: 'review', content: 'Candidate context', kind: 'semantic', scope: { type: 'user' }, confidence: .7, importance: .5, halfLifeDays: 7, validTo: null, sensitivity: 'ordinary', relatedMemoryId: null, memoryId: null, decisionReason: null, createdAt: now, decidedAt: null, groundedMessageIds: ['user-memory-popup'] } });
       return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
     });
-    await page.goto('/conversation');
+    await page.goto('/conversation/conversation-memory-popup');
     await expect(page.getByText('I will use that context.', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Memory recalled for this answer' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Memory created or updated from this turn' })).toBeVisible();
@@ -92,5 +135,125 @@ test.describe('memory product', () => {
     await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Memory recalled for this answer');
     await recall.press('Enter');
     await expect(page.getByRole('dialog', { name: 'Memory activity' })).toBeVisible();
+  });
+
+  test('guides first-run setup and saves only after explicit owner confirmation', async ({ page }) => {
+    let configurationGets = 0;
+    let savedBody: Record<string, unknown> | null = null;
+    await mockShellApi(page, async (route, url) => {
+      if (url.pathname.endsWith('/memory-model-inventory')) return route.fulfill({ json: inventory });
+      if (url.pathname.endsWith('/memory-model-configuration')) {
+        if (route.request().method() === 'GET') {
+        configurationGets += 1;
+        return route.fulfill({ status: 404, json: { detail: 'Memory model configuration has not been created.' } });
+        }
+        savedBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({ json: configured(1) });
+      }
+      if (url.pathname.endsWith('/memory-reindex')) return route.fulfill({ json: idleReindex });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+
+    await page.goto('/memory/settings');
+    await expect(page.getByRole('heading', { name: /memory/i }).first()).toBeVisible();
+    await expect(page.getByText(/automatic memory|set up memory|first use/i).first()).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    const firstRunA11y = await new AxeBuilder({ page }).include('.settings-page').analyze();
+    expect(firstRunA11y.violations).toEqual([]);
+
+    const extraction = page.getByRole('combobox', { name: /memory extraction|extraction model/i });
+    const embedding = page.getByRole('combobox', { name: /memory embeddings|embedding model/i });
+    await expect(extraction).toHaveValue('qwen3:8b');
+    await expect(embedding).toHaveValue('qwen3-embedding:4b');
+    await expect(extraction.locator('option:checked')).toHaveText(/Recommended/);
+    await expect(embedding.locator('option:checked')).toHaveText(/Recommended/);
+    expect(configurationGets).toBeGreaterThan(0);
+    expect(savedBody).toBeNull();
+
+    // A forged submit must remain side-effect free until the owner confirms
+    // that completed turns may be processed for durable memories.
+    await page.locator('form.setup-form').evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    await expect.poll(() => savedBody).toBeNull();
+
+    const confirmation = page.getByRole('checkbox', { name: /I understand Aura will process/i });
+    await confirmation.check();
+    await page.getByRole('button', { name: /save|enable|configure/i }).last().click();
+    await expect.poll(() => savedBody).toMatchObject({ extractionModelId: 'qwen3:8b', embeddingModelId: 'qwen3-embedding:4b', expectedVersion: 1 });
+    await expect(page.getByText(/saved|configured|ready/i).first()).toBeVisible();
+  });
+
+  test('hydrates configured selections and retries an independent reindex failure', async ({ page }) => {
+    let reindexAttempts = 0;
+    await mockShellApi(page, async (route, url) => {
+      if (url.pathname.endsWith('/memory-model-inventory')) return route.fulfill({ json: inventory });
+      if (url.pathname.endsWith('/memory-model-configuration')) return route.fulfill({ json: configured(3) });
+      if (!url.pathname.endsWith('/memory-reindex')) return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+      reindexAttempts += 1;
+      return reindexAttempts === 1
+        ? route.fulfill({ status: 503, json: { detail: 'Reindex status temporarily unavailable.' } })
+        : route.fulfill({ json: idleReindex });
+    });
+
+    await page.goto('/memory/settings');
+    await expect(page.getByRole('combobox', { name: /memory extraction|extraction model/i })).toHaveValue('qwen3:8b');
+    await expect(page.getByRole('combobox', { name: /memory embeddings|embedding model/i })).toHaveValue('qwen3-embedding:4b');
+    await expect(page.getByRole('button', { name: /retry/i })).toBeVisible();
+    await page.getByRole('button', { name: /retry/i }).click();
+    await expect(page.getByText(/no reindex|idle/i).first()).toBeVisible();
+    expect(reindexAttempts).toBe(2);
+  });
+
+  test('uses disclosed advanced filters and contextual detail on narrow screens', async ({ page }) => {
+    const memory = {
+      id: 'memory-responsive', scope: { type: 'user' }, status: 'active', pinned: false, version: 1,
+      currentRevision: { id: 'revision-responsive', memoryId: 'memory-responsive', revision: 1, kind: 'preference', content: 'AURA-0044 responsive fixture', correctionReason: null, confidence: .95, importance: .7, halfLifeDays: 180, observedAt: '2026-10-08T09:00:00Z', validFrom: null, validTo: null, createdAt: '2026-10-08T09:00:00Z' },
+      reinforcedAt: null, dormantAt: null, archivedAt: null, createdAt: '2026-10-08T09:00:00Z', updatedAt: '2026-10-08T09:00:00Z',
+    };
+    await mockShellApi(page, async (route, url) => {
+      if (url.pathname.endsWith('/memories')) return route.fulfill({ json: { items: [memory], nextCursor: null } });
+      if (url.pathname.endsWith('/memories/memory-responsive')) return route.fulfill({ json: { ...memory, revisions: [memory.currentRevision], provenance: [], embeddingGenerations: [], embeddings: [], relations: [] } });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+
+    await page.goto('/memory');
+    const advanced = page.getByRole('button', { name: /advanced filters/i });
+    await expect(advanced).toBeVisible();
+    await advanced.click();
+    await expect(page.getByLabel(/provenance/i)).toBeVisible();
+    await page.evaluate(() => { document.documentElement.dataset['theme'] = 'dark'; });
+    const darkRecordsA11y = await new AxeBuilder({ page }).include('.records-page').analyze();
+    expect(darkRecordsA11y.violations).toEqual([]);
+    await advanced.press('Escape');
+    await expect(advanced).toBeFocused();
+
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.getByRole('button', { name: /AURA-0044 responsive fixture/ }).click();
+    await expect(page.getByRole('heading', { name: 'AURA-0044 responsive fixture', exact: true })).toBeVisible();
+    await expect(page.getByText('Select a memory', { exact: true })).not.toBeVisible();
+    const mobileRecordsA11y = await new AxeBuilder({ page }).include('.records-page').analyze();
+    expect(mobileRecordsA11y.violations).toEqual([]);
+  });
+
+  test('keeps review decisions and settings controls keyboard-accessible', async ({ page }) => {
+    const candidate = {
+      id: 'candidate-keyboard', jobId: 'job-keyboard', runId: 'run-keyboard', version: 1, action: 'create', state: 'review',
+      content: 'Keyboard review fixture', kind: 'preference', scope: { type: 'user' }, confidence: .7, importance: .5, halfLifeDays: 30,
+      validTo: null, sensitivity: 'ordinary', relatedMemoryId: null, memoryId: null, decisionReason: null, createdAt: '2026-10-08T09:00:00Z', decidedAt: null,
+    };
+    await mockShellApi(page, async (route, url) => {
+      if (url.pathname.endsWith('/memory-candidates/candidate-keyboard')) return route.fulfill({ json: { ...candidate, groundedMessageIds: ['message-keyboard'] } });
+      if (url.pathname.endsWith('/memory-candidates')) return route.fulfill({ json: { items: [candidate], nextCursor: null } });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+    await page.goto('/memory/candidates');
+    await expect(page.getByRole('heading', { name: 'Review queue', exact: true })).toBeVisible();
+    const candidateButton = page.getByRole('button', { name: /Keyboard review fixture/ });
+    await candidateButton.focus();
+    await candidateButton.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Keyboard review fixture', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /approve unchanged/i })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /edit and approve/i })).toBeEnabled();
+    const reviewA11y = await new AxeBuilder({ page }).include('.memory-page').analyze();
+    expect(reviewA11y.violations).toEqual([]);
   });
 });

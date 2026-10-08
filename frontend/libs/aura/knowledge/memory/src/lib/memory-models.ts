@@ -91,3 +91,74 @@ export function memoryAgentFilterChange(filters: MemoryFilters, agentProfileId: 
     scopeType: agentProfileId ? 'agent' : filters.scopeType === 'agent' ? 'all' : filters.scopeType,
   });
 }
+
+/** Core uses 404 to mean the owner has not saved a memory model configuration. */
+export function isMissingMemoryConfiguration(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'status' in error && (error as { readonly status?: unknown }).status === 404;
+}
+
+/** Initial configuration is an explicit version-one write; later saves use the server version. */
+export function expectedMemoryConfigurationVersion(configuration: MemoryModelConfiguration | null): number {
+  return configuration?.version ?? 1;
+}
+
+export function canSaveMemoryConfiguration(configurationMissing: boolean, confirmed: boolean): boolean {
+  return !configurationMissing || confirmed;
+}
+
+export type MemorySettingsRequestKey = 'inventory' | 'configuration' | 'reindex';
+export function reconcileMemorySettingsRequests(results: Readonly<Record<MemorySettingsRequestKey, PromiseSettledResult<unknown>>>): { readonly configurationMissing: boolean; readonly failed: ReadonlyArray<MemorySettingsRequestKey> } {
+  const failed = (Object.keys(results) as MemorySettingsRequestKey[]).filter((key) => results[key].status === 'rejected');
+  return {
+    configurationMissing: results.configuration.status === 'rejected' && isMissingMemoryConfiguration(results.configuration.reason),
+    failed,
+  };
+}
+
+export interface MemorySettingsLoadResult {
+  readonly inventory: MemoryModelInventory | null;
+  readonly configuration: MemoryModelConfiguration | null;
+  readonly reindex: MemoryReindexStatus | null;
+  readonly configurationMissing: boolean;
+  readonly errors: ReadonlyArray<{ readonly key: MemorySettingsRequestKey; readonly reason: unknown }>;
+}
+
+export async function loadMemorySettings(api: Pick<MemoryApi, 'getModelInventory' | 'getModelConfiguration' | 'getReindexStatus'>): Promise<MemorySettingsLoadResult> {
+  const [inventory, configuration, reindex] = await Promise.allSettled([api.getModelInventory(), api.getModelConfiguration(), api.getReindexStatus()]);
+  const results = { inventory, configuration, reindex };
+  const reconciliation = reconcileMemorySettingsRequests(results);
+  const errors: Array<{ readonly key: MemorySettingsRequestKey; readonly reason: unknown }> = [];
+  for (const key of Object.keys(results) as MemorySettingsRequestKey[]) {
+    const result = results[key];
+    if (result.status === 'rejected' && !(key === 'configuration' && reconciliation.configurationMissing)) errors.push({ key, reason: result.reason });
+  }
+  return {
+    inventory: inventory.status === 'fulfilled' ? inventory.value : null,
+    configuration: configuration.status === 'fulfilled' ? configuration.value : null,
+    reindex: reindex.status === 'fulfilled' ? reindex.value : null,
+    configurationMissing: reconciliation.configurationMissing,
+    errors,
+  };
+}
+
+export function saveMemorySettings(api: Pick<MemoryApi, 'updateModelConfiguration'>, extractionModelId: string, embeddingModelId: string, configuration: MemoryModelConfiguration | null): Promise<MemoryModelConfiguration> {
+  return api.updateModelConfiguration(extractionModelId, embeddingModelId, expectedMemoryConfigurationVersion(configuration));
+}
+
+export function hasMemoryAdvancedFilters(filters: MemoryFilters): boolean {
+  return Boolean(filters.agentProfileId || filters.kind || filters.provenanceType || filters.confidenceMin !== undefined || filters.createdFrom || filters.createdTo || filters.includeHistorical);
+}
+
+export function recommendedMemoryModelId(capability: 'structured_output' | 'embedding', models: ReadonlyArray<MemoryCompatibleModel>): string | null {
+  const preferredId = capability === 'structured_output' ? 'qwen3:8b' : 'qwen3-embedding:4b';
+  return models.filter((model) => isSelectableMemoryModel(model) && model.capabilities.includes(capability)).find((model) => model.id === preferredId || model.displayName === preferredId)?.id
+    ?? models.find((model) => isSelectableMemoryModel(model) && model.capabilities.includes(capability))?.id
+    ?? null;
+}
+
+export function hydratedMemoryModelIds(configuration: MemoryModelConfiguration | null, models: ReadonlyArray<MemoryCompatibleModel>): { readonly extractionModelId: string; readonly embeddingModelId: string } {
+  return {
+    extractionModelId: configuration?.extraction.modelId ?? recommendedMemoryModelId('structured_output', models) ?? '',
+    embeddingModelId: configuration?.embedding.modelId ?? recommendedMemoryModelId('embedding', models) ?? '',
+  };
+}

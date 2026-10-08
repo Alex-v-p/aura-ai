@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import type { AgentMemoryPolicy, MemoryCandidateDetail, MemoryCandidateEdit, MemoryCandidateSummary, MemoryDetail, MemoryModelConfiguration, MemoryModelInventory, MemoryPage, MemoryReindexStatus, MemoryScope } from '@aura/aura-api-client';
 import { AuraMemoryApi } from './memory-api';
-import { MEMORY_API, normalizeMemoryFilters, type MemoryApi, type MemoryFilters } from './memory-models';
+import { isMissingMemoryConfiguration, loadMemorySettings, MEMORY_API, normalizeMemoryFilters, saveMemorySettings, type MemoryApi, type MemoryFilters } from './memory-models';
 
 @Injectable({ providedIn: 'root' })
 export class MemoryStore {
@@ -14,6 +14,8 @@ export class MemoryStore {
   readonly candidate = signal<MemoryCandidateDetail | null>(null);
   readonly modelInventory = signal<MemoryModelInventory | null>(null);
   readonly modelConfiguration = signal<MemoryModelConfiguration | null>(null);
+  /** True only when Core explicitly reports that the owner has not configured memory models yet. */
+  readonly modelConfigurationMissing = signal(false);
   readonly reindex = signal<MemoryReindexStatus | null>(null);
   readonly policies = signal<ReadonlyArray<AgentMemoryPolicy>>([]);
   readonly attachedPolicyRevisionId = signal<string | null>(null);
@@ -32,6 +34,15 @@ export class MemoryStore {
     this.filters.set(normalizeMemoryFilters(filters)); this.loading.set(true); this.notice.set(null);
     try { const page = await this.api.listMemories(undefined, this.filters()); if (generation === this.loadGeneration) this.memories.set(page); } catch (error: unknown) { if (generation === this.loadGeneration) this.notice.set(message(error, 'We could not load your memories.')); }
     finally { if (generation === this.loadGeneration) this.loading.set(false); }
+  }
+  /** Resolve only the setup status for Records without turning provider errors into a page failure. */
+  async loadConfigurationStatus(): Promise<void> {
+    try {
+      this.modelConfiguration.set(await this.api.getModelConfiguration());
+      this.modelConfigurationMissing.set(false);
+    } catch (error: unknown) {
+      if (isMissingMemoryConfiguration(error)) this.modelConfigurationMissing.set(true);
+    }
   }
   async loadMore(): Promise<void> { const cursor = this.memories().nextCursor; if (!cursor || this.loading()) return; const generation = this.loadGeneration; const filters = this.filters(); this.loading.set(true); try { const page = await this.api.listMemories(cursor, filters); if (generation === this.loadGeneration && filters === this.filters()) this.memories.update((current) => ({ items: [...current.items, ...page.items], nextCursor: page.nextCursor })); } catch (error: unknown) { if (generation === this.loadGeneration) this.notice.set(message(error, 'We could not load more memories.')); } finally { if (generation === this.loadGeneration) this.loading.set(false); } }
   async loadDetail(id: string, scope?: MemoryScope): Promise<MemoryDetail | null> {
@@ -56,8 +67,28 @@ export class MemoryStore {
   async loadCandidate(id: string): Promise<void> { this.notice.set(null); try { this.candidate.set(await this.api.getCandidate(id)); } catch (error: unknown) { this.notice.set(message(error, 'We could not load that candidate.')); } }
   async approveCandidate(edit?: MemoryCandidateEdit): Promise<boolean> { const current = this.candidate(); if (!current) return false; return this.mutate(() => this.api.approveCandidate(current.id, current.version, edit).then((receipt) => { this.candidate.set(receipt.candidate); this.candidates.update((items) => items.map((item) => item.id === receipt.candidate.id ? receipt.candidate : item)); })); }
   async rejectCandidate(reason: string): Promise<boolean> { const current = this.candidate(); if (!current || !reason.trim()) return false; return this.mutate(() => this.api.rejectCandidate(current.id, current.version, reason.trim()).then((receipt) => { this.candidate.set(receipt.candidate); this.candidates.update((items) => items.map((item) => item.id === receipt.candidate.id ? receipt.candidate : item)); })); }
-  async loadSettings(): Promise<void> { this.loading.set(true); this.notice.set(null); try { const [inventory, configuration, reindex] = await Promise.all([this.api.getModelInventory(), this.api.getModelConfiguration(), this.api.getReindexStatus()]); this.modelInventory.set(inventory); this.modelConfiguration.set(configuration); this.reindex.set(reindex); } catch (error: unknown) { this.notice.set(message(error, 'We could not load memory settings.')); } finally { this.loading.set(false); } }
-  async saveSettings(extractionModelId: string, embeddingModelId: string): Promise<boolean> { const current = this.modelConfiguration(); if (!current) return false; return this.mutate(() => this.api.updateModelConfiguration(extractionModelId, embeddingModelId, current.version).then((configuration) => { this.modelConfiguration.set(configuration); return this.api.getReindexStatus(); }).then((status) => { this.reindex.set(status); })); }
+  async loadSettings(): Promise<void> {
+    this.loading.set(true);
+    this.notice.set(null);
+    this.modelConfigurationMissing.set(false);
+    const result = await loadMemorySettings(this.api);
+    const failures = result.errors.map(({ key, reason }) => message(reason, key === 'inventory' ? 'Model inventory is unavailable.' : key === 'configuration' ? 'Model configuration is unavailable.' : 'Reindex status is unavailable.'));
+    if (result.inventory) this.modelInventory.set(result.inventory);
+    if (result.configuration) this.modelConfiguration.set(result.configuration);
+    else if (result.configurationMissing) this.modelConfigurationMissing.set(true);
+    if (result.reindex) this.reindex.set(result.reindex);
+    if (failures.length > 0) this.notice.set(failures.join(' '));
+    this.loading.set(false);
+  }
+  async saveSettings(extractionModelId: string, embeddingModelId: string): Promise<boolean> {
+    const current = this.modelConfiguration();
+    if (!extractionModelId || !embeddingModelId) return false;
+    return this.mutate(() => saveMemorySettings(this.api, extractionModelId, embeddingModelId, current).then((configuration) => {
+      this.modelConfiguration.set(configuration);
+      this.modelConfigurationMissing.set(false);
+      return this.api.getReindexStatus();
+    }).then((status) => { this.reindex.set(status); }));
+  }
   async resumeReindex(): Promise<boolean> { const generationId = this.reindex()?.replacementGeneration?.id; if (!generationId) return false; return this.mutate(() => this.api.resumeReindex(generationId).then((status) => this.reindex.set(status))); }
   async loadPolicies(agentProfileId: string): Promise<void> { this.loading.set(true); this.notice.set(null); try { const result = await this.api.listAgentPolicies(agentProfileId); this.policies.set(result.items); this.attachedPolicyRevisionId.set(result.attachedPolicyRevisionId); this.agentVersion.set(result.agentVersion); } catch (error: unknown) { this.notice.set(message(error, 'We could not load this agent memory policy.')); } finally { this.loading.set(false); } }
   async createPolicy(agentProfileId: string, body: Parameters<MemoryApi['createAgentPolicy']>[1]): Promise<boolean> { return this.mutate(() => this.api.createAgentPolicy(agentProfileId, body).then((policy) => { this.policies.update((items) => [...items, policy]); })); }

@@ -5,7 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, RouterLinkActive, type ParamMap } from '@angular/router';
 import type { AgentMemoryPolicy, MemoryCandidateAction, MemoryCandidateEdit, MemoryCollectionScopeType, MemoryKind, MemoryLifecycleStatus, MemoryScope } from '@aura/aura-api-client';
 import { AgentStore } from '@aura/aura/interaction/agents';
-import { isSelectableMemoryModel, memoryAgentFilterChange, memoryScopeFilterChange } from './memory-models';
+import { canSaveMemoryConfiguration, hasMemoryAdvancedFilters, hydratedMemoryModelIds, isSelectableMemoryModel, memoryAgentFilterChange, memoryScopeFilterChange, recommendedMemoryModelId } from './memory-models';
 import { MemoryStore } from './memory-store';
 
 const kinds: ReadonlyArray<MemoryKind> = ['episodic', 'semantic', 'procedural', 'preference', 'system'];
@@ -29,6 +29,8 @@ export class MemoryPageComponent {
   readonly scopeType = signal<'user' | 'agent'>('user');
   readonly agentProfileId = signal('');
   readonly purgeOpenerId = signal<string | null>(null);
+  readonly advancedFiltersOpen = signal(false);
+  @ViewChild('advancedFilterToggle') private readonly advancedFilterToggle?: ElementRef<HTMLButtonElement>;
   @ViewChild('purgeCloseButton') private readonly purgeCloseButton?: ElementRef<HTMLButtonElement>;
   draftContent = '';
   draftReason = '';
@@ -46,6 +48,7 @@ export class MemoryPageComponent {
   private routeLoadKey: string | null = null;
   constructor() {
     this.initialLoad = this.store.load();
+    void this.store.loadConfigurationStatus();
     this.route.paramMap.subscribe((params) => { const id = params.get('id'); this.selectedId.set(id); if (id) void this.openRoute(id, this.route.snapshot.queryParamMap); });
     this.route.queryParamMap.subscribe((params) => { const id = this.selectedId(); if (id) void this.openRoute(id, params); });
   }
@@ -70,6 +73,10 @@ export class MemoryPageComponent {
   scopeLabel(scope: MemoryScope): string { return scope.type === 'user' ? 'Shared with you' : `Private to agent ${scope.agentProfileId}`; }
   relevance(detail: NonNullable<ReturnType<MemoryStore['selected']>>): string { return detail?.currentRelevance === undefined ? 'Not reported' : `${Math.round(detail.currentRelevance * 100)}%`; }
   scopeQuery(scope?: MemoryScope): Record<string, string> { return scope?.type === 'agent' ? { scopeType: 'agent', agentProfileId: scope.agentProfileId } : scope ? { scopeType: 'user' } : {}; }
+  hasAdvancedFilters(): boolean { return hasMemoryAdvancedFilters(this.store.filters()); }
+  isFirstUse(): boolean { const filters = this.store.filters(); return this.store.modelConfigurationMissing() && !this.store.loading() && !this.store.notice() && this.store.memories().items.length === 0 && !filters.q && !filters.agentProfileId && !filters.kind && !filters.status && !filters.provenanceType && filters.confidenceMin === undefined && !filters.createdFrom && !filters.createdTo && !filters.includeHistorical; }
+  isFilteredEmpty(): boolean { const filters = this.store.filters(); return Boolean(filters.q || filters.agentProfileId || filters.kind || filters.status || filters.provenanceType || filters.confidenceMin !== undefined || filters.createdFrom || filters.createdTo || filters.includeHistorical); }
+  toggleAdvancedFilters(event?: Event): void { if (event) { if ((event as KeyboardEvent).key !== 'Escape') return; event.preventDefault(); this.advancedFiltersOpen.set(false); queueMicrotask(() => this.advancedFilterToggle?.nativeElement.focus()); return; } this.advancedFiltersOpen.update((open) => !open); }
   private async openRoute(id: string, params: ParamMap): Promise<void> {
     const routeLoadKey = `${id}:${params.get('scopeType') ?? ''}:${params.get('agentProfileId') ?? ''}:${params.get('action') ?? ''}`;
     if (this.routeLoadKey === routeLoadKey) return;
@@ -118,14 +125,24 @@ export class MemoryCandidatesPageComponent {
   candidateScope(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string { const scope = candidate.scope; return !scope ? 'Unclassified' : scope.type === 'user' ? 'Shared user' : `Agent ${scope.agentProfileId}`; }
 }
 
-@Component({ selector: 'aura-memory-settings-page', standalone: true, imports: [FormsModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-settings.component.html', styleUrl: './memory-pages.component.css' })
+@Component({ selector: 'aura-memory-settings-page', standalone: true, imports: [DatePipe, FormsModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-settings.component.html', styleUrl: './memory-pages.component.css' })
 export class MemorySettingsPageComponent {
   readonly store = inject(MemoryStore);
   extractionModelId = '';
   embeddingModelId = '';
-  constructor() { void this.store.loadSettings(); }
+  confirmSetup = false;
+  constructor() { void this.initialize(); }
+  async initialize(): Promise<void> { await this.store.loadSettings(); this.hydrateSelections(); }
   inventory(capability: 'structured_output' | 'embedding') { return this.store.modelInventory()?.models.filter((model) => isSelectableMemoryModel(model) && model.capabilities.includes(capability)) ?? []; }
-  async save(): Promise<void> { if (this.extractionModelId && this.embeddingModelId) await this.store.saveSettings(this.extractionModelId, this.embeddingModelId); }
+  recommended(capability: 'structured_output' | 'embedding'): string | null { return recommendedMemoryModelId(capability, this.store.modelInventory()?.models ?? []); }
+  isRecommended(modelId: string, capability: 'structured_output' | 'embedding'): boolean { return modelId === this.recommended(capability) && (capability === 'structured_output' ? modelId === 'qwen3:8b' : modelId === 'qwen3-embedding:4b'); }
+  async retry(): Promise<void> { await this.initialize(); }
+  private hydrateSelections(): void {
+    const selections = hydratedMemoryModelIds(this.store.modelConfiguration(), this.store.modelInventory()?.models ?? []);
+    this.extractionModelId = selections.extractionModelId;
+    this.embeddingModelId = selections.embeddingModelId;
+  }
+  async save(): Promise<void> { if (!canSaveMemoryConfiguration(this.store.modelConfigurationMissing(), this.confirmSetup)) return; if (this.extractionModelId && this.embeddingModelId) await this.store.saveSettings(this.extractionModelId, this.embeddingModelId); }
   async resume(): Promise<void> { await this.store.resumeReindex(); }
 }
 
