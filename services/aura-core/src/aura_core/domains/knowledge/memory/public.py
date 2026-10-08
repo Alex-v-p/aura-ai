@@ -245,7 +245,7 @@ class MemoryProcessingCommand:
         if not callable(identifier):
             raise MemoryValidationError("memory command identifiers are unavailable")
         payload: dict[str, object] = {
-            "schemaVersion": MEMORY_PROCESSING_SCHEMA_VERSION,
+            "schemaVersion": getattr(command, "schema_version", None),
             "commandId": str(getattr(command, "id", "")),
             "jobId": identifier("jobId"),
             "runId": str(getattr(command, "run_id", "")),
@@ -266,7 +266,10 @@ class MemoryProcessingCommand:
                         "generation_id": "generationId",
                     }[name]
                 ] = value.isoformat() if isinstance(value, datetime) else str(value)
-        if any(type(value) is not str or not value for value in payload.values()):
+        if any(
+            key != "schemaVersion" and (type(value) is not str or not value)
+            for key, value in payload.items()
+        ):
             raise MemoryValidationError("memory command identifiers are incomplete")
         return cls.from_payload(payload)
 
@@ -1432,6 +1435,9 @@ class MemoryRepository(Protocol):
     async def list_candidates(
         self, issuer: str, subject: str, **kwargs: object
     ) -> list[MemoryCandidate]: ...
+    async def get_candidate_for_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryCandidate | None: ...
     async def get_candidate(
         self, issuer: str, subject: str, candidate_id: UUID
     ) -> MemoryCandidate: ...
@@ -1703,6 +1709,18 @@ class _MemoryStoreBase:
 
     async def get_candidate(self, issuer: str, subject: str, candidate_id: UUID) -> MemoryCandidate:
         return self._candidate_owned(issuer, subject, candidate_id)
+
+    async def get_candidate_for_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryCandidate | None:
+        matches = [
+            candidate
+            for candidate in self.candidates.values()
+            if candidate.job_id == job_id
+            and candidate.issuer == issuer
+            and candidate.subject == subject
+        ]
+        return max(matches, key=lambda item: (item.created_at, item.id), default=None)
 
     async def _decide_candidate_owner(
         self,

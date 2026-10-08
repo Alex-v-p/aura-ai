@@ -663,6 +663,75 @@ def test_memory_command_payload_rejects_version_and_identifier_shape_mismatches(
             MemoryProcessingCommand.from_payload(mismatch)
 
 
+def test_memory_command_from_outbox_accepts_integer_schema_and_validates_identifiers() -> None:
+    conversation_id = uuid4()
+    run_id = uuid4()
+    agent_revision_id = uuid4()
+    command = memory_command_factory(
+        Conversation(ISSUER, OWNER, "test", uuid4(), agent_revision_id, "fake", id=conversation_id),
+        Run(
+            conversation_id,
+            uuid4(),
+            agent_revision_id,
+            uuid4(),
+            "fake",
+            "fake",
+            id=run_id,
+            status=RunStatus.COMPLETED,
+        ),
+        Message(
+            conversation_id,
+            MessageRole.ASSISTANT,
+            "answer",
+            MessageState.COMPLETE,
+            run_id,
+            id=uuid4(),
+        ),
+    )
+
+    parsed = MemoryProcessingCommand.from_outbox(command)
+    assert parsed.schema_version == 1
+    assert parsed.command_id == command.id
+    assert parsed.job_id == run_id
+    with pytest.raises(MemoryValidationError):
+        MemoryProcessingCommand.from_outbox(replace(command, schema_version=2))
+
+    class _MalformedOutbox:
+        topic = command.topic
+        id = command.id
+        run_id = command.run_id
+        conversation_id = command.conversation_id
+        correlation_id = command.correlation_id
+        causation_id = command.causation_id
+        created_at = command.created_at
+        attempt_id = command.attempt_id
+        generation_id = command.generation_id
+
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def identifier(self, name: str) -> object:
+            return self.value if name == "jobId" else command.identifier(name)
+
+    for malformed in ("", uuid4(), "not-a-uuid"):
+        with pytest.raises(MemoryValidationError):
+            MemoryProcessingCommand.from_outbox(_MalformedOutbox(malformed))
+
+
+@pytest.mark.asyncio
+async def test_memory_store_candidate_lookup_for_job_is_owner_scoped_and_latest() -> None:
+    store = MemoryStore(clock=lambda: NOW)
+    job_id = uuid4()
+    first = replace(_candidate(), job_id=job_id, created_at=NOW)
+    second = replace(_candidate(), job_id=job_id, created_at=NOW + timedelta(seconds=1))
+    foreign = replace(_candidate(), job_id=job_id, subject="another-owner")
+    store.candidates.update({first.id: first, second.id: second, foreign.id: foreign})
+
+    assert await store.get_candidate_for_job(job_id, ISSUER, OWNER) == second
+    assert await store.get_candidate_for_job(job_id, ISSUER, "another-owner") == foreign
+    assert await store.get_candidate_for_job(job_id, ISSUER, "missing-owner") is None
+
+
 @pytest.mark.asyncio
 async def test_provider_never_receives_database_message_ids_and_common_token_claim_requires_review(
 ) -> None:

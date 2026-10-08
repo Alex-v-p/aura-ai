@@ -1,6 +1,7 @@
 """End-to-end API checks using only in-process deterministic dependencies."""
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator, Sequence
 from typing import TypedDict, cast
@@ -10,11 +11,20 @@ import httpx
 import pytest
 from aura_core.domains.execution.runs.events import RunEvent, new_event
 from aura_core.domains.interaction.conversations.public import InvalidConversationCursor
+from aura_core.domains.knowledge.memory.public import (
+    CandidateState,
+    MemoryModelConfiguration,
+    MemoryProcessingCommand,
+    MemoryProcessingJob,
+    MemoryProcessingService,
+    MemoryScopeType,
+    MemoryTurnEvidence,
+)
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Settings
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.gateway import ModelGateway
-from aura_core.runtime.models.ports import ChatMessage
+from aura_core.runtime.models.ports import ChatMessage, EmbeddingResult, StructuredInferenceRequest
 from fastapi import FastAPI
 
 from conftest import ScriptedModel, owner_client
@@ -41,6 +51,46 @@ class _ConversationPageItem(TypedDict):
 class _ConversationPage(TypedDict):
     items: list[_ConversationPageItem]
     nextCursor: str | None
+
+
+class _PreferenceInference:
+    """Deterministic structured extractor for the assembled memory path."""
+
+    async def infer(self, request: StructuredInferenceRequest) -> dict[str, object]:
+        raw_segments = request.input.get("evidence_segments")
+        assert isinstance(raw_segments, list) and raw_segments
+        segments = cast(list[object], raw_segments)
+        first = segments[0]
+        assert isinstance(first, dict)
+        first_payload = cast(dict[str, object], first)
+        handle = first_payload.get("handle")
+        assert isinstance(handle, str)
+        return {
+            "action": "create",
+            "content": "I prefer concise answers.",
+            "kind": "preference",
+            "scope_type": "user",
+            "confidence": 0.99,
+            "importance": 0.8,
+            "half_life_days": 365,
+            "grounded_evidence_handles": [handle],
+        }
+
+
+class _PreferenceEmbedding:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def embed(self, model_id: str, text: str) -> EmbeddingResult:
+        self.calls.append(text)
+        return EmbeddingResult(
+            vector=(0.1, 0.2, 0.3),
+            model_id=model_id,
+            model_revision="embedder-v1",
+            dimension=3,
+            model_digest="e" * 64,
+            digest=hashlib.sha256(text.encode()).hexdigest(),
+        )
 
 
 @pytest.mark.asyncio
@@ -431,6 +481,200 @@ async def test_streaming_contract_replays_snapshot_deltas_and_terminal_status(
         assert payloads[0]["data"]["run"]["status"] == "completed"
         assert payloads[-1]["data"]["status"] == "completed"
         assert all(payload["runId"] == run_id for payload in payloads)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_completed_question_delivers_and_processes_durable_memory_end_to_end(
+    api_app: FastAPI,
+) -> None:
+    """A completed answer must enqueue, settle, and embed one memory job."""
+
+    client, session = await owner_client(api_app)
+    try:
+        created = await client.post(
+            "/api/v1/conversations",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={
+                "message": "I prefer concise answers.",
+                "modelId": "chat",
+            },
+        )
+        assert created.status_code == 202
+        run_id = UUID(created.json()["run"]["id"])
+
+        # This is the same coordinator/provider boundary used by the local
+        # worker path; a delivery failure must not be converted into a failed
+        # run after the assistant has been persisted.
+        await api_app.state.aura.coordinator.execute(run_id, api_app.state.aura.provider)
+        conversation, run = await api_app.state.aura.store.find_run_any(run_id)
+        assert run.status.value == "completed"
+        assistant = next(
+            message for message in conversation.messages if message.id == run.assistant_message_id
+        )
+        assert assistant.state.value == "complete"
+        assert assistant.content == "Hello from Aura."
+
+        history = await api_app.state.aura.publisher.history(run_id)
+        assert [event.sequence for event in history] == list(range(len(history)))
+        assert {event.event_type for event in history} >= {
+            "run.snapshot",
+            "assistant.snapshot",
+            "run.status",
+        }
+        assert all(
+            cast(dict[str, object], event.data).get("code") != "DELIVERY_ERROR"
+            for event in history
+        )
+
+        execution_command = await api_app.state.aura.outbox.receive()
+        assert execution_command.topic == "aura.runs.execute.v1"
+        command = await api_app.state.aura.outbox.receive()
+        assert command.topic == "aura.memory.process.v1"
+        assert command.run_id == run_id
+
+        repository = api_app.state.aura.memory_repository
+        generation = await repository.register_embedding_generation(
+            "https://authentik.dev.example",
+            "owner-subject",
+            generation=1,
+            model_id="memory-embedder",
+            model_revision="embedder-v1",
+            dimension=3,
+            model_digest="e" * 64,
+        )
+        generation = await repository.activate_embedding_generation(
+            "https://authentik.dev.example", "owner-subject", generation.id
+        )
+        configuration = MemoryModelConfiguration(
+            "https://authentik.dev.example",
+            "owner-subject",
+            "memory-extractor",
+            "memory-embedder",
+            extraction_model_revision="extractor-v1",
+            embedding_model_revision="embedder-v1",
+            embedding_generation=generation.id,
+        )
+        await repository.save_model_configuration(
+            "https://authentik.dev.example",
+            "owner-subject",
+            configuration,
+            expected_version=1,
+            idempotency_key="system-memory-configuration",
+            dimension=3,
+            model_digest="e" * 64,
+        )
+
+        async def evidence_loader(job: MemoryProcessingJob) -> MemoryTurnEvidence:
+            owner_conversation, owner_run = await api_app.state.aura.store.find_run_any(
+                run_id
+            )
+            user = next(
+                item
+                for item in owner_conversation.messages
+                if item.id == owner_run.user_message_id
+            )
+            completed_assistant = next(
+                item
+                for item in owner_conversation.messages
+                if item.id == owner_run.assistant_message_id
+            )
+            user_ids = (user.id,)
+            assistant_ids = (completed_assistant.id,)
+            digest = hashlib.sha256(user.content.encode()).hexdigest()
+            return MemoryTurnEvidence(
+                job.issuer,
+                job.subject,
+                job.run_id,
+                job.conversation_id,
+                job.agent_revision_id,
+                user_ids,
+                assistant_ids,
+                user.content,
+                completed_assistant.content,
+                digest,
+            )
+
+        processor = MemoryProcessingService(
+            repository,
+            _PreferenceInference(),
+            _PreferenceEmbedding(),
+            evidence_loader=evidence_loader,
+        )
+        job = MemoryProcessingJob(
+            run_id,
+            "https://authentik.dev.example",
+            "owner-subject",
+            run_id,
+            conversation.id,
+            correlation_id=run.attempt_id,
+            causation_id=run.id,
+            agent_revision_id=run.agent_revision_id,
+            user_message_ids=(run.user_message_id,),
+            assistant_message_ids=(run.assistant_message_id,),
+            agent_profile_id=conversation.agent_profile_id,
+            allow_shared_user_promotion=True,
+            memory_policy_revision_id=run.memory_policy_revision_id,
+            evidence_digest=hashlib.sha256(
+                b"I prefer concise answers."
+            ).hexdigest(),
+        )
+        await repository.enqueue_processing_job(job)
+        processor.jobs[(job.issuer, job.subject, job.run_id)] = job
+        assert job.id == run_id
+
+        # Exercise the same generic identifier-envelope parser used by the
+        # assembled worker transport, rather than bypassing it with the
+        # domain-specific payload parser.
+        parsed_command = MemoryProcessingCommand.from_outbox(command)
+        settlement = await processor.process_command(parsed_command)
+        assert settlement.terminal is True
+        assert settlement.status.value == "completed"
+
+        candidates = await repository.list_candidates(
+            "https://authentik.dev.example", "owner-subject", run_id=run_id
+        )
+        assert len(candidates) == 1
+        assert candidates[0].state is CandidateState.ACCEPTED
+        assert candidates[0].memory_id is not None
+        assert candidates[0].action.value == "create"
+
+        memory = await repository.get_memory(
+            "https://authentik.dev.example",
+            "owner-subject",
+            candidates[0].memory_id,
+            scope_type=MemoryScopeType.USER,
+        )
+        assert memory.content == "I prefer concise answers."
+        assert len(memory.revisions) == 1
+        assert len(memory.embeddings) == 1
+
+        replay = await processor.process_command(parsed_command)
+        assert replay.terminal is True
+        assert len(
+            await repository.list_candidates(
+                "https://authentik.dev.example", "owner-subject", run_id=run_id
+            )
+        ) == 1
+        replayed_memory = await repository.get_memory(
+            "https://authentik.dev.example",
+            "owner-subject",
+            candidates[0].memory_id,
+            scope_type=MemoryScopeType.USER,
+        )
+        assert len(replayed_memory.revisions) == 1
+        assert len(replayed_memory.embeddings) == 1
+
+        activity = await client.get(f"/api/v1/runs/{run_id}/memory-activity")
+        assert activity.status_code == 200
+        payload = activity.json()
+        assert payload["processingStatus"] == "settled"
+        assert payload["items"][0]["action"] == "created"
+        assert payload["items"][0]["status"] == "completed"
     finally:
         await client.aclose()
 

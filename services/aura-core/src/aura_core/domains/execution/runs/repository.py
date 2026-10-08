@@ -194,9 +194,10 @@ class SqlRunRepository:
         value = await session.scalar(
             select(func.max(RunEventRow.sequence)).where(RunEventRow.run_id == event.run_id)
         )
+        next_sequence = 0 if value is None else int(value) + 1
         persisted = RunEvent(
             event.event_id,
-            int(value or -1) + 1,
+            next_sequence,
             event.event_type,
             event.run_id,
             event.conversation_id,

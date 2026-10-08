@@ -724,13 +724,16 @@ class InstrumentedMemoryRepository:
         method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "persist_candidate"))
         return await self._invoke("memory.candidate.persist", method, (None, None, None), candidate)
 
-    async def get_candidate_for_job(self, job_id: UUID, issuer: str, subject: str) -> object | None:
+    async def get_candidate_for_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryCandidate | None:
         method = cast(
             Callable[..., Awaitable[object]], getattr(self._inner, "get_candidate_for_job")
         )
-        return await self._invoke(
+        result = await self._invoke(
             "memory.candidate.get", method, (None, None, None), job_id, issuer, subject
         )
+        return cast(MemoryCandidate | None, result)
 
     async def list_candidates(
         self, issuer: str, subject: str, **kwargs: object
