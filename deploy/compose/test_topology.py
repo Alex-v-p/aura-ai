@@ -40,6 +40,19 @@ class ComposeTopologyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
 
+    def test_deterministic_ollama_fixture_models_have_provider_identity_metadata(self) -> None:
+        fixture = (ROOT / "deploy/compose/e2e/fake_provider.py").read_text(encoding="utf-8")
+        expected = {
+            "fixture-chat": "5aab3664f58aecf3728756feafd39dfc723fdfd43dff233a622eea824574d18b",
+            "fixture-chat-2": "2da0d79fc1a6e1cb9edef7bc5a3c41ee4e31df2eb8f53f35487639a0f9ed8951",
+            "embed": "8a1eed22144c3f04485a69eea62bfd3fa1026de39dc252b77ba9b1f3f08b00ec",
+        }
+        for name, digest in expected.items():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            self.assertIn(f'"name": "{name}"', fixture)
+            self.assertIn(f'"digest": "{digest}"', fixture)
+            self.assertRegex(fixture, r'"modified_at": "2026-10-09T00:00:00Z"')
+
     def test_only_core_entrypoints_receive_provider_egress(self) -> None:
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")

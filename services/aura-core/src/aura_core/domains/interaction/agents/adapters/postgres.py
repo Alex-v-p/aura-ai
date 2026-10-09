@@ -33,11 +33,17 @@ class SqlAgentSeeder:
                         id=PLATFORM_COMPONENT_ID, component="platform", revision=1, content=""
                     )
                 )
+            if await session.get(PromptComponentRevisionRow, GOVERNANCE_COMPONENT_ID) is None:
                 session.add(
                     PromptComponentRevisionRow(
                         id=GOVERNANCE_COMPONENT_ID, component="governance", revision=1, content=""
                     )
                 )
+            # SQLAlchemy cannot infer a dependency between independently
+            # staged rows when the bundle is added in the same unit of work.
+            # Flush the component revisions before inserting their FK child.
+            await session.flush()
+            if await session.get(PromptBundleRevisionRow, PROMPT_BUNDLE_ID) is None:
                 session.add(
                     PromptBundleRevisionRow(
                         id=PROMPT_BUNDLE_ID,
@@ -46,6 +52,7 @@ class SqlAgentSeeder:
                         governance_component_revision_id=GOVERNANCE_COMPONENT_ID,
                     )
                 )
+            await session.flush()
             if await session.get(AgentProfileRow, GENERAL_AGENT.profile_id) is not None:
                 return
             session.add(
@@ -56,6 +63,7 @@ class SqlAgentSeeder:
                     current_revision_id=GENERAL_AGENT.revision_id,
                 )
             )
+            await session.flush()
             session.add(
                 ModelPolicyRevisionRow(
                     id=GENERAL_AGENT.policy_revision_id,

@@ -1703,6 +1703,47 @@ async def test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex(
 
 
 @pytest.mark.asyncio
+async def test_sql_model_configuration_reuses_matching_generation_when_link_is_missing(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, engine = sql_memory_store
+    configuration = MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    initial = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        configuration,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    assert initial.embedding_generation is not None
+
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE memory_model_configurations "
+                "SET embedding_generation = NULL "
+                "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+            ),
+            {"issuer": ISSUER, "subject": OWNER},
+        )
+
+    repaired = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        configuration,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+
+    assert repaired.embedding_generation == initial.embedding_generation
+    generations = await store.list_embedding_generations(ISSUER, OWNER)
+    assert len(generations) == 1
+    assert generations[0].id == initial.embedding_generation
+
+
+@pytest.mark.asyncio
 async def test_sql_memory_policy_replay_conflict_scope_and_fallback_grant(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:

@@ -1,11 +1,5 @@
 """PostgreSQL adapter for the public memory repository port."""
 
-# SQLAlchemy's dynamically typed row attributes are normalized at hydration.
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnknownMemberType=false, reportPrivateUsage=false
-
-# SQL statements and hydration stay close to their transaction boundaries.
-# ruff: noqa: E501
-
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +12,7 @@ from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from aura_core.domains.knowledge.memory.persistence import (
     MemoryActionOutcomeRow,
@@ -70,15 +65,15 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryValidationError,
     MemoryVersionConflict,
     ProcessingJobStatus,
-    _fingerprint,
-    _normalize_candidate_for_approval,
     classify_sensitivity,
     decide_candidate,
     memory_activity_id,
+    normalize_candidate_for_approval,
     validate_memory_text,
     validate_provenance,
     validate_revision,
 )
+from aura_core.domains.knowledge.memory.public import fingerprint as make_fingerprint
 
 MAX_RECALL_CANDIDATES = 50
 
@@ -88,6 +83,38 @@ def _uuid_or_none(value: object) -> UUID | None:
         return UUID(str(value)) if value is not None else None
     except TypeError, ValueError:
         return None
+
+
+def _scope_type(value: object) -> MemoryScopeType | None:
+    if value is None:
+        return None
+    return value if isinstance(value, MemoryScopeType) else MemoryScopeType(str(value))
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise TypeError("expected an integer value")
+
+
+def _as_float(value: object) -> float:
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    raise TypeError("expected a numeric value")
+
+
+def _uuid_set(value: object) -> frozenset[UUID]:
+    if value is None:
+        return frozenset()
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+        raise TypeError("expected an iterable of UUIDs")
+    result: set[UUID] = set()
+    for item in cast(Iterable[object], value):
+        parsed = _uuid_or_none(item)
+        if parsed is None:
+            raise ValueError("invalid UUID")
+        result.add(parsed)
+    return frozenset(result)
 
 
 def _retention_basis(row: object) -> MemoryRetentionBasis:
@@ -110,7 +137,7 @@ def _vector_tuple(value: object, dimension: int) -> tuple[float, ...] | None:
         inner = text[1:-1].strip()
         values = () if not inner else tuple(float(part.strip()) for part in inner.split(","))
     else:
-        values = tuple(float(item) for item in cast(Iterable[object], value))
+        values = tuple(float(item) for item in cast(Iterable[float], value))
     if len(values) != dimension or not all(math.isfinite(item) for item in values):
         raise ValueError("persisted embedding dimension is invalid")
     return values
@@ -166,7 +193,8 @@ class SqlMemoryRepository:
         self, run_id: UUID, issuer: str, subject: str
     ) -> MemoryActivitySnapshot:
         async with self.sessions() as session:
-            jobs = (
+            jobs = cast(
+                list[MemoryProcessingJobRow],
                 (
                     await session.execute(
                         select(MemoryProcessingJobRow).where(
@@ -177,7 +205,7 @@ class SqlMemoryRepository:
                     )
                 )
                 .scalars()
-                .all()
+                .all(),
             )
             recall_metadata: dict[str, object] | None = None
             last_event_id: UUID | None = None
@@ -194,20 +222,23 @@ class SqlMemoryRepository:
             if not jobs and not run_known:
                 raise MemoryNotFound("run memory activity not found")
             job_ids = [item.id for item in jobs]
-            candidates = (
+            candidates = cast(
+                list[MemoryCandidateRow],
                 (
-                    await session.execute(
-                        select(MemoryCandidateRow).where(
-                            MemoryCandidateRow.job_id.in_(job_ids),
-                            MemoryCandidateRow.principal_issuer == issuer,
-                            MemoryCandidateRow.principal_subject == subject,
+                    (
+                        await session.execute(
+                            select(MemoryCandidateRow).where(
+                                MemoryCandidateRow.job_id.in_(job_ids),
+                                MemoryCandidateRow.principal_issuer == issuer,
+                                MemoryCandidateRow.principal_subject == subject,
+                            )
                         )
                     )
-                )
-                .scalars()
-                .all()
-                if job_ids
-                else []
+                    .scalars()
+                    .all()
+                    if job_ids
+                    else []
+                ),
             )
             items: list[MemoryActivityItem] = []
             for candidate in candidates:
@@ -215,7 +246,7 @@ class SqlMemoryRepository:
                 # diagnostics, not owner-facing memory activity.
                 if candidate.state == CandidateState.REJECTED.value:
                     continue
-                scope = None
+                scope: dict[str, object] | None = None
                 if candidate.scope_type is not None:
                     scope = {"type": candidate.scope_type}
                     if candidate.agent_profile_id is not None:
@@ -255,9 +286,10 @@ class SqlMemoryRepository:
                 generation_id = recall_metadata.get("embeddingGenerationId")
                 selections = recall_metadata.get("selections")
                 if isinstance(selections, list):
-                    for selection in selections:
-                        if not isinstance(selection, dict):
+                    for raw_selection in cast(list[object], selections):
+                        if not isinstance(raw_selection, dict):
                             continue
+                        selection = cast(dict[str, object], raw_selection)
                         memory_id = _uuid_or_none(selection.get("memoryId"))
                         revision_id = _uuid_or_none(selection.get("revisionId"))
                         if memory_id is None or revision_id is None:
@@ -406,10 +438,14 @@ class SqlMemoryRepository:
         )
 
     @staticmethod
-    def _recall_scope_clause(scopes: tuple[tuple[MemoryScopeType, UUID | None], ...]) -> object:
+    def _recall_scope_clause(
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...]
+    ) -> ColumnElement[bool]:
         from sqlalchemy import and_, or_
 
-        return (
+        return cast(
+            ColumnElement[bool],
+            (
             or_(
                 *[
                     and_(MemoryRow.scope_type == scope.value, MemoryRow.agent_profile_id == agent)
@@ -420,8 +456,9 @@ class SqlMemoryRepository:
                     for scope, agent in scopes
                 ]
             )
-            if scopes
-            else text("FALSE")
+                if scopes
+                else text("FALSE")
+            ),
         )
 
     async def search_lexical(
@@ -555,9 +592,12 @@ class SqlMemoryRepository:
                 await session.execute(
                     text(
                         "SELECT principal_issuer, principal_subject FROM memories "
-                        "UNION SELECT principal_issuer, principal_subject FROM memory_processing_jobs "
-                        "UNION SELECT principal_issuer, principal_subject FROM memory_model_configurations "
-                        "UNION SELECT principal_issuer, principal_subject FROM memory_embedding_generations"
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_processing_jobs "
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_model_configurations "
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_embedding_generations"
                     )
                 )
             ).all()
@@ -921,53 +961,40 @@ class SqlMemoryRepository:
         )
 
     async def _hydrate(self, session: AsyncSession, row: MemoryRow) -> MemoryRecord:
-        revisions = (
-            (
-                await session.execute(
-                    select(MemoryRevisionRow)
-                    .where(MemoryRevisionRow.memory_id == row.id)
-                    .order_by(MemoryRevisionRow.revision)
-                )
-            )
-            .scalars()
-            .all()
+        revisions = cast(
+            list[MemoryRevisionRow],
+            (await session.execute(
+                select(MemoryRevisionRow)
+                .where(MemoryRevisionRow.memory_id == row.id)
+                .order_by(MemoryRevisionRow.revision)
+            )).scalars().all(),
         )
-        provenance = (
-            (
-                await session.execute(
-                    select(MemoryProvenanceRow)
-                    .where(MemoryProvenanceRow.memory_id == row.id)
-                    .order_by(MemoryProvenanceRow.observed_at)
-                )
-            )
-            .scalars()
-            .all()
+        provenance = cast(
+            list[MemoryProvenanceRow],
+            (await session.execute(
+                select(MemoryProvenanceRow)
+                .where(MemoryProvenanceRow.memory_id == row.id)
+                .order_by(MemoryProvenanceRow.observed_at)
+            )).scalars().all(),
         )
         revision_ids = [item.id for item in revisions]
-        embeddings = (
-            (
-                await session.execute(
-                    select(MemoryEmbeddingRow).where(
-                        MemoryEmbeddingRow.revision_id.in_(revision_ids),
-                        MemoryEmbeddingRow.principal_issuer == row.principal_issuer,
-                        MemoryEmbeddingRow.principal_subject == row.principal_subject,
-                    )
+        embeddings = cast(
+            list[MemoryEmbeddingRow],
+            (await session.execute(
+                select(MemoryEmbeddingRow).where(
+                    MemoryEmbeddingRow.revision_id.in_(revision_ids),
+                    MemoryEmbeddingRow.principal_issuer == row.principal_issuer,
+                    MemoryEmbeddingRow.principal_subject == row.principal_subject,
                 )
-            )
-            .scalars()
-            .all()
-            if revision_ids
-            else []
+            )).scalars().all()
+            if revision_ids else [],
         )
         generation_ids = {item.generation_id for item in embeddings}
-        relation_rows = (
-            (
-                await session.execute(
-                    select(MemoryRelationRow).where(MemoryRelationRow.memory_id == row.id)
-                )
-            )
-            .scalars()
-            .all()
+        relation_rows = cast(
+            list[MemoryRelationRow],
+            (await session.execute(
+                select(MemoryRelationRow).where(MemoryRelationRow.memory_id == row.id)
+            )).scalars().all(),
         )
         record = MemoryRecord(
             row.id,
@@ -1010,20 +1037,16 @@ class SqlMemoryRepository:
             row.created_at or datetime.now(UTC),
             row.updated_at or datetime.now(UTC),
         )
-        generation_rows = (
-            (
-                await session.execute(
-                    select(MemoryEmbeddingGenerationRow).where(
-                        MemoryEmbeddingGenerationRow.id.in_(generation_ids),
-                        MemoryEmbeddingGenerationRow.principal_issuer == row.principal_issuer,
-                        MemoryEmbeddingGenerationRow.principal_subject == row.principal_subject,
-                    )
+        generation_rows = cast(
+            list[MemoryEmbeddingGenerationRow],
+            (await session.execute(
+                select(MemoryEmbeddingGenerationRow).where(
+                    MemoryEmbeddingGenerationRow.id.in_(generation_ids),
+                    MemoryEmbeddingGenerationRow.principal_issuer == row.principal_issuer,
+                    MemoryEmbeddingGenerationRow.principal_subject == row.principal_subject,
                 )
-            )
-            .scalars()
-            .all()
-            if generation_ids
-            else []
+            )).scalars().all()
+            if generation_ids else [],
         )
         record.embedding_generations = [
             MemoryEmbeddingGeneration(
@@ -1168,8 +1191,8 @@ class SqlMemoryRepository:
                     issuer,
                     subject,
                     memory_id,
-                    scope_type=kwargs.get("scope_type"),
-                    agent_profile_id=kwargs.get("agent_profile_id"),
+                    scope_type=_scope_type(kwargs.get("scope_type")),
+                    agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
                 ),
             )
 
@@ -1177,8 +1200,10 @@ class SqlMemoryRepository:
         kind = MemoryKind(str(kwargs["kind"]))
         scope = kwargs["scope"]
         if not isinstance(scope, MemoryScope):
-            scope = MemoryScope(MemoryScopeType(str(scope)), kwargs.get("agent_profile_id"))  # type: ignore[arg-type]
-        authorized_agent_ids = frozenset(kwargs.get("authorized_agent_ids", frozenset()))
+            scope = MemoryScope(
+                MemoryScopeType(str(scope)), _uuid_or_none(kwargs.get("agent_profile_id"))
+            )
+        authorized_agent_ids = _uuid_set(kwargs.get("authorized_agent_ids"))
         if (
             scope.type is MemoryScopeType.AGENT
             and authorized_agent_ids
@@ -1187,20 +1212,21 @@ class SqlMemoryRepository:
             raise MemoryScopeAuthorizationRequired("agent scope is not authorized")
         content = str(kwargs["content"])
         confidence, importance = (
-            float(kwargs.get("confidence", 1.0)),
-            float(kwargs.get("importance", 0.5)),
+            _as_float(kwargs.get("confidence", 1.0)),
+            _as_float(kwargs.get("importance", 0.5)),
         )
-        half_life = float(kwargs.get("half_life_days", 30.0))
-        valid_from, valid_to = kwargs.get("valid_from"), kwargs.get("valid_to")
-        validate_revision(content, confidence, importance, half_life, valid_from, valid_to)  # type: ignore[arg-type]
+        half_life = _as_float(kwargs.get("half_life_days", 30.0))
+        valid_from = cast(datetime | None, kwargs.get("valid_from"))
+        valid_to = cast(datetime | None, kwargs.get("valid_to"))
+        validate_revision(content, confidence, importance, half_life, valid_from, valid_to)
         now = self._now()
         memory_id = UUID(str(kwargs["memory_id"])) if kwargs.get("memory_id") else uuid4()
         revision_id = uuid4()
-        provenance = list(kwargs.get("provenance", []))
+        provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
         for item in provenance:
             validate_provenance(item)
         key = kwargs.get("idempotency_key")
-        fingerprint = _fingerprint(
+        fingerprint = make_fingerprint(
             "create",
             {k: v for k, v in kwargs.items() if k not in {"idempotency_key", "provenance"}},
         )
@@ -1241,7 +1267,7 @@ class SqlMemoryRepository:
                     confidence=confidence,
                     importance=importance,
                     half_life_days=half_life,
-                    observed_at=kwargs.get("observed_at") or now,
+                    observed_at=cast(datetime | None, kwargs.get("observed_at")) or now,
                     valid_from=valid_from,
                     valid_to=valid_to,
                     provenance_ids=[str(item.id) for item in provenance],
@@ -1285,7 +1311,7 @@ class SqlMemoryRepository:
     ) -> MemoryRecord:
         key = kwargs.get("idempotency_key")
         provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
-        fp = _fingerprint(
+        fp = make_fingerprint(
             "reinforce",
             {
                 "memory_id": str(memory_id),
@@ -1311,15 +1337,15 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
             prior = await self._replay(session, issuer, subject, key, fp)
             if prior is not None:
                 assert isinstance(prior, MemoryRecord)
                 return prior
             expected_version = kwargs.get("expected_version")
-            if expected_version is not None and row.version != int(expected_version):
+            if expected_version is not None and row.version != _as_int(expected_version):
                 raise MemoryVersionConflict("memory version conflict")
             if (
                 kwargs.get("require_active") is True
@@ -1358,8 +1384,8 @@ class SqlMemoryRepository:
             issuer,
             subject,
             memory_id,
-            scope_type=kwargs.get("scope_type"),
-            agent_profile_id=kwargs.get("agent_profile_id"),
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
         )
 
     async def revise_memory(
@@ -1370,7 +1396,7 @@ class SqlMemoryRepository:
         if reason is not None:
             validate_memory_text(str(reason), "correction reason")
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint(
+        fp = make_fingerprint(
             "revise",
             {k: v for k, v in kwargs.items() if k not in {"idempotency_key", "provenance"}}
             | {"memory_id": str(memory_id)},
@@ -1383,14 +1409,14 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
             prior = await self._replay(session, issuer, subject, key, fp)
             if prior is not None:
                 assert isinstance(prior, MemoryRecord)
                 return prior
-            expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
             if row.version != expected:
                 raise MemoryVersionConflict("memory version conflict")
             previous = (
@@ -1398,28 +1424,31 @@ class SqlMemoryRepository:
                     select(MemoryRevisionRow).where(MemoryRevisionRow.id == row.current_revision_id)
                 )
             ).scalar_one()
-            confidence = float(
+            confidence = _as_float(
                 previous.confidence if kwargs.get("confidence") is None else kwargs["confidence"]
             )
-            importance = float(
+            importance = _as_float(
                 previous.importance if kwargs.get("importance") is None else kwargs["importance"]
             )
-            half_life = float(
+            half_life = _as_float(
                 previous.half_life_days
                 if kwargs.get("half_life_days") is None
                 else kwargs["half_life_days"]
             )
-            valid_from = (
-                previous.valid_from if kwargs.get("valid_from") is None else kwargs["valid_from"]
+            valid_from = cast(
+                datetime | None,
+                previous.valid_from
+                if kwargs.get("valid_from") is None
+                else kwargs["valid_from"],
             )
             valid_to = (
                 None
                 if kwargs.get("clear_valid_to") is True
                 else previous.valid_to
                 if kwargs.get("valid_to") is None
-                else kwargs["valid_to"]
+                else cast(datetime | None, kwargs["valid_to"])
             )
-            validate_revision(content, confidence, importance, half_life, valid_from, valid_to)  # type: ignore[arg-type]
+            validate_revision(content, confidence, importance, half_life, valid_from, valid_to)
             number = (
                 await session.execute(
                     select(MemoryRevisionRow.revision)
@@ -1429,7 +1458,7 @@ class SqlMemoryRepository:
                 )
             ).scalar_one() + 1
             revision_id, now = uuid4(), datetime.now(UTC)
-            provenance = list(kwargs.get("provenance", []))
+            provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
             for item in provenance:
                 validate_provenance(item)
             kind = (
@@ -1483,8 +1512,8 @@ class SqlMemoryRepository:
             issuer,
             subject,
             memory_id,
-            scope_type=kwargs.get("scope_type"),
-            agent_profile_id=kwargs.get("agent_profile_id"),
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
         )
 
     async def set_status(
@@ -1492,7 +1521,7 @@ class SqlMemoryRepository:
     ) -> MemoryRecord:
         key = kwargs.get("idempotency_key")
         status = MemoryLifecycleStatus(str(kwargs["status"]))
-        fp = _fingerprint(
+        fp = make_fingerprint(
             "status",
             {
                 "memory": str(memory_id),
@@ -1511,14 +1540,14 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
             prior = await self._replay(session, issuer, subject, key, fp)
             if prior is not None:
                 assert isinstance(prior, MemoryRecord)
                 return prior
-            expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
             if row.version != expected:
                 raise MemoryVersionConflict("memory version conflict")
             now = datetime.now(UTC)
@@ -1549,14 +1578,14 @@ class SqlMemoryRepository:
                 ).scalar_one_or_none()
                 if related_row is None:
                     raise MemoryNotFound("related memory not found")
-                authorized_agent_ids = frozenset(kwargs.get("authorized_agent_ids", frozenset()))
+                authorized_agent_ids = _uuid_set(kwargs.get("authorized_agent_ids"))
                 if (
                     related_row.scope_type != row.scope_type
                     or related_row.agent_profile_id != row.agent_profile_id
                 ):
                     raise MemoryNotFound("related memory not found")
                 if related_row.scope_type == "agent" and (
-                    related_row.agent_profile_id != kwargs.get("agent_profile_id")
+                    related_row.agent_profile_id != _uuid_or_none(kwargs.get("agent_profile_id"))
                     and related_row.agent_profile_id not in authorized_agent_ids
                 ):
                     raise MemoryNotFound("related memory not found")
@@ -1573,15 +1602,15 @@ class SqlMemoryRepository:
             issuer,
             subject,
             memory_id,
-            scope_type=kwargs.get("scope_type"),
-            agent_profile_id=kwargs.get("agent_profile_id"),
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
         )
 
     async def set_pinned(
         self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
     ) -> MemoryRecord:
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint(
+        fp = make_fingerprint(
             "pin",
             {
                 "memory": str(memory_id),
@@ -1599,14 +1628,14 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
             prior = await self._replay(session, issuer, subject, key, fp)
             if prior is not None:
                 assert isinstance(prior, MemoryRecord)
                 return prior
-            expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
             if row.version != expected:
                 raise MemoryVersionConflict("memory version conflict")
             row.pinned, row.version, row.updated_at = (
@@ -1619,8 +1648,8 @@ class SqlMemoryRepository:
             issuer,
             subject,
             memory_id,
-            scope_type=kwargs.get("scope_type"),
-            agent_profile_id=kwargs.get("agent_profile_id"),
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
         )
 
     async def purge(
@@ -1629,7 +1658,7 @@ class SqlMemoryRepository:
         if kwargs.get("confirmation") != PURGE_CONFIRMATION:
             raise MemoryPurgeConfirmationRequired("exact purge confirmation is required")
         key = kwargs.get("idempotency_key")
-        fp = _fingerprint(
+        fp = make_fingerprint(
             "purge",
             {
                 "memory": str(memory_id),
@@ -1668,10 +1697,10 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
-            expected = int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
             if row.version != expected:
                 raise MemoryVersionConflict("memory version conflict")
             revisions = (
@@ -1699,8 +1728,11 @@ class SqlMemoryRepository:
                 (
                     await session.execute(
                         text(
-                            "SELECT id FROM memory_candidates WHERE principal_issuer = :issuer "
-                            "AND principal_subject = :subject AND (related_memory_id = :memory_id OR memory_id = :memory_id)"
+                            "SELECT id FROM memory_candidates "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (related_memory_id = :memory_id "
+                            "OR memory_id = :memory_id)"
                         ),
                         {"issuer": issuer, "subject": subject, "memory_id": memory_id},
                     )
@@ -1712,7 +1744,46 @@ class SqlMemoryRepository:
                 (
                     await session.execute(
                         text(
-                            "SELECT id FROM memory_processing_jobs WHERE principal_issuer = :issuer AND principal_subject = :subject AND (memory_id = :memory_id OR id IN (SELECT job_id FROM memory_candidates WHERE principal_issuer = :issuer AND principal_subject = :subject AND (related_memory_id = :memory_id OR memory_id = :memory_id)) OR id IN (SELECT job_id FROM memory_action_outcomes WHERE principal_issuer = :issuer AND principal_subject = :subject AND memory_id = :memory_id) OR EXISTS (SELECT 1 FROM memory_command_idempotency AS idem WHERE idem.principal_issuer = :issuer AND idem.principal_subject = :subject AND idem.memory_id = :memory_id AND (idem.idempotency_key = 'memory-job:' || memory_processing_jobs.id::text OR idem.idempotency_key IN (SELECT 'memory-action:' || c.id::text FROM memory_candidates AS c WHERE c.job_id = memory_processing_jobs.id AND c.principal_issuer = :issuer AND c.principal_subject = :subject) OR (idem.idempotency_key LIKE 'memory-fallback:%' AND EXISTS (SELECT 1 FROM memory_candidates AS fallback_candidate JOIN memory_revisions AS fallback_revision ON fallback_revision.memory_id = :memory_id AND fallback_revision.content = fallback_candidate.content WHERE fallback_candidate.job_id = memory_processing_jobs.id AND fallback_candidate.principal_issuer = :issuer AND fallback_candidate.principal_subject = :subject AND fallback_candidate.decision_reason LIKE 'provider_ignore_deterministic_create%'))))))"
+                            "SELECT id FROM memory_processing_jobs "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (memory_id = :memory_id "
+                            "OR id IN ("
+                            "SELECT job_id FROM memory_candidates "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (related_memory_id = :memory_id "
+                            "OR memory_id = :memory_id)"
+                            ") OR id IN ("
+                            "SELECT job_id FROM memory_action_outcomes "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND memory_id = :memory_id"
+                            ") OR EXISTS ("
+                            "SELECT 1 FROM memory_command_idempotency AS idem "
+                            "WHERE idem.principal_issuer = :issuer "
+                            "AND idem.principal_subject = :subject "
+                            "AND idem.memory_id = :memory_id "
+                            "AND (idem.idempotency_key = 'memory-job:' "
+                            "|| memory_processing_jobs.id::text "
+                            "OR idem.idempotency_key IN ("
+                            "SELECT 'memory-action:' || c.id::text "
+                            "FROM memory_candidates AS c "
+                            "WHERE c.job_id = memory_processing_jobs.id "
+                            "AND c.principal_issuer = :issuer "
+                            "AND c.principal_subject = :subject"
+                            ") OR (idem.idempotency_key LIKE 'memory-fallback:%' "
+                            "AND EXISTS ("
+                            "SELECT 1 FROM memory_candidates AS fallback_candidate "
+                            "JOIN memory_revisions AS fallback_revision "
+                            "ON fallback_revision.memory_id = :memory_id "
+                            "AND fallback_revision.content = fallback_candidate.content "
+                            "WHERE fallback_candidate.job_id = memory_processing_jobs.id "
+                            "AND fallback_candidate.principal_issuer = :issuer "
+                            "AND fallback_candidate.principal_subject = :subject "
+                            "AND fallback_candidate.decision_reason "
+                            "LIKE 'provider_ignore_deterministic_create%'"
+                            ")))))"
                         ),
                         {"issuer": issuer, "subject": subject, "memory_id": memory_id},
                     )
@@ -1725,14 +1796,51 @@ class SqlMemoryRepository:
             # yet persisted.  All rows are owner constrained.
             await session.execute(
                 text(
-                    "UPDATE memory_processing_jobs SET status = 'failed', last_error_class = 'purged', "
-                    "lease_id = NULL, lease_until = NULL, user_message_ids = '[]'::jsonb, "
-                    "assistant_message_ids = '[]'::jsonb, evidence_digest = NULL, memory_id = NULL "
+                    "UPDATE memory_processing_jobs "
+                    "SET status = 'failed', last_error_class = 'purged', "
+                    "lease_id = NULL, lease_until = NULL, "
+                    "user_message_ids = '[]'::jsonb, "
+                    "assistant_message_ids = '[]'::jsonb, "
+                    "evidence_digest = NULL, memory_id = NULL "
                     "WHERE principal_issuer = :issuer "
-                    "AND principal_subject = :subject AND (memory_id = :memory_id OR id IN "
-                    "(SELECT job_id FROM memory_candidates WHERE principal_issuer = :issuer AND principal_subject = :subject AND (related_memory_id = :memory_id OR memory_id = :memory_id)) "
-                    "OR id IN (SELECT job_id FROM memory_action_outcomes WHERE principal_issuer = :issuer AND principal_subject = :subject AND memory_id = :memory_id) "
-                    "OR EXISTS (SELECT 1 FROM memory_command_idempotency AS idem WHERE idem.principal_issuer = :issuer AND idem.principal_subject = :subject AND idem.memory_id = :memory_id AND (idem.idempotency_key = 'memory-job:' || memory_processing_jobs.id::text OR idem.idempotency_key IN (SELECT 'memory-action:' || c.id::text FROM memory_candidates AS c WHERE c.job_id = memory_processing_jobs.id AND c.principal_issuer = :issuer AND c.principal_subject = :subject) OR (idem.idempotency_key LIKE 'memory-fallback:%' AND EXISTS (SELECT 1 FROM memory_candidates AS fallback_candidate JOIN memory_revisions AS fallback_revision ON fallback_revision.memory_id = :memory_id AND fallback_revision.content = fallback_candidate.content WHERE fallback_candidate.job_id = memory_processing_jobs.id AND fallback_candidate.principal_issuer = :issuer AND fallback_candidate.principal_subject = :subject AND fallback_candidate.decision_reason LIKE 'provider_ignore_deterministic_create%'))))))"
+                    "AND principal_subject = :subject "
+                    "AND (memory_id = :memory_id "
+                    "OR id IN ("
+                    "SELECT job_id FROM memory_candidates "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND (related_memory_id = :memory_id "
+                    "OR memory_id = :memory_id)"
+                    ") OR id IN ("
+                    "SELECT job_id FROM memory_action_outcomes "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND memory_id = :memory_id"
+                    ") OR EXISTS ("
+                    "SELECT 1 FROM memory_command_idempotency AS idem "
+                    "WHERE idem.principal_issuer = :issuer "
+                    "AND idem.principal_subject = :subject "
+                    "AND idem.memory_id = :memory_id "
+                    "AND (idem.idempotency_key = 'memory-job:' "
+                    "|| memory_processing_jobs.id::text "
+                    "OR idem.idempotency_key IN ("
+                    "SELECT 'memory-action:' || c.id::text "
+                    "FROM memory_candidates AS c "
+                    "WHERE c.job_id = memory_processing_jobs.id "
+                    "AND c.principal_issuer = :issuer "
+                    "AND c.principal_subject = :subject"
+                    ") OR (idem.idempotency_key LIKE 'memory-fallback:%' "
+                    "AND EXISTS ("
+                    "SELECT 1 FROM memory_candidates AS fallback_candidate "
+                    "JOIN memory_revisions AS fallback_revision "
+                    "ON fallback_revision.memory_id = :memory_id "
+                    "AND fallback_revision.content = fallback_candidate.content "
+                    "WHERE fallback_candidate.job_id = memory_processing_jobs.id "
+                    "AND fallback_candidate.principal_issuer = :issuer "
+                    "AND fallback_candidate.principal_subject = :subject "
+                    "AND fallback_candidate.decision_reason "
+                    "LIKE 'provider_ignore_deterministic_create%'"
+                    ")))))"
                 ),
                 {"issuer": issuer, "subject": subject, "memory_id": memory_id},
             )
@@ -1758,7 +1866,12 @@ class SqlMemoryRepository:
             if candidate_ids or job_ids:
                 await session.execute(
                     text(
-                        "DELETE FROM memory_action_outcomes WHERE principal_issuer = :issuer AND principal_subject = :subject AND (candidate_id = ANY(:candidate_ids) OR job_id = ANY(:job_ids) OR memory_id = :memory_id)"
+                        "DELETE FROM memory_action_outcomes "
+                        "WHERE principal_issuer = :issuer "
+                        "AND principal_subject = :subject "
+                        "AND (candidate_id = ANY(:candidate_ids) "
+                        "OR job_id = ANY(:job_ids) "
+                        "OR memory_id = :memory_id)"
                     ),
                     {
                         "issuer": issuer,
@@ -1771,14 +1884,19 @@ class SqlMemoryRepository:
             else:
                 await session.execute(
                     text(
-                        "DELETE FROM memory_action_outcomes WHERE principal_issuer = :issuer AND principal_subject = :subject AND memory_id = :memory_id"
+                        "DELETE FROM memory_action_outcomes "
+                        "WHERE principal_issuer = :issuer "
+                        "AND principal_subject = :subject "
+                        "AND memory_id = :memory_id"
                     ),
                     {"issuer": issuer, "subject": subject, "memory_id": memory_id},
                 )
             await session.execute(
                 text(
                     "DELETE FROM memory_candidates WHERE principal_issuer = :issuer "
-                    "AND principal_subject = :subject AND (related_memory_id = :memory_id OR memory_id = :memory_id OR job_id = ANY(:job_ids))"
+                    "AND principal_subject = :subject "
+                    "AND (related_memory_id = :memory_id "
+                    "OR memory_id = :memory_id OR job_id = ANY(:job_ids))"
                 ),
                 {
                     "issuer": issuer,
@@ -1789,7 +1907,10 @@ class SqlMemoryRepository:
             )
             await session.execute(
                 text(
-                    "DELETE FROM memory_embedding_jobs WHERE principal_issuer = :issuer AND principal_subject = :subject AND memory_id = :memory_id"
+                    "DELETE FROM memory_embedding_jobs "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND memory_id = :memory_id"
                 ),
                 {"issuer": issuer, "subject": subject, "memory_id": memory_id},
             )
@@ -1818,7 +1939,8 @@ class SqlMemoryRepository:
             await session.flush()
             await session.execute(
                 text(
-                    "INSERT INTO memory_purge_fences(principal_issuer, principal_subject, memory_id) "
+                    "INSERT INTO memory_purge_fences "
+                    "(principal_issuer, principal_subject, memory_id) "
                     "VALUES (:issuer, :subject, :memory_id) ON CONFLICT DO NOTHING"
                 ),
                 {"issuer": issuer, "subject": subject, "memory_id": memory_id},
@@ -1844,9 +1966,9 @@ class SqlMemoryRepository:
     async def register_embedding_generation(
         self, issuer: str, subject: str, **kwargs: object
     ) -> MemoryEmbeddingGeneration:
-        generation = int(kwargs["generation"])
+        generation = _as_int(kwargs["generation"])
         model_id = str(kwargs["model_id"])
-        dimension = int(kwargs["dimension"])
+        dimension = _as_int(kwargs["dimension"])
         model_digest = kwargs.get("model_digest")
         if not model_id or dimension < 1:
             raise ValueError("embedding model and dimension are required")
@@ -1860,7 +1982,7 @@ class SqlMemoryRepository:
             uuid4(),
             generation,
             model_id,
-            kwargs.get("model_revision"),
+            cast(str | None, kwargs.get("model_revision")),
             dimension,
             "building",
             datetime.now(UTC),
@@ -2018,8 +2140,8 @@ class SqlMemoryRepository:
                 subject,
                 memory_id,
                 lock=True,
-                scope_type=kwargs.get("scope_type"),
-                agent_profile_id=kwargs.get("agent_profile_id"),
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
             )
             generation_id = kwargs["generation_id"]
             generation = await session.get(MemoryEmbeddingGenerationRow, generation_id)
@@ -2040,7 +2162,7 @@ class SqlMemoryRepository:
                 raise MemoryNotFound("memory revision not found")
             if revision.memory_id != row.id:
                 raise MemoryNotFound("memory revision not found")
-            vector = [float(value) for value in cast(Iterable[object], kwargs["vector"])]
+            vector = [float(value) for value in cast(Iterable[float], kwargs["vector"])]
             digest = str(kwargs["digest"])
             if len(vector) != generation.dimension or not all(
                 math.isfinite(value) for value in vector
@@ -2092,8 +2214,8 @@ class SqlMemoryRepository:
             issuer,
             subject,
             memory_id,
-            scope_type=kwargs.get("scope_type"),
-            agent_profile_id=kwargs.get("agent_profile_id"),
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
         )
 
     async def save_model_configuration(
@@ -2102,7 +2224,7 @@ class SqlMemoryRepository:
         if configuration.issuer != issuer or configuration.subject != subject:
             raise MemoryScopeAuthorizationRequired("model configuration owner mismatch")
         key = kwargs.get("idempotency_key")
-        fingerprint = _fingerprint(
+        fingerprint = make_fingerprint(
             "model.configuration",
             {
                 "extraction": configuration.extraction_model_id,
@@ -2137,9 +2259,9 @@ class SqlMemoryRepository:
                 MemoryModelConfigurationRow, (issuer, subject), with_for_update=True
             )
             expected = kwargs.get("expected_version")
-            if row is None and expected is not None and int(expected) != 1:
+            if row is None and expected is not None and _as_int(expected) != 1:
                 raise MemoryVersionConflict("memory model configuration version conflict")
-            if row is not None and expected is not None and row.version != int(expected):
+            if row is not None and expected is not None and row.version != _as_int(expected):
                 raise MemoryVersionConflict("model configuration version conflict")
             selected_generation = configuration.embedding_generation
             missing_generation = row is not None and row.embedding_generation is None
@@ -2158,27 +2280,55 @@ class SqlMemoryRepository:
             # state on the next verified save without treating it as a model
             # change or requiring a reindex of an empty index.
             if row is not None and row.embedding_generation is None:
-                dimension = int(kwargs.get("dimension", 0))
+                dimension = _as_int(kwargs.get("dimension", 0))
                 model_digest = kwargs.get("model_digest")
                 if dimension < 1 or not isinstance(model_digest, str):
                     raise MemoryValidationError("initial embedding generation is unavailable")
-                generation_id = uuid4()
-                session.add(
-                    MemoryEmbeddingGenerationRow(
-                        id=generation_id,
-                        generation=1,
-                        model_id=configuration.embedding_model_id,
-                        model_revision=configuration.embedding_model_revision,
-                        model_digest=model_digest,
-                        dimension=dimension,
-                        status="active",
-                        principal_issuer=issuer,
-                        principal_subject=subject,
-                        created_at=datetime.now(UTC),
-                        activated_at=datetime.now(UTC),
+                existing = (
+                    await session.execute(
+                        select(MemoryEmbeddingGenerationRow)
+                        .where(
+                            MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                            MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            MemoryEmbeddingGenerationRow.status == "active",
+                            MemoryEmbeddingGenerationRow.model_id
+                            == configuration.embedding_model_id,
+                            MemoryEmbeddingGenerationRow.model_revision
+                            == configuration.embedding_model_revision,
+                            MemoryEmbeddingGenerationRow.model_digest == model_digest,
+                            MemoryEmbeddingGenerationRow.dimension == dimension,
+                        )
+                        .order_by(MemoryEmbeddingGenerationRow.generation.desc())
                     )
-                )
-                selected_generation = generation_id
+                ).scalars().all()
+                if len(existing) == 1:
+                    selected_generation = existing[0].id
+                else:
+                    next_generation = (
+                        await session.execute(
+                            select(func.max(MemoryEmbeddingGenerationRow.generation)).where(
+                                MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                                MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            )
+                        )
+                    ).scalar_one() or 0
+                    generation_id = uuid4()
+                    session.add(
+                        MemoryEmbeddingGenerationRow(
+                            id=generation_id,
+                            generation=int(next_generation) + 1,
+                            model_id=configuration.embedding_model_id,
+                            model_revision=configuration.embedding_model_revision,
+                            model_digest=model_digest,
+                            dimension=dimension,
+                            status="active",
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            created_at=datetime.now(UTC),
+                            activated_at=datetime.now(UTC),
+                        )
+                    )
+                    selected_generation = generation_id
             # A model change creates a discoverable building generation while
             # leaving the currently selected generation active until a full
             # reindex atomically activates its replacement.
@@ -2207,7 +2357,9 @@ class SqlMemoryRepository:
                     if row.embedding_generation
                     else None
                 )
-                dimension = int(kwargs.get("dimension", base.dimension if base is not None else 0))
+                dimension = _as_int(
+                    kwargs.get("dimension", base.dimension if base is not None else 0)
+                )
                 if dimension > 0:
                     next_generation = (
                         await session.execute(
@@ -2232,27 +2384,31 @@ class SqlMemoryRepository:
                     session.add(building)
                     selected_generation = row.embedding_generation
             if row is None:
-                dimension = int(kwargs.get("dimension", 0))
-                model_digest = kwargs.get("model_digest")
-                if dimension < 1 or not isinstance(model_digest, str):
-                    raise MemoryValidationError("initial embedding generation is unavailable")
-                generation_id = uuid4()
-                session.add(
-                    MemoryEmbeddingGenerationRow(
-                        id=generation_id,
-                        generation=1,
-                        model_id=configuration.embedding_model_id,
-                        model_revision=configuration.embedding_model_revision,
-                        model_digest=model_digest,
-                        dimension=dimension,
-                        status="active",
-                        principal_issuer=issuer,
-                        principal_subject=subject,
-                        created_at=datetime.now(UTC),
-                        activated_at=datetime.now(UTC),
+                if selected_generation is None:
+                    dimension = _as_int(kwargs.get("dimension", 0))
+                    model_digest = kwargs.get("model_digest")
+                    if dimension < 1 or not isinstance(model_digest, str):
+                        raise MemoryValidationError("initial embedding generation is unavailable")
+                    generation_id = uuid4()
+                    session.add(
+                        MemoryEmbeddingGenerationRow(
+                            id=generation_id,
+                            generation=1,
+                            model_id=configuration.embedding_model_id,
+                            model_revision=configuration.embedding_model_revision,
+                            model_digest=model_digest,
+                            dimension=dimension,
+                            status="active",
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            created_at=datetime.now(UTC),
+                            activated_at=datetime.now(UTC),
+                        )
                     )
+                    selected_generation = generation_id
+                configuration = replace(
+                    configuration, embedding_generation=selected_generation
                 )
-                configuration = replace(configuration, embedding_generation=generation_id)
                 row = MemoryModelConfigurationRow(
                     principal_issuer=issuer,
                     principal_subject=subject,
@@ -2260,7 +2416,7 @@ class SqlMemoryRepository:
                     extraction_model_revision=configuration.extraction_model_revision,
                     embedding_model_id=configuration.embedding_model_id,
                     embedding_model_revision=configuration.embedding_model_revision,
-                    embedding_generation=generation_id,
+                    embedding_generation=selected_generation,
                     version=configuration.version,
                     updated_at=datetime.now(UTC),
                 )
@@ -2622,7 +2778,7 @@ class SqlMemoryRepository:
                         ),
                     )
                 )
-            limit = max(1, min(int(kwargs.get("limit", 30)), 100))
+            limit = max(1, min(_as_int(kwargs.get("limit", 30)), 100))
             rows = (
                 (
                     await session.execute(
@@ -2746,7 +2902,7 @@ class SqlMemoryRepository:
         self, issuer: str, subject: str, candidate_id: UUID, **kwargs: object
     ) -> MemoryCandidate:
         key = kwargs.get("idempotency_key")
-        fingerprint = _fingerprint(
+        fingerprint = make_fingerprint(
             "candidate.approve",
             {
                 "candidate": str(candidate_id),
@@ -2784,7 +2940,7 @@ class SqlMemoryRepository:
                     pass
             return replayed
         candidate = await self.get_candidate(issuer, subject, candidate_id)
-        expected = int(kwargs.get("expected_version", 1))
+        expected = _as_int(kwargs.get("expected_version", 1))
         if expected != candidate.version:
             raise MemoryVersionConflict("memory candidate version conflict")
         if candidate.state not in {CandidateState.PROPOSED, CandidateState.REVIEW} and not (
@@ -2794,23 +2950,24 @@ class SqlMemoryRepository:
         job = await self.get_processing_job(candidate.job_id, issuer, subject)
         edit = kwargs.get("edit")
         if isinstance(edit, dict):
-            scope_data = cast(dict[str, object], edit["scope"])
+            edit_data = cast(dict[str, object], edit)
+            scope_data = cast(dict[str, object], edit_data["scope"])
             candidate = replace(
                 candidate,
-                action=MemoryAction(str(edit["action"])),
-                content=str(edit["content"]),
-                kind=MemoryKind(str(edit["kind"])),
+                action=MemoryAction(str(edit_data["action"])),
+                content=str(edit_data["content"]),
+                kind=MemoryKind(str(edit_data["kind"])),
                 scope=MemoryScope(
                     MemoryScopeType(str(scope_data["type"])),
                     UUID(str(scope_data["agentProfileId"]))
                     if scope_data.get("agentProfileId")
                     else None,
                 ),
-                confidence=float(edit["confidence"]),
-                importance=float(edit["importance"]),
-                half_life_days=float(edit["halfLifeDays"]),
-                valid_to=cast(datetime | None, edit.get("validTo")),
-                related_memory_id=cast(UUID | None, edit.get("relatedMemoryId")),
+                confidence=_as_float(edit_data["confidence"]),
+                importance=_as_float(edit_data["importance"]),
+                half_life_days=_as_float(edit_data["halfLifeDays"]),
+                valid_to=cast(datetime | None, edit_data.get("validTo")),
+                related_memory_id=cast(UUID | None, edit_data.get("relatedMemoryId")),
             )
             grounded = set(candidate.grounded_message_ids)
             if not grounded or not grounded.issubset(set(job.user_message_ids)):
@@ -2864,7 +3021,7 @@ class SqlMemoryRepository:
             # Provider ``review`` is a disposition, not a durable mutation.
             # Normalize legacy content-bearing rows at approval time so they
             # remain owner-approvable without rewriting the database first.
-            candidate = _normalize_candidate_for_approval(candidate)
+            candidate = normalize_candidate_for_approval(candidate)
         if candidate.content is None or not candidate.scope:
             raise MemoryValidationError("memory candidate content and scope are required")
         if (
@@ -3020,7 +3177,7 @@ class SqlMemoryRepository:
         # Rejection receipts are content-free, but their bounded reason is
         # still user-controlled text and must not become a credential sink.
         validate_memory_text(reason, "rejection reason")
-        fingerprint = _fingerprint(
+        fingerprint = make_fingerprint(
             "candidate.reject",
             {
                 "candidate": str(candidate_id),
@@ -3037,7 +3194,7 @@ class SqlMemoryRepository:
                 if replay is not None:
                     return replay
         candidate = await self.get_candidate(issuer, subject, candidate_id)
-        expected = int(kwargs.get("expected_version", 1))
+        expected = _as_int(kwargs.get("expected_version", 1))
         if expected != candidate.version:
             raise MemoryVersionConflict("memory candidate version conflict")
         if candidate.state not in {CandidateState.PROPOSED, CandidateState.REVIEW}:
@@ -3311,7 +3468,7 @@ class SqlMemoryRepository:
                         }
                         else 2
                     )
-                    if existing_version != int(expected_version):
+                    if existing_version != _as_int(expected_version):
                         raise MemoryVersionConflict("memory candidate version conflict")
                 existing.action = candidate.action.value
                 existing.content = candidate.content
