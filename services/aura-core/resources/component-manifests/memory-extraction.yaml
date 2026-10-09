@@ -24,6 +24,7 @@ metrics:
   - memory_candidate_outcome
   - memory_extraction_outcome
   - memory_candidate_decision
+  - memory_fallback_outcome
   - memory_personal_retention_gate_outcome
   - memory_retention_gate_duration_ms
   - memory_reviewable_candidate_count
@@ -51,6 +52,7 @@ metric_semantics:
   memory_candidate_outcome: Deterministic acceptance, review, rejection, or retry decision.
   memory_extraction_outcome: Metadata-only structured extraction boundary outcome.
   memory_candidate_decision: Metadata-only deterministic candidate decision.
+  memory_fallback_outcome: Metadata-only deterministic provider-ignore fallback outcome.
   memory_personal_retention_gate_outcome: Personal-first retention basis gate outcome.
   memory_retention_gate_duration_ms: Deterministic retention gate duration.
   memory_reviewable_candidate_count: Count of actionable owner-review candidates.

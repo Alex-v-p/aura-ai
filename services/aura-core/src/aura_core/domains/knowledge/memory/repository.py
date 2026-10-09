@@ -1291,7 +1291,19 @@ class SqlMemoryRepository:
         provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
         fp = _fingerprint(
             "reinforce",
-            {"memory_id": str(memory_id), "provenance": [str(item.id) for item in provenance]},
+            {
+                "memory_id": str(memory_id),
+                "provenance": [str(item.id) for item in provenance],
+                **(
+                    {
+                        "expected_version": kwargs.get("expected_version"),
+                        "require_active": kwargs.get("require_active") is True,
+                    }
+                    if kwargs.get("expected_version") is not None
+                    or kwargs.get("require_active") is True
+                    else {}
+                ),
+            },
         )
         for item in provenance:
             validate_provenance(item)
@@ -1310,6 +1322,14 @@ class SqlMemoryRepository:
             if prior is not None:
                 assert isinstance(prior, MemoryRecord)
                 return prior
+            expected_version = kwargs.get("expected_version")
+            if expected_version is not None and row.version != int(expected_version):
+                raise MemoryVersionConflict("memory version conflict")
+            if (
+                kwargs.get("require_active") is True
+                and row.status != MemoryLifecycleStatus.ACTIVE.value
+            ):
+                raise MemoryNotFound("memory is no longer active")
             now = datetime.now(UTC)
             row.status = MemoryLifecycleStatus.ACTIVE.value
             row.dormant_at = None
@@ -1396,7 +1416,13 @@ class SqlMemoryRepository:
             valid_from = (
                 previous.valid_from if kwargs.get("valid_from") is None else kwargs["valid_from"]
             )
-            valid_to = previous.valid_to if kwargs.get("valid_to") is None else kwargs["valid_to"]
+            valid_to = (
+                None
+                if kwargs.get("clear_valid_to") is True
+                else previous.valid_to
+                if kwargs.get("valid_to") is None
+                else kwargs["valid_to"]
+            )
             validate_revision(content, confidence, importance, half_life, valid_from, valid_to)  # type: ignore[arg-type]
             number = (
                 await session.execute(

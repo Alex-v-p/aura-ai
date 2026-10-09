@@ -137,6 +137,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
         "memory_job_outcome", "memory_candidate_outcome", "memory_action_outcome",
         "memory_extraction_outcome", "memory_candidate_decision",
         "memory_personal_retention_gate_outcome", "memory_reviewable_candidate_count",
+        "memory_fallback_outcome",
         "structured_inference_duration_ms", "queue_wait_ms", "retry_count", "backlog", "errors",
         "provider_errors", "duration_ms", "backlog_depth",
         "memory_extraction_duration_ms", "memory_job_duration_ms", "memory_job_queue_wait_ms",
@@ -265,6 +266,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
         "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
         "memory.action", "memory.policy", "memory.retention_gate", "memory.embedding",
+        "memory.fallback",
         "memory.retry", "memory.error",
     }),
     "aura.knowledge.memory_maintenance": frozenset({
@@ -314,6 +316,8 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
     ("aura.knowledge.memory_extraction", "memory.policy"): "memory_policy_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.retention_gate"):
         "memory_retention_gate_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.fallback"):
+        "operation_duration_ms",
     ("aura.knowledge.memory_maintenance", "memory.maintenance"):
         "memory_maintenance_duration_ms",
     ("aura.knowledge.memory_maintenance", "memory.reindex.chunk"):
@@ -1230,6 +1234,7 @@ def record_memory_processing(
         "memory.extraction": ("memory_extraction_outcome",),
         "memory.retention_gate": ("memory_personal_retention_gate_outcome",),
         "memory.policy": ("memory_candidate_decision",),
+        "memory.fallback": ("memory_fallback_outcome",),
         "memory.candidate": ("memory_candidate_outcome",),
         "memory.action": ("memory_action_outcome",),
         "memory.embedding": ("embedding_duration_ms", "missing_embedding_backlog"),

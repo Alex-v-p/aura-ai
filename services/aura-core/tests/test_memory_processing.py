@@ -40,6 +40,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryProcessingJob,
     MemoryProcessingService,
     MemoryProvenance,
+    MemoryRecord,
     MemoryRetentionBasis,
     MemoryScope,
     MemoryScopeType,
@@ -47,6 +48,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryStore,
     MemoryTurnEvidence,
     MemoryValidationError,
+    MemoryVersionConflict,
     ProcessingJobStatus,
     classify_retention_basis,
     classify_sensitivity,
@@ -2681,6 +2683,519 @@ async def test_review_reject_and_ignore_branches_settle_without_memory_write(
     assert repository.processing_jobs[job.id].status is ProcessingJobStatus.COMPLETED
     assert repository.memories == {}
     assert all("content" not in outcome for outcome in processor.outcomes)
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_reinforces_existing_direct_family_fact() -> None:
+    """A conservative ignore must not lose a repeat of an exact durable fact."""
+
+    content = "My sister’s birthday is on March 14."
+    repository = MemoryStore(clock=lambda: NOW)
+    metrics = MetadataMetrics()
+
+    def telemetry(**event: object) -> None:
+        record_memory_processing(
+            metrics,
+            component="aura.knowledge.memory_extraction",
+            dependency="memory_worker",
+            **event,
+        )
+
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+        idempotency_key="seed-family-fact",
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+        telemetry=telemetry,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    message_id = uuid4()
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({message_id}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.ACCEPTED
+    assert result.action is MemoryAction.REINFORCE
+    assert result.decision_reason == "provider_ignore_reinforcement"
+    assert result.half_life_days == 365
+    assert result.valid_to is None
+    assert len(repository.memories) == 1
+    reinforced = repository.memories[existing.id]
+    assert reinforced.reinforced_at == NOW
+    assert reinforced.current_revision.half_life_days == 365
+    assert reinforced.current_revision.valid_to is None
+    assert len(reinforced.revisions) == 2
+    outcome = next(item for item in repository.outcomes if item["action"] == "reinforce")
+    assert "error_class" not in outcome
+    measurements = metrics.snapshot()
+    fallback_measurement = next(
+        item for item in measurements if item.metric == "memory_fallback_outcome"
+    )
+    assert dict(fallback_measurement.dimensions)["outcome"] == "fallback"
+    assert "error_class" not in dict(fallback_measurement.dimensions)
+    action_measurement = next(
+        item for item in measurements if item.metric == "memory_action_outcome"
+    )
+    assert "error_class" not in dict(action_measurement.dimensions)
+    assert metrics.stats().rejected == 0
+    assert content not in repr(outcome)
+    assert content not in repr(fallback_measurement)
+    assert content not in repr(action_measurement)
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_does_not_create_new_family_fact() -> None:
+    content = "My sister’s birthday is on March 14."
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert result.action is MemoryAction.IGNORE
+    assert repository.memories == {}
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_binds_reinforcement_to_active_target() -> None:
+    content = "My sister’s birthday is on March 14."
+    repository = MemoryStore(clock=lambda: NOW)
+    active = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=365,
+        idempotency_key="active-family-fact",
+    )
+    historical = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=365,
+        idempotency_key="historical-family-fact",
+    )
+    historical_version = historical.version
+    historical_reinforced_at = historical.reinforced_at
+    await repository.set_status(
+        ISSUER,
+        OWNER,
+        historical.id,
+        status=MemoryLifecycleStatus.ARCHIVED,
+        expected_version=historical.version,
+        scope_type=MemoryScopeType.USER,
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.ACCEPTED
+    assert repository.memories[active.id].reinforced_at == NOW
+    assert repository.memories[historical.id].status is MemoryLifecycleStatus.ARCHIVED
+    assert repository.memories[historical.id].version == historical_version + 1
+    assert repository.memories[historical.id].reinforced_at == historical_reinforced_at
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_disappearing_target_fails_closed_without_create() -> None:
+    content = "My sister’s birthday is on March 14."
+
+    class DisappearingFamilyStore(MemoryStore):
+        def __init__(self) -> None:
+            super().__init__(clock=lambda: NOW)
+            self.target_id: UUID | None = None
+            self.list_calls = 0
+
+        async def list_memories(
+            self, issuer: str, subject: str, filters: Any = None
+        ) -> list[Any]:
+            values = await super().list_memories(issuer, subject, filters)
+            self.list_calls += 1
+            if self.list_calls == 1 and self.target_id is not None:
+                self.memories.pop(self.target_id, None)
+            return values
+
+    repository = DisappearingFamilyStore()
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=365,
+        idempotency_key="disappearing-family-fact",
+    )
+    repository.target_id = existing.id
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert result.decision_reason == "reinforcement_target_unavailable"
+    assert repository.memories == {}
+    assert not any(item["action"] == "create" for item in repository.outcomes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["archive", "version"])
+async def test_provider_ignore_transition_before_reinforce_fails_closed(
+    transition: str,
+) -> None:
+    content = "My sister’s birthday is on March 14."
+
+    class TransitioningFamilyStore(MemoryStore):
+        target_id: UUID | None = None
+
+        async def reinforce_memory(
+            self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+        ) -> MemoryRecord:
+            assert self.target_id == memory_id
+            if transition == "archive":
+                self.memories[memory_id].status = MemoryLifecycleStatus.ARCHIVED
+            else:
+                self.memories[memory_id].version += 1
+            return await super().reinforce_memory(issuer, subject, memory_id, **kwargs)
+
+    repository = TransitioningFamilyStore(clock=lambda: NOW)
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=365,
+        idempotency_key="transition-family-fact",
+    )
+    repository.target_id = existing.id
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert result.decision_reason == "reinforcement_target_unavailable"
+    if transition == "archive":
+        assert repository.memories[existing.id].status is MemoryLifecycleStatus.ARCHIVED
+    else:
+        assert repository.memories[existing.id].status is MemoryLifecycleStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revision_race", ["missing", "conflict", "conflict_correction"])
+async def test_provider_ignore_revision_race_has_no_accepted_orphan(
+    revision_race: str,
+) -> None:
+    content = "My sister’s birthday is on March 14."
+    metrics = MetadataMetrics()
+
+    def telemetry(**event: object) -> None:
+        record_memory_processing(
+            metrics,
+            component="aura.knowledge.memory_extraction",
+            dependency="memory_worker",
+            **event,
+        )
+
+    class RevisionRaceFamilyStore(MemoryStore):
+        async def revise_memory(
+            self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+        ) -> MemoryRecord:
+            if revision_race == "missing":
+                self.memories.pop(memory_id, None)
+                raise MemoryNotFound("memory disappeared during horizon revision")
+            if revision_race == "conflict_correction":
+                corrected = await super().revise_memory(
+                    issuer,
+                    subject,
+                    memory_id,
+                    content="Owner corrected this family fact.",
+                    half_life_days=30,
+                    valid_to=NOW + timedelta(days=45),
+                    expected_version=kwargs["expected_version"],
+                    idempotency_key="owner-correction-before-fallback",
+                )
+                del corrected
+                raise MemoryVersionConflict("owner correction won the horizon race")
+            raise MemoryVersionConflict("memory horizon revision changed")
+
+    repository = RevisionRaceFamilyStore(clock=lambda: NOW)
+    await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+        idempotency_key="revision-race-family-fact",
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+        telemetry=telemetry,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert result.decision_reason == "reinforcement_target_unavailable"
+    assert result.content is None
+    assert metrics.stats().rejected == 0
+    assert any(item.metric == "memory_candidate_outcome" for item in metrics.snapshot())
+    assert any(item.metric == "memory_job_outcome" for item in metrics.snapshot())
+    if revision_race == "missing":
+        assert repository.memories == {}
+    elif revision_race == "conflict":
+        record = next(iter(repository.memories.values()))
+        assert record.status is MemoryLifecycleStatus.ACTIVE
+        assert record.current_revision.half_life_days == 30
+        assert record.current_revision.valid_to is not None
+    else:
+        record = next(iter(repository.memories.values()))
+        assert record.current_revision.content == "Owner corrected this family fact."
+        assert record.current_revision.half_life_days == 30
+        assert record.current_revision.valid_to == NOW + timedelta(days=45)
+        assert len(record.revisions) == 2
 
 
 @pytest.mark.asyncio
