@@ -3,7 +3,7 @@ import { DatePipe, DecimalPipe, PercentPipe } from '@angular/common';
 import { A11yModule } from '@angular/cdk/a11y';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, RouterLinkActive, type ParamMap } from '@angular/router';
-import type { AgentMemoryPolicy, MemoryCandidateAction, MemoryCandidateEdit, MemoryCollectionScopeType, MemoryKind, MemoryLifecycleStatus, MemoryRecallMode, MemoryScope } from '@aura/aura-api-client';
+import type { AgentMemoryPolicy, MemoryCandidateAction, MemoryCandidateEdit, MemoryCandidateSummary, MemoryCollectionScopeType, MemoryKind, MemoryLifecycleStatus, MemoryRecallMode, MemoryScope } from '@aura/aura-api-client';
 import { AgentStore } from '@aura/aura/interaction/agents';
 import { canSaveMemoryConfiguration, defaultMemoryPolicySettings, hasMemoryAdvancedFilters, hydratedMemoryModelIds, hydratedMemoryPolicySettings, isSelectableMemoryModel, memoryAgentFilterChange, memoryScopeFilterChange, recommendedMemoryModelId } from './memory-models';
 import { MemoryStore } from './memory-store';
@@ -154,11 +154,11 @@ export class MemoryCandidatesPageComponent {
    * hidden by the API. Keep the fallback explicit so old invalid-provider
    * rows cannot suggest that an actionable review is waiting.
    */
-  candidateContent(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string {
+  candidateContent(candidate: MemoryCandidateSummary): string {
     const content = candidate.content?.trim();
     return content || this.candidateDiagnostic(candidate);
   }
-  candidateDiagnostic(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string {
+  candidateDiagnostic(candidate: MemoryCandidateSummary): string {
     const reason = candidate.decisionReason?.toLowerCase() ?? '';
     if (reason.includes('invalid_provider_output') || reason.includes('malformed') || reason.includes('incomplete')) return 'Aura could not produce a complete memory proposal; this diagnostic is not reviewable.';
     if (reason.includes('missing_content') || reason.includes('empty_content')) return 'Aura did not provide memory content for this proposal.';
