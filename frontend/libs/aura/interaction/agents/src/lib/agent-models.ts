@@ -2,6 +2,10 @@ import { InjectionToken } from '@angular/core';
 
 export type AgentStatus = 'active' | 'disabled';
 
+/** Stable Core identity for the built-in Aura profile. Display names are
+ * mutable and therefore cannot identify the default agent. */
+export const BUILT_IN_AURA_AGENT_PROFILE_ID = '7e1d98ee-65b2-5bc7-9ca9-edd7ad85b540';
+
 export interface AgentReference {
   readonly profileId: string;
   readonly revisionId: string;
@@ -27,6 +31,10 @@ export interface AgentProfile {
   readonly version: number;
   readonly currentRevisionId: string;
   readonly revisions: ReadonlyArray<AgentRevision>;
+}
+
+export function isBuiltInAuraAgent(profile: { readonly id: string; readonly displayName?: string }): boolean {
+  return profile.id === BUILT_IN_AURA_AGENT_PROFILE_ID;
 }
 
 export interface AgentDraft {
@@ -85,7 +93,7 @@ export class InMemoryAgentApi implements AgentApi {
   }
 
   private seedAura(): AgentProfile {
-    return this.profile('7e4d9f2d-9b6f-4d0b-a2ad-0a8c8e6b3f10', { displayName: 'Aura', purpose: 'A steady, practical thinking partner.', behavioralInstructions: 'Be clear, kind, and action-oriented.', personaRevisionId: 'f2f4e37e-3e7b-48c3-b3fb-2d92dfb6a146' }, 1);
+    return this.profile(BUILT_IN_AURA_AGENT_PROFILE_ID, { displayName: 'Aura', purpose: 'A steady, practical thinking partner.', behavioralInstructions: 'Be clear, kind, and action-oriented.', personaRevisionId: 'f2f4e37e-3e7b-48c3-b3fb-2d92dfb6a146' }, 1);
   }
 
   private profile(id: string, draft: AgentDraft, version: number): AgentProfile {

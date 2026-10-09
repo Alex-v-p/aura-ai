@@ -6,7 +6,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
 import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
-import { AgentStore, type AgentReference } from '@aura/aura/interaction/agents';
+import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
 import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
@@ -53,6 +53,18 @@ export class ConversationPanelComponent {
 
   constructor() {
     effect(() => {
+      const conversation = this.store.selected();
+      if (!conversation.id.startsWith('draft-') || conversation.agent) return;
+      this.store.requireDefaultDraftAgent();
+      const aura = this.agentStore.activeAgents().find(isBuiltInAuraAgent);
+      const current = aura?.revisions.find((revision) => revision.revisionId === aura.currentRevisionId);
+      if (this.store.authState() === 'authenticated' && current) {
+        this.store.setDefaultDraftAgent(current);
+      } else if (this.store.authState() === 'authenticated' && !this.agentStore.loading()) {
+        this.store.failDefaultDraftAgent(this.agentStore.notice() ?? 'Aura’s current agent revision is unavailable. Retry agent discovery before sending.');
+      }
+    });
+    effect(() => {
       const request = this.store.runInspectorRequested();
       if (request > 0) queueMicrotask(() => this.openRunInspector());
     });
@@ -82,7 +94,9 @@ export class ConversationPanelComponent {
     });
   }
 
-  submit(event?: Event): void { event?.preventDefault(); if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }
+  defaultAgentReady(): boolean { const conversation = this.store.selected(); return !conversation.id.startsWith('draft-') || Boolean(conversation.agent) || this.store.defaultDraftAgentResolution() === 'resolved'; }
   handleKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.submit(event); } }
   chooseAgent(revisionId: string): void {
     if (this.controlsDisabled()) return;

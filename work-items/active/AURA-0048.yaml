@@ -68,6 +68,8 @@ allowed_paths:
   - services/aura-core/tests/system/test_memory_api.py
   - services/aura-core/tests/system/test_api_conversation_flow.py
   - frontend/libs/aura/knowledge/memory/**
+  - frontend/libs/aura/interaction/agents/src/lib/agent-models.ts
+  - frontend/libs/aura/interaction/agents/src/lib/agent-models.spec.ts
   - frontend/libs/aura/interaction/conversations/**
   - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
   - frontend/apps/aura-web-e2e/src/full-stack.spec.ts

@@ -3,6 +3,9 @@ import type { ConversationApi, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
 import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
 
+const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
+function hydrateDefaultAgent(store: ConversationStore): void { store.setDefaultDraftAgent(hydratedDefaultAgent); }
+
 const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const preferredModel = { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const session: Session = { principal: { issuer: 'https://authentik.test', subject: 'owner' }, csrfToken: 'csrf', idleExpiresAt: '2026-10-05T20:00:00Z', absoluteExpiresAt: '2026-10-06T12:00:00Z' };
@@ -63,7 +66,7 @@ describe('ConversationStore', () => {
     expect(visibleMemoryActivities([placeholder, candidate])).toEqual([candidate]);
   });
   let store: ConversationStore;
-  beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); });
+  beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); hydrateDefaultAgent(store); });
 
   it('keeps drafts in memory and validates empty sends', () => { store.updateDraft(''); expect(store.send()).toBe(false); expect(store.notice()).toContain('Write a message'); });
   it('blocks keyboard-style sends while the current agent is disabled', async () => {
@@ -232,6 +235,7 @@ describe('ConversationStore', () => {
     const rejectedApi = fakeApi(undefined, [], [], undefined, undefined, undefined, async () => { throw { status: 503, message: 'Conversation service unavailable', retryable: true }; });
     const rejectedStore = new ConversationStore(rejectedApi);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(rejectedStore);
     rejectedStore.updateDraft('Keep this after rejection');
 
     expect(rejectedStore.send()).toBe(true);
@@ -250,6 +254,7 @@ describe('ConversationStore', () => {
     });
     const acceptedStore = new ConversationStore(acceptedApi);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(acceptedStore);
     acceptedStore.updateDraft('Persist this once');
 
     expect(acceptedStore.send()).toBe(true);
@@ -267,6 +272,7 @@ describe('ConversationStore', () => {
     const degradedCatalog: ModelCatalog = { models: [model], defaultModelId, observedAt: new Date().toISOString() };
     const degradedStore = new ConversationStore(fakeApi(undefined, [], [], undefined, undefined, degradedCatalog));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(degradedStore);
 
     expect(degradedStore.selectedModelId()).toBe('');
     degradedStore.updateDraft('Require an explicit model');
@@ -284,6 +290,7 @@ describe('ConversationStore', () => {
     });
     const pendingTitleStore = new ConversationStore(api);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(pendingTitleStore);
     pendingTitleStore.updateDraft('A first message about nearby observatories');
     expect(pendingTitleStore.send()).toBe(true);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -404,18 +411,73 @@ describe('ConversationStore', () => {
 
     expect(rejectedStore.conversations().map((conversation) => conversation.id)).toEqual(['first', 'second']);
   });
-  it('omits an agent identifier for an unconfigured draft', async () => {
-    let selectedAgentRevision: string | undefined = 'unexpected';
+  it('fails closed until a draft has an authoritative agent revision', async () => {
+    let createCalls = 0;
     const api = fakeApi(undefined, [], [], undefined, undefined, undefined, async (message, modelId, _idempotencyKey, agentRevisionId) => {
-      selectedAgentRevision = agentRevisionId;
+      createCalls += 1;
+      expect(agentRevisionId).toBe('aura-revision-12');
       return fakeApi().createConversation(message, modelId, 'test');
     });
     const draftStore = new ConversationStore(api);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     draftStore.updateDraft('Use the seeded default');
-    draftStore.send();
+    expect(draftStore.send()).toBe(false);
+    expect(draftStore.notice()).toContain('preparing');
+    expect(createCalls).toBe(0);
+    hydrateDefaultAgent(draftStore);
+    expect(draftStore.send()).toBe(true);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
-    expect(selectedAgentRevision).toBeUndefined();
+    expect(createCalls).toBe(1);
+  });
+  it('pins the current built-in agent revision when the shell hydrates a new draft', async () => {
+    const draftStore = new ConversationStore(fakeApi());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const currentAura = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
+    draftStore.setDefaultDraftAgent(currentAura);
+    expect(draftStore.selected().agent).toEqual(currentAura);
+
+    const explicit = { profileId: 'research-profile', revisionId: 'research-revision-2', revision: 2, displayName: 'Researcher', status: 'active' as const };
+    draftStore.requestAgent(explicit);
+    draftStore.setDefaultDraftAgent({ ...currentAura, revisionId: 'aura-revision-13', revision: 13 });
+    expect(draftStore.selected().agent).toEqual(explicit);
+  });
+  it('keeps a draft unsendable while the authoritative default agent is pending or failed', async () => {
+    const draftStore = new ConversationStore(fakeApi());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.updateDraft('Wait for the current Aura revision');
+    draftStore.requireDefaultDraftAgent();
+    expect(draftStore.defaultDraftAgentResolution()).toBe('pending');
+    expect(draftStore.send()).toBe(false);
+    draftStore.failDefaultDraftAgent('Agent inventory failed.');
+    expect(draftStore.defaultDraftAgentResolution()).toBe('failed');
+    expect(draftStore.defaultDraftAgentError()).toBe('Agent inventory failed.');
+    expect(draftStore.send()).toBe(false);
+    draftStore.setDefaultDraftAgent({ profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Renamed built-in', status: 'active' });
+    expect(draftStore.defaultDraftAgentResolution()).toBe('resolved');
+  });
+  it('does not keep a draft setup error visible after navigating to a persisted conversation', async () => {
+    const draftStore = new ConversationStore(fakeApi());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.requireDefaultDraftAgent();
+    draftStore.failDefaultDraftAgent('Agent inventory failed.');
+    expect(draftStore.selectedDefaultDraftAgentError()).toBe('Agent inventory failed.');
+    draftStore.conversations.update((items) => [...items, { ...items[0], id: 'persisted-after-error', title: 'Loaded conversation', agent: hydratedDefaultAgent }]);
+    draftStore.select('persisted-after-error');
+    expect(draftStore.selectedDefaultDraftAgentError()).toBeNull();
+  });
+  it('resets agent hydration when creating a new draft after a resolved draft', async () => {
+    const draftStore = new ConversationStore(fakeApi());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(draftStore);
+    draftStore.updateDraft('Persist the resolved draft');
+    expect(draftStore.send()).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    draftStore.create();
+    expect(draftStore.selected().id).toMatch(/^draft-/);
+    expect(draftStore.selected().agent).toBeNull();
+    expect(draftStore.defaultDraftAgentResolution()).toBe('pending');
+    draftStore.updateDraft('Do not send before hydration');
+    expect(draftStore.send()).toBe(false);
   });
   it('sends an explicitly selected UUID agent revision for a draft', async () => {
     let selectedAgentRevision: string | undefined;
@@ -440,6 +502,7 @@ describe('ConversationStore', () => {
     });
     const draftStore = new ConversationStore(api);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(draftStore);
     draftStore.requestPersona({ profileId: 'persona-profile', revisionId: 'persona-revision-2', revision: 2, displayName: 'Researcher', status: 'active', newerRevisionAvailable: false });
     draftStore.updateDraft('Use this persona');
     draftStore.send();
@@ -648,6 +711,7 @@ describe('ConversationStore', () => {
     });
     const modelStore = new ConversationStore(api);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    hydrateDefaultAgent(modelStore);
     await modelStore.selectModel(model.id);
     modelStore.updateDraft('Persist this model choice');
 
@@ -1005,9 +1069,10 @@ describe('ConversationStore', () => {
       expect(attempts).toBe(1);
       expect(retryStore.memoryActivityNotice()).toBeNull();
       await vi.advanceTimersByTimeAsync(250);
-      // Empty settled activity is authoritative for ignored/rejected
-      // extraction, so it must not schedule another projection retry.
-      expect(attempts).toBe(1);
+      // The run stream can close before the memory projection publishes its
+      // authoritative activity, so an empty settled snapshot is retried once
+      // on the silent reconciliation horizon.
+      expect(attempts).toBe(2);
       expect(retryStore.memoryActivityNotice()).toBeNull();
 
       const queuedSnapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'queued', items: [{ ...terminalActivity, id: 'memory-activity-queued', action: 'queued_for_review', status: 'queued', candidateId: null, memoryId: null, memoryRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending' }], lastEventId: null, reconciledAt: now };
@@ -1034,6 +1099,16 @@ describe('ConversationStore', () => {
       expect(attempts).toBe(9);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(attempts).toBe(9);
+
+      attempts = 0;
+      api.getRunMemoryActivity = async () => {
+        attempts += 1;
+        return emptySettledSnapshot;
+      };
+      await retryStore.retryMemoryActivity(run.id);
+      await vi.advanceTimersByTimeAsync(400_000);
+      expect(attempts).toBe(9);
+      expect(retryStore.memoryActivityNotice()).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -65,6 +65,14 @@ export class ConversationStore {
   readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
   readonly selectedPersona = computed(() => this.selected().persona);
   readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && !this.selected().archivedAt && this.modelFor(this.selectedId()) && this.runState() !== 'working' && this.canRunWithSelectedAgent(this.selectedId())));
+  /** Every agentless draft starts unresolved. The shell must hydrate the
+   * built-in agent's current revision before a first send can be accepted. */
+  readonly defaultDraftAgentResolution = signal<'resolved' | 'pending' | 'failed'>('pending');
+  readonly defaultDraftAgentError = signal<string | null>(null);
+  readonly selectedDefaultDraftAgentError = computed(() => {
+    const conversation = this.selected();
+    return conversation.id.startsWith('draft-') && !conversation.agent ? this.defaultDraftAgentError() : null;
+  });
   readonly pendingAgent = signal<AgentReference | null>(null);
   readonly pendingAgentAction = signal<'switch' | 'upgrade'>('switch');
   readonly pendingPersona = signal<PersonaReference | null>(null);
@@ -290,7 +298,35 @@ export class ConversationStore {
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
     this.cancelPendingConfigurationForSelection(id);
     const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
-    this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
+    this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.defaultDraftAgentResolution.set('pending'); this.defaultDraftAgentError.set(null); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
+  }
+
+  /**
+   * The shell supplies the built-in agent's current revision once its profile
+   * inventory is hydrated. Keep this narrowly scoped to an untouched draft so
+   * an explicit agent choice or a persisted conversation can never be
+   * rewritten by the asynchronous inventory response.
+   */
+  setDefaultDraftAgent(agent: AgentReference): void {
+    const conversation = this.selected();
+    if (!conversation.id.startsWith('draft-') || conversation.agent || !agent.revisionId) return;
+    this.replaceConversation({ ...conversation, agent });
+    this.defaultDraftAgentResolution.set('resolved');
+    this.defaultDraftAgentError.set(null);
+  }
+
+  requireDefaultDraftAgent(): void {
+    const conversation = this.selected();
+    if (!conversation.id.startsWith('draft-') || conversation.agent) return;
+    this.defaultDraftAgentResolution.set('pending');
+    this.defaultDraftAgentError.set(null);
+  }
+
+  failDefaultDraftAgent(message: string): void {
+    const conversation = this.selected();
+    if (!conversation.id.startsWith('draft-') || conversation.agent) return;
+    this.defaultDraftAgentResolution.set('failed');
+    this.defaultDraftAgentError.set(message);
   }
 
   updateDraft(value: string): void { const id = this.selectedId(); this.drafts.update((drafts) => ({ ...drafts, [id]: value })); if (value.trim()) this.setNotice(id, null); }
@@ -314,6 +350,8 @@ export class ConversationStore {
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), agent });
+      this.defaultDraftAgentResolution.set('resolved');
+      this.defaultDraftAgentError.set(null);
       return;
     }
     this.pendingAgentAction.set(agent.profileId === current.profileId && agent.revision > current.revision ? 'upgrade' : 'switch');
@@ -363,6 +401,10 @@ export class ConversationStore {
     const action = agent && conversation.agent && agent.profileId === conversation.agent.profileId && agent.revision > conversation.agent.revision ? 'upgrade' : 'switch';
     if (conversation.id.startsWith('draft-')) {
       this.replaceConversation({ ...conversation, agent, persona: useAgentDefaultPersona ? null : persona, personaOverride: !useAgentDefaultPersona && Boolean(persona) });
+      if (agent) {
+        this.defaultDraftAgentResolution.set('resolved');
+        this.defaultDraftAgentError.set(null);
+      }
       return;
     }
     this.pendingConfiguration.set({ conversationId: conversation.id, expectedVersion: conversation.version, agent, persona, useAgentDefaultPersona, agentChanged, personaChanged, action });
@@ -497,6 +539,10 @@ export class ConversationStore {
     if (!text) { this.setNotice(id, 'Write a message before sending.'); return false; }
     if (this.selected().archivedAt) { this.setNotice(id, 'Restore this archived conversation before sending a message.'); return false; }
     if (this.runState() === 'working') return false;
+    if (!this.canUseDefaultDraftAgent()) {
+      this.setNotice(id, this.defaultDraftAgentError() ?? 'Aura is still preparing its current agent revision. Try again in a moment.');
+      return false;
+    }
     if (!this.modelFor(id)) { this.setNotice(id, 'Choose an available model before sending.'); return false; }
     if (!this.canRunWithSelectedAgent(id)) { this.setNotice(id, this.selected().agent ? 'This agent is disabled. Select an active replacement before sending.' : 'Select an active agent before sending.'); return false; }
     const pendingTurnId = `pending-user-${Date.now()}`;
@@ -507,6 +553,11 @@ export class ConversationStore {
     // failures; acceptance clears it only if it has not changed meanwhile.
     this.setRunState(id, 'working'); this.setNotice(id, null);
     void (id.startsWith('draft-') ? this.createPersisted(id, text) : this.createRun(id, text)); return true;
+  }
+
+  private canUseDefaultDraftAgent(): boolean {
+    const conversation = this.selected();
+    return !conversation.id.startsWith('draft-') || Boolean(conversation.agent) || this.defaultDraftAgentResolution() === 'resolved';
   }
 
   stop(): void {
@@ -783,11 +834,13 @@ export class ConversationStore {
       const snapshot = await this.api.getRunMemoryActivity(runId);
       this.applyMemorySnapshot(snapshot);
       this.setMemoryActivityNotice(conversationId, null);
-      // A settled empty projection is authoritative: ignored and rejected
-      // extraction decisions intentionally have no owner-facing activity.
-      // Retrying it indefinitely creates the misleading unavailable banner
-      // after an otherwise successful conversation.
+      // The run stream may close on run.status before the asynchronous memory
+      // projection publishes its activity. Keep a bounded, silent retry for
+      // an empty settled snapshot so a late authoritative create/reinforce is
+      // visible without a reload. If it remains empty, no indicator or banner
+      // is produced for ignored/rejected extraction.
       const terminal = snapshot.processingStatus === 'settled'
+        && snapshot.items.length > 0
         && snapshot.items.every((item) => item.reconciliationStatus === 'authoritative');
       if (terminal) this.clearMemoryActivityRetry(runId);
       else this.scheduleMemoryActivityRetry(conversationId, runId);
