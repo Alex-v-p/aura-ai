@@ -76,7 +76,11 @@ class SqlAgentSeeder:
                     fallback_relevance_threshold=0.5,
                     max_memories=2,
                     context_budget_fraction=0.05,
-                    allow_shared_user_promotion=False,
+                    # Aura's built-in profile is the only seeded agent that
+                    # may automatically promote well-grounded personal facts
+                    # into shared-user memory.  Custom agents receive their
+                    # own conservative policy in the SQL store.
+                    allow_shared_user_promotion=True,
                     recall_mode="automatic",
                     automatic_recall_threshold=0.7,
                 )

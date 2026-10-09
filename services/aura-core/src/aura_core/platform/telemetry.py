@@ -38,7 +38,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
     "aura.knowledge.memory_persistence": "1.0.0",
-    "aura.knowledge.memory_extraction": "1.1.0",
+    "aura.knowledge.memory_extraction": "1.2.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
@@ -135,10 +135,13 @@ _METRICS: Mapping[str, frozenset[str]] = {
     ),
     "aura.knowledge.memory_extraction": frozenset({
         "memory_job_outcome", "memory_candidate_outcome", "memory_action_outcome",
+        "memory_extraction_outcome", "memory_candidate_decision",
+        "memory_personal_retention_gate_outcome", "memory_reviewable_candidate_count",
         "structured_inference_duration_ms", "queue_wait_ms", "retry_count", "backlog", "errors",
         "provider_errors", "duration_ms", "backlog_depth",
         "memory_extraction_duration_ms", "memory_job_duration_ms", "memory_job_queue_wait_ms",
-        "memory_policy_duration_ms", "memory_processing_errors", "memory_retry_count",
+        "memory_policy_duration_ms", "memory_retention_gate_duration_ms",
+        "memory_processing_errors", "memory_retry_count",
         "missing_embedding_backlog", "embedding_duration_ms", "consumer_received",
         "consumer_acknowledged",
         "consumer_redelivered", "outbox_duplicates", "consumer_nacked", "consumer_rejected",
@@ -261,7 +264,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.knowledge.memory_extraction": frozenset({
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
         "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
-        "memory.action", "memory.policy", "memory.embedding",
+        "memory.action", "memory.policy", "memory.retention_gate", "memory.embedding",
         "memory.retry", "memory.error",
     }),
     "aura.knowledge.memory_maintenance": frozenset({
@@ -309,6 +312,8 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
     ("aura.knowledge.memory_extraction", "memory.extraction"): "memory_extraction_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.extract"): "memory_extraction_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.policy"): "memory_policy_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.retention_gate"):
+        "memory_retention_gate_duration_ms",
     ("aura.knowledge.memory_maintenance", "memory.maintenance"):
         "memory_maintenance_duration_ms",
     ("aura.knowledge.memory_maintenance", "memory.reindex.chunk"):
@@ -495,7 +500,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",
-            "policy_off", "selected",
+            "policy_off", "selected", "rejected", "personal", "explicit_request", "none",
         }
     ),
     "status": frozenset(
@@ -1222,8 +1227,9 @@ def record_memory_processing(
     semantic_metrics: Mapping[str, tuple[str, ...]] = {
         "memory.job.queue": (),
         "memory.job": ("memory_job_outcome",),
-        "memory.extraction": (),
-        "memory.policy": (),
+        "memory.extraction": ("memory_extraction_outcome",),
+        "memory.retention_gate": ("memory_personal_retention_gate_outcome",),
+        "memory.policy": ("memory_candidate_decision",),
         "memory.candidate": ("memory_candidate_outcome",),
         "memory.action": ("memory_action_outcome",),
         "memory.embedding": ("embedding_duration_ms", "missing_embedding_backlog"),
@@ -1261,6 +1267,14 @@ def record_memory_processing(
                 effective_component, semantic_metric, outcome=outcome,
                 dependency=dependency, trace_id=trace_id,
             )
+    if operation == "memory.candidate" and outcome == "review":
+        metrics.increment(
+            effective_component,
+            "memory_reviewable_candidate_count",
+            outcome="review",
+            dependency=dependency,
+            trace_id=trace_id,
+        )
     if backlog is not None and "backlog" in _METRICS.get(effective_component, frozenset()):
         metrics.observe(
             effective_component, "backlog", float(max(0, backlog)), trace_id=trace_id,

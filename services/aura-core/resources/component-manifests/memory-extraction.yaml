@@ -1,6 +1,6 @@
 component:
   id: aura.knowledge.memory_extraction
-  version: 1.1.0
+  version: 1.2.0
   owner: knowledge.memory
   category: worker
 input:
@@ -22,6 +22,11 @@ metrics:
   - memory_candidate_review_outcome
   - memory_job_outcome
   - memory_candidate_outcome
+  - memory_extraction_outcome
+  - memory_candidate_decision
+  - memory_personal_retention_gate_outcome
+  - memory_retention_gate_duration_ms
+  - memory_reviewable_candidate_count
   - memory_action_outcome
   - structured_inference_duration_ms
   - queue_wait_ms
@@ -44,6 +49,11 @@ metric_semantics:
   memory_candidate_review_outcome: Metadata-only candidate review decision outcome.
   memory_job_outcome: Queued, completed, retryable, or failed identifier-only job outcome.
   memory_candidate_outcome: Deterministic acceptance, review, rejection, or retry decision.
+  memory_extraction_outcome: Metadata-only structured extraction boundary outcome.
+  memory_candidate_decision: Metadata-only deterministic candidate decision.
+  memory_personal_retention_gate_outcome: Personal-first retention basis gate outcome.
+  memory_retention_gate_duration_ms: Deterministic retention gate duration.
+  memory_reviewable_candidate_count: Count of actionable owner-review candidates.
   memory_action_outcome: Durable create, reinforce, dispute, supersede, or review result.
   structured_inference_duration_ms: Bounded provider call duration without prompt or response capture.
   queue_wait_ms: Monotonic delay from persisted job availability to worker claim.

@@ -14,6 +14,7 @@ from aura_core.domains.interaction.agents.adapters.sql_store import (
 from aura_core.domains.interaction.agents.persistence import MemoryPolicyRevisionRow
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
+    GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_PROFILE_ID,
     NAMESPACE,
     AgentCatalog,
@@ -64,6 +65,21 @@ def test_deterministic_recall_mode_successor_is_available() -> None:
     assert _policy_owner_matches(row, "issuer", "owner")
 
 
+def test_personal_first_builtin_policy_is_available_to_authenticated_owner() -> None:
+    row = _blank_policy(GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID, GENERAL_PROFILE_ID)
+
+    assert _policy_owner_matches(row, "issuer", "owner")
+    assert _is_deterministic_platform_policy(
+        GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID, GENERAL_PROFILE_ID
+    )
+
+
+def test_personal_first_policy_cannot_be_reused_by_another_profile() -> None:
+    row = _blank_policy(GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID, uuid4())
+
+    assert not _policy_owner_matches(row, "issuer", "owner")
+
+
 def test_arbitrary_blank_principal_policy_remains_unauthorized() -> None:
     row = _blank_policy(uuid4(), uuid4())
 
@@ -81,6 +97,9 @@ def test_revision_allocation_whitelist_includes_only_deterministic_blank_policie
     assert _is_deterministic_platform_policy(
         uuid5(NAMESPACE, f"agent-memory-recall-policy:{agent_profile_id}:2"),
         agent_profile_id,
+    )
+    assert _is_deterministic_platform_policy(
+        GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID, GENERAL_PROFILE_ID
     )
     assert not _is_deterministic_platform_policy(uuid4(), agent_profile_id)
 

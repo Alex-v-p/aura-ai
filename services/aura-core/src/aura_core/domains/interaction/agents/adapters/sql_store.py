@@ -24,6 +24,7 @@ from aura_core.domains.interaction.agents.persistence import (
 )
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
+    GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
     NAMESPACE,
@@ -65,6 +66,10 @@ def _is_deterministic_platform_policy(policy_id: UUID, agent_profile_id: UUID) -
 
     return (
         (policy_id == GENERAL_MEMORY_POLICY_ID and agent_profile_id == GENERAL_PROFILE_ID)
+        or (
+            policy_id == GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID
+            and agent_profile_id == GENERAL_PROFILE_ID
+        )
         or is_platform_memory_policy(policy_id, agent_profile_id)
         or policy_id
         == uuid5(

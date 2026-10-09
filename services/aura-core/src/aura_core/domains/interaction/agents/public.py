@@ -33,6 +33,9 @@ GENERAL_PROFILE_ID = uuid5(NAMESPACE, "general-assistant")
 GENERAL_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-1")
 GENERAL_POLICY_ID = uuid5(NAMESPACE, "ollama-model-policy-1")
 GENERAL_MEMORY_POLICY_ID = uuid5(NAMESPACE, "general-assistant-memory-policy-1")
+GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID = uuid5(
+    NAMESPACE, "general-assistant-memory-personal-first-policy-3"
+)
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -55,7 +58,10 @@ def platform_memory_policy_id(agent_profile_id: UUID) -> UUID:
 def is_platform_memory_policy(policy_id: UUID, agent_profile_id: UUID) -> bool:
     """Check the narrow, deterministic legacy policy identity."""
 
-    return policy_id == platform_memory_policy_id(agent_profile_id)
+    return policy_id == platform_memory_policy_id(agent_profile_id) or (
+        agent_profile_id == GENERAL_PROFILE_ID
+        and policy_id in (GENERAL_MEMORY_POLICY_ID, GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID)
+    )
 
 
 class MemoryRecallMode(StrEnum):
@@ -272,6 +278,7 @@ class AgentCatalog:
             1,
             max_memories=2,
             context_budget_fraction=0.05,
+            allow_shared_user_promotion=True,
             recall_mode=MemoryRecallMode.AUTOMATIC,
             automatic_recall_threshold=0.70,
         )
@@ -1016,6 +1023,7 @@ __all__ = [
     "ConfigurationVersionConflict",
     "GENERAL_POLICY_ID",
     "GENERAL_MEMORY_POLICY_ID",
+    "GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID",
     "platform_memory_policy_id",
     "is_platform_memory_policy",
     "MemoryPolicy",

@@ -266,6 +266,17 @@ async def emit_memory_activity(
     embedding_generation_id = (
         getattr(result, "embedding_generation_id", None) if result is not None else None
     )
+    terminal_rejected = status in {"completed", "failed"} and str(candidate_state) == "rejected"
+    if terminal_rejected:
+        # Rejected/ignored extraction is a content-free terminal diagnostic,
+        # not an owner-actionable candidate.  Keep the reconciliation event
+        # but never expose identifiers that would invite inspection.
+        action = "queued_for_review"
+        candidate_id = None
+        memory_id = None
+        revision_id = None
+        policy_revision_id = None
+        embedding_generation_id = None
     data: dict[str, object] = {
         "id": str(activity_id),
         "action": action,

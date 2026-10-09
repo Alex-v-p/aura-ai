@@ -70,10 +70,15 @@ class _PreferenceInference:
             "content": "I prefer concise answers.",
             "kind": "preference",
             "scope_type": "user",
+            "agent_profile_id": None,
             "confidence": 0.99,
             "importance": 0.8,
             "half_life_days": 365,
+            "valid_to": None,
+            "sensitivity": "ordinary",
+            "retention_basis": "personal",
             "grounded_evidence_handles": [handle],
+            "related_memory_id": None,
         }
 
 

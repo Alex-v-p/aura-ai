@@ -79,6 +79,24 @@ def test_seeded_configuration_is_deterministic_and_revisioned() -> None:
     assert first_persona.current_revision_id == second_persona.current_revision_id
 
 
+def test_built_in_aura_promotes_personal_memory_but_custom_agents_default_off() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    assert catalog.memory_policies[
+        aura.current_revision.memory_policy_revision_id
+    ].allow_shared_user_promotion
+
+    custom = catalog.create_agent(
+        "custom-agent",
+        "Custom",
+        "A custom assistant.",
+        "Be helpful.",
+    )
+    assert not catalog.memory_policies[
+        custom.current_revision.memory_policy_revision_id
+    ].allow_shared_user_promotion
+
+
 def test_revisions_are_sequenced_immutably_and_require_expected_version() -> None:
     personas = PersonaCatalog()
     catalog = AgentCatalog(personas)

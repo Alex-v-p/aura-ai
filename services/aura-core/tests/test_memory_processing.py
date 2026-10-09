@@ -17,6 +17,7 @@ import pytest
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.memory_uow import memory_command_factory
 from aura_core.domains.execution.runs.dto import Run, RunStatus
+from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.interaction.conversations.dto import (
     Conversation,
     Message,
@@ -39,6 +40,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryProcessingJob,
     MemoryProcessingService,
     MemoryProvenance,
+    MemoryRetentionBasis,
     MemoryScope,
     MemoryScopeType,
     MemorySensitivity,
@@ -46,12 +48,14 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryTurnEvidence,
     MemoryValidationError,
     ProcessingJobStatus,
+    classify_retention_basis,
     classify_sensitivity,
     contains_secret,
     decide_candidate,
 )
 from aura_core.entrypoints.worker.app import (
     _configure_worker_memory_recall,
+    emit_memory_activity,
     run_memory_once,
 )
 from aura_core.platform.outbox import InMemoryOutbox
@@ -630,7 +634,7 @@ def test_shared_default_review_and_sensitive_categories_are_always_reviewed(
 def test_evaluation_fixture_covers_required_memory_families() -> None:
     fixture = Path(__file__).parent / "fixtures" / "memory" / "evaluation_cases.json"
     cases = json.loads(fixture.read_text())
-    assert {case["category"] for case in cases} == {
+    assert {
         "family_fact",
         "changing_project_state",
         "meal_context",
@@ -640,11 +644,52 @@ def test_evaluation_fixture_covers_required_memory_families() -> None:
         "agent_private",
         "shared_user",
         "duplicate_reinforcement",
-    }
+    } <= {case["category"] for case in cases}
     assert all(
         case["expected_action"] in {action.value for action in MemoryAction} for case in cases
     )
     assert all(case["expected_horizon"] in {"short", "medium", "long"} for case in cases)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("I prefer concise answers.", MemoryRetentionBasis.PERSONAL),
+        ("My Orion project is blocked on review.", MemoryRetentionBasis.PERSONAL),
+        (
+            "Please remember that Star Wars premiered in 1977.",
+            MemoryRetentionBasis.EXPLICIT_REQUEST,
+        ),
+        ("Can you remember my sister's birthday?", MemoryRetentionBasis.EXPLICIT_REQUEST),
+        ("You should remember my sister's birthday.", MemoryRetentionBasis.EXPLICIT_REQUEST),
+        (
+            "Across my agents, remember my weekly summary preference.",
+            MemoryRetentionBasis.EXPLICIT_REQUEST,
+        ),
+        ("What does save mean?", MemoryRetentionBasis.NONE),
+        ("I remember Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("Save that file to disk.", MemoryRetentionBasis.NONE),
+        ("Note the difference between these answers.", MemoryRetentionBasis.NONE),
+        ("Store the report in the archive.", MemoryRetentionBasis.NONE),
+        ("A sister is a female sibling.", MemoryRetentionBasis.NONE),
+        ("Who directed Star Wars?", MemoryRetentionBasis.NONE),
+        ("Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("I think Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("I heard that Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("I wonder whether Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("My understanding is Star Wars premiered in 1977.", MemoryRetentionBasis.NONE),
+        ("My sister Nora's birthday is July 14.", MemoryRetentionBasis.PERSONAL),
+        ("My favorite trilogy is the original Star Wars trilogy.", MemoryRetentionBasis.PERSONAL),
+        ("My car needs servicing.", MemoryRetentionBasis.PERSONAL),
+        ("My project is blocked on review.", MemoryRetentionBasis.PERSONAL),
+        ("The Sun gives us light.", MemoryRetentionBasis.NONE),
+        ("We know Earth is round.", MemoryRetentionBasis.NONE),
+    ],
+)
+def test_retention_basis_requires_a_personal_connection_or_explicit_request(
+    content: str, expected: MemoryRetentionBasis
+) -> None:
+    assert classify_retention_basis(content) is expected
 
 
 def test_memory_command_factory_is_deterministic_identifier_only_and_owner_bound() -> None:
@@ -788,6 +833,72 @@ async def test_memory_store_candidate_lookup_for_job_is_owner_scoped_and_latest(
 
 
 @pytest.mark.asyncio
+async def test_rejected_extraction_is_omitted_from_run_activity() -> None:
+    store = MemoryStore(clock=lambda: NOW)
+    run_id = uuid4()
+    job = MemoryProcessingJob(
+        uuid4(), ISSUER, OWNER, run_id, uuid4(), status=ProcessingJobStatus.COMPLETED
+    )
+    candidate = replace(
+        _candidate(),
+        job_id=job.id,
+        content=None,
+        kind=None,
+        scope=None,
+        confidence=0.0,
+        importance=None,
+        half_life_days=None,
+        state=CandidateState.REJECTED,
+        decision_reason="invalid_provider_output",
+    )
+    store.processing_jobs[job.id] = job
+    store.candidates[candidate.id] = candidate
+
+    activity = await store.get_run_memory_activity(run_id, ISSUER, OWNER)
+
+    assert activity.items == ()
+    assert activity.processing_status == "settled"
+
+
+@pytest.mark.asyncio
+async def test_terminal_rejected_activity_has_no_candidate_identifier() -> None:
+    class Publisher:
+        def __init__(self) -> None:
+            self.events: list[RunEvent] = []
+
+        async def publish(self, event: RunEvent) -> None:
+            self.events.append(event)
+
+    command = MemoryProcessingCommand(
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    candidate = replace(
+        _candidate(),
+        job_id=command.job_id,
+        state=CandidateState.REJECTED,
+        decision_reason="not_personal",
+    )
+    settlement = type("Settlement", (), {"candidate": candidate})()
+    publisher = Publisher()
+
+    await emit_memory_activity(
+        publisher,
+        MemoryStore(clock=lambda: NOW),
+        MetadataMetrics(),
+        command,
+        "completed",
+        settlement,
+    )
+
+    data = publisher.events[0].data
+    assert data["status"] == "completed"
+    assert data["action"] == "queued_for_review"
+    assert data["candidateId"] is None
+    assert data["memoryId"] is None
+    assert data["memoryRevisionId"] is None
+
+
+@pytest.mark.asyncio
 async def test_provider_never_receives_database_message_ids_and_common_token_claim_requires_review(
 ) -> None:
     message_id = uuid4()
@@ -825,13 +936,140 @@ async def test_provider_never_receives_database_message_ids_and_common_token_cla
         assistant_content="The weather is sunny today.",
         user_message_ids=frozenset({message_id}),
     )
-    assert result.state is CandidateState.REVIEW
+    assert result.state is CandidateState.REJECTED
     # The capture object is intentionally inspected after execution: raw
     # persisted message identifiers must never be serialized into provider
     # input; evidence is represented by bounded handles instead.
     calls = cast(_Inference, processor.inference).calls
     assert calls
     assert str(message_id) not in repr(calls[0])
+
+
+@pytest.mark.asyncio
+async def test_complete_world_or_assistant_only_proposals_fail_personal_retention_gate() -> None:
+    class WorldFactInference:
+        async def infer(self, request: StructuredInferenceRequest) -> dict[str, object]:
+            segments = cast(list[Mapping[str, object]], request.input["evidence_segments"])
+            return {
+                "action": "create",
+                "content": "Star Wars premiered in 1977.",
+                "kind": "semantic",
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.99,
+                "importance": 0.8,
+                "half_life_days": 365,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
+                "grounded_evidence_handles": [str(segments[0]["handle"])],
+                "related_memory_id": None,
+            }
+
+    for user_content, assistant_content in (
+        ("Star Wars premiered in 1977.", "Understood."),
+        ("What year did Star Wars premiere?", "Star Wars premiered in 1977."),
+        ("Save that file to disk.", "I saved the file."),
+        ("A sister is a female sibling.", "That is correct."),
+    ):
+        repository = MemoryStore(clock=lambda: NOW)
+        processor = MemoryProcessingService(
+            repository,
+            WorldFactInference(),
+            _Embedding(),
+            clock=lambda: NOW,
+        )
+        await processor.configure_models(
+            MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+        )
+        job = await processor.enqueue(ISSUER, OWNER, run_id=uuid4(), conversation_id=uuid4())
+
+        result = await processor.process(
+            job,
+            user_content=user_content,
+            assistant_content=assistant_content,
+            user_message_ids=frozenset({uuid4()}),
+        )
+
+        assert result.state is CandidateState.REJECTED
+        assert result.decision_reason == "not_personal"
+        assert await repository.list_memories(ISSUER, OWNER) == []
+
+
+@pytest.mark.asyncio
+async def test_shared_candidate_conflicts_with_private_memory_across_scopes() -> None:
+    class SharedPreferenceInference:
+        async def infer(self, request: StructuredInferenceRequest) -> dict[str, object]:
+            segments = cast(list[Mapping[str, object]], request.input["evidence_segments"])
+            return {
+                "action": "create",
+                "content": "I prefer concise answers.",
+                "kind": "preference",
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.99,
+                "importance": 0.8,
+                "half_life_days": 365,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "explicit_request",
+                "grounded_evidence_handles": [str(segments[0]["handle"])],
+                "related_memory_id": None,
+            }
+
+    current_time = [NOW]
+    repository = MemoryStore(clock=lambda: current_time[0])
+    await repository.create_memory(
+        ISSUER,
+        OWNER,
+        content="I prefer concise answers.",
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.AGENT, CURRENT_AGENT),
+        confidence=0.9,
+        importance=0.8,
+        half_life_days=365,
+    )
+    for index in range(250):
+        current_time[0] += timedelta(seconds=1)
+        await repository.create_memory(
+            ISSUER,
+            OWNER,
+            content=f"Unrelated decoy memory {index}.",
+            kind=MemoryKind.SEMANTIC,
+            scope=MemoryScope(MemoryScopeType.AGENT, uuid4()),
+            confidence=0.9,
+            importance=0.5,
+            half_life_days=30,
+        )
+    processor = MemoryProcessingService(
+        repository, SharedPreferenceInference(), _Embedding(), clock=lambda: NOW
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    message_id = uuid4()
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_ids=(message_id,),
+        agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    result = await processor.process(
+        job,
+        user_content="Across my agents, remember that I prefer concise answers.",
+        assistant_content="Understood.",
+        user_message_ids=frozenset({message_id}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REVIEW
+    assert result.decision_reason == "conflict"
+    assert len(repository.memories) == 251
 
 
 def test_server_evidence_binding_rejects_owner_run_message_and_digest_mismatches() -> None:
@@ -997,11 +1235,11 @@ async def test_factory_envelope_reaches_worker_and_ack_follows_durable_settlemen
 
 
 @pytest.mark.asyncio
-async def test_invalid_provider_output_is_reviewed_but_provider_outage_is_retryable() -> None:
+async def test_invalid_provider_output_is_rejected_but_provider_outage_is_retryable() -> None:
     user_message_id = uuid4()
     for result, error, expected_state in (
-        ({"action": "not-a-real-action"}, None, CandidateState.REVIEW),
-        ({"action": "create", "content": "x" * 40000}, None, CandidateState.REVIEW),
+        ({"action": "not-a-real-action"}, None, CandidateState.REJECTED),
+        ({"action": "create", "content": "x" * 40000}, None, CandidateState.REJECTED),
         (None, RuntimeError("provider unavailable"), CandidateState.RETRYABLE),
     ):
         repository = MemoryStore(clock=lambda: NOW)
@@ -1058,7 +1296,7 @@ async def test_schema_valid_domain_invalid_output_settles_processing_job() -> No
     candidate = await processor.process_job(job.id)
 
     assert candidate is not None
-    assert candidate.state is CandidateState.REVIEW
+    assert candidate.state is CandidateState.REJECTED
     assert candidate.decision_reason == "invalid_provider_output"
     assert candidate.content is None
     assert repository.processing_jobs[job.id].status is ProcessingJobStatus.COMPLETED
@@ -1105,7 +1343,7 @@ async def test_extraction_telemetry_distinguishes_invalid_output_from_provider_r
     )
     retry_state, retry_measurements = await run_case(None, RuntimeError("provider unavailable"))
 
-    assert invalid_state is CandidateState.REVIEW
+    assert invalid_state is CandidateState.REJECTED
     invalid_extraction = [
         item for item in invalid_measurements if item.metric == "memory_extraction_duration_ms"
     ]
@@ -1117,7 +1355,12 @@ async def test_extraction_telemetry_distinguishes_invalid_output_from_provider_r
     }
     assert any(
         item.metric == "memory_candidate_outcome"
-        and dict(item.dimensions).get("outcome") == "review"
+        and dict(item.dimensions).get("outcome") == "rejected"
+        for item in invalid_measurements
+    )
+    assert any(
+        item.metric == "memory_candidate_decision"
+        and dict(item.dimensions).get("outcome") == "rejected"
         for item in invalid_measurements
     )
     assert not any(item.metric == "memory_retry_count" for item in invalid_measurements)
@@ -1171,7 +1414,13 @@ def test_candidate_and_action_normalization_ids_are_stable_for_replayed_jobs() -
         "scope_type": "agent",
         "agent_profile_id": str(uuid4()),
         "confidence": 0.9,
+        "importance": 0.5,
+        "half_life_days": 30,
+        "valid_to": None,
+        "sensitivity": "ordinary",
+        "retention_basis": "personal",
         "grounded_evidence_handles": ["user-0"],
+        "related_memory_id": None,
     }
     handles = {"user-0": uuid4()}
     job = replace(job, agent_profile_id=CURRENT_AGENT)
@@ -1184,6 +1433,43 @@ def test_candidate_and_action_normalization_ids_are_stable_for_replayed_jobs() -
     assert first.id == second.id
     assert first.id != job.id
     assert first.grounded_message_ids == second.grounded_message_ids
+
+
+@pytest.mark.parametrize(
+    "field_update",
+    [
+        {"related_memory_id": str(uuid4())},
+        {"valid_to": 123},
+    ],
+)
+def test_provider_cannot_bind_related_memory_or_non_string_validity(
+    field_update: dict[str, object],
+) -> None:
+    job = replace(
+        MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4()),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    raw: dict[str, object] = {
+        "action": "create",
+        "content": "The owner prefers concise answers.",
+        "kind": "preference",
+        "scope_type": "agent",
+        "agent_profile_id": str(CURRENT_AGENT),
+        "confidence": 0.9,
+        "importance": 0.5,
+        "half_life_days": 30,
+        "valid_to": None,
+        "sensitivity": "ordinary",
+        "retention_basis": "personal",
+        "grounded_evidence_handles": ["user-0"],
+        "related_memory_id": None,
+    }
+    raw.update(field_update)
+
+    with pytest.raises(MemoryValidationError):
+        MemoryProcessingService._action_from_provider(  # pyright: ignore[reportPrivateUsage]
+            raw, job, {"user-0": uuid4()}
+        )
 
 
 @pytest.mark.asyncio
@@ -1259,7 +1545,7 @@ async def test_sensitive_provider_mislabel_and_unknown_action_fail_closed() -> N
                 "confidence": 0.99,
                 "grounded_message_ids": [str(message_id)],
             },
-            CandidateState.REVIEW,
+            CandidateState.REJECTED,
         ),
         (
             {
@@ -1272,7 +1558,7 @@ async def test_sensitive_provider_mislabel_and_unknown_action_fail_closed() -> N
                 "sensitivity": "not-a-category",
                 "grounded_message_ids": [str(message_id)],
             },
-            CandidateState.REVIEW,
+            CandidateState.REJECTED,
         ),
     ):
         repository = MemoryStore(clock=lambda: NOW)
@@ -1370,7 +1656,7 @@ async def test_opaque_grounding_handle_cannot_bind_a_foreign_message_id() -> Non
         user_message_ids=frozenset({message_id}),
         run_agent_profile_id=CURRENT_AGENT,
     )
-    assert result.state is CandidateState.REVIEW
+    assert result.state is CandidateState.REJECTED
     assert repository.memories == {}
 
 
@@ -1392,7 +1678,13 @@ async def test_multi_segment_opaque_handles_and_negation_force_contradiction_rev
                 "scope_type": "agent",
                 "agent_profile_id": str(CURRENT_AGENT),
                 "confidence": 0.99,
+                "importance": 0.5,
+                "half_life_days": 30,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
                 "grounded_evidence_handles": [handles[0]],
+                "related_memory_id": None,
             }
 
     repository = MemoryStore(clock=lambda: NOW)
@@ -1471,7 +1763,14 @@ async def test_structured_request_carries_domain_owned_memory_decision_contract(
                 "kind": "preference",
                 "scope_type": "user",
                 "confidence": 0.7,
+                "importance": 0.5,
+                "half_life_days": 30,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
                 "grounded_evidence_handles": [handle],
+                "agent_profile_id": None,
+                "related_memory_id": None,
             }
 
     processor = MemoryProcessingService(
@@ -1493,30 +1792,28 @@ async def test_structured_request_carries_domain_owned_memory_decision_contract(
     assert result.action is MemoryAction.CREATE
     assert result.importance == 0.5
     assert result.half_life_days == 30.0
-    assert seen[0].input["decision_contract"] == {
-        "allowed_actions": [item.value for item in MemoryAction],
-        "instructions": (
-            "Extract only durable facts explicitly stated by the user. For create or review, "
-            "copy the durable fact into content, choose kind semantic or preference, choose "
-            "scope_type agent or user, and return the matching opaque evidence handle. Choose "
-            "importance from 0 to 1 based on durable value and propose a half_life_days between "
-            "0.25 and 3650 based on the fact's relevance horizon; if uncertain, use 0.5 importance "
-            "and 30 days. Set valid_to only when the user states a concrete end date; otherwise "
-            "return null and do not invent an expiry. Use action ignore when there is no durable "
-            "user-authored fact. Never invent identifiers."
-        ),
-        "required_for_create_or_review": [
-            "content",
-            "kind",
-            "scope_type",
-            "grounded_evidence_handles",
-            "importance",
-            "half_life_days",
-        ],
-        "scope_guidance": {
-            "agent": "private to the current agent",
-            "user": "shared user memory; policy may require review",
-        },
+    contract = cast(Mapping[str, object], seen[0].input["decision_contract"])
+    assert contract["allowed_actions"] == [item.value for item in MemoryAction]
+    instructions = str(contract["instructions"])
+    assert "memory-extraction-policy-v2" in instructions
+    assert "personal" in instructions and "explicit_request" in instructions
+    assert "Assistant context is background only" in instructions
+    assert contract["required_for_create_or_review"] == [
+        "content",
+        "kind",
+        "scope_type",
+        "retention_basis",
+        "grounded_evidence_handles",
+        "importance",
+        "half_life_days",
+        "sensitivity",
+        "valid_to",
+        "agent_profile_id",
+        "related_memory_id",
+    ]
+    assert contract["scope_guidance"] == {
+        "agent": "private to the current agent",
+        "user": "shared user memory; policy may require review",
     }
 
 
@@ -1532,8 +1829,15 @@ async def test_provider_review_candidate_is_approvable_without_edit() -> None:
                 "content": "I prefer concise answers.",
                 "kind": "preference",
                 "scope_type": "agent",
+                "agent_profile_id": None,
                 "confidence": 0.7,
+                "importance": 0.5,
+                "half_life_days": 30,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
                 "grounded_evidence_handles": [handle],
+                "related_memory_id": None,
             }
 
     repository = MemoryStore(clock=lambda: NOW)

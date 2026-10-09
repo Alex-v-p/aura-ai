@@ -1,0 +1,176 @@
+id: AURA-0048
+title: Make memory personal-first and eliminate empty review candidates
+status: approved
+change_class: feature
+intent: >
+  Tune automatic extraction toward durable owner-relevant facts and explicit
+  remember requests, reject ordinary world knowledge, eliminate empty review
+  candidates, and prove the resulting behavior through the authenticated Aura
+  web application without widening memory authorization.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0012-http-sse-nats-realtime-transport.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - Owner-approved AURA-0048 personal-first extraction plan
+    - Retention bases are personal explicit_request and none
+    - Ordinary world knowledge is ignored unless the owner explicitly asks Aura to remember it
+    - Assistant-authored content may provide context but cannot establish memory grounding
+    - High-confidence ordinary personal and explicit-request memories may promote to shared-user scope for the built-in Aura agent
+    - Incomplete provider output is a content-free rejected diagnostic and never an owner-review item
+    - Ignored or rejected extraction decisions are omitted from owner-facing conversation memory activity
+    - Existing content-bearing memories are not automatically reclassified
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references: [MEM-001, MEM-002, MEM-003, MEM-004, MEM-005, MEM-006, MEM-010, MEM-011, MEM-012, MEM-013, MEM-014, MEM-015, MEM-016, MEM-017, MEM-021, MEM-024, MEM-025, MEM-026, MEM-027, MEM-028, MEM-029, MEM-030, MEM-031, MEM-032, MEM-033, MEM-034, EVA-007, CMP-003]
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-core.interaction.agents
+  - aura-core.migrations
+  - aura-core.platform.telemetry
+  - aura-web.knowledge.memory
+  - aura-web.interaction.conversations
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0048.yaml
+  - work-items/archived/AURA-0048.yaml
+  - services/aura-core/migrations/versions/0012_memory_personal_first.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/resources/component-manifests/memory-extraction.yaml
+  - services/aura-core/tests/fixtures/memory/evaluation_cases.json
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_agent_memory_policy_sql.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_migration_0012_memory_personal_first.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/memory-product.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/knowledge/world_model/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/providers/models/**
+  - frontend/libs/platform/aura-api-client/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_extraction
+  required_metrics:
+    - memory_extraction_duration_ms
+    - memory_candidate_outcome
+    - memory_action_outcome
+    - memory_processing_errors
+  required_evaluators:
+    - memory_extraction_policy
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Personal-first verification must require user-authored grounding and must not infer owner attributes from assistant content or topical questions
+    - Explicit remember requests must be recognized deterministically and remain subject to credential sensitivity conflict and authorization rules
+    - Built-in shared-user promotion must not widen custom-agent policies or historical conversation and run pins
+    - Review candidates must expose actionable owner-visible content while rejected diagnostics retain no memory text
+    - Telemetry and ignored-decision audit metadata must never contain prompts responses memory text embeddings secrets or personal subjects
+    - Owner and agent scope authorization and embedding generation rules remain unchanged
+  data_classes:
+    - private durable owner relationship preference commitment possession and project memory content
+    - content-free extraction decision and failure metadata
+    - owner agent conversation run policy candidate revision and embedding-generation identifiers
+required_agents:
+  implementation: [core_worker, platform_worker, frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, architecture_guardian, security_privacy_reviewer, observability_steward]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Versioned extraction distinguishes personal explicit_request and none retention bases and applies deterministic verification after provider inference.
+  - Personal retention requires user-authored evidence tied to the owner a close relationship a preference routine commitment constraint possession or owned project while mere topic mention questions and assistant-only facts are ignored.
+  - Explicit retention requires a recognized remember or save request and continues to reject credentials and review sensitive conflicting or ambiguous content.
+  - Structured provider output uses enums for kind scope sensitivity and retention basis requires complete nullable decision metadata and requires complete grounded proposals for create or review actions.
+  - Malformed dates invented identifiers missing proposal fields and incomplete output settle as content-free rejected diagnostics rather than review candidates or endless retries.
+  - High-confidence ordinary personal facts and safe explicit remember requests may automatically persist in shared-user scope under the built-in Aura policy.
+  - Migration 0012 creates deterministic successor policy and agent revisions for only the built-in Aura profile enables shared-user promotion and preserves recall mode threshold limits scopes grants historical policies and all conversation and run pins.
+  - Migration 0012 leaves custom-agent policies unchanged and idempotently reclassifies legacy null-content invalid-provider review rows as rejected diagnostics.
+  - Existing content-bearing memories and candidates are not automatically rewritten or reclassified.
+  - Ignored and rejected extraction outcomes remain content-free audit metadata and are omitted from user-facing run memory activity indicators popups and availability warnings.
+  - Every owner-visible review candidate contains visible actionable content and complete retention metadata and defensive null-content rendering uses reason-specific diagnostic copy.
+  - The extraction policy and observable component version distinguish the personal-first implementation without changing the public OpenAPI shape.
+  - Approved deterministic fixtures achieve precision and recall of 1.0 for personal and explicit-request extraction with zero admissions for ordinary world knowledge questions or assistant-only facts.
+  - Provider outages remain retryable and never block conversation delivery while duplicate personal facts reinforce rather than duplicate records.
+  - Authenticated web-app acceptance completes the owner-approved sister-birthday and Star-Wars scenario three consecutive times using configured Ollama models and shows correct recall persistence embeddings activity and review behavior.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0048.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0048.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0048.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0048.yaml
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_memory_domain.py services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_evaluation.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_migration_0012_memory_personal_first.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_memory_api.py services/aura-core/tests/system/test_api_conversation_flow.py
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pyright services/aura-core/src
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/memory-product.spec.ts --config=playwright.config.ts --project=desktop
+  - ./deploy/compose/local-http.sh up
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

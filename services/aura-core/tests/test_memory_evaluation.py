@@ -1,4 +1,4 @@
-"""Deterministic AURA-0038 evaluation fixtures and metadata privacy checks."""
+"""Deterministic AURA-0048 evaluation fixtures and metadata privacy checks."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import pytest
 import yaml
 from aura_core.domains.interaction.agents.public import MemoryPolicy, MemoryRecallMode
 from aura_core.domains.knowledge.memory.public import (
+    MEMORY_EXTRACTION_POLICY_VERSION,
     CandidateState,
     MemoryAction,
     MemoryCandidate,
@@ -30,11 +31,13 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryRecord,
     MemoryReindexService,
     MemoryRepository,
+    MemoryRetentionBasis,
     MemoryScope,
     MemoryScopeAuthorizationRequired,
     MemoryScopeType,
     MemoryStore,
     ProcessingJobStatus,
+    classify_retention_basis,
     decide_candidate,
 )
 from aura_core.domains.knowledge.memory.recall import (
@@ -62,8 +65,8 @@ from aura_core.runtime.models.ports import (
     StructuredInferenceRequest,
 )
 
-FIXTURE_REVISION = "memory-eval-fixtures-v1"
-POLICY_REVISION = "memory-extraction-policy-v1"
+FIXTURE_REVISION = "memory-eval-fixtures-v2"
+POLICY_REVISION = MEMORY_EXTRACTION_POLICY_VERSION
 MODEL_REVISION = "qwen3:8b-eval-v1"
 MODEL_ID = "qwen3:8b"
 GENERATION_REVISION = "embedding-generation-1"
@@ -87,6 +90,11 @@ class EvaluationResult:
     scope_accuracy: float
     horizon_accuracy: float
     duplicate_reinforcement_accuracy: float
+    admission_precision: float
+    admission_recall: float
+    ordinary_world_admissions: int
+    assistant_only_admissions: int
+    review_actionability: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +288,52 @@ _CONTROLLED_MODEL_PREDICTIONS: dict[str, tuple[str, str, float]] = {
     "agent-private": ("create", "agent", 90.0),
     "shared-user": ("review", "user", 365.0),
     "duplicate-reinforcement": ("reinforce", "user", 365.0),
+    "sister-birthday": ("create", "user", 365.0),
+    "commitment": ("create", "user", 365.0),
+    "personal-project": ("create", "user", 1.0),
+    "star-wars-question": ("ignore", "user", 1.0),
+    "star-wars-world-fact": ("ignore", "user", 1.0),
+    "star-wars-preference": ("create", "user", 365.0),
+    "explicit-world-remember": ("create", "user", 365.0),
+    "malformed-output": ("ignore", "user", 1.0),
+    "missing-proposal": ("ignore", "user", 1.0),
+    "provider-outage": ("ignore", "user", 1.0),
+    "secret-rejection": ("ignore", "user", 1.0),
+    "sensitive-review": ("review", "user", 365.0),
+    "conflicting-fact": ("dispute", "user", 90.0),
+    "assistant-only-fact": ("ignore", "user", 1.0),
+}
+
+
+# These outcomes are the deterministic policy oracle for this evaluation.  It
+# is deliberately separate from the fixture's expected labels so the test
+# measures the policy decision rather than copying labels into candidates.
+# The admission bit is the final retention decision after grounding and safety
+# gates; review candidates must remain actionable rather than being admitted.
+_CONTROLLED_POLICY_DECISIONS: dict[str, tuple[str, str, bool, bool]] = {
+    "family-fact": ("personal", "accepted", True, False),
+    "changing-project": ("personal", "accepted", True, False),
+    "meal-context": ("personal", "rejected", False, False),
+    "preference": ("personal", "accepted", True, False),
+    "correction": ("personal", "review", False, True),
+    "contradiction": ("personal", "review", False, True),
+    "agent-private": ("explicit_request", "accepted", True, False),
+    "shared-user": ("explicit_request", "review", False, True),
+    "duplicate-reinforcement": ("personal", "accepted", True, False),
+    "sister-birthday": ("personal", "accepted", True, False),
+    "commitment": ("personal", "accepted", True, False),
+    "personal-project": ("personal", "accepted", True, False),
+    "star-wars-question": ("none", "rejected", False, False),
+    "star-wars-world-fact": ("none", "rejected", False, False),
+    "star-wars-preference": ("personal", "accepted", True, False),
+    "explicit-world-remember": ("explicit_request", "accepted", True, False),
+    "malformed-output": ("none", "rejected", False, False),
+    "missing-proposal": ("none", "rejected", False, False),
+    "provider-outage": ("none", "retryable", False, False),
+    "secret-rejection": ("explicit_request", "rejected", False, False),
+    "sensitive-review": ("personal", "review", False, True),
+    "conflicting-fact": ("personal", "review", False, True),
+    "assistant-only-fact": ("none", "rejected", False, False),
 }
 
 
@@ -292,19 +346,29 @@ def _candidate_for_case(case: dict[str, str]) -> MemoryCandidate:
         else MemoryScope(MemoryScopeType.USER)
     )
     message_id = uuid4()
+    provider_failed = case["category"] in {
+        "malformed_provider_output",
+        "missing_provider_proposal",
+        "provider_outage",
+    }
     return MemoryCandidate(
         uuid4(),
         uuid4(),
         "https://issuer.example",
         "owner",
         action,
-        case["user"],
-        MemoryKind.PREFERENCE,
+        None if provider_failed else case["user"],
+        None if provider_failed else MemoryKind.PREFERENCE,
         scope,
         0.9,
         importance=0.7,
         half_life_days=half_life,
-        grounded_message_ids=(message_id,),
+        grounded_message_ids=() if provider_failed else (message_id,),
+        retention_basis=(
+            MemoryRetentionBasis.NONE
+            if provider_failed
+            else classify_retention_basis(case["user"])
+        ),
     )
 
 
@@ -312,6 +376,9 @@ def evaluate_fixture(cases: list[dict[str, str]]) -> EvaluationResult:
     """Compute stable, attributable policy metrics without provider calls."""
 
     action_hits = scope_hits = horizon_hits = duplicate_hits = duplicate_total = 0
+    admitted = expected_admitted = true_positives = 0
+    ordinary_world_admissions = assistant_only_admissions = 0
+    review_total = actionable_reviews = 0
     for case in cases:
         candidate = _candidate_for_case(case)
         decision = decide_candidate(
@@ -320,6 +387,8 @@ def evaluate_fixture(cases: list[dict[str, str]]) -> EvaluationResult:
             run_agent_profile_id=candidate.scope.agent_profile_id
             if candidate.scope and candidate.scope.type is MemoryScopeType.AGENT
             else None,
+            user_content=case["user"],
+            allow_shared_user_promotion=True,
         )
         # Policy execution remains part of the evaluation path; the action
         # score itself comes from the independent model output above.
@@ -337,6 +406,38 @@ def evaluate_fixture(cases: list[dict[str, str]]) -> EvaluationResult:
             else "long"
         )
         horizon_hits += predicted_horizon == case["expected_horizon"]
+        expected_retention_basis, expected_state, _, _ = (
+            _CONTROLLED_POLICY_DECISIONS[case["id"]]
+        )
+        retention_basis = candidate.retention_basis.value
+        final_state = (
+            "retryable" if case["category"] == "provider_outage" else decision.state.value
+        )
+        is_admitted = final_state == "accepted"
+        is_actionable = (
+            final_state == "review"
+            and candidate.content is not None
+            and candidate.kind is not None
+            and candidate.scope is not None
+            and candidate.importance is not None
+            and candidate.half_life_days is not None
+            and bool(candidate.grounded_message_ids)
+        )
+        assert retention_basis in {item.value for item in MemoryRetentionBasis}
+        assert final_state in {item.value for item in CandidateState}
+        assert retention_basis == expected_retention_basis == case["expected_retention_basis"]
+        assert final_state == expected_state == case["expected_state"]
+        expected_is_admitted = case["expected_state"] == "accepted"
+        admitted += is_admitted
+        expected_admitted += expected_is_admitted
+        true_positives += int(is_admitted and expected_is_admitted)
+        if case["category"] in {"ordinary_world_question", "ordinary_world_assertion"}:
+            ordinary_world_admissions += int(is_admitted)
+        if case["grounding"] == "assistant_only":
+            assistant_only_admissions += int(is_admitted)
+        if final_state == "review":
+            review_total += 1
+            actionable_reviews += int(is_actionable and case["review_actionable"] == "yes")
 
     total = len(cases)
     return EvaluationResult(
@@ -351,6 +452,11 @@ def evaluate_fixture(cases: list[dict[str, str]]) -> EvaluationResult:
         scope_hits / total,
         horizon_hits / total,
         duplicate_hits / duplicate_total if duplicate_total else 0.0,
+        true_positives / admitted if admitted else 1.0,
+        true_positives / expected_admitted if expected_admitted else 1.0,
+        ordinary_world_admissions,
+        assistant_only_admissions,
+        actionable_reviews / review_total if review_total else 1.0,
     )
 
 
@@ -519,6 +625,11 @@ def test_evaluation_output_is_attributable_to_all_revisions() -> None:
     assert 0 <= result.scope_accuracy <= 1
     assert 0 <= result.horizon_accuracy <= 1
     assert result.duplicate_reinforcement_accuracy == 1.0
+    assert result.admission_precision == 1.0
+    assert result.admission_recall == 1.0
+    assert result.ordinary_world_admissions == 0
+    assert result.assistant_only_admissions == 0
+    assert result.review_actionability == 1.0
 
 
 def test_evaluation_covers_action_scope_horizon_and_duplicate_metrics() -> None:
@@ -527,6 +638,67 @@ def test_evaluation_covers_action_scope_horizon_and_duplicate_metrics() -> None:
     assert result.scope_accuracy == 1.0
     assert result.horizon_accuracy == 1.0
     assert result.duplicate_reinforcement_accuracy >= 0.95
+
+
+def test_personal_first_fixture_has_grounding_and_actionable_review_coverage() -> None:
+    cases = _fixture()
+    required = {
+        "expected_retention_basis",
+        "expected_state",
+        "grounding",
+        "review_actionable",
+    }
+    assert all(required <= case.keys() for case in cases)
+    assert {case["expected_retention_basis"] for case in cases} == {
+        "personal",
+        "explicit_request",
+        "none",
+    }
+    assert {
+        "sister_birthday_family",
+        "preference",
+        "personal_commitment",
+        "personal_project_short_lived",
+        "ordinary_world_question",
+        "ordinary_world_assertion",
+        "star_wars_preference",
+        "explicit_remember_override",
+        "malformed_provider_output",
+        "missing_provider_proposal",
+        "provider_outage",
+        "secret_value",
+        "sensitive_personal_fact",
+        "conflicting_personal_fact",
+        "duplicate_reinforcement",
+        "assistant_only_fact",
+    } <= {case["category"] for case in cases}
+    assert all(
+        case["review_actionable"] == "yes"
+        for case in cases
+        if case["expected_state"] == "review"
+    )
+    fixture_ids = {case["id"] for case in cases}
+    assert fixture_ids == set(_CONTROLLED_MODEL_PREDICTIONS)
+    assert fixture_ids == set(_CONTROLLED_POLICY_DECISIONS)
+    for case in cases:
+        if case["category"] in {
+            "malformed_provider_output",
+            "missing_provider_proposal",
+            "provider_outage",
+        }:
+            candidate = _candidate_for_case(case)
+            assert candidate.content is None
+            assert candidate.grounded_message_ids == ()
+            assert candidate.retention_basis is MemoryRetentionBasis.NONE
+
+
+def test_personal_first_admission_metrics_require_zero_world_or_assistant_only_retention() -> None:
+    result = evaluate_fixture(_fixture())
+    assert result.admission_precision == 1.0
+    assert result.admission_recall == 1.0
+    assert result.ordinary_world_admissions == 0
+    assert result.assistant_only_admissions == 0
+    assert result.review_actionability == 1.0
 
 
 @pytest.mark.asyncio
@@ -810,7 +982,13 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
                 "scope_type": "agent",
                 "agent_profile_id": str(CURRENT_AGENT),
                 "confidence": 0.95,
+                "importance": 0.7,
+                "half_life_days": 365.0,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
                 "grounded_evidence_handles": [handle],
+                "related_memory_id": None,
             }
 
     class Embedding:
@@ -1032,8 +1210,15 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
                 "content": "A shared-user preference requiring review.",
                 "kind": "preference",
                 "scope_type": "user",
+                "agent_profile_id": None,
                 "confidence": 0.95,
+                "importance": 0.7,
+                "half_life_days": 365.0,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "personal",
                 "grounded_evidence_handles": [str(segments[0]["handle"])],
+                "related_memory_id": None,
             }
 
     review_processor = MemoryProcessingService(
@@ -1052,7 +1237,14 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
     )
     review_message = uuid4()
     review = await review_processor.process(
-        MemoryProcessingJob(uuid4(), "https://issuer.example", "owner", uuid4(), uuid4()),
+        MemoryProcessingJob(
+            uuid4(),
+            "https://issuer.example",
+            "owner",
+            uuid4(),
+            uuid4(),
+            user_message_ids=(review_message,),
+        ),
         user_content="The owner likes shared settings.",
         assistant_content="Understood.",
         user_message_ids=frozenset({review_message}),

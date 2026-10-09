@@ -257,6 +257,12 @@ class MemoryCandidateRow(Base):
     grounded_message_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     related_memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Every proposal carries a durable extraction-retention classification.
+    # The migration defaults legacy rows to ``none`` so SQL hydration cannot
+    # silently lose the provider's decision metadata.
+    retention_basis: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="none"
+    )
     state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="proposed")
     decision_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

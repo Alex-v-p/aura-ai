@@ -61,6 +61,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryPurgeReplayNotFound,
     MemoryRecord,
     MemoryRelation,
+    MemoryRetentionBasis,
     MemoryRevision,
     MemoryScope,
     MemoryScopeAuthorizationRequired,
@@ -87,6 +88,14 @@ def _uuid_or_none(value: object) -> UUID | None:
         return UUID(str(value)) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _retention_basis(row: object) -> MemoryRetentionBasis:
+    value = getattr(row, "retention_basis", None)
+    try:
+        return MemoryRetentionBasis(str(value)) if value is not None else MemoryRetentionBasis.NONE
+    except ValueError:
+        return MemoryRetentionBasis.NONE
 
 
 def _vector_tuple(value: object, dimension: int) -> tuple[float, ...] | None:
@@ -202,6 +211,10 @@ class SqlMemoryRepository:
             )
             items: list[MemoryActivityItem] = []
             for candidate in candidates:
+                # Ignored and rejected extraction decisions are content-free
+                # diagnostics, not owner-facing memory activity.
+                if candidate.state == CandidateState.REJECTED.value:
+                    continue
                 scope = None
                 if candidate.scope_type is not None:
                     scope = {"type": candidate.scope_type}
@@ -215,8 +228,6 @@ class SqlMemoryRepository:
                         MemoryAction.SUPERSEDE.value: "disputed",
                     }.get(candidate.action, "queued_for_review")
                     status = "completed"
-                elif candidate.state == CandidateState.REJECTED.value:
-                    action, status = "queued_for_review", "completed"
                 else:
                     action = "queued_for_review"
                     candidate_job = next((item for item in jobs if item.id == candidate.job_id), None)
@@ -775,6 +786,7 @@ class SqlMemoryRepository:
             version=1 if row.state in {"proposed", "review", "retryable"} else 2,
             created_at=row.created_at or datetime.now(UTC),
             decided_at=row.decided_at,
+            retention_basis=_retention_basis(row),
         )
 
     @staticmethod
@@ -2535,6 +2547,7 @@ class SqlMemoryRepository:
                 version=1 if row.state in {"proposed", "review", "retryable"} else 2,
                 created_at=row.created_at or datetime.now(UTC),
                 decided_at=row.decided_at,
+                retention_basis=_retention_basis(row),
             )
 
     async def list_candidates(
@@ -2611,6 +2624,7 @@ class SqlMemoryRepository:
                         version=1 if row.state in {"proposed", "review", "retryable"} else 2,
                         created_at=row.created_at or datetime.now(UTC),
                         decided_at=row.decided_at,
+                        retention_basis=_retention_basis(row),
                     )
                 )
             return result
@@ -3217,33 +3231,33 @@ class SqlMemoryRepository:
                 raise MemoryNotFound("memory processing job not found")
             existing = await session.get(MemoryCandidateRow, candidate.id, with_for_update=True)
             if existing is None:
-                session.add(
-                    MemoryCandidateRow(
-                        id=candidate.id,
-                        job_id=candidate.job_id,
-                        principal_issuer=candidate.issuer,
-                        principal_subject=candidate.subject,
-                        action=candidate.action.value,
-                        content=candidate.content,
-                        kind=candidate.kind.value if candidate.kind else None,
-                        scope_type=candidate.scope.type.value if candidate.scope else None,
-                        agent_profile_id=candidate.scope.agent_profile_id
-                        if candidate.scope
-                        else None,
-                        confidence=candidate.confidence,
-                        importance=candidate.importance,
-                        half_life_days=candidate.half_life_days,
-                        valid_to=candidate.valid_to,
-                        sensitivity=candidate.sensitivity.value,
-                        grounded_message_ids=[str(item) for item in candidate.grounded_message_ids],
-                        related_memory_id=candidate.related_memory_id,
-                        state=candidate.state.value,
-                        decision_reason=candidate.decision_reason,
-                        memory_id=candidate.memory_id,
-                        created_at=candidate.created_at,
-                        decided_at=candidate.decided_at,
-                    )
+                row = MemoryCandidateRow(
+                    id=candidate.id,
+                    job_id=candidate.job_id,
+                    principal_issuer=candidate.issuer,
+                    principal_subject=candidate.subject,
+                    action=candidate.action.value,
+                    content=candidate.content,
+                    kind=candidate.kind.value if candidate.kind else None,
+                    scope_type=candidate.scope.type.value if candidate.scope else None,
+                    agent_profile_id=candidate.scope.agent_profile_id
+                    if candidate.scope
+                    else None,
+                    confidence=candidate.confidence,
+                    importance=candidate.importance,
+                    half_life_days=candidate.half_life_days,
+                    valid_to=candidate.valid_to,
+                    sensitivity=candidate.sensitivity.value,
+                    grounded_message_ids=[str(item) for item in candidate.grounded_message_ids],
+                    related_memory_id=candidate.related_memory_id,
+                    state=candidate.state.value,
+                    decision_reason=candidate.decision_reason,
+                    memory_id=candidate.memory_id,
+                    created_at=candidate.created_at,
+                    decided_at=candidate.decided_at,
                 )
+                row.retention_basis = candidate.retention_basis.value
+                session.add(row)
             else:
                 if (
                     existing.principal_issuer != candidate.issuer
@@ -3285,6 +3299,7 @@ class SqlMemoryRepository:
                 existing.state = candidate.state.value
                 existing.decision_reason = candidate.decision_reason
                 existing.decided_at = candidate.decided_at
+                existing.retention_basis = candidate.retention_basis.value
             if idempotency_key and isinstance(fingerprint, str):
                 prior = await session.get(
                     MemoryIdempotencyRow,

@@ -101,6 +101,14 @@ class MemorySensitivity(StrEnum):
     UNKNOWN_RISK = "unknown_risk"
 
 
+class MemoryRetentionBasis(StrEnum):
+    """Deterministic reason a turn is eligible for durable memory."""
+
+    PERSONAL = "personal"
+    EXPLICIT_REQUEST = "explicit_request"
+    NONE = "none"
+
+
 class CandidateState(StrEnum):
     PROPOSED = "proposed"
     ACCEPTED = "accepted"
@@ -122,6 +130,7 @@ MEMORY_PROCESSING_TOPIC = "aura.memory.process.v1"
 MEMORY_ID_NAMESPACE = UUID("b7dc5f90-3db3-4d41-85a5-cd3f1d9d6f31")
 _REINDEX_PENDING = object()
 SENSITIVITY_POLICY_VERSION = "memory-sensitivity-v1"
+MEMORY_EXTRACTION_POLICY_VERSION = "memory-extraction-policy-v2"
 
 # Composition injects the platform's metadata-only recorder.  The domain does
 # not import telemetry or retain provider payloads, and recorder failures are
@@ -136,8 +145,14 @@ MEMORY_ACTION_SCHEMA: Mapping[str, object] = {
     "properties": {
         "action": {"type": "string", "enum": [item.value for item in MemoryAction]},
         "content": {"type": ["string", "null"]},
-        "kind": {"type": ["string", "null"]},
-        "scope_type": {"type": ["string", "null"]},
+        "kind": {
+            "type": ["string", "null"],
+            "enum": [item.value for item in MemoryKind] + [None],
+        },
+        "scope_type": {
+            "type": ["string", "null"],
+            "enum": [item.value for item in MemoryScopeType] + [None],
+        },
         "agent_profile_id": {"type": ["string", "null"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "importance": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
@@ -146,12 +161,33 @@ MEMORY_ACTION_SCHEMA: Mapping[str, object] = {
             "minimum": MIN_HALF_LIFE_DAYS,
             "maximum": MAX_HALF_LIFE_DAYS,
         },
-        "valid_to": {"type": ["string", "null"]},
-        "sensitivity": {"type": "string"},
+        "valid_to": {"type": ["string", "null"], "format": "date-time"},
+        "sensitivity": {
+            "type": "string",
+            "enum": [item.value for item in MemorySensitivity],
+        },
+        "retention_basis": {
+            "type": "string",
+            "enum": [item.value for item in MemoryRetentionBasis],
+        },
         "grounded_evidence_handles": {"type": "array", "items": {"type": "string"}},
         "related_memory_id": {"type": ["string", "null"]},
     },
-    "required": ["action", "confidence"],
+    "required": [
+        "action",
+        "content",
+        "kind",
+        "scope_type",
+        "agent_profile_id",
+        "confidence",
+        "importance",
+        "half_life_days",
+        "valid_to",
+        "sensitivity",
+        "retention_basis",
+        "grounded_evidence_handles",
+        "related_memory_id",
+    ],
 }
 
 
@@ -755,6 +791,7 @@ class MemoryCandidate:
     version: int = 1
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decided_at: datetime | None = None
+    retention_basis: MemoryRetentionBasis = MemoryRetentionBasis.NONE
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, MemoryAction):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -853,6 +890,7 @@ def _content_free_candidate(candidate: MemoryCandidate) -> MemoryCandidate:
             version=candidate.version,
             created_at=candidate.created_at,
             decided_at=candidate.decided_at,
+            retention_basis=candidate.retention_basis,
         )
     return candidate
 
@@ -945,6 +983,56 @@ def decide_candidate(
     if candidate.confidence < 0.85:
         return CandidateDecision(CandidateState.REVIEW, "review_threshold")
     return CandidateDecision(CandidateState.ACCEPTED, "auto_commit")
+
+
+_EXPLICIT_MEMORY_REQUEST = re.compile(
+    r"(?:^|[,;:]\s*|\bplease\s+|\b(?:can|could|would)\s+you\s+)"
+    r"(?:remember|keep\s+in\s+mind|don['’]?t\s+forget)\b|"
+    r"\b(?:you|aura|this\s+agent)\s+should\s+"
+    r"(?:remember|keep\s+in\s+mind|don['’]?t\s+forget)\b|"
+    r"\b(?:save|store|note)\s+(?:the\s+fact(?:\s+that)?|in\s+memory|for\s+later)\b",
+    re.IGNORECASE,
+)
+_QUESTION_MEMORY_COMMAND = re.compile(
+    r"\b(?:can|could|would)\s+you\s+(?:please\s+)?"
+    r"(?:remember|keep\s+in\s+mind|don['’]?t\s+forget)\b|"
+    r"\b(?:can|could|would)\s+you\s+(?:please\s+)?"
+    r"(?:save|store|note)\s+(?:the\s+fact(?:\s+that)?|in\s+memory|for\s+later)\b|"
+    r"\bplease\s+(?:remember|keep\s+in\s+mind|don['’]?t\s+forget)\b|"
+    r"\bplease\s+(?:save|store|note)\s+(?:the\s+fact(?:\s+that)?|in\s+memory|for\s+later)\b",
+    re.IGNORECASE,
+)
+_EPISTEMIC_FRAMING = re.compile(
+    r"\b(?:i\s+(?:think|believe|heard|read|wonder)|i\s+was\s+told|"
+    r"my\s+understanding\s+is)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_MEMORY_MARKER = re.compile(
+    r"(?:\b(?:my|our)\b|"
+    r"\bowner\s+(?:prefer|prefers|like|likes|love|loves|enjoy|enjoys|hate|hates|"
+    r"avoid|avoids|need|needs|want|wants|own|owns|bought|use|uses|usually|always|"
+    r"never|have|has|work|works|live|lives|plan|plans|promise|promised|correct|making|"
+    r"working)\b|"
+    r"\bpersonal\s+(?:project|preference|commitment|routine|plan|goal)\b|"
+    r"\b(?:i|we|i['’]?m|i\s+am)\s+(?:prefer|like|love|enjoy|hate|avoid|need|want|"
+    r"own|bought|use|usually|always|never|have|work|live|plan|promise|promised|"
+    r"correct|making|working)\b)",
+    re.IGNORECASE,
+)
+
+
+def classify_retention_basis(user_content: str) -> MemoryRetentionBasis:
+    """Classify retention from authenticated user text, never assistant text."""
+
+    if "?" in user_content and not _QUESTION_MEMORY_COMMAND.search(user_content):
+        return MemoryRetentionBasis.NONE
+    if _EXPLICIT_MEMORY_REQUEST.search(user_content):
+        return MemoryRetentionBasis.EXPLICIT_REQUEST
+    if _EPISTEMIC_FRAMING.search(user_content):
+        return MemoryRetentionBasis.NONE
+    if _PERSONAL_MEMORY_MARKER.search(user_content):
+        return MemoryRetentionBasis.PERSONAL
+    return MemoryRetentionBasis.NONE
 
 
 # Short, conservative credential patterns are applied before a memory reaches
@@ -1742,6 +1830,10 @@ class _MemoryStoreBase:
         for candidate in self.candidates.values():
             if candidate.job_id not in job_ids:
                 continue
+            # Ignored and rejected extraction decisions are content-free
+            # diagnostics, not owner-facing memory activity.
+            if candidate.state is CandidateState.REJECTED:
+                continue
             scope = None
             if candidate.scope is not None:
                 scope = {"type": candidate.scope.type.value}
@@ -1755,8 +1847,6 @@ class _MemoryStoreBase:
                     MemoryAction.SUPERSEDE: "disputed",
                 }.get(candidate.action, "queued_for_review")
                 status = "completed"
-            elif candidate.state is CandidateState.REJECTED:
-                action, status = "queued_for_review", "completed"
             else:
                 action = "queued_for_review"
                 candidate_job = next((item for item in jobs if item.id == candidate.job_id), None)
@@ -2211,7 +2301,6 @@ class MemoryProcessingService:
         try:
             normalized_outcome = {
                 "received": "ok",
-                "rejected": "error",
                 "parked": "retryable",
             }.get(outcome, outcome)
             self._telemetry(
@@ -2445,6 +2534,7 @@ class MemoryProcessingService:
                 raw.related_memory_id,
                 CandidateState.REVIEW if provider_requested_review else raw.state,
                 "provider_requested_review" if provider_requested_review else raw.decision_reason,
+                retention_basis=raw.retention_basis,
             )
         payload_method = getattr(raw, "as_payload", None)
         data: Mapping[str, object] | None
@@ -2467,12 +2557,30 @@ class MemoryProcessingService:
             "half_life_days",
             "valid_to",
             "sensitivity",
+            "retention_basis",
             "grounded_message_ids",
             "grounded_evidence_handles",
             "related_memory_id",
         }
         if set(data) - allowed:
             raise MemoryValidationError("structured memory action contains unsupported fields")
+        required = {
+            "action",
+            "content",
+            "kind",
+            "scope_type",
+            "agent_profile_id",
+            "confidence",
+            "importance",
+            "half_life_days",
+            "valid_to",
+            "sensitivity",
+            "retention_basis",
+            "grounded_evidence_handles",
+            "related_memory_id",
+        }
+        if not required <= set(data):
+            raise MemoryValidationError("structured memory action is incomplete")
         try:
             action = MemoryAction(str(data.get("action")))
             kind = MemoryKind(str(data["kind"])) if data.get("kind") is not None else None
@@ -2492,7 +2600,9 @@ class MemoryProcessingService:
             if not isinstance(raw_handles, (list, tuple)):
                 raise MemoryValidationError("grounded evidence handles are malformed")
             handle_map = evidence_handles or {}
-            grounded = tuple(handle_map[item] for item in raw_handles if str(item) in handle_map)
+            if any(str(item) not in handle_map for item in raw_handles):
+                raise MemoryValidationError("grounded evidence handle is unavailable")
+            grounded = tuple(handle_map[str(item)] for item in raw_handles)
             # Provider-supplied database IDs are never trusted.  They are
             # accepted only as an ungrounded legacy shape, forcing review.
             raw_grounded = data.get("grounded_message_ids", ())
@@ -2500,13 +2610,29 @@ class MemoryProcessingService:
                 raise MemoryValidationError("grounded message identifiers are malformed")
             if raw_grounded:
                 grounded = ()
-            related = (
-                UUID(str(data["related_memory_id"])) if data.get("related_memory_id") else None
-            )
+            if data.get("related_memory_id") is not None:
+                raise MemoryValidationError("related memory identifiers require server resolution")
+            related = None
             valid_to = data.get("valid_to")
             if isinstance(valid_to, str):
                 valid_to = datetime.fromisoformat(valid_to)
+                if valid_to.tzinfo is None:
+                    raise MemoryValidationError("valid-to must include timezone")
+            elif valid_to is not None:
+                raise MemoryValidationError("valid-to must be an RFC3339 string or null")
             content = str(data["content"]) if data.get("content") is not None else None
+            retention_basis = MemoryRetentionBasis(str(data["retention_basis"]))
+            if action in {MemoryAction.CREATE, MemoryAction.REVIEW}:
+                if (
+                    not content
+                    or kind is None
+                    or scope is None
+                    or data.get("importance") is None
+                    or data.get("half_life_days") is None
+                    or not grounded
+                    or retention_basis is MemoryRetentionBasis.NONE
+                ):
+                    raise MemoryValidationError("memory action proposal is incomplete")
             provider_requested_review = action is MemoryAction.REVIEW
             if provider_requested_review and content is not None:
                 action = MemoryAction.CREATE
@@ -2536,6 +2662,7 @@ class MemoryProcessingService:
                 related,
                 CandidateState.REVIEW if provider_requested_review else CandidateState.PROPOSED,
                 "provider_requested_review" if provider_requested_review else None,
+                retention_basis=retention_basis,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise MemoryValidationError("structured memory action is malformed") from exc
@@ -2659,24 +2786,36 @@ class MemoryProcessingService:
                 "decision_contract": {
                     "allowed_actions": [item.value for item in MemoryAction],
                     "instructions": (
-                        "Extract only durable facts explicitly stated by the user. "
+                        f"Apply {MEMORY_EXTRACTION_POLICY_VERSION}. Extract only durable "
+                        "owner-relevant facts explicitly stated by the user. "
+                        "Ignore ordinary world knowledge, topical questions, and facts "
+                        "provided only by the assistant. "
                         "For create or review, copy the durable fact into content, choose "
-                        "kind semantic or preference, choose scope_type agent or user, and "
-                        "return the matching opaque evidence handle. Choose importance from "
+                        "kind from the enum, choose scope_type agent or user, and return "
+                        "the matching opaque evidence handle. Set retention_basis to personal "
+                        "for owner facts, or explicit_request only when the user asks Aura "
+                        "to remember/save/note it. Use none with ignore otherwise. Choose "
+                        "importance from "
                         "0 to 1 based on durable value and propose a half_life_days between "
                         "0.25 and 3650 based on the fact's relevance horizon; if uncertain, "
                         "use 0.5 importance and 30 days. Set valid_to only when the user "
                         "states a concrete end date; otherwise return null and do not invent "
-                        "an expiry. Use action ignore when there is no durable user-authored "
-                        "fact. Never invent identifiers."
+                        "an expiry. Use action ignore when there is no durable personal or "
+                        "explicitly requested fact. Never invent identifiers or evidence "
+                        "handles. Assistant context is background only and is never grounding."
                     ),
                     "required_for_create_or_review": [
                         "content",
                         "kind",
                         "scope_type",
+                        "retention_basis",
                         "grounded_evidence_handles",
                         "importance",
                         "half_life_days",
+                        "sensitivity",
+                        "valid_to",
+                        "agent_profile_id",
+                        "related_memory_id",
                     ],
                     "scope_guidance": {
                         "agent": "private to the current agent",
@@ -2759,6 +2898,7 @@ class MemoryProcessingService:
                         candidate.related_memory_id,
                         candidate.state,
                         candidate.decision_reason,
+                        retention_basis=candidate.retention_basis,
                     )
             except MemoryValidationError:
                 # The provider transport succeeded, but its schema-valid
@@ -2779,13 +2919,14 @@ class MemoryProcessingService:
                     job.id,
                     job.issuer,
                     job.subject,
-                    MemoryAction.REVIEW,
+                    MemoryAction.IGNORE,
                     None,
                     None,
                     None,
                     0.0,
-                    state=CandidateState.REVIEW,
+                    state=CandidateState.REJECTED,
                     decision_reason="invalid_provider_output",
+                    retention_basis=MemoryRetentionBasis.NONE,
                 )
             else:
                 self._emit(
@@ -2835,17 +2976,36 @@ class MemoryProcessingService:
             existing = await self.repository.list_memories(
                 job.issuer,
                 job.subject,
-                MemoryFilters(scope_type=MemoryScopeType.USER, include_historical=True, limit=200),
+                MemoryFilters(
+                    scope_type=None,
+                    include_all_scopes=True,
+                    include_historical=True,
+                    q=candidate.content,
+                    limit=200,
+                ),
             )
             conflict = any(
                 item.content == candidate.content
                 and item.scope != (candidate.scope or MemoryScope(MemoryScopeType.USER))
                 for item in existing
             )
+        retention_gate_started = monotonic()
+        retention_basis = classify_retention_basis(user_content)
+        if candidate.action is not MemoryAction.IGNORE:
+            candidate = replace(candidate, retention_basis=retention_basis)
+        self._emit(
+            "memory.retention_gate",
+            retention_gate_started,
+            trace_id=trace_id,
+            outcome=retention_basis.value,
+            attempt_count=job.attempt_count,
+        )
         policy_started = monotonic()
         provider_requested_review = candidate.decision_reason == "provider_requested_review"
         if candidate.decision_reason == "invalid_provider_output":
-            decision = CandidateDecision(CandidateState.REVIEW, "invalid_provider_output")
+            decision = CandidateDecision(CandidateState.REJECTED, "invalid_provider_output")
+        elif candidate.action is not MemoryAction.IGNORE and retention_basis is MemoryRetentionBasis.NONE:
+            decision = CandidateDecision(CandidateState.REJECTED, "not_personal")
         else:
             decision = decide_candidate(
                 candidate,
@@ -2857,11 +3017,14 @@ class MemoryProcessingService:
             )
         if provider_requested_review and decision.state is CandidateState.ACCEPTED:
             decision = CandidateDecision(CandidateState.REVIEW, "provider_requested_review")
+        decision_outcome = decision.state.value
+        if candidate.action is MemoryAction.IGNORE and decision.reason != "invalid_provider_output":
+            decision_outcome = "ignored"
         self._emit(
             "memory.policy",
             policy_started,
             trace_id=trace_id,
-            outcome=decision.state.value,
+            outcome=decision_outcome,
             attempt_count=job.attempt_count,
         )
         candidate = replace(candidate, state=decision.state, decision_reason=decision.reason)
@@ -2878,7 +3041,7 @@ class MemoryProcessingService:
                 "memory.candidate",
                 process_started,
                 trace_id=trace_id,
-                outcome=decision.state.value,
+                outcome=decision_outcome,
                 attempt_count=job.attempt_count,
             )
             self._emit(
@@ -5432,6 +5595,7 @@ __all__ = [
     "MemoryCollectionScopeType",
     "MemoryService",
     "MEMORY_ACTION_SCHEMA",
+    "MEMORY_EXTRACTION_POLICY_VERSION",
     "MEMORY_ID_NAMESPACE",
     "MEMORY_PROCESSING_SCHEMA_VERSION",
     "MEMORY_PROCESSING_TOPIC",
@@ -5448,12 +5612,14 @@ __all__ = [
     "MemoryProcessingSettlement",
     "MemoryProcessor",
     "MemoryReindexService",
+    "MemoryRetentionBasis",
     "MemorySensitivity",
     "MemoryStore",
     "MemoryTurnEvidence",
     "MemoryValidationError",
     "MemoryVersionConflict",
     "ProcessingJobStatus",
+    "classify_retention_basis",
     "classify_sensitivity",
     "contains_secret",
     "decide_candidate",
