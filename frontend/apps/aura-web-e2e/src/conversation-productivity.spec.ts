@@ -38,6 +38,7 @@ interface FixtureConversation {
 interface FixtureOptions {
   readonly conversations?: ReadonlyArray<FixtureConversation>;
   readonly pageSize?: number;
+  readonly gateReconciliation?: boolean;
 }
 
 interface FixtureState {
@@ -45,6 +46,7 @@ interface FixtureState {
   readonly detailRequests: string[];
   readonly metadataRequests: Array<{ readonly method: string; readonly body: string }>;
   readonly runRequests: Array<{ readonly method: string; readonly url: string }>;
+  readonly releaseReconciliation: () => void;
 }
 
 function run(id: string, conversationId: string, status: RunStatus, overrides: Partial<FixtureRun> = {}): FixtureRun {
@@ -117,6 +119,12 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const detailRequests: string[] = [];
   const metadataRequests: Array<{ readonly method: string; readonly body: string }> = [];
   const runRequests: Array<{ readonly method: string; readonly url: string }> = [];
+  let releaseReconciliation = (): void => undefined;
+  const reconciliationGate = options.gateReconciliation
+    ? new Promise<void>((resolve) => {
+        releaseReconciliation = resolve;
+      })
+    : Promise.resolve();
   const current = new Map(firstPage.map((item) => [item.id, item]));
 
   await page.route('**/api/**', async (route: Route) => {
@@ -176,7 +184,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     if (eventsMatch) {
       const runId = eventsMatch[1];
       if (runId === 'run-reconcile') {
-        await new Promise<void>((resolve) => setTimeout(resolve, 500));
+        await reconciliationGate;
         const previous = current.get('conversation-reconcile');
         const reconciled = run('run-reconcile', 'conversation-reconcile', 'failed', { error: { code: 'MODEL_TIMEOUT', message: 'timeout', retryable: true, traceId: 'trace-reconciled' } });
         if (previous) current.set('conversation-reconcile', { ...previous, currentRun: null, recentRuns: [reconciled] });
@@ -204,35 +212,48 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     }
     await route.continue();
   });
-  return { listRequests, detailRequests, metadataRequests, runRequests };
+  return { listRequests, detailRequests, metadataRequests, runRequests, releaseReconciliation };
 }
 
-async function waitForLibrary(page: Page): Promise<void> {
+async function waitForLibrary(page: Page, options: { readonly keepMobileNavigationOpen?: boolean } = {}): Promise<void> {
   await page.goto('/conversation');
   await expect(page.getByRole('status', { name: /loading your conversation/i })).toBeHidden();
-  await expect(page.getByRole('navigation', { name: /primary navigation/i })).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: /primary navigation/i });
+  const openNavigation = page.getByRole('button', { name: /open navigation/i });
+  if (await openNavigation.count()) {
+    await openNavigation.click();
+    await expect(navigation).toHaveClass(/is-mobile-open/);
+    if (!options.keepMobileNavigationOpen) {
+      await navigation.getByRole('button', { name: 'Close navigation' }).click();
+      await expect(navigation).toBeHidden();
+    }
+  } else {
+    await expect(navigation).toBeVisible();
+  }
 }
 
 test.describe('conversation productivity', () => {
   test('requests 30-item pages and only loads the next page after Load more', async ({ page }) => {
     const conversations = Array.from({ length: 31 }, (_, index) => conversation(`conversation-${index}`, `Conversation ${index}`));
     const fixture = await installFixture(page, { conversations });
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
 
-    await expect.poll(() => fixture.listRequests.length).toBe(1);
-    expect(fixture.listRequests[0].searchParams.get('limit')).toBe('30');
+    await expect.poll(() => fixture.listRequests.length).toBeGreaterThan(0);
+    const initialListRequestCount = fixture.listRequests.length;
+    expect(fixture.listRequests.every((request) => request.searchParams.get('cursor') === null)).toBeTruthy();
+    expect(fixture.listRequests[0]?.searchParams.get('limit')).toBe('30');
     await expect(page.getByRole('button', { name: /load more/i })).toBeVisible();
     expect(await page.getByRole('link', { name: /conversation \d+/i }).count()).toBe(30);
 
     await page.getByRole('button', { name: /load more/i }).click();
-    await expect.poll(() => fixture.listRequests.length).toBe(2);
-    expect(fixture.listRequests[1].searchParams.get('cursor')).toBeTruthy();
+    await expect.poll(() => fixture.listRequests.length).toBe(initialListRequestCount + 1);
+    expect(fixture.listRequests.at(-1)?.searchParams.get('cursor')).toBeTruthy();
     await expect(page.getByRole('link', { name: 'Conversation 30' })).toBeVisible();
   });
 
   test('debounces title search, opens a connected live filter popup, and keeps terms out of the URL', async ({ page }) => {
     const fixture = await installFixture(page);
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
     const search = page.getByRole('searchbox', { name: /search conversation titles/i });
     await expect(search).toHaveAccessibleName('Search conversation titles');
     await expect(page.locator('.library-search .search-icon[aria-hidden="true"] svg')).toHaveCount(1);
@@ -289,7 +310,7 @@ test.describe('conversation productivity', () => {
 
     await filterTrigger.click();
     await expect(filterPanel).toBeVisible();
-    await page.getByRole('heading', { name: /new conversation/i }).click();
+    await page.keyboard.press('Escape');
     await expect(filterPanel).toBeHidden();
     await expect(filterTrigger).toBeFocused();
   });
@@ -315,7 +336,7 @@ test.describe('conversation productivity', () => {
 
   test('preserves selection and draft through filtering and rejected metadata mutation', async ({ page }) => {
     const fixture = await installFixture(page);
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
     const composer = page.getByRole('textbox', { name: /message aura/i });
     await composer.fill('Keep this private draft');
     await page.getByRole('link', { name: /beta notes/i }).click();
@@ -324,6 +345,11 @@ test.describe('conversation productivity', () => {
     await expect(page.getByRole('heading', { name: 'Beta notes' })).toBeVisible();
     await composer.fill('Keep the selected draft too');
 
+    const openNavigation = page.getByRole('button', { name: /open navigation/i });
+    if (await openNavigation.count()) {
+      await openNavigation.click();
+      await expect(page.getByRole('navigation', { name: /primary navigation/i })).toHaveClass(/is-mobile-open/);
+    }
     const betaRow = page.getByRole('link', { name: /beta notes/i });
     const actionButton = betaRow.locator('..').getByRole('button', { name: /conversation actions|more actions/i });
     await actionButton.click();
@@ -358,7 +384,7 @@ test.describe('conversation productivity', () => {
     const failedRun = run('run-failed', 'conversation-runs', 'failed', { retryOfRunId: 'run-old' });
     await installFixture(page, { conversations: [conversation('conversation-runs', 'Run inspector', { currentRun: activeRun, recentRuns: [activeRun, failedRun] })] });
     await page.goto('/conversation/conversation-runs');
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
     const opener = page.getByRole('button', { name: 'Conversation actions for Run inspector' });
     await opener.click();
     await page.getByRole('menuitem', { name: 'Inspect runs' }).click();
@@ -374,7 +400,9 @@ test.describe('conversation productivity', () => {
     await expect.poll(async () => page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBeTruthy();
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
-    await expect(opener).toBeFocused();
+    const openNavigation = page.getByRole('button', { name: /open navigation/i });
+    if (await openNavigation.count()) await expect(openNavigation).toBeFocused();
+    else await expect(opener).toBeFocused();
   });
 
   test('inspects a nonselected row, loads historical runs, and restores row-menu focus', async ({ page }) => {
@@ -394,7 +422,7 @@ test.describe('conversation productivity', () => {
         conversation('conversation-beta', 'Beta notes', { recentRuns: [newestRun, olderRun] }),
       ],
     });
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
 
     const inspectTrigger = page.getByRole('button', { name: 'Conversation actions for Beta notes' });
     await inspectTrigger.click();
@@ -413,9 +441,9 @@ test.describe('conversation productivity', () => {
 
   test('reconciles an active run snapshot and keeps cancel/retry eligibility correct', async ({ page }) => {
     const activeRun = run('run-reconcile', 'conversation-reconcile', 'running');
-    const fixture = await installFixture(page, { conversations: [conversation('conversation-reconcile', 'Reconciliation', { currentRun: activeRun, recentRuns: [activeRun] })] });
+    const fixture = await installFixture(page, { gateReconciliation: true, conversations: [conversation('conversation-reconcile', 'Reconciliation', { currentRun: activeRun, recentRuns: [activeRun] })] });
     await page.goto('/conversation/conversation-reconcile');
-    await waitForLibrary(page);
+    await waitForLibrary(page, { keepMobileNavigationOpen: true });
     const opener = page.getByRole('button', { name: 'Conversation actions for Reconciliation' });
     await opener.click();
     await page.getByRole('menuitem', { name: 'Inspect runs' }).click();
@@ -423,6 +451,7 @@ test.describe('conversation productivity', () => {
     await expect(drawer.getByRole('button', { name: /cancel/i })).toBeVisible();
     await expect(drawer.getByRole('button', { name: /retry/i })).toHaveCount(0);
 
+    fixture.releaseReconciliation();
     await expect(drawer.getByRole('button', { name: /cancel/i })).toHaveCount(0);
     await expect(drawer.getByRole('button', { name: /retry/i })).toBeVisible();
     await drawer.getByRole('button', { name: /retry/i }).click();

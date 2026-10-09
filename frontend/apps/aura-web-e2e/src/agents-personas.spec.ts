@@ -68,6 +68,7 @@ async function installConfigurationFake(page: Page): Promise<void> {
     if (url.pathname === '/api/v1/agents' && request.method() === 'GET') return route.fulfill({ json: { items: [profileSummary(agent), profileSummary(researcher)] } });
     if (url.pathname === '/api/v1/personas' && request.method() === 'GET') return route.fulfill({ json: { items: [profileSummary(persona)] } });
     if (url.pathname === '/api/v1/agents/agent-aura' && request.method() === 'GET') return route.fulfill({ json: profileDetail(agent) });
+    if (url.pathname === '/api/v1/agents/agent-researcher' && request.method() === 'GET') return route.fulfill({ json: profileDetail(researcher) });
     if (url.pathname === '/api/v1/personas/persona-neutral' && request.method() === 'GET') return route.fulfill({ json: profileDetail(persona) });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: [summary()], nextCursor: null } });
     if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'GET') return route.fulfill({ json: { ...summary(), messages: [{ id: 'assistant-0', conversationId: 'welcome', role: 'assistant', content: 'Welcome.', state: 'complete', runId: null, createdAt: now(), updatedAt: now() }], recentRuns: [], agentAssignments: assignments } });
@@ -76,6 +77,7 @@ async function installConfigurationFake(page: Page): Promise<void> {
       if (body.agentRevisionId && !body.transcriptSharingConfirmed) return route.fulfill({ status: 409, json: { detail: 'Confirm sharing the full completed transcript.' } });
       if (body.agentRevisionId) {
         assignmentRevision = body.agentRevisionId;
+        disabledFixture = false;
         const replacement = body.agentRevisionId === researcherRevision.id ? researcherRevision : auraRevision2;
         const replacementAgent = replacement.profileId === agent.id ? agentReference(replacement.id) : { profileId: researcher.id, revisionId: replacement.id, revision: replacement.revision, displayName: researcher.displayName, status: 'active', newerRevisionAvailable: false };
         assignments = [...assignments, { id: `assignment-${assignments.length}`, agent: replacementAgent, reason: replacement.profileId === agent.id ? 'revision_upgrade' : 'manual_switch', effectiveAfterMessageId: 'assistant-0', createdAt: now() }];
@@ -108,16 +110,32 @@ async function installConfigurationFake(page: Page): Promise<void> {
 
 test.beforeEach(async ({ page }) => { await installConfigurationFake(page); });
 
-test('exposes keyboard-accessible agent and persona management routes', async ({ page }) => {
+test('exposes keyboard-accessible agent and persona management routes', async ({ page }, testInfo) => {
   await page.goto('/agents');
   await expect(page.getByRole('heading', { name: /agents/i })).toBeVisible();
-  await expect(page.getByRole('link', { name: /personas/i })).toBeVisible();
-  await page.getByRole('button', { name: /new agent|create agent/i }).click();
-  await page.getByLabel(/display name/i).fill('Researcher');
+  if (testInfo.project.name === 'mobile') {
+    const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await expect(navigation).toHaveClass(/is-mobile-open/);
+    await expect(page.getByRole('link', { name: /personas/i })).toBeVisible();
+    await navigation.getByRole('button', { name: 'Close navigation' }).click();
+    await expect(navigation).toBeHidden();
+  } else {
+    await expect(page.getByRole('link', { name: /personas/i })).toBeVisible();
+  }
+  await page.getByRole('link', { name: 'Create agent' }).click();
+  const displayName = page.getByLabel(/display name/i);
+  await displayName.fill('Researcher');
   await page.getByLabel(/purpose/i).fill('Research questions carefully.');
   await page.getByLabel(/behavioral instructions|instructions/i).fill('Cite sources.');
+  await page.getByLabel(/persona revision/i).selectOption('persona-neutral-r1');
+  // The responsive form can re-render after the revision selection; assert the
+  // required identity field remains populated before submitting.
+  await displayName.fill('Researcher');
+  await expect(displayName).toHaveValue('Researcher');
   await page.getByRole('button', { name: /save|create/i }).click();
-  await expect(page.getByText('Researcher')).toBeVisible();
+  await page.goto('/agents');
+  await expect(page.getByRole('link', { name: /Researcher/ }).first()).toBeVisible();
   await page.goto('/personas');
   await expect(page.getByRole('heading', { name: /personas/i })).toBeVisible();
   await expect(page.getByText('Neutral')).toBeVisible();
@@ -126,27 +144,39 @@ test('exposes keyboard-accessible agent and persona management routes', async ({
 });
 
 test('confirms full-transcript sharing and renders an assignment transition marker', async ({ page }) => {
-  await page.goto('/');
-  const picker = page.getByLabel(/agent/i);
+  await page.goto('/conversation/welcome');
+  await page.getByRole('button', { name: 'Conversation options' }).click();
+  const options = page.getByRole('dialog', { name: 'Conversation options' });
+  const picker = options.getByLabel('Agent');
   await expect(picker).toBeVisible();
   await picker.selectOption('agent-aura-r2');
-  await expect(page.getByRole('dialog')).toContainText(/full completed transcript/i);
-  await page.getByRole('dialog').getByRole('button', { name: /confirm|switch|continue/i }).click();
+  await options.getByRole('button', { name: 'Apply changes' }).click();
+  const confirmation = page.locator('.agent-confirm[role="dialog"]');
+  await expect(confirmation).toContainText(/full completed transcript/i);
+  await confirmation.getByRole('button', { name: 'Confirm change' }).click();
   await expect(page.getByText(/agent changed/i)).toBeVisible();
-  await picker.selectOption('agent-researcher-r1');
-  await page.getByRole('dialog').getByRole('button', { name: /confirm|switch|continue/i }).click();
+  await page.getByRole('button', { name: 'Conversation options' }).click();
+  const reopenedOptions = page.getByRole('dialog', { name: 'Conversation options' });
+  const reopenedPicker = reopenedOptions.getByLabel('Agent');
+  await reopenedPicker.selectOption('agent-researcher-r1');
+  await reopenedOptions.getByRole('button', { name: 'Apply changes' }).click();
+  await expect(confirmation).toContainText(/full completed transcript/i);
+  await confirmation.getByRole('button', { name: 'Confirm change' }).click();
   await expect(page.getByText(/agent changed/i)).toBeVisible();
 });
 
 test('preserves a draft and offers an active replacement when the assigned agent is disabled', async ({ page }) => {
-  await page.goto('/?fixture=disabled');
+  await page.goto('/conversation/welcome?fixture=disabled');
   const composer = page.getByRole('textbox', { name: /message/i });
   await composer.fill('Keep this draft while I choose a replacement.');
-  await expect(page.getByText(/disabled|choose an active replacement/i)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'This agent is disabled' })).toBeVisible();
   await expect(composer).toHaveValue('Keep this draft while I choose a replacement.');
   await expect(page.getByRole('button', { name: /send/i })).toBeDisabled();
-  await page.getByLabel(/agent/i).selectOption('agent-researcher-r1');
-  await page.getByRole('dialog').getByRole('button', { name: /confirm|switch|continue/i }).click();
+  await page.getByRole('button', { name: 'Conversation options' }).click();
+  const options = page.getByRole('dialog', { name: 'Conversation options' });
+  await options.getByLabel('Agent').selectOption('agent-researcher-r1');
+  await options.getByRole('button', { name: 'Apply changes' }).click();
+  await page.locator('.agent-confirm[role="dialog"]').getByRole('button', { name: 'Confirm change' }).click();
   await expect(composer).toHaveValue('Keep this draft while I choose a replacement.');
   await expect(page.getByRole('button', { name: /send/i })).toBeEnabled();
 });

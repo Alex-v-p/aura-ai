@@ -1,6 +1,6 @@
 :host { display: block; height: 100%; }
 .app-shell { background: var(--canvas); color: var(--text); display: flex; height: 100dvh; min-height: 0; overflow: hidden; width: 100%; }
-.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex: 0 0 272px; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; padding: 1.5rem 1rem 1rem; position: relative; transition: flex-basis .18s ease, padding-inline .18s ease; z-index: 20; }
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex: 0 0 320px; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; padding: 1.5rem 1rem 1rem; position: relative; transition: flex-basis .18s ease, padding-inline .18s ease; z-index: 20; }
 .sidebar.is-collapsed { --compact-control-size: 2.75rem; --compact-nav-width: 3.375rem; flex-basis: 78px; align-items: center; padding-inline: .5rem; }
 .sidebar-top { align-items: center; display: flex; flex: 0 0 auto; justify-content: space-between; margin-bottom: 2.25rem; min-height: 2.25rem; width: 100%; }
 .wordmark { align-items: center; color: var(--text); display: inline-flex; font-size: 1.25rem; font-weight: 750; gap: .55rem; letter-spacing: -.04em; text-decoration: none; }
