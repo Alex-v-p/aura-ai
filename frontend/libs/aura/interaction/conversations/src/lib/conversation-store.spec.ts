@@ -1045,6 +1045,70 @@ describe('ConversationStore', () => {
     expect(noActivityStore.memoryActivityNotice()).toBeNull();
   });
 
+  it('keeps reconciling recall-only activity until a late extraction arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date().toISOString();
+      const assistantMessageId = 'assistant-memory-recall-late-create';
+      const run: Run = { id: 'run-memory-recall-late-create', conversationId: 'memory-recall-late-create', userMessageId: 'user-memory-recall-late-create', assistantMessageId, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+      const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'Your remembered answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+      const recalled: MemoryActivity = { id: 'memory-activity-recalled', action: 'recalled', status: 'completed', scope: { type: 'user' }, candidateId: null, memoryId: 'memory-recalled', memoryRevisionId: 'revision-recalled', policyRevisionId: 'policy-1', embeddingGenerationId: 'generation-1', reconciliationStatus: 'authoritative', occurredAt: now };
+      const created: MemoryActivity = { id: 'memory-activity-created-late', action: 'created', status: 'completed', scope: { type: 'user' }, candidateId: 'candidate-created-late', memoryId: 'memory-created-late', memoryRevisionId: 'revision-created-late', policyRevisionId: 'policy-1', embeddingGenerationId: 'generation-1', reconciliationStatus: 'authoritative', occurredAt: now };
+      const snapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'settled', items: [recalled], lastEventId: 'memory-recall', reconciledAt: now };
+      const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
+      api.getRunMemoryActivity = async () => snapshot;
+      const store = new ConversationStore(api);
+      await vi.waitFor(() => expect(store.loading()).toBe(false));
+
+      let attempts = 0;
+      api.getRunMemoryActivity = async () => {
+        attempts += 1;
+        return attempts === 1 ? { ...snapshot, items: [recalled] } : { ...snapshot, items: [recalled, created], lastEventId: 'memory-created' };
+      };
+      await store.retryMemoryActivity(run.id);
+      expect(store.selected().turns[0]?.memoryActivities).toEqual([recalled]);
+      expect(store.memoryActivityNotice()).toBeNull();
+
+      const applyEvent = (store as unknown as { applyEvent: (event: RunEvent) => void }).applyEvent.bind(store);
+      applyEvent({ schemaVersion: 1, eventId: 'memory-recall-event', sequence: 1, eventType: 'memory.activity', runId: run.id, conversationId: run.conversationId, occurredAt: now, data: recalled } as RunEvent);
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(attempts).toBe(2);
+      expect(store.selected().turns[0]?.memoryActivities).toEqual([recalled, created]);
+      expect(memoryActivityIndicators(store.selected().turns[0]?.memoryActivities ?? [])).toEqual({ recalled: true, updated: true });
+      expect(store.memoryActivityNotice()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('silently exhausts reconciliation for recall-only activity', async () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date().toISOString();
+      const assistantMessageId = 'assistant-memory-recall-only';
+      const run: Run = { id: 'run-memory-recall-only', conversationId: 'memory-recall-only', userMessageId: 'user-memory-recall-only', assistantMessageId, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+      const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'A recalled answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+      const recalled: MemoryActivity = { id: 'memory-activity-recall-only', action: 'recalled', status: 'completed', scope: { type: 'user' }, candidateId: null, memoryId: 'memory-recall-only', memoryRevisionId: 'revision-recall-only', policyRevisionId: 'policy-1', embeddingGenerationId: 'generation-1', reconciliationStatus: 'authoritative', occurredAt: now };
+      const snapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'settled', items: [recalled], lastEventId: 'memory-recall-only', reconciledAt: now };
+      const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
+      api.getRunMemoryActivity = async () => snapshot;
+      const store = new ConversationStore(api);
+      await vi.waitFor(() => expect(store.loading()).toBe(false));
+
+      let attempts = 0;
+      api.getRunMemoryActivity = async () => { attempts += 1; return snapshot; };
+      await store.retryMemoryActivity(run.id);
+      await vi.advanceTimersByTimeAsync(400_000);
+
+      expect(attempts).toBe(9);
+      expect(store.selected().turns[0]?.memoryActivities).toEqual([recalled]);
+      expect(store.memoryActivityNotice()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('silently retries an expected missing projection with bounded backoff', async () => {
     vi.useFakeTimers();
     try {

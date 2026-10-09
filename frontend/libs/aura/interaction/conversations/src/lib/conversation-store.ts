@@ -736,7 +736,10 @@ export class ConversationStore {
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
   private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
   private applyMemoryActivity(conversationId: string, runId: string, activity: MemoryActivity): void {
-    this.clearMemoryActivityRetry(runId);
+    // Recall is published synchronously with the answer while extraction may
+    // still be settling. Keep reconciliation alive until a non-recall
+    // extraction activity becomes authoritative.
+    if (this.isAuthoritativeMemoryExtraction(activity)) this.clearMemoryActivityRetry(runId);
     const conversation = this.find(conversationId); if (!conversation) return;
     this.setMemoryActivityNotice(conversationId, null);
     this.clearMemoryPopupError(activity.id);
@@ -820,6 +823,7 @@ export class ConversationStore {
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
   private setMemoryActivityNotice(id: string, notice: string | null): void { this.memoryActivityNotices.update((notices) => ({ ...notices, [id]: notice })); }
   private isPendingMemoryActivity(activity: MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
+  private isAuthoritativeMemoryExtraction(activity: MemoryActivity): boolean { return activity.action !== 'recalled' && activity.reconciliationStatus === 'authoritative'; }
   private clearMemoryPopupError(activityId: string): void {
     this.memoryPopupErrors.update((items) => {
       if (!(activityId in items)) return items;
@@ -840,8 +844,7 @@ export class ConversationStore {
       // visible without a reload. If it remains empty, no indicator or banner
       // is produced for ignored/rejected extraction.
       const terminal = snapshot.processingStatus === 'settled'
-        && snapshot.items.length > 0
-        && snapshot.items.every((item) => item.reconciliationStatus === 'authoritative');
+        && snapshot.items.some((item) => this.isAuthoritativeMemoryExtraction(item));
       if (terminal) this.clearMemoryActivityRetry(runId);
       else this.scheduleMemoryActivityRetry(conversationId, runId);
     } catch (error: unknown) { this.handleMemoryActivityReadFailure(conversationId, runId, error); }
