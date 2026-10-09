@@ -1211,13 +1211,20 @@
           "agentVersion": { "type": "integer", "minimum": 1 }
         }
       },
+      "MemoryRecallMode": {
+        "type": "string",
+        "enum": ["off", "automatic"],
+        "description": "Controls ambient conversational recall only. Off does not disable extraction, review, reinforcement, embedding, or storage."
+      },
       "AgentMemoryPolicy": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "agentProfileId", "revision", "sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds", "createdAt"],
+        "required": ["id", "agentProfileId", "revision", "recallMode", "automaticRecallThreshold", "sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds", "createdAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "agentProfileId": { "type": "string", "format": "uuid" },
           "revision": { "type": "integer", "minimum": 1 },
+          "recallMode": { "$ref": "#/components/schemas/MemoryRecallMode" },
+          "automaticRecallThreshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "Minimum normalized query-match score required for automatic recall admission." },
           "sharedUserRead": { "type": "boolean" },
           "currentAgentRead": { "type": "boolean" },
           "sharedUserPromotion": { "type": "boolean" },
@@ -1232,6 +1239,8 @@
         "type": "object", "additionalProperties": false,
         "required": ["sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds", "expectedRevision"],
         "properties": {
+          "recallMode": { "allOf": [{ "$ref": "#/components/schemas/MemoryRecallMode" }], "default": "automatic", "description": "Optional for backward compatibility. Omitted values create an automatic policy." },
+          "automaticRecallThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "Optional for backward compatibility. Omitted values use the 0.70 automatic query-match threshold." },
           "sharedUserRead": { "type": "boolean" },
           "currentAgentRead": { "type": "boolean" },
           "sharedUserPromotion": { "type": "boolean" },

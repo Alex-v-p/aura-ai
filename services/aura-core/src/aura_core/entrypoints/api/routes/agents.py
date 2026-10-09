@@ -19,6 +19,7 @@ from aura_core.domains.interaction.agents.public import (
     ConfigurationStatus,
     ConfigurationVersionConflict,
     MemoryPolicy,
+    MemoryRecallMode,
 )
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.entrypoints.api.state import AppState
@@ -61,6 +62,12 @@ class AgentMemoryPolicyRequest(BaseModel):
     context_budget_fraction: float = Field(gt=0, le=0.2, alias="contextBudgetFraction")
     fallback_agent_profile_ids: list[UUID] = Field(  # pyright: ignore[reportUnknownVariableType]
         default_factory=list, max_length=64, alias="fallbackAgentProfileIds"
+    )
+    recall_mode: MemoryRecallMode = Field(
+        default=MemoryRecallMode.AUTOMATIC, alias="recallMode"
+    )
+    automatic_recall_threshold: float = Field(
+        default=0.70, ge=0, le=1, alias="automaticRecallThreshold"
     )
     expected_revision: int = Field(ge=1, alias="expectedRevision")
 
@@ -183,6 +190,8 @@ def memory_policy_payload(item: MemoryPolicy) -> dict[str, object]:
         "maxMemories": item.max_memories,
         "contextBudgetFraction": item.context_budget_fraction,
         "fallbackAgentProfileIds": [str(value) for value in item.fallback_agent_profile_ids],
+        "recallMode": item.recall_mode.value,
+        "automaticRecallThreshold": item.automatic_recall_threshold,
         "createdAt": item.created_at.isoformat(),
     }
 
@@ -349,6 +358,8 @@ async def create_agent_memory_policy(
             body.context_budget_fraction,
             body.shared_user_promotion,
             tuple(body.fallback_agent_profile_ids),
+            recall_mode=body.recall_mode,
+            automatic_recall_threshold=body.automatic_recall_threshold,
         )
         result = await agent_call(
             request,

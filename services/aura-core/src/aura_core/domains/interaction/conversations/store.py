@@ -216,22 +216,30 @@ class ConversationStore:
                 )
             ))
             raw_items: Sequence[object] = tuple(result.memories)
-            items = normalize_memory_evidence(raw_items)
+            items = normalize_memory_evidence(raw_items, limit=policy.max_memories)
             run.memory_embedding_generation_id = result.embedding_generation_id
             # Metadata is explicitly identifier/score-only.  The in-memory
             # repository is the durable run seam used by unit/system tests.
             degraded = bool(getattr(result, "degraded", False))
             degradation_reason = getattr(result, "degradation_reason", None)
+            gate_outcome = getattr(result, "gate_outcome", None)
+            recall_outcome = (
+                "skipped"
+                if isinstance(gate_outcome, str) and gate_outcome.startswith("skipped/")
+                else "degraded" if degraded else "ok"
+            )
             run.memory_recall_metadata = serialize_memory_recall_metadata(
                 items,
                 policy_revision_id=run.memory_policy_revision_id,
                 embedding_generation_id=result.embedding_generation_id,
                 retrieval_version=str(
-                    getattr(result, "retrieval_version", "memory-retrieval-v1")
+                    getattr(result, "retrieval_version", "memory-retrieval-v2")
                 ),
-                outcome="degraded" if degraded else "ok",
+                outcome=recall_outcome,
                 fallback_used=bool(getattr(result, "fallback_used", False)),
                 degradation_reason=degradation_reason,
+                recall_mode=getattr(getattr(policy, "recall_mode", None), "value", None),
+                gate_outcome=gate_outcome,
             )
             return items, policy.context_budget_fraction
         except Exception:
@@ -239,7 +247,7 @@ class ConversationStore:
                 (),
                 policy_revision_id=run.memory_policy_revision_id,
                 embedding_generation_id=None,
-                retrieval_version="memory-retrieval-v1",
+                retrieval_version="memory-retrieval-v2",
                 outcome="degraded",
                 fallback_used=False,
                 degradation_reason="recall_failed",

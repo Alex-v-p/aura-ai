@@ -10,7 +10,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
@@ -410,6 +410,25 @@ def _housekeeping_context(processor: object, operation: str) -> MemoryTraceConte
     return MemoryTraceContext(trace_id=uuid4().hex, span_id=new_span_id())
 
 
+def _configure_worker_memory_recall(
+    store: SqlConversationStore,
+    sessions: Any,
+    *,
+    settings: object,
+    metrics: MetadataMetrics,
+) -> object:
+    """Attach the shared owner-scoped memory recall boundary to run execution."""
+
+    from aura_core.bootstrap import memory_uow
+
+    repository = memory_uow.memory_repository(sessions, metrics=metrics)
+    store.set_memory_recall(
+        memory_uow.memory_recall_service(repository, settings=settings, metrics=metrics)
+    )
+    store.set_memory_activity_repository(repository)
+    return repository
+
+
 async def run_memory_housekeeping(processor: object, interval_seconds: float = 60.0) -> None:
     """Run maintenance and resumable reindex work outside the run loop."""
 
@@ -447,12 +466,22 @@ async def run_forever(settings: Settings | None = None) -> None:
     )
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
+    metrics, telemetry = make_worker_telemetry()
+    # The worker composes the same owner-scoped recall boundary as the API.
+    # Run execution happens in this process too, so leaving this unset would
+    # silently bypass pinned automatic/off policies before prompt compilation.
+    _configure_worker_memory_recall(
+        store,
+        sessions,
+        settings=config,
+        metrics=metrics,
+    )
+
     from aura_core.bootstrap import memory_uow
 
     command_factory = getattr(memory_uow, "memory_command_factory", None)
     if callable(command_factory):
         store.set_memory_command_factory(cast(Callable[..., OutboxCommand], command_factory))
-    metrics, telemetry = make_worker_telemetry()
     consumer = NatsRunConsumer(config.nats_url, metrics=metrics)
     from aura_core.domains.knowledge.memory import public as memory_public
 

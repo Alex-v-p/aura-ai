@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 0acb173e6dc50662349cb9c02b732569b0ca7af301e09a7437fbb2254f54e3e9
+// Contract SHA-256: 1ae73ee509d3837c6b6e4082caa6957c1686244b13ebdac6a3dbddd0ae7b0467
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -101,9 +101,11 @@ export type ResumeMemoryReindexRequest = { readonly "generationId": string; };
 
 export type AgentMemoryPolicyCollection = { readonly "items": ReadonlyArray<AgentMemoryPolicy>; readonly "attachedPolicyRevisionId": string; readonly "agentVersion": number; };
 
-export type AgentMemoryPolicy = { readonly "id": string; readonly "agentProfileId": string; readonly "revision": number; readonly "sharedUserRead": boolean; readonly "currentAgentRead": boolean; readonly "sharedUserPromotion": boolean; readonly "fallbackRelevanceThreshold": number; readonly "maxMemories": number; readonly "contextBudgetFraction": number; readonly "fallbackAgentProfileIds": ReadonlyArray<string>; readonly "createdAt": string; };
+export type MemoryRecallMode = "off" | "automatic";
 
-export type CreateAgentMemoryPolicyRequest = { readonly "sharedUserRead": boolean; readonly "currentAgentRead": boolean; readonly "sharedUserPromotion": boolean; readonly "fallbackRelevanceThreshold": number; readonly "maxMemories": number; readonly "contextBudgetFraction": number; readonly "fallbackAgentProfileIds": ReadonlyArray<string>; readonly "expectedRevision": number; };
+export type AgentMemoryPolicy = { readonly "id": string; readonly "agentProfileId": string; readonly "revision": number; readonly "recallMode": MemoryRecallMode; readonly "automaticRecallThreshold": number; readonly "sharedUserRead": boolean; readonly "currentAgentRead": boolean; readonly "sharedUserPromotion": boolean; readonly "fallbackRelevanceThreshold": number; readonly "maxMemories": number; readonly "contextBudgetFraction": number; readonly "fallbackAgentProfileIds": ReadonlyArray<string>; readonly "createdAt": string; };
+
+export type CreateAgentMemoryPolicyRequest = { readonly "recallMode"?: MemoryRecallMode; readonly "automaticRecallThreshold"?: number; readonly "sharedUserRead": boolean; readonly "currentAgentRead": boolean; readonly "sharedUserPromotion": boolean; readonly "fallbackRelevanceThreshold": number; readonly "maxMemories": number; readonly "contextBudgetFraction": number; readonly "fallbackAgentProfileIds": ReadonlyArray<string>; readonly "expectedRevision": number; };
 
 export type AttachAgentMemoryPolicyRequest = { readonly "expectedAgentVersion": number; };
 

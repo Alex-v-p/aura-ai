@@ -1,6 +1,6 @@
 component:
   id: aura.knowledge.memory_retrieval
-  version: 1.0.0
+  version: 1.1.0
   owner: knowledge.memory
   category: retrieval
 input:
@@ -24,6 +24,7 @@ metrics:
   - memory_query_embedding_duration_ms
   - memory_retrieval_candidate_count
   - memory_recall_count
+  - memory_recall_gate_outcome
   - memory_fallback_outcome
   - memory_context_tokens
   - memory_retrieval_errors
@@ -35,6 +36,7 @@ metric_semantics:
   memory_query_embedding_duration_ms: Query embedding duration for the active owner generation; distinct from persisted-vector search.
   memory_retrieval_candidate_count: Bounded candidate count after policy and lifecycle filters.
   memory_recall_count: Number of selected memory revisions admitted to context.
+  memory_recall_gate_outcome: Bounded automatic recall gate result without memory content.
   memory_fallback_outcome: Bounded primary-result fallback decision; never reveals foreign-scope existence.
   memory_context_tokens: Estimated metadata-only token count admitted to the memory evidence budget.
   memory_retrieval_errors: Count of fail-closed retrieval or telemetry errors by bounded class.
@@ -45,7 +47,7 @@ evaluators:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency, retrieval_stage, scope_type, degradation]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, memory_id, memory_revision_id, memory_policy_revision_id, generation_id, embedding_generation_id, fallback_grant_id, retrieval_version, selection_order, candidate_count, recalled_count, context_tokens]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, memory_id, memory_revision_id, memory_policy_revision_id, generation_id, embedding_generation_id, fallback_grant_id, retrieval_version, recall_mode, gate_outcome, selection_order, candidate_count, recalled_count, context_tokens]
   prohibited: [content, memory_text, evidence, provenance, prompt, response, vector, payload, endpoint, token, credential, owner_subject, owner, subject]
 retention:
   process_buffer: bounded

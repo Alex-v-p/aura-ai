@@ -679,6 +679,65 @@ async def test_completed_question_delivers_and_processes_durable_memory_end_to_e
         await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_off_agent_recall_is_skipped_while_memory_processing_is_queued(
+    api_app: FastAPI,
+) -> None:
+    """Task-focused agents omit ambient recall without disabling extraction."""
+
+    client, session = await owner_client(api_app)
+    try:
+        persona = (await client.get("/api/v1/personas")).json()["items"][0]
+        created_agent = await client.post(
+            "/api/v1/agents",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={
+                "displayName": "Task-focused test agent",
+                "purpose": "Keep task context narrow.",
+                "instructions": "Answer only the current task.",
+                "personaRevisionId": persona["currentRevision"]["id"],
+            },
+        )
+        assert created_agent.status_code == 201, created_agent.text
+        agent_revision_id = created_agent.json()["currentRevision"]["id"]
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={
+                "message": "Remember that this turn must stay task-focused.",
+                "modelId": "chat",
+                "agentRevisionId": agent_revision_id,
+            },
+        )
+        assert created.status_code == 202, created.text
+        run_id = UUID(created.json()["run"]["id"])
+        await api_app.state.aura.coordinator.execute(run_id, api_app.state.aura.provider)
+
+        conversation, run = await api_app.state.aura.store.find_run_any(run_id)
+        assert str(conversation.agent_revision_id) == agent_revision_id
+        assert run.status.value == "completed"
+        assert run.memory_recall_metadata is not None
+        assert run.memory_recall_metadata["recallMode"] == "off"
+        assert run.memory_recall_metadata["gateOutcome"] == "skipped/policy_off"
+        assert run.memory_recall_metadata["selections"] == []
+        assert run.memory_recall_metadata["embeddingGenerationId"] is None
+
+        execution_command = await api_app.state.aura.outbox.receive()
+        assert execution_command.topic == "aura.runs.execute.v1"
+        memory_command = await api_app.state.aura.outbox.receive()
+        assert memory_command.topic == "aura.memory.process.v1"
+        assert memory_command.run_id == run_id
+    finally:
+        await client.aclose()
+
+
 class PausingModel(ScriptedModel):
     def __init__(self) -> None:
         super().__init__(("partial",))

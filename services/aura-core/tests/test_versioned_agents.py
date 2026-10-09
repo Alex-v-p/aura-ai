@@ -7,6 +7,7 @@ must remain the same for every entrypoint.
 """
 
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -14,10 +15,14 @@ from aura_core.domains.execution.runs.public import RunCoordinator, RunStatus
 from aura_core.domains.interaction.agents.public import (
     GENERAL_REVISION_ID,
     AgentCatalog,
+    AgentMemoryRepository,
     AgentRevision,
     ConfigurationDisabled,
+    ConfigurationIdempotencyConflict,
     ConfigurationStatus,
     ConfigurationVersionConflict,
+    MemoryPolicy,
+    MemoryRecallMode,
     PromptBundleRevision,
     PromptCompiler,
     PromptComponentRevision,
@@ -100,6 +105,38 @@ def test_revisions_are_sequenced_immutably_and_require_expected_version() -> Non
             "stale",
             "stale",
             persona_revision.id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_policy_idempotency_fingerprint_includes_recall_controls() -> None:
+    catalog = AgentCatalog()
+    repository = AgentMemoryRepository(catalog)
+    profile = catalog.list_agents()[0]
+    policy = MemoryPolicy(
+        uuid4(),
+        profile.id,
+        2,
+        max_memories=2,
+        context_budget_fraction=0.05,
+        recall_mode=MemoryRecallMode.AUTOMATIC,
+        automatic_recall_threshold=0.70,
+    )
+
+    created = await repository.create_memory_policy("issuer", "owner", policy, "same-key")
+    assert created is policy
+
+    with pytest.raises(ConfigurationIdempotencyConflict):
+        await repository.create_memory_policy(
+            "issuer",
+            "owner",
+            replace(
+                policy,
+                id=uuid4(),
+                recall_mode=MemoryRecallMode.OFF,
+                automatic_recall_threshold=0.85,
+            ),
+            "same-key",
         )
 
 

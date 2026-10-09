@@ -74,9 +74,11 @@ class SqlAgentSeeder:
                     shared_user_read=True,
                     current_agent_read=True,
                     fallback_relevance_threshold=0.5,
-                    max_memories=8,
-                    context_budget_fraction=0.2,
+                    max_memories=2,
+                    context_budget_fraction=0.05,
                     allow_shared_user_promotion=False,
+                    recall_mode="automatic",
+                    automatic_recall_threshold=0.7,
                 )
             )
             session.add(

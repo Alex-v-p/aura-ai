@@ -83,6 +83,16 @@ def upgrade() -> None:
             "ON memory_policy_revisions(principal_issuer, principal_subject, agent_profile_id)"
         )
     )
+    # Declarative bootstrap metadata may have created this table with only its
+    # primary key.  CREATE TABLE IF NOT EXISTS then skips the table definition,
+    # so install the conflict target independently before any seed upsert.
+    op.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_policy_owner_revision "
+            "ON memory_policy_revisions "
+            "(principal_issuer, principal_subject, agent_profile_id, revision)"
+        )
+    )
     seed_policy = text(
         "INSERT INTO memory_policy_revisions "
         "(id, principal_issuer, principal_subject, agent_profile_id, revision, "

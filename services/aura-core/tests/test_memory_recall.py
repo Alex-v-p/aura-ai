@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
-from aura_core.domains.interaction.agents.public import MemoryPolicy
+from aura_core.domains.interaction.agents.public import MemoryPolicy, MemoryRecallMode
 from aura_core.domains.knowledge.memory.public import (
     MemoryEmbeddingGeneration,
     MemoryKind,
@@ -168,6 +168,33 @@ async def test_recall_enforces_generation_scope_lifecycle_and_budget() -> None:
     )
     assert historical.candidates
     assert all(item.scope_type is MemoryScopeType.USER for item in historical.candidates)
+
+
+@pytest.mark.asyncio
+async def test_off_policy_skips_generation_embedding_and_storage_lookup() -> None:
+    class NoRecallRepository:
+        async def get_active_embedding_generation(self, *_args: object) -> None:
+            raise AssertionError("off recall must not resolve an embedding generation")
+
+    events: list[MemoryRecallTelemetryEvent] = []
+
+    class Collector:
+        def record(self, event: MemoryRecallTelemetryEvent) -> None:
+            events.append(event)
+
+    agent = uuid4()
+    policy = MemoryPolicy(agent, agent, 1, recall_mode=MemoryRecallMode.OFF)
+    result = await MemoryRecallService(
+        NoRecallRepository(), telemetry=Collector()
+    ).recall(
+        MemoryRecallRequest(ISSUER, SUBJECT, agent, "private task", policy)
+    )
+
+    assert result.candidates == ()
+    assert result.gate_outcome == "skipped/policy_off"
+    assert events and events[-1].outcome == "skipped"
+    assert events[-1].gate_outcome == "policy_off"
+    assert events[-1].recall_mode == "off"
 
 
 @pytest.mark.asyncio

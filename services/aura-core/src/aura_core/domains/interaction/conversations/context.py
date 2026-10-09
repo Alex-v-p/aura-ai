@@ -63,6 +63,7 @@ class MemoryEvidence:
     validity_score: float = 0.0
     scope_score: float = 0.0
     final_score: float = 0.0
+    query_match_score: float = 0.0
     scope_type: str = "user"
     agent_profile_id: UUID | None = None
     provenance_ids: tuple[UUID, ...] = ()
@@ -134,6 +135,7 @@ def normalize_memory_evidence(items: Sequence[object], *, limit: int = 8) -> lis
                     validity_score=_memory_float(item, "validity_score", "validity"),
                     scope_score=_memory_float(item, "scope_score", "scopeScore"),
                     final_score=_memory_float(item, "final_score", "finalScore"),
+                    query_match_score=_memory_float(item, "query_match_score", "queryMatchScore"),
                     scope_type=_memory_scope(item),
                     agent_profile_id=(
                         UUID(str(_memory_value(item, "agent_profile_id")))
@@ -166,6 +168,8 @@ def serialize_memory_recall_metadata(
     outcome: str,
     fallback_used: bool,
     degradation_reason: str | None = None,
+    recall_mode: str | None = None,
+    gate_outcome: str | None = None,
 ) -> dict[str, object]:
     """Serialize one content-free recall snapshot for any run repository."""
 
@@ -188,6 +192,7 @@ def serialize_memory_recall_metadata(
                 "scope": item.scope_type,
                 "scopeScore": item.scope_score,
                 "finalScore": item.final_score,
+                "queryMatchScore": item.query_match_score,
                 "agentProfileId": (
                     str(item.agent_profile_id) if item.agent_profile_id else None
                 ),
@@ -211,6 +216,10 @@ def serialize_memory_recall_metadata(
     }
     if degradation_reason is not None:
         result["degradationReason"] = degradation_reason
+    if recall_mode is not None:
+        result["recallMode"] = recall_mode
+    if gate_outcome is not None:
+        result["gateOutcome"] = gate_outcome
     return result
 
 

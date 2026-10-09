@@ -87,6 +87,16 @@ class MemoryPolicyRevisionRow(Base):
     max_memories: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     context_budget_fraction: Mapped[float] = mapped_column(nullable=False, default=0.2)
     allow_shared_user_promotion: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Recall mode is persisted as a value at the SQL boundary.  The public
+    # agent domain exposes the provider-neutral enum; keeping this mapping a
+    # short string preserves compatibility with existing policy revisions and
+    # lets migrations backfill old rows without rewriting their identity.
+    recall_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="automatic", server_default="automatic"
+    )
+    automatic_recall_threshold: Mapped[float] = mapped_column(
+        nullable=False, default=0.7, server_default="0.7"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

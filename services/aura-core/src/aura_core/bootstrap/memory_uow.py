@@ -1018,6 +1018,8 @@ def memory_recall_service(
                     generation_id=event.generation_id,
                     run_id=event.run_id,
                     conversation_id=event.conversation_id,
+                    recall_mode=event.recall_mode,
+                    gate_outcome=event.gate_outcome,
                     retrieval_version=event.retrieval_version,
                 )
             except Exception:

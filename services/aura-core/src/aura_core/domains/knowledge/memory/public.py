@@ -2704,44 +2704,6 @@ class MemoryProcessingService:
             if not callable(infer):
                 raise MemoryValidationError("structured inference provider is unavailable")
             raw = await infer(request)
-            self._emit(
-                "memory.extraction",
-                extraction_started,
-                trace_id=trace_id,
-                outcome="ok",
-                attempt_count=job.attempt_count,
-            )
-            candidate = self._action_from_provider(
-                raw,
-                job,
-                evidence_handles,
-                run_agent_profile_id=run_agent_profile_id or job.agent_profile_id,
-            )
-            # Provider output cannot choose ownership or bind a candidate to a
-            # different job.  Normalize the identity to the server job before
-            # any persistence, while retaining only policy-relevant fields.
-            if candidate.issuer != job.issuer or candidate.subject != job.subject:
-                raise MemoryValidationError("structured action owner mismatch")
-            if candidate.job_id != job.id:
-                candidate = MemoryCandidate(
-                    candidate.id,
-                    job.id,
-                    job.issuer,
-                    job.subject,
-                    candidate.action,
-                    candidate.content,
-                    candidate.kind,
-                    candidate.scope,
-                    candidate.confidence,
-                    candidate.importance,
-                    candidate.half_life_days,
-                    candidate.valid_to,
-                    candidate.sensitivity,
-                    candidate.grounded_message_ids,
-                    candidate.related_memory_id,
-                    candidate.state,
-                    candidate.decision_reason,
-                )
         except Exception:
             self._emit(
                 "memory.extraction",
@@ -2764,6 +2726,75 @@ class MemoryProcessingService:
                 state=CandidateState.RETRYABLE,
                 decision_reason="provider_error",
             )
+        else:
+            try:
+                candidate = self._action_from_provider(
+                    raw,
+                    job,
+                    evidence_handles,
+                    run_agent_profile_id=run_agent_profile_id or job.agent_profile_id,
+                )
+                # Provider output cannot choose ownership or bind a candidate
+                # to a different job.  Normalize the identity to the server
+                # job before any persistence, while retaining only
+                # policy-relevant fields.
+                if candidate.issuer != job.issuer or candidate.subject != job.subject:
+                    raise MemoryValidationError("structured action owner mismatch")
+                if candidate.job_id != job.id:
+                    candidate = MemoryCandidate(
+                        candidate.id,
+                        job.id,
+                        job.issuer,
+                        job.subject,
+                        candidate.action,
+                        candidate.content,
+                        candidate.kind,
+                        candidate.scope,
+                        candidate.confidence,
+                        candidate.importance,
+                        candidate.half_life_days,
+                        candidate.valid_to,
+                        candidate.sensitivity,
+                        candidate.grounded_message_ids,
+                        candidate.related_memory_id,
+                        candidate.state,
+                        candidate.decision_reason,
+                    )
+            except MemoryValidationError:
+                # The provider transport succeeded, but its schema-valid
+                # payload did not satisfy the domain action contract.  This is
+                # terminal review work, not an outage: retrying would replay
+                # the same malformed decision indefinitely.  Do not retain
+                # any provider-supplied content in this diagnostic outcome.
+                self._emit(
+                    "memory.extraction",
+                    extraction_started,
+                    trace_id=trace_id,
+                    outcome="error",
+                    error_class="validation",
+                    attempt_count=job.attempt_count,
+                )
+                candidate = MemoryCandidate(
+                    uuid5(MEMORY_ID_NAMESPACE, f"candidate:{job.id}"),
+                    job.id,
+                    job.issuer,
+                    job.subject,
+                    MemoryAction.REVIEW,
+                    None,
+                    None,
+                    None,
+                    0.0,
+                    state=CandidateState.REVIEW,
+                    decision_reason="invalid_provider_output",
+                )
+            else:
+                self._emit(
+                    "memory.extraction",
+                    extraction_started,
+                    trace_id=trace_id,
+                    outcome="ok",
+                    attempt_count=job.attempt_count,
+                )
         if candidate.state is CandidateState.RETRYABLE:
             self.candidates[candidate.id] = candidate
             persist_candidate = cast(
@@ -2813,14 +2844,17 @@ class MemoryProcessingService:
             )
         policy_started = monotonic()
         provider_requested_review = candidate.decision_reason == "provider_requested_review"
-        decision = decide_candidate(
-            candidate,
-            user_message_ids=user_message_ids,
-            run_agent_profile_id=run_agent_profile_id or job.agent_profile_id,
-            existing_conflict=conflict,
-            user_content=user_content,
-            allow_shared_user_promotion=allow_shared_user_promotion,
-        )
+        if candidate.decision_reason == "invalid_provider_output":
+            decision = CandidateDecision(CandidateState.REVIEW, "invalid_provider_output")
+        else:
+            decision = decide_candidate(
+                candidate,
+                user_message_ids=user_message_ids,
+                run_agent_profile_id=run_agent_profile_id or job.agent_profile_id,
+                existing_conflict=conflict,
+                user_content=user_content,
+                allow_shared_user_promotion=allow_shared_user_promotion,
+            )
         if provider_requested_review and decision.state is CandidateState.ACCEPTED:
             decision = CandidateDecision(CandidateState.REVIEW, "provider_requested_review")
         self._emit(

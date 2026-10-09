@@ -6,7 +6,8 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from enum import StrEnum
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
 from aura_core.domains.interaction.personas.public import (
@@ -57,6 +58,13 @@ def is_platform_memory_policy(policy_id: UUID, agent_profile_id: UUID) -> bool:
     return policy_id == platform_memory_policy_id(agent_profile_id)
 
 
+class MemoryRecallMode(StrEnum):
+    """How an immutable agent memory policy admits conversation context."""
+
+    OFF = "off"
+    AUTOMATIC = "automatic"
+
+
 @dataclass(frozen=True, slots=True)
 class AgentRevision:
     id: UUID
@@ -91,6 +99,11 @@ class MemoryPolicy:
     allow_shared_user_promotion: bool = False
     fallback_agent_profile_ids: tuple[UUID, ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Recall is intentionally explicit and versioned with the immutable
+    # policy.  Keeping these fields at the end preserves source compatibility
+    # for older positional policy constructors and persisted revisions.
+    recall_mode: MemoryRecallMode = MemoryRecallMode.AUTOMATIC
+    automatic_recall_threshold: float = 0.70
 
     def __post_init__(self) -> None:
         if not 0 <= self.fallback_relevance_threshold <= 1:
@@ -103,6 +116,16 @@ class MemoryPolicy:
             raise ValueError("an agent cannot grant itself as a fallback")
         if len(set(self.fallback_agent_profile_ids)) != len(self.fallback_agent_profile_ids):
             raise ValueError("fallback grants must be unique")
+        raw_recall_mode = cast(object, self.recall_mode)
+        if raw_recall_mode is None:
+            object.__setattr__(self, "recall_mode", MemoryRecallMode.AUTOMATIC)
+        elif not isinstance(raw_recall_mode, MemoryRecallMode):
+            try:
+                object.__setattr__(self, "recall_mode", MemoryRecallMode(raw_recall_mode))
+            except ValueError as exc:
+                raise ValueError("memory recall mode must be off or automatic") from exc
+        if not 0 <= self.automatic_recall_threshold <= 1:
+            raise ValueError("automatic recall threshold must be between zero and one")
 
 
 # More explicit aliases make the public boundary easy to discover without
@@ -244,7 +267,13 @@ class AgentCatalog:
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
         )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
-            GENERAL_MEMORY_POLICY_ID, GENERAL_PROFILE_ID, 1
+            GENERAL_MEMORY_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            1,
+            max_memories=2,
+            context_budget_fraction=0.05,
+            recall_mode=MemoryRecallMode.AUTOMATIC,
+            automatic_recall_threshold=0.70,
         )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
@@ -315,7 +344,13 @@ class AgentCatalog:
         if memory_policy_revision_id == GENERAL_MEMORY_POLICY_ID:
             memory_policy_revision_id = uuid5(NAMESPACE, f"agent-memory-policy:{profile_id}:1")
             self.memory_policies[memory_policy_revision_id] = MemoryPolicy(
-                memory_policy_revision_id, profile_id, 1
+                memory_policy_revision_id,
+                profile_id,
+                1,
+                max_memories=2,
+                context_budget_fraction=0.05,
+                recall_mode=MemoryRecallMode.OFF,
+                automatic_recall_threshold=0.70,
             )
         policy = self.memory_policies.get(memory_policy_revision_id)
         if policy is None or policy.agent_profile_id != profile_id:
@@ -415,8 +450,11 @@ class AgentCatalog:
         context_budget_fraction: float = 0.2,
         allow_shared_user_promotion: bool = False,
         fallback_agent_profile_ids: tuple[UUID, ...] = (),
+        recall_mode: MemoryRecallMode = MemoryRecallMode.AUTOMATIC,
+        automatic_recall_threshold: float = 0.70,
         idempotency_key: str | None = None,
     ) -> MemoryPolicy:
+        recall_mode = MemoryRecallMode(recall_mode)
         fingerprint = _canonical_fingerprint(
             "memory-policy",
             {
@@ -428,6 +466,8 @@ class AgentCatalog:
                 "maxMemories": max_memories,
                 "contextBudgetFraction": context_budget_fraction,
                 "fallbackAgentProfileIds": [str(item) for item in fallback_agent_profile_ids],
+                "recallMode": recall_mode.value,
+                "automaticRecallThreshold": automatic_recall_threshold,
             },
         )
         if idempotency_key is not None and idempotency_key in self.policy_idempotency:
@@ -473,6 +513,8 @@ class AgentCatalog:
             context_budget_fraction,
             allow_shared_user_promotion,
             tuple(fallback_agent_profile_ids),
+            recall_mode=recall_mode,
+            automatic_recall_threshold=automatic_recall_threshold,
         )
         self.memory_policies[policy.id] = policy
         if idempotency_key is not None:
@@ -716,6 +758,8 @@ class AgentMemoryRepository:
                 "fallbackAgentProfileIds": [
                     str(item) for item in policy.fallback_agent_profile_ids
                 ],
+                "recallMode": policy.recall_mode.value,
+                "automaticRecallThreshold": policy.automatic_recall_threshold,
             },
         )
         if key is not None and key in self.catalog.policy_idempotency:
@@ -977,6 +1021,7 @@ __all__ = [
     "MemoryPolicy",
     "AgentMemoryPolicy",
     "MemoryPolicyRevision",
+    "MemoryRecallMode",
     "GENERAL_PROFILE_ID",
     "GENERAL_REVISION_ID",
     "NEUTRAL_PERSONA_ID",

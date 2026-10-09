@@ -38,11 +38,11 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "1.1.0",
     "aura.runtime.stream_delivery": "1.2.0",
     "aura.knowledge.memory_persistence": "1.0.0",
-    "aura.knowledge.memory_extraction": "1.0.0",
+    "aura.knowledge.memory_extraction": "1.1.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
-    "aura.knowledge.memory_retrieval": "1.0.0",
+    "aura.knowledge.memory_retrieval": "1.1.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -177,6 +177,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
         "memory_query_embedding_duration_ms",
         "memory_retrieval_candidate_count",
         "memory_recall_count",
+        "memory_recall_gate_outcome",
         "memory_fallback_outcome",
         "memory_context_tokens",
         "memory_retrieval_errors",
@@ -391,6 +392,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "recalled_count",
         "context_tokens",
         "fallback_grant_id",
+        "recall_mode",
+        "gate_outcome",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -492,6 +495,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",
+            "policy_off", "selected",
         }
     ),
     "status": frozenset(
@@ -1343,6 +1347,8 @@ def record_memory_retrieval(
     retrieval_version: str | None = None,
     selection_order: int | None = None,
     fallback_grant_id: str | None = None,
+    recall_mode: str | None = None,
+    gate_outcome: str | None = None,
 ) -> None:
     """Record one retrieval boundary and its bounded recall metadata.
 
@@ -1417,6 +1423,8 @@ def record_memory_retrieval(
         "embedding_generation_id": embedding_generation_id,
         "retrieval_version": retrieval_version,
         "fallback_grant_id": fallback_grant_id,
+        "recall_mode": recall_mode,
+        "gate_outcome": gate_outcome,
     }.items():
         if value is not None:
             trace_attributes[key] = value
@@ -1491,6 +1499,21 @@ def record_memory_retrieval(
             run_id=run_id,
             conversation_id=conversation_id,
             **{key: value for key, value in trace_attributes.items()},
+        )
+    if gate_outcome is not None:
+        metrics.increment(
+            "aura.knowledge.memory_retrieval",
+            "memory_recall_gate_outcome",
+            outcome=(
+                gate_outcome
+                if gate_outcome in {"policy_off", "selected", "empty"}
+                else "unknown"
+            ),
+            retrieval_stage="primary",
+            dependency=bounded_dependency,
+            trace_id=trace_id,
+            run_id=run_id,
+            conversation_id=conversation_id,
         )
     if context_tokens is not None:
         metrics.observe(

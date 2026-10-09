@@ -326,8 +326,13 @@ def test_model_inventory_configuration_and_reindex_never_accept_or_return_provid
 def test_agent_memory_policy_contract_enforces_retrieval_only_ceilings_and_immutable_attach(
 ) -> None:
     spec = _openapi()
+    recall_mode = _schema(spec, "MemoryRecallMode")
+    assert recall_mode["enum"] == ["off", "automatic"]
+
     policy = _schema(spec, "AgentMemoryPolicy")
     assert {
+        "recallMode",
+        "automaticRecallThreshold",
         "sharedUserRead",
         "currentAgentRead",
         "sharedUserPromotion",
@@ -338,8 +343,15 @@ def test_agent_memory_policy_contract_enforces_retrieval_only_ceilings_and_immut
     } <= set(policy["required"])
     assert policy["properties"]["maxMemories"]["maximum"] == 8
     assert policy["properties"]["contextBudgetFraction"]["maximum"] == 0.2
+    assert policy["properties"]["automaticRecallThreshold"]["maximum"] == 1
     description = policy["properties"]["fallbackAgentProfileIds"]["description"].lower()
     assert "retrieval" in description and "delegation" in description
+
+    create_schema = _schema(spec, "CreateAgentMemoryPolicyRequest")
+    assert "recallMode" not in create_schema["required"]
+    assert "automaticRecallThreshold" not in create_schema["required"]
+    assert create_schema["properties"]["recallMode"]["default"] == "automatic"
+    assert create_schema["properties"]["automaticRecallThreshold"]["default"] == 0.7
 
     attach = spec["paths"][
         "/api/v1/agents/{agent_profile_id}/memory-policies/{policy_revision_id}/attach"

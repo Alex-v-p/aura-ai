@@ -1,6 +1,6 @@
 component:
   id: aura.knowledge.memory_extraction
-  version: 1.0.0
+  version: 1.1.0
   owner: knowledge.memory
   category: worker
 input:

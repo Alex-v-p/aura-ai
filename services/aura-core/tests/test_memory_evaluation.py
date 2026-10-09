@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import yaml
-from aura_core.domains.interaction.agents.public import MemoryPolicy
+from aura_core.domains.interaction.agents.public import MemoryPolicy, MemoryRecallMode
 from aura_core.domains.knowledge.memory.public import (
     CandidateState,
     MemoryAction,
@@ -44,9 +44,11 @@ from aura_core.domains.knowledge.memory.recall import (
     MemoryRecallCandidate,
     MemoryRecallRequest,
     MemoryRecallService,
+    MemoryRecallTelemetryEvent,
 )
 from aura_core.platform.outbox.service import make_identifier_command
 from aura_core.platform.telemetry import (
+    COMPONENT_VERSIONS,
     MetadataMetrics,
     StructuredContainerLogExporter,
     record_memory_processing,
@@ -66,6 +68,10 @@ MODEL_REVISION = "qwen3:8b-eval-v1"
 MODEL_ID = "qwen3:8b"
 GENERATION_REVISION = "embedding-generation-1"
 CURRENT_AGENT = uuid4()
+FOREIGN_AGENT = uuid4()
+UNAUTHORIZED_AGENT = uuid4()
+RETRIEVAL_COMPONENT_ID = "aura.knowledge.memory_retrieval"
+RETRIEVAL_COMPONENT_VERSION = COMPONENT_VERSIONS[RETRIEVAL_COMPONENT_ID]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +113,157 @@ def _fixture() -> list[dict[str, str]]:
     payload = json.loads(path.read_text())
     assert isinstance(payload, list)
     return cast(list[dict[str, str]], payload)
+
+
+async def _recall_quality_fixture() -> tuple[
+    MemoryStore, MemoryEmbeddingGeneration, datetime, dict[str, UUID]
+]:
+    """Build a deterministic recall corpus with lifecycle and scope traps."""
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    store = MemoryStore(clock=lambda: now)
+    generation = await store.register_embedding_generation(
+        "https://evaluation.example",
+        "owner",
+        generation=1,
+        model_id="evaluation-embedder",
+        model_revision="evaluation-embedder-v1",
+        dimension=2,
+        model_digest="a" * 64,
+    )
+    await store.save_model_configuration(
+        "https://evaluation.example",
+        "owner",
+        MemoryModelConfiguration(
+            "https://evaluation.example",
+            "owner",
+            "evaluation-extractor",
+            "evaluation-embedder",
+            embedding_model_revision="evaluation-embedder-v1",
+            embedding_generation=generation.id,
+        ),
+    )
+    await store.activate_embedding_generation("https://evaluation.example", "owner", generation.id)
+
+    ids: dict[str, UUID] = {}
+
+    async def add(
+        name: str,
+        content: str,
+        scope: MemoryScope,
+        vector: tuple[float, float],
+        *,
+        valid_to: datetime | None = None,
+    ) -> MemoryRecord:
+        record = await store.create_memory(
+            "https://evaluation.example",
+            "owner",
+            content=content,
+            kind=MemoryKind.SEMANTIC,
+            scope=scope,
+            confidence=0.95,
+            importance=0.8,
+            valid_to=valid_to,
+            idempotency_key=f"recall-quality-{name}",
+        )
+        await store.attach_embedding(
+            "https://evaluation.example",
+            "owner",
+            record.id,
+            revision_id=record.current_revision_id,
+            generation_id=generation.id,
+            vector=vector,
+            digest=(name.encode().hex() + "0" * 64)[:64],
+            model_id=generation.model_id,
+            model_revision=generation.model_revision,
+            model_digest=generation.model_digest,
+            dimension=generation.dimension,
+            scope_type=scope.type,
+            agent_profile_id=scope.agent_profile_id,
+        )
+        ids[name] = record.id
+        return record
+
+    await add(
+        "relevant",
+        "The family prefers pizza on Friday.",
+        MemoryScope(MemoryScopeType.USER),
+        (1.0, 0.0),
+    )
+    await add(
+        "paraphrase",
+        "The household enjoys a shared Friday meal.",
+        MemoryScope(MemoryScopeType.USER),
+        (1.0, 0.0),
+    )
+    await add(
+        "unrelated",
+        "The weather forecast is rainy tomorrow.",
+        MemoryScope(MemoryScopeType.USER),
+        (0.0, 1.0),
+    )
+    await add(
+        "expired",
+        "The family prefers pizza forever.",
+        MemoryScope(MemoryScopeType.USER),
+        (1.0, 0.0),
+        valid_to=now - timedelta(days=1),
+    )
+    disputed = await add(
+        "disputed",
+        "The family prefers pizza, but this is disputed.",
+        MemoryScope(MemoryScopeType.USER),
+        (1.0, 0.0),
+    )
+    await store.set_status(
+        "https://evaluation.example",
+        "owner",
+        disputed.id,
+        status=MemoryLifecycleStatus.DISPUTED,
+        expected_version=disputed.version,
+        idempotency_key="recall-quality-disputed-status",
+    )
+    await add(
+        "unauthorized",
+        "A private agent remembers family pizza.",
+        MemoryScope(MemoryScopeType.AGENT, UNAUTHORIZED_AGENT),
+        (1.0, 0.0),
+    )
+    await add(
+        "fallback",
+        "The delegated agent remembers a family pizza preference.",
+        MemoryScope(MemoryScopeType.AGENT, FOREIGN_AGENT),
+        (1.0, 0.0),
+    )
+    return store, generation, now, ids
+
+
+def _quality_request(
+    generation: MemoryEmbeddingGeneration,
+    now: datetime,
+    policy: MemoryPolicy,
+    query: str,
+    *,
+    agent_profile_id: UUID = CURRENT_AGENT,
+    vector: tuple[float, float] = (1.0, 0.0),
+) -> MemoryRecallRequest:
+    return MemoryRecallRequest(
+        "https://evaluation.example",
+        "owner",
+        agent_profile_id,
+        query,
+        policy,
+        now=now,
+        context_token_budget=1000,
+        query_embedding=MemoryQueryEmbedding(
+            vector,
+            generation.id,
+            generation.model_id,
+            generation.model_revision,
+            generation.dimension,
+            model_digest=generation.model_digest,
+        ),
+    )
 
 
 _CONTROLLED_MODEL_PREDICTIONS: dict[str, tuple[str, str, float]] = {
@@ -184,7 +341,7 @@ def evaluate_fixture(cases: list[dict[str, str]]) -> EvaluationResult:
     total = len(cases)
     return EvaluationResult(
         "aura.knowledge.memory_extraction",
-        "1.0.0",
+        COMPONENT_VERSIONS["aura.knowledge.memory_extraction"],
         FIXTURE_REVISION,
         POLICY_REVISION,
         MODEL_ID,
@@ -352,7 +509,7 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
 def test_evaluation_output_is_attributable_to_all_revisions() -> None:
     result = evaluate_fixture(_fixture())
     assert result.component_id == "aura.knowledge.memory_extraction"
-    assert result.component_version == "1.0.0"
+    assert result.component_version == COMPONENT_VERSIONS[result.component_id]
     assert result.fixture_revision == FIXTURE_REVISION
     assert result.policy_revision == POLICY_REVISION
     assert result.model_id == MODEL_ID
@@ -370,6 +527,166 @@ def test_evaluation_covers_action_scope_horizon_and_duplicate_metrics() -> None:
     assert result.scope_accuracy == 1.0
     assert result.horizon_accuracy == 1.0
     assert result.duplicate_reinforcement_accuracy >= 0.95
+
+
+@pytest.mark.asyncio
+async def test_recall_quality_keeps_relevant_and_paraphrased_facts_only() -> None:
+    store, generation, now, ids = await _recall_quality_fixture()
+    policy = MemoryPolicy(
+        uuid4(),
+        CURRENT_AGENT,
+        1,
+        max_memories=2,
+        context_budget_fraction=0.05,
+        automatic_recall_threshold=0.70,
+        recall_mode=MemoryRecallMode.AUTOMATIC,
+    )
+
+    direct = await MemoryRecallService(store).recall(
+        _quality_request(generation, now, policy, "Which family pizza preference was saved?")
+    )
+    admitted = {item.memory_id for item in direct.candidates}
+    assert {ids["relevant"], ids["paraphrase"]} <= admitted
+    assert ids["unrelated"] not in admitted
+    assert ids["expired"] not in admitted
+    assert ids["disputed"] not in admitted
+    assert ids["unauthorized"] not in admitted
+    assert len(direct.candidates) <= 2
+    assert all(item.query_match_score >= 0.70 for item in direct.candidates)
+
+    paraphrased = await MemoryRecallService(store).recall(
+        _quality_request(
+            generation,
+            now,
+            policy,
+            "What does the household enjoy for a shared meal?",
+        )
+    )
+    assert ids["paraphrase"] in {item.memory_id for item in paraphrased.candidates}
+    assert paraphrased.retrieval_version == "memory-retrieval-v2"
+
+
+@pytest.mark.asyncio
+async def test_recall_fallback_is_authorized_and_uses_query_match() -> None:
+    store, generation, now, ids = await _recall_quality_fixture()
+    policy = MemoryPolicy(
+        uuid4(),
+        CURRENT_AGENT,
+        1,
+        shared_user_read=False,
+        current_agent_read=False,
+        max_memories=2,
+        context_budget_fraction=0.05,
+        fallback_relevance_threshold=0.70,
+        fallback_agent_profile_ids=(FOREIGN_AGENT,),
+        automatic_recall_threshold=0.70,
+        recall_mode=MemoryRecallMode.AUTOMATIC,
+    )
+    result = await MemoryRecallService(store).recall(
+        _quality_request(
+            generation,
+            now,
+            policy,
+            "Which family pizza preference is remembered by the delegated agent?",
+        )
+    )
+    assert result.fallback_used is True
+    assert [item.memory_id for item in result.candidates] == [ids["fallback"]]
+    assert result.candidates[0].query_match_score >= policy.automatic_recall_threshold
+
+    denied = replace(policy, fallback_agent_profile_ids=())
+    denied_result = await MemoryRecallService(store).recall(
+        _quality_request(generation, now, denied, "Which family pizza preference is remembered?")
+    )
+    assert denied_result.candidates == ()
+    assert denied_result.fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_off_mode_skips_all_recall_io_but_persistence_remains_available() -> None:
+    class NoRecallIOStore(MemoryStore):
+        generation_lookups = 0
+        memory_lookups = 0
+
+        async def get_active_embedding_generation(self, issuer: str, subject: str) -> None:
+            self.generation_lookups += 1
+            return await super().get_active_embedding_generation(issuer, subject)
+
+        async def list_memories(self, *args: object, **kwargs: object) -> list[MemoryRecord]:
+            self.memory_lookups += 1
+            return await super().list_memories(*args, **kwargs)  # type: ignore[arg-type]
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    store = NoRecallIOStore(clock=lambda: now)
+    events: list[MemoryRecallTelemetryEvent] = []
+
+    class Collector:
+        def record(self, event: MemoryRecallTelemetryEvent) -> None:
+            events.append(event)
+
+    policy = MemoryPolicy(
+        uuid4(),
+        CURRENT_AGENT,
+        1,
+        max_memories=2,
+        context_budget_fraction=0.05,
+        recall_mode=MemoryRecallMode.OFF,
+    )
+    result = await MemoryRecallService(store, telemetry=Collector()).recall(
+        MemoryRecallRequest(
+            "https://evaluation.example",
+            "owner",
+            CURRENT_AGENT,
+            "Which preference was saved?",
+            policy,
+            now=now,
+            context_token_budget=1000,
+        )
+    )
+    assert result.candidates == ()
+    assert result.gate_outcome == "skipped/policy_off"
+    assert result.embedding_generation_id is None
+    assert store.generation_lookups == 0
+    assert store.memory_lookups == 0
+    assert events and {event.gate_outcome for event in events} == {"policy_off"}
+    assert {event.recall_mode for event in events} == {"off"}
+    assert all("preference" not in repr(event) for event in events)
+
+    persisted = await store.create_memory(
+        "https://evaluation.example",
+        "owner",
+        content="The owner prefers quiet mornings.",
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.USER),
+        confidence=0.95,
+        importance=0.8,
+        half_life_days=365,
+    )
+    assert persisted.status is MemoryLifecycleStatus.ACTIVE
+    assert store.generation_lookups > 0
+
+
+@pytest.mark.asyncio
+async def test_automatic_recall_metadata_is_content_free_and_budget_bounded() -> None:
+    store, generation, now, _ids = await _recall_quality_fixture()
+    policy = MemoryPolicy(
+        uuid4(),
+        CURRENT_AGENT,
+        1,
+        max_memories=2,
+        context_budget_fraction=0.05,
+        automatic_recall_threshold=0.70,
+        recall_mode=MemoryRecallMode.AUTOMATIC,
+    )
+    result = await MemoryRecallService(store).recall(
+        _quality_request(generation, now, policy, "family pizza")
+    )
+    assert len(result.candidates) <= 2
+    assert sum(max(1, (len(item.content) + 3) // 4) for item in result.candidates) <= 50
+    for metadata in result.metadata:
+        assert "content" not in metadata
+        assert metadata["retrievalVersion"] == "memory-retrieval-v2"
+        assert metadata["queryMatchScore"] >= 0.70
 
 
 def test_memory_manifests_declare_component_local_latency_retry_backlog_and_privacy() -> None:
@@ -1449,7 +1766,7 @@ def _metrics_for_result(
     embedding_generation_revision: str,
     fixture_case_id: str,
     k: int = 3,
-) -> RecallEvaluationMetrics:
+    ) -> RecallEvaluationMetrics:
     top = list(candidates[:k])
     hits = [item for item in top if item.memory_id in relevant_ids]
     first_hit = next(
@@ -1457,8 +1774,8 @@ def _metrics_for_result(
         None,
     )
     return RecallEvaluationMetrics(
-        component_id="aura.knowledge.memory_retrieval",
-        component_version="1.0.0",
+        component_id=RETRIEVAL_COMPONENT_ID,
+        component_version=RETRIEVAL_COMPONENT_VERSION,
         fixture_revision=RECALL_FIXTURE_REVISION,
         retrieval_version=RETRIEVAL_VERSION,
         policy_revision=str(policy_revision),
@@ -1483,6 +1800,17 @@ def _metrics_for_result(
 
 @pytest.mark.asyncio
 async def test_retrieval_evaluation_covers_facts_horizons_and_metadata_only_scores() -> None:
+    manifest_path = (
+        Path(__file__).parents[1]
+        / "resources"
+        / "component-manifests"
+        / "memory-retrieval.yaml"
+    )
+    manifest = cast(dict[str, object], yaml.safe_load(manifest_path.read_text()))
+    manifest_component = cast(dict[str, object], manifest["component"])
+    assert manifest_component["id"] == RETRIEVAL_COMPONENT_ID
+    assert manifest_component["version"] == RETRIEVAL_COMPONENT_VERSION
+
     repository, generation, now = await _build_recall_repository()
     policy = MemoryPolicy(
         id=UUID("33333333-3333-4333-8333-333333333333"),
@@ -1543,6 +1871,8 @@ async def test_retrieval_evaluation_covers_facts_horizons_and_metadata_only_scor
         observed.append((cast(str, case["id"]), metrics))
         assert len(cast(str, case["id"])) <= MAX_FIXTURE_CASE_ID_LENGTH
         assert metrics.metadata()["fixtureCaseId"] == case["id"]
+        assert metrics.component_id == RETRIEVAL_COMPONENT_ID
+        assert metrics.component_version == RETRIEVAL_COMPONENT_VERSION
         assert result.retrieval_version == RETRIEVAL_VERSION
         assert all("content" not in item for item in result.metadata)
         assert all("provenanceIds" in item and "revisionId" in item for item in result.metadata)

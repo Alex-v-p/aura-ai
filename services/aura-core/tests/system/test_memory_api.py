@@ -380,3 +380,82 @@ async def test_memory_search_rejects_overlong_terms_and_emits_all_declared_metri
         )
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_memory_policy_modes_defaults_and_immutable_attach(api_app: Any) -> None:
+    """Policy transport exposes conservative defaults and versioned mode changes."""
+
+    client, session = await owner_client(api_app)
+    try:
+        agents = (await client.get("/api/v1/agents")).json()["items"]
+        assert agents
+        aura_id = agents[0]["id"]
+        aura_policies = await client.get(f"/api/v1/agents/{aura_id}/memory-policies")
+        assert aura_policies.status_code == 200, aura_policies.text
+        attached = aura_policies.json()
+        current = attached["items"][-1]
+        assert current["recallMode"] == "automatic"
+        assert current["automaticRecallThreshold"] == 0.7
+        assert current["maxMemories"] == 2
+        assert current["contextBudgetFraction"] == 0.05
+
+        body = {
+            "sharedUserRead": True,
+            "currentAgentRead": True,
+            "sharedUserPromotion": False,
+            "fallbackRelevanceThreshold": 0.7,
+            "maxMemories": 2,
+            "contextBudgetFraction": 0.05,
+            "fallbackAgentProfileIds": [],
+            "recallMode": "off",
+            "automaticRecallThreshold": 0.7,
+            "expectedRevision": current["revision"],
+        }
+        headers = _headers(session, key=str(uuid4()))
+        created = await client.post(
+            f"/api/v1/agents/{aura_id}/memory-policies", headers=headers, json=body
+        )
+        assert created.status_code == 201, created.text
+        policy = created.json()
+        assert policy["recallMode"] == "off"
+        assert policy["automaticRecallThreshold"] == 0.7
+        replay = await client.post(
+            f"/api/v1/agents/{aura_id}/memory-policies", headers=headers, json=body
+        )
+        assert replay.status_code == 201
+        assert replay.json() == policy
+
+        attached_profile = await client.post(
+            f"/api/v1/agents/{aura_id}/memory-policies/{policy['id']}/attach",
+            headers=_headers(session, key=str(uuid4())),
+            json={"expectedAgentVersion": attached["agentVersion"]},
+        )
+        assert attached_profile.status_code == 201, attached_profile.text
+        refreshed = await client.get(f"/api/v1/agents/{aura_id}/memory-policies")
+        assert refreshed.json()["attachedPolicyRevisionId"] == policy["id"]
+        assert refreshed.json()["agentVersion"] == attached["agentVersion"] + 1
+
+        persona = (await client.get("/api/v1/personas")).json()["items"][0]
+        custom = await client.post(
+            "/api/v1/agents",
+            headers=_headers(session, key=str(uuid4())),
+            json={
+                "displayName": "Focused worker",
+                "purpose": "Handle narrow task work.",
+                "instructions": "Stay focused.",
+                "personaRevisionId": persona["currentRevision"]["id"],
+            },
+        )
+        assert custom.status_code == 201, custom.text
+        custom_policy = await client.get(
+            f"/api/v1/agents/{custom.json()['id']}/memory-policies"
+        )
+        assert custom_policy.status_code == 200
+        defaults = custom_policy.json()["items"][-1]
+        assert defaults["recallMode"] == "off"
+        assert defaults["automaticRecallThreshold"] == 0.7
+        assert defaults["maxMemories"] == 2
+        assert defaults["contextBudgetFraction"] == 0.05
+    finally:
+        await client.aclose()

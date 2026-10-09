@@ -7,7 +7,7 @@
 from datetime import UTC, datetime
 from hashlib import sha256
 from json import dumps
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,12 +25,15 @@ from aura_core.domains.interaction.agents.persistence import (
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
+    GENERAL_PROFILE_ID,
+    NAMESPACE,
     NEUTRAL_PERSONA_REVISION_ID,
     PROMPT_BUNDLE_ID,
     AgentCatalog,
     AgentProfile,
     AgentRevision,
     MemoryPolicy,
+    MemoryRecallMode,
     is_platform_memory_policy,
     platform_memory_policy_id,
 )
@@ -57,20 +60,31 @@ def _require_memory_policy_id(value: UUID | None) -> UUID:
     return value
 
 
+def _is_deterministic_platform_policy(policy_id: UUID, agent_profile_id: UUID) -> bool:
+    """Recognize only the blank-principal policies created by Aura migrations."""
+
+    return (
+        (policy_id == GENERAL_MEMORY_POLICY_ID and agent_profile_id == GENERAL_PROFILE_ID)
+        or is_platform_memory_policy(policy_id, agent_profile_id)
+        or policy_id
+        == uuid5(
+            NAMESPACE,
+            f"agent-memory-recall-policy:{agent_profile_id}:2",
+        )
+    )
+
+
 def _policy_owner_matches(row: MemoryPolicyRevisionRow, issuer: str, subject: str) -> bool:
     """Authorize exact owners plus only deterministic migrated defaults.
 
-    Blank-principal rows are legacy migration artifacts.  Their deterministic
-    per-agent IDs make them safe to recognize without turning arbitrary UUIDs
-    into globally readable policies.
+    Blank-principal rows are legacy or migration artifacts.  Their
+    deterministic per-agent IDs make them safe to recognize without turning
+    arbitrary UUIDs into globally readable policies.
     """
 
     return (row.principal_issuer, row.principal_subject) == (issuer, subject) or (
         (row.principal_issuer, row.principal_subject) == ("", "")
-        and (
-            row.id == GENERAL_MEMORY_POLICY_ID
-            or is_platform_memory_policy(row.id, row.agent_profile_id)
-        )
+        and _is_deterministic_platform_policy(row.id, row.agent_profile_id)
     )
 
 
@@ -170,6 +184,8 @@ class SqlAgentStore:
                 max_memories=item.max_memories,
                 context_budget_fraction=item.context_budget_fraction,
                 allow_shared_user_promotion=item.allow_shared_user_promotion,
+                recall_mode=MemoryRecallMode(item.recall_mode),
+                automatic_recall_threshold=item.automatic_recall_threshold,
                 fallback_agent_profile_ids=tuple(
                     grant.foreign_agent_profile_id
                     for grant in fallback_grants
@@ -224,6 +240,10 @@ class SqlAgentStore:
                             principal_subject=subject,
                             agent_profile_id=identifier,
                             revision=1,
+                            recall_mode="off",
+                            max_memories=2,
+                            context_budget_fraction=0.05,
+                            automatic_recall_threshold=0.7,
                         )
                     )
                 else:
@@ -446,17 +466,19 @@ class SqlAgentStore:
             .all()
         )
         return MemoryPolicy(
-            row.id,
-            row.agent_profile_id,
-            row.revision,
-            row.shared_user_read,
-            row.current_agent_read,
-            row.fallback_relevance_threshold,
-            row.max_memories,
-            row.context_budget_fraction,
-            row.allow_shared_user_promotion,
-            tuple(grants),
-            row.created_at or datetime.now(UTC),
+            id=row.id,
+            agent_profile_id=row.agent_profile_id,
+            revision=row.revision,
+            shared_user_read=row.shared_user_read,
+            current_agent_read=row.current_agent_read,
+            fallback_relevance_threshold=row.fallback_relevance_threshold,
+            max_memories=row.max_memories,
+            context_budget_fraction=row.context_budget_fraction,
+            allow_shared_user_promotion=row.allow_shared_user_promotion,
+            recall_mode=MemoryRecallMode(row.recall_mode),
+            automatic_recall_threshold=row.automatic_recall_threshold,
+            fallback_agent_profile_ids=tuple(grants),
+            created_at=row.created_at or datetime.now(UTC),
         )
 
     async def create_memory_policy(
@@ -473,6 +495,8 @@ class SqlAgentStore:
             policy.max_memories,
             policy.context_budget_fraction,
             policy.allow_shared_user_promotion,
+            policy.recall_mode,
+            policy.automatic_recall_threshold,
             policy.fallback_agent_profile_ids,
         )
         async with self.sessions() as session, session.begin():
@@ -532,12 +556,14 @@ class SqlAgentStore:
                 *[
                     item
                     for item in migrated_defaults
-                    if is_platform_memory_policy(item.id, item.agent_profile_id)
+                    if _is_deterministic_platform_policy(
+                        item.id, item.agent_profile_id
+                    )
                 ],
             ]
             same_agent_policies = [
                 item
-                for item in owner_policies
+                for item in policies
                 if item.agent_profile_id == policy.agent_profile_id
             ]
             if policy.revision != max((item.revision for item in same_agent_policies), default=0) + 1:
@@ -588,6 +614,8 @@ class SqlAgentStore:
                     max_memories=policy.max_memories,
                     context_budget_fraction=policy.context_budget_fraction,
                     allow_shared_user_promotion=policy.allow_shared_user_promotion,
+                    recall_mode=policy.recall_mode,
+                    automatic_recall_threshold=policy.automatic_recall_threshold,
                 )
             )
             for foreign_agent in policy.fallback_agent_profile_ids:
@@ -650,17 +678,19 @@ class SqlAgentStore:
                 )
                 result.append(
                     MemoryPolicy(
-                        row.id,
-                        row.agent_profile_id,
-                        row.revision,
-                        row.shared_user_read,
-                        row.current_agent_read,
-                        row.fallback_relevance_threshold,
-                        row.max_memories,
-                        row.context_budget_fraction,
-                        row.allow_shared_user_promotion,
-                        tuple(grants),
-                        row.created_at or datetime.now(UTC),
+                        id=row.id,
+                        agent_profile_id=row.agent_profile_id,
+                        revision=row.revision,
+                        shared_user_read=row.shared_user_read,
+                        current_agent_read=row.current_agent_read,
+                        fallback_relevance_threshold=row.fallback_relevance_threshold,
+                        max_memories=row.max_memories,
+                        context_budget_fraction=row.context_budget_fraction,
+                        allow_shared_user_promotion=row.allow_shared_user_promotion,
+                        recall_mode=MemoryRecallMode(row.recall_mode),
+                        automatic_recall_threshold=row.automatic_recall_threshold,
+                        fallback_agent_profile_ids=tuple(grants),
+                        created_at=row.created_at or datetime.now(UTC),
                     )
                 )
             return sorted(result, key=lambda item: item.revision)

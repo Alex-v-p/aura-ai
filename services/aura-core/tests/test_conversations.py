@@ -258,6 +258,7 @@ async def test_context_injects_bounded_untrusted_memory_and_records_identifier_m
         "agentProfileId",
         "provenanceIds",
         "embeddingGenerationId",
+        "queryMatchScore",
     }
     assert selection["selectionOrder"] == 1
     assert selection["lexicalScore"] == 0.7
@@ -369,8 +370,10 @@ async def test_context_budget_telemetry_counts_trimmed_memory_revisions() -> Non
     conversation, _, run = await store.create(
         "https://issuer", "owner", "Trim memory evidence.", "fake", models, str(uuid4())
     )
-    compiled_prompt = store.agents.compilation(run.agent_revision_id)
-    budget = estimate_tokens(compiled_prompt.text) + estimate_tokens("Trim memory evidence.") + 256
+    # The general policy now reserves five percent for memory evidence.  Use
+    # a sufficiently large run budget so this test still exercises trimming
+    # at the two-memory policy ceiling.
+    budget = 4000
 
     context = await store.context(
         conversation.id,
@@ -416,7 +419,7 @@ async def test_memory_recall_failure_degrades_to_conversation_context() -> None:
     assert run.memory_recall_metadata == {
         "policyRevisionId": str(run.memory_policy_revision_id),
         "embeddingGenerationId": None,
-        "retrievalVersion": "memory-retrieval-v1",
+        "retrievalVersion": "memory-retrieval-v2",
         "outcome": "degraded",
         "fallbackUsed": False,
         "selections": [],

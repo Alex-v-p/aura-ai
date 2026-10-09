@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import aura_core.bootstrap.memory_uow as memory_uow
 import pytest
+from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.memory_uow import memory_command_factory
 from aura_core.domains.execution.runs.dto import Run, RunStatus
 from aura_core.domains.interaction.conversations.dto import (
@@ -49,9 +50,12 @@ from aura_core.domains.knowledge.memory.public import (
     contains_secret,
     decide_candidate,
 )
-from aura_core.entrypoints.worker.app import run_memory_once
+from aura_core.entrypoints.worker.app import (
+    _configure_worker_memory_recall,
+    run_memory_once,
+)
 from aura_core.platform.outbox import InMemoryOutbox
-from aura_core.platform.telemetry import MetadataMetrics
+from aura_core.platform.telemetry import MetadataMetrics, record_memory_processing
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.runtime.models.ports import (
     EmbeddingResult,
@@ -138,6 +142,7 @@ class _DurableMemoryStore(MemoryStore):
         self.persisted_candidates: dict[UUID, MemoryCandidate] = {}
         self.persisted_outcomes: list[dict[str, object]] = []
         self.embedding_jobs: dict[UUID, MemoryEmbeddingJob] = {}
+
 
     async def enqueue_processing_job(self, job: MemoryProcessingJob) -> MemoryProcessingJob:
         job_id = job.id
@@ -293,6 +298,52 @@ class _DurableMemoryStore(MemoryStore):
         )
         self.embedding_jobs[job_id] = settled
         return settled
+
+
+def test_worker_composition_attaches_owner_scoped_memory_recall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = object()
+    recall = object()
+    calls: dict[str, object] = {}
+
+    def make_repository(sessions: object, *, metrics: object) -> object:
+        calls["sessions"] = sessions
+        calls["metrics"] = metrics
+        return repository
+
+    def make_recall(
+        actual_repository: object, *, settings: object, metrics: object
+    ) -> object:
+        calls["repository"] = actual_repository
+        calls["settings"] = settings
+        calls["recall_metrics"] = metrics
+        return recall
+
+    monkeypatch.setattr(memory_uow, "memory_repository", make_repository)
+    monkeypatch.setattr(memory_uow, "memory_recall_service", make_recall)
+    store = SqlConversationStore(None)  # type: ignore[arg-type]
+    metrics = MetadataMetrics()
+    settings = object()
+    sessions = object()
+
+    returned = _configure_worker_memory_recall(
+        store,
+        sessions,
+        settings=settings,
+        metrics=metrics,
+    )
+
+    assert returned is repository
+    assert store.memory_recall is recall
+    assert store.memory_activity_repository is repository
+    assert calls == {
+        "sessions": sessions,
+        "metrics": metrics,
+        "repository": repository,
+        "settings": settings,
+        "recall_metrics": metrics,
+    }
 
 
 class _CrashStore(_DurableMemoryStore):
@@ -946,12 +997,12 @@ async def test_factory_envelope_reaches_worker_and_ack_follows_durable_settlemen
 
 
 @pytest.mark.asyncio
-async def test_malformed_oversized_and_provider_outage_are_retryable_without_memory_write() -> None:
+async def test_invalid_provider_output_is_reviewed_but_provider_outage_is_retryable() -> None:
     user_message_id = uuid4()
-    for result, error in (
-        ({"action": "not-a-real-action"}, None),
-        ({"action": "create", "content": "x" * 40000}, None),
-        (None, RuntimeError("provider unavailable")),
+    for result, error, expected_state in (
+        ({"action": "not-a-real-action"}, None, CandidateState.REVIEW),
+        ({"action": "create", "content": "x" * 40000}, None, CandidateState.REVIEW),
+        (None, RuntimeError("provider unavailable"), CandidateState.RETRYABLE),
     ):
         repository = MemoryStore(clock=lambda: NOW)
         inference = _Inference(result, error=error)
@@ -967,8 +1018,125 @@ async def test_malformed_oversized_and_provider_outage_are_retryable_without_mem
             user_message_ids=frozenset({user_message_id}),
             run_agent_profile_id=CURRENT_AGENT,
         )
-        assert candidate.state is CandidateState.RETRYABLE
+        assert candidate.state is expected_state
         assert await repository.list_memories(ISSUER, OWNER) == []
+
+
+@pytest.mark.asyncio
+async def test_schema_valid_domain_invalid_output_settles_processing_job() -> None:
+    message_id = uuid4()
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    generation = await _ready_generation(repository)
+    # The transport/schema accepts this shape, but a create action without
+    # canonical content is invalid at the memory domain boundary.
+    inference = _Inference({"action": "create", "confidence": 0.99})
+    processor = MemoryProcessingService(
+        repository,
+        inference,
+        _Embedding(),
+        clock=lambda: NOW,
+        evidence_loader=lambda loaded: _evidence_for(loaded, "A durable fact.", "Noted."),
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_generation=generation.id,
+        )
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_ids=(message_id,),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    candidate = await processor.process_job(job.id)
+
+    assert candidate is not None
+    assert candidate.state is CandidateState.REVIEW
+    assert candidate.decision_reason == "invalid_provider_output"
+    assert candidate.content is None
+    assert repository.processing_jobs[job.id].status is ProcessingJobStatus.COMPLETED
+    assert repository.processing_jobs[job.id].last_error_class is None
+    assert repository.memories == {}
+
+
+@pytest.mark.asyncio
+async def test_extraction_telemetry_distinguishes_invalid_output_from_provider_retry() -> None:
+    async def run_case(
+        result: object, error: Exception | None
+    ) -> tuple[CandidateState, tuple[object, ...]]:
+        metrics = MetadataMetrics()
+
+        def telemetry(**event: object) -> None:
+            record_memory_processing(
+                metrics,
+                component="aura.knowledge.memory_extraction",
+                dependency="memory_worker",
+                **event,
+            )
+
+        processor = MemoryProcessingService(
+            MemoryStore(clock=lambda: NOW),
+            _Inference(result, error=error),
+            _Embedding(),
+            clock=lambda: NOW,
+            telemetry=telemetry,
+        )
+        await processor.configure_models(
+            MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+        )
+        job = await processor.enqueue(ISSUER, OWNER, run_id=uuid4(), conversation_id=uuid4())
+        candidate = await processor.process(
+            job,
+            user_content="A private durable fact.",
+            assistant_content="Noted.",
+            user_message_ids=frozenset({uuid4()}),
+        )
+        return candidate.state, tuple(metrics.snapshot())
+
+    invalid_state, invalid_measurements = await run_case(
+        {"action": "create", "confidence": 0.99}, None
+    )
+    retry_state, retry_measurements = await run_case(None, RuntimeError("provider unavailable"))
+
+    assert invalid_state is CandidateState.REVIEW
+    invalid_extraction = [
+        item for item in invalid_measurements if item.metric == "memory_extraction_duration_ms"
+    ]
+    assert len(invalid_extraction) == 1
+    assert dict(invalid_extraction[0].dimensions) == {
+        "dependency": "memory_worker",
+        "error_class": "validation",
+        "outcome": "error",
+    }
+    assert any(
+        item.metric == "memory_candidate_outcome"
+        and dict(item.dimensions).get("outcome") == "review"
+        for item in invalid_measurements
+    )
+    assert not any(item.metric == "memory_retry_count" for item in invalid_measurements)
+
+    assert retry_state is CandidateState.RETRYABLE
+    retry_extraction = [
+        item for item in retry_measurements if item.metric == "memory_extraction_duration_ms"
+    ]
+    assert len(retry_extraction) == 1
+    assert dict(retry_extraction[0].dimensions) == {
+        "dependency": "memory_worker",
+        "error_class": "provider",
+        "outcome": "error",
+    }
+    assert any(item.metric == "memory_processing_errors" for item in retry_measurements)
+    assert any(item.metric == "memory_retry_count" for item in retry_measurements)
+    rendered = repr(invalid_measurements + retry_measurements)
+    assert "A private durable fact." not in rendered
+    assert "provider unavailable" not in rendered
 
 
 def test_foreign_evidence_ids_and_untrusted_categories_fail_closed() -> None:
@@ -1091,7 +1259,7 @@ async def test_sensitive_provider_mislabel_and_unknown_action_fail_closed() -> N
                 "confidence": 0.99,
                 "grounded_message_ids": [str(message_id)],
             },
-            CandidateState.RETRYABLE,
+            CandidateState.REVIEW,
         ),
         (
             {
@@ -1104,7 +1272,7 @@ async def test_sensitive_provider_mislabel_and_unknown_action_fail_closed() -> N
                 "sensitivity": "not-a-category",
                 "grounded_message_ids": [str(message_id)],
             },
-            CandidateState.RETRYABLE,
+            CandidateState.REVIEW,
         ),
     ):
         repository = MemoryStore(clock=lambda: NOW)

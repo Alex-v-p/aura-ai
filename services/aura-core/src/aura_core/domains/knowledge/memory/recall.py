@@ -17,7 +17,7 @@ from time import monotonic
 from typing import Protocol, cast
 from uuid import UUID
 
-from aura_core.domains.interaction.agents.public import MemoryPolicy
+from aura_core.domains.interaction.agents.public import MemoryPolicy, MemoryRecallMode
 from aura_core.domains.knowledge.memory.public import (
     MemoryEmbeddingGeneration,
     MemoryFilters,
@@ -28,7 +28,7 @@ from aura_core.domains.knowledge.memory.public import (
 )
 
 RRF_K = 60
-RETRIEVAL_VERSION = "memory-retrieval-v1"
+RETRIEVAL_VERSION = "memory-retrieval-v2"
 MAX_CANDIDATES_PER_CHANNEL = 50
 MAX_RECALLED_MEMORIES = 8
 ORDINARY_STATUSES = frozenset({MemoryLifecycleStatus.ACTIVE})
@@ -89,6 +89,8 @@ class MemoryRecallTelemetryEvent:
     generation_id: str | None = None
     run_id: str | None = None
     conversation_id: str | None = None
+    recall_mode: str | None = None
+    gate_outcome: str | None = None
     retrieval_version: str = RETRIEVAL_VERSION
 
 
@@ -146,6 +148,7 @@ class MemoryRecallCandidate:
     scope_score: float
     final_score: float
     embedding_generation_id: UUID | None
+    query_match_score: float = 0.0
 
     def metadata(self) -> dict[str, object]:
         """Content-free run metadata suitable for durable recall recording."""
@@ -166,6 +169,7 @@ class MemoryRecallCandidate:
             "embeddingGenerationId": str(self.embedding_generation_id)
             if self.embedding_generation_id
             else None,
+            "queryMatchScore": self.query_match_score,
             "retrievalVersion": RETRIEVAL_VERSION,
         }
 
@@ -179,6 +183,7 @@ class MemoryRecallResult:
     embedding_generation_id: UUID | None
     policy_revision_id: UUID
     retrieval_version: str = RETRIEVAL_VERSION
+    gate_outcome: str | None = None
 
     @property
     def memories(self) -> tuple[MemoryRecallCandidate, ...]:
@@ -243,6 +248,24 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return numerator / denominator if denominator else -1.0
 
 
+def _record_vector_similarity(
+    record: MemoryRecord, query_vector: Sequence[float], generation_id: UUID
+) -> float:
+    """Return a bounded query similarity for the selected embedding generation."""
+
+    revision_id = record.current_revision_id
+    for embedding in record.embeddings:
+        if (
+            embedding.revision_id == revision_id
+            and embedding.generation_id == generation_id
+            and embedding.vector is not None
+        ):
+            # Cosine may be negative; automatic admission treats negative
+            # similarity as no match and never lets it widen recall.
+            return max(0.0, min(1.0, _cosine(query_vector, embedding.vector)))
+    return 0.0
+
+
 def _lexical_score(query: str, content: str) -> float:
     terms = {item for item in re.findall(r"[\w'-]+", query.casefold()) if item}
     if not terms:
@@ -284,6 +307,8 @@ class MemoryRecallService:
         fallback_outcome: str | None = None,
         context_tokens: int | None = None,
         generation_id: str | None = None,
+        recall_mode: str | None = None,
+        gate_outcome: str | None = None,
     ) -> None:
         if self.telemetry is None:
             return
@@ -306,6 +331,8 @@ class MemoryRecallService:
             generation_id=generation_id,
             run_id=str(request.run_id) if request.run_id else None,
             conversation_id=str(request.conversation_id) if request.conversation_id else None,
+            recall_mode=recall_mode or request.policy.recall_mode.value,
+            gate_outcome=gate_outcome,
         )
         try:
             self.telemetry.record(event)
@@ -315,6 +342,28 @@ class MemoryRecallService:
 
     async def recall(self, request: MemoryRecallRequest) -> MemoryRecallResult:
         started = monotonic()
+        if request.policy.recall_mode is MemoryRecallMode.OFF and not request.historical:
+            # This branch intentionally precedes generation lookup and query
+            # embedding. Off disables ambient retrieval only; extraction and
+            # reinforcement remain on the independent worker path.
+            self._emit(
+                request,
+                "retrieval",
+                started,
+                outcome="skipped",
+                retrieval_stage="primary",
+                recall_mode=MemoryRecallMode.OFF.value,
+                gate_outcome="policy_off",
+            )
+            return MemoryRecallResult(
+                (),
+                False,
+                False,
+                None,
+                None,
+                request.policy.id,
+                gate_outcome="skipped/policy_off",
+            )
         generation: MemoryEmbeddingGeneration | None = None
         if hasattr(self.repository, "get_active_embedding_generation"):
             source = cast(MemoryRecallRepository, self.repository)
@@ -536,6 +585,8 @@ class MemoryRecallService:
             retrieval_stage="selection",
             candidate_count=len(candidates),
             generation_id=str(generation.id),
+            recall_mode=request.policy.recall_mode.value,
+            gate_outcome="selected" if selected else "empty",
         )
         self._emit(
             request,
@@ -545,16 +596,24 @@ class MemoryRecallService:
             retrieval_stage="primary",
             candidate_count=len(candidates),
             generation_id=str(generation.id),
+            recall_mode=request.policy.recall_mode.value,
+            gate_outcome="selected" if selected else "empty",
         )
         return MemoryRecallResult(
-            tuple(selected), fallback_used, False, None, generation.id, request.policy.id
+            tuple(selected),
+            fallback_used,
+            False,
+            None,
+            generation.id,
+            request.policy.id,
+            gate_outcome="selected" if selected else "empty",
         )
 
     @staticmethod
     def _primary_below_threshold(
         candidates: Sequence[MemoryRecallCandidate], threshold: float
     ) -> bool:
-        return not candidates or max(item.relevance for item in candidates) < threshold
+        return not candidates or max(item.query_match_score for item in candidates) < threshold
 
     async def _search(
         self,
@@ -650,7 +709,15 @@ class MemoryRecallService:
                 generation_id=str(generation.id),
             )
         fused_started = monotonic()
-        fused = self._fuse(lexical, vector, request.query, request.now, generation.id, historical)
+        fused = self._fuse(
+            lexical,
+            vector,
+            request.query,
+            query_embedding.vector,
+            request.now,
+            generation.id,
+            historical,
+        )
         self._emit(
             request,
             "fusion",
@@ -662,6 +729,12 @@ class MemoryRecallService:
         )
         rerank_started = monotonic()
         result = self._rerank(fused)
+        if request.policy.recall_mode is MemoryRecallMode.AUTOMATIC and not historical:
+            result = [
+                item
+                for item in result
+                if item.query_match_score >= request.policy.automatic_recall_threshold
+            ]
         self._emit(
             request,
             "rerank",
@@ -729,6 +802,7 @@ class MemoryRecallService:
         lexical: Sequence[MemoryRecord],
         vector: Sequence[MemoryRecord],
         query: str,
+        query_vector: Sequence[float],
         now: datetime,
         generation_id: UUID,
         historical: bool,
@@ -751,6 +825,8 @@ class MemoryRecallService:
                 1 / (RRF_K + vector_ranks[memory_id]) if memory_id in vector_ranks else 0
             )
             relevance = record.relevance(now)
+            vector_similarity = _record_vector_similarity(record, query_vector, generation_id)
+            query_match_score = max(lexical_score, vector_similarity)
             validity = (
                 1.0
                 if revision.valid_to is None
@@ -785,6 +861,7 @@ class MemoryRecallService:
                     scope_score,
                     final,
                     generation_id,
+                    query_match_score,
                 )
             )
         return result
