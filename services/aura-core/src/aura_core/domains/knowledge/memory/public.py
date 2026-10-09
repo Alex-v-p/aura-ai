@@ -35,9 +35,19 @@ from aura_core.runtime.models.ports import (
 
 MIN_HALF_LIFE_DAYS = 0.25
 MAX_HALF_LIFE_DAYS = 3650.0
+DEFAULT_MEMORY_IMPORTANCE = 0.5
+DEFAULT_MEMORY_HALF_LIFE_DAYS = 30.0
 DORMANT_THRESHOLD = 0.10
 ARCHIVE_AFTER_DAYS = 30
 PURGE_CONFIRMATION = "PURGE MEMORY"
+
+
+def memory_activity_id(job_id: UUID) -> UUID:
+    """Return the stable activity identity shared by SSE and reconciliation."""
+
+    return uuid5(MEMORY_ID_NAMESPACE, f"activity:{job_id}")
+
+
 MEMORY_PROVENANCE_TYPES = frozenset({"manual", "conversation_message", "run", "system", "import"})
 MEMORY_RELATION_TYPES = frozenset({"supersedes", "superseded_by", "disputes", "disputed_by"})
 
@@ -789,6 +799,35 @@ class CandidateDecision:
     reason: str
 
 
+def _normalize_candidate_for_approval(candidate: MemoryCandidate) -> MemoryCandidate:
+    """Make a content-bearing candidate owner-approvable.
+
+    ``review`` is a provider disposition, not a durable memory mutation.  A
+    few candidates were persisted before that distinction was enforced, so
+    keep those rows compatible by translating their action at the approval
+    boundary.  Missing decay metadata receives conservative, bounded defaults;
+    validity remains open-ended unless the provider supplied an explicit end.
+    """
+
+    if candidate.content is None:
+        return candidate
+    action = MemoryAction.CREATE if candidate.action is MemoryAction.REVIEW else candidate.action
+    return replace(
+        candidate,
+        action=action,
+        importance=(
+            candidate.importance
+            if candidate.importance is not None
+            else DEFAULT_MEMORY_IMPORTANCE
+        ),
+        half_life_days=(
+            candidate.half_life_days
+            if candidate.half_life_days is not None
+            else DEFAULT_MEMORY_HALF_LIFE_DAYS
+        ),
+    )
+
+
 def _content_free_candidate(candidate: MemoryCandidate) -> MemoryCandidate:
     """Strip private evidence from terminal/non-actionable candidate rows."""
 
@@ -834,7 +873,10 @@ def decide_candidate(
     if candidate.action is MemoryAction.REVIEW:
         return CandidateDecision(CandidateState.REVIEW, "provider_requested_review")
     classified = classify_sensitivity(candidate.content)
-    if classified is MemorySensitivity.CREDENTIAL:
+    if (
+        classified is MemorySensitivity.CREDENTIAL
+        or candidate.sensitivity is MemorySensitivity.CREDENTIAL
+    ):
         return CandidateDecision(CandidateState.REJECTED, "credential")
     sensitive_categories = {
         MemorySensitivity.HEALTH,
@@ -1329,6 +1371,10 @@ def validate_memory_text(value: str, field: str = "memory text") -> None:
 
 
 class MemoryRepository(Protocol):
+    def set_embedding_queue_boundary(
+        self, boundary: Callable[..., Awaitable[object]] | None
+    ) -> None: ...
+
     async def reserve_reindex_command(
         self,
         issuer: str,
@@ -1503,11 +1549,17 @@ class _MemoryStoreBase:
         self.model_configurations: dict[tuple[str, str], MemoryModelConfiguration] = {}
         self._clock = clock or (lambda: datetime.now(UTC))
         self._candidate_evidence_loader: Callable[..., Awaitable[object]] | None = None
+        self._embedding_queue_boundary: Callable[..., Awaitable[object]] | None = None
 
     def set_candidate_evidence_loader(
         self, loader: Callable[..., Awaitable[object]] | None
     ) -> None:
         self._candidate_evidence_loader = loader
+
+    def set_embedding_queue_boundary(
+        self, boundary: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        self._embedding_queue_boundary = boundary
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -1570,7 +1622,26 @@ class _MemoryStoreBase:
     ) -> MemoryEmbeddingGeneration | None:
         """Return the generation atomically selected for this owner."""
         configuration = self.model_configurations.get((issuer, subject))
-        if configuration is None or configuration.embedding_generation is None:
+        if configuration is None:
+            return None
+        if configuration.embedding_generation is None:
+            matches = [
+                item
+                for item in self.embedding_generations.values()
+                if item.issuer == issuer
+                and item.subject == subject
+                and item.status == "active"
+                and item.model_id == configuration.embedding_model_id
+                and item.model_revision == configuration.embedding_model_revision
+            ]
+            if len(matches) == 1:
+                configuration = replace(
+                    configuration,
+                    embedding_generation=matches[0].id,
+                    version=configuration.version + 1,
+                )
+                self.model_configurations[(issuer, subject)] = configuration
+        if configuration.embedding_generation is None:
             return None
         generation = self.embedding_generations.get(configuration.embedding_generation)
         if (
@@ -1581,6 +1652,51 @@ class _MemoryStoreBase:
         ):
             return None
         return generation
+
+    async def _ensure_active_embedding_job(
+        self, issuer: str, subject: str, record: MemoryRecord
+    ) -> None:
+        """Queue the selected generation without invoking an embedding provider."""
+
+        generation = await self.get_active_embedding_generation(issuer, subject)
+        if generation is None:
+            return
+        queue = self._embedding_queue_boundary or self.queue_embedding_job
+        await queue(
+            issuer,
+            subject,
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            generation_id=generation.id,
+        )
+
+    async def _stage_active_embedding_job(
+        self, issuer: str, subject: str, record: MemoryRecord
+    ) -> MemoryEmbeddingJob | None:
+        """Persist the selected-generation job without crossing instrumentation."""
+
+        generation = await self.get_active_embedding_generation(issuer, subject)
+        if generation is None:
+            return None
+        self._assert_not_fenced(issuer, subject, record.id)
+        job_id = uuid5(
+            MEMORY_ID_NAMESPACE,
+            f"embedding-job:{issuer}:{subject}:{record.current_revision_id}:{generation.id}",
+        )
+        existing = self.embedding_jobs.get(job_id)
+        if existing is not None:
+            return replace(existing, lease_id=None, lease_until=None)
+        item = MemoryEmbeddingJob(
+            job_id,
+            issuer,
+            subject,
+            record.id,
+            record.current_revision_id,
+            generation.id,
+            available_at=self._now(),
+        )
+        self.embedding_jobs[job_id] = item
+        return item
 
     def _find(
         self,
@@ -1642,10 +1758,18 @@ class _MemoryStoreBase:
             elif candidate.state is CandidateState.REJECTED:
                 action, status = "queued_for_review", "completed"
             else:
-                action, status = "queued_for_review", "queued"
+                action = "queued_for_review"
+                candidate_job = next((item for item in jobs if item.id == candidate.job_id), None)
+                status = (
+                    "completed"
+                    if candidate_job is not None
+                    and candidate_job.status
+                    in {ProcessingJobStatus.COMPLETED, ProcessingJobStatus.FAILED}
+                    else "queued"
+                )
             items.append(
                 MemoryActivityItem(
-                    uuid5(MEMORY_ID_NAMESPACE, f"activity:{candidate.id}"),
+                    memory_activity_id(candidate.job_id),
                     action,
                     status,
                     scope,
@@ -1743,6 +1867,13 @@ class _MemoryStoreBase:
         if prior is not None:
             assert isinstance(prior, MemoryCandidate)
             if prior.state is not CandidateState.RETRYABLE:
+                if prior.state is CandidateState.ACCEPTED and prior.memory_id is not None:
+                    record = self.memories.get(prior.memory_id)
+                    if record is not None:
+                        try:
+                            await self._ensure_active_embedding_job(issuer, subject, record)
+                        except Exception:
+                            pass
                 return prior
             pending_command = True
         if candidate.version != expected_version:
@@ -1751,6 +1882,7 @@ class _MemoryStoreBase:
             pending_command and candidate.state is CandidateState.RETRYABLE
         ):
             raise MemoryVersionConflict("memory candidate is already decided")
+        job = self.processing_jobs.get(candidate.job_id)
         if edit is not None:
             try:
                 scope_value = edit["scope"]
@@ -1778,20 +1910,38 @@ class _MemoryStoreBase:
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 raise MemoryValidationError("memory candidate edit is invalid") from exc
+        else:
+            # ``review`` is a provider disposition, not an approval action.
+            # Normalize legacy rows so an owner can approve grounded content
+            # without having to rewrite the candidate first.
+            candidate = _normalize_candidate_for_approval(candidate)
         if candidate.content is None or contains_secret(candidate.content):
             raise MemoryValidationError("credential-like candidate content is not accepted")
-        if classify_sensitivity(candidate.content) is MemorySensitivity.CREDENTIAL:
+        if (
+            classify_sensitivity(candidate.content) is MemorySensitivity.CREDENTIAL
+            or candidate.sensitivity is MemorySensitivity.CREDENTIAL
+        ):
             raise MemoryValidationError("credential-like candidate content is not accepted")
         scope = candidate.scope
         if scope is None:
             raise MemoryValidationError("memory candidate scope is required")
         if scope.type is MemoryScopeType.AGENT and scope.agent_profile_id is None:
             raise MemoryValidationError("agent candidate scope requires an agent profile")
+        if (
+            job is not None
+            and scope.type is MemoryScopeType.AGENT
+            and scope.agent_profile_id != job.agent_profile_id
+        ):
+            raise MemoryScopeAuthorizationRequired("candidate agent scope is not authorized")
         validate_revision(
             candidate.content,
             candidate.confidence,
-            candidate.importance or 0.5,
-            candidate.half_life_days or 30.0,
+            candidate.importance
+            if candidate.importance is not None
+            else DEFAULT_MEMORY_IMPORTANCE,
+            candidate.half_life_days
+            if candidate.half_life_days is not None
+            else DEFAULT_MEMORY_HALF_LIFE_DAYS,
             None,
             candidate.valid_to,
         )
@@ -1799,7 +1949,6 @@ class _MemoryStoreBase:
             claimed = replace(candidate, state=CandidateState.RETRYABLE)
             self.candidates[candidate_id] = claimed
             self._record_replay(issuer, subject, command_key, fingerprint, claimed)
-        job = self.processing_jobs.get(candidate.job_id)
         if edit is not None:
             if job is None:
                 raise MemoryValidationError("edited memory evidence is unavailable")
@@ -1889,11 +2038,20 @@ class _MemoryStoreBase:
                     kind=candidate.kind or MemoryKind.SEMANTIC,
                     scope=scope,
                     confidence=candidate.confidence,
-                    importance=candidate.importance or 0.5,
-                    half_life_days=candidate.half_life_days or 30.0,
+                    importance=(
+                        candidate.importance
+                        if candidate.importance is not None
+                        else DEFAULT_MEMORY_IMPORTANCE
+                    ),
+                    half_life_days=(
+                        candidate.half_life_days
+                        if candidate.half_life_days is not None
+                        else DEFAULT_MEMORY_HALF_LIFE_DAYS
+                    ),
                     valid_to=candidate.valid_to,
                     provenance=provenance,
                     idempotency_key=f"memory-action:{candidate.id}",
+                    _defer_embedding_queue=True,
                     scope_type=scope.type,
                     agent_profile_id=scope.agent_profile_id,
                 )
@@ -1936,6 +2094,12 @@ class _MemoryStoreBase:
         )
         self.candidates[candidate_id] = decided
         self._record_replay(issuer, subject, command_key, fingerprint, decided)
+        try:
+            await self._ensure_active_embedding_job(issuer, subject, result)
+        except Exception:
+            # Approval is already durably accepted.  Queue repair is retried
+            # by an idempotent approval replay and never invokes inference.
+            pass
         return decided
 
     async def approve_candidate(
@@ -2245,24 +2409,42 @@ class MemoryProcessingService:
                 if resolved_agent is None:
                     raise MemoryValidationError("agent scope cannot be resolved")
                 resolved_scope = MemoryScope(MemoryScopeType.AGENT, resolved_agent)
+            provider_requested_review = raw.action is MemoryAction.REVIEW
+            action = (
+                MemoryAction.CREATE
+                if provider_requested_review and raw.content is not None
+                else raw.action
+            )
             return MemoryCandidate(
                 candidate_id,
                 job.id,
                 job.issuer,
                 job.subject,
-                raw.action,
+                action,
                 raw.content,
                 raw.kind,
                 resolved_scope,
                 raw.confidence,
-                raw.importance,
-                raw.half_life_days,
+                raw.importance
+                if raw.importance is not None
+                else (
+                    DEFAULT_MEMORY_IMPORTANCE
+                    if raw.content is not None
+                    else None
+                ),
+                raw.half_life_days
+                if raw.half_life_days is not None
+                else (
+                    DEFAULT_MEMORY_HALF_LIFE_DAYS
+                    if raw.content is not None
+                    else None
+                ),
                 raw.valid_to,
                 raw.sensitivity,
                 raw.grounded_message_ids,
                 raw.related_memory_id,
-                raw.state,
-                raw.decision_reason,
+                CandidateState.REVIEW if provider_requested_review else raw.state,
+                "provider_requested_review" if provider_requested_review else raw.decision_reason,
             )
         payload_method = getattr(raw, "as_payload", None)
         data: Mapping[str, object] | None
@@ -2324,22 +2506,36 @@ class MemoryProcessingService:
             valid_to = data.get("valid_to")
             if isinstance(valid_to, str):
                 valid_to = datetime.fromisoformat(valid_to)
+            content = str(data["content"]) if data.get("content") is not None else None
+            provider_requested_review = action is MemoryAction.REVIEW
+            if provider_requested_review and content is not None:
+                action = MemoryAction.CREATE
             return MemoryCandidate(
                 candidate_id,
                 job.id,
                 job.issuer,
                 job.subject,
                 action,
-                str(data["content"]) if data.get("content") is not None else None,
+                content,
                 kind,
                 scope,
                 float(data.get("confidence", 0.0)),
-                float(data["importance"]) if data.get("importance") is not None else None,
-                float(data["half_life_days"]) if data.get("half_life_days") is not None else None,
+                (
+                    float(data["importance"])
+                    if data.get("importance") is not None
+                    else (DEFAULT_MEMORY_IMPORTANCE if content is not None else None)
+                ),
+                (
+                    float(data["half_life_days"])
+                    if data.get("half_life_days") is not None
+                    else (DEFAULT_MEMORY_HALF_LIFE_DAYS if content is not None else None)
+                ),
                 valid_to,
                 MemorySensitivity(str(data.get("sensitivity", "ordinary"))),
                 grounded,
                 related,
+                CandidateState.REVIEW if provider_requested_review else CandidateState.PROPOSED,
+                "provider_requested_review" if provider_requested_review else None,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise MemoryValidationError("structured memory action is malformed") from exc
@@ -2466,14 +2662,21 @@ class MemoryProcessingService:
                         "Extract only durable facts explicitly stated by the user. "
                         "For create or review, copy the durable fact into content, choose "
                         "kind semantic or preference, choose scope_type agent or user, and "
-                        "return the matching opaque evidence handle. Use action ignore when "
-                        "there is no durable user-authored fact. Never invent identifiers."
+                        "return the matching opaque evidence handle. Choose importance from "
+                        "0 to 1 based on durable value and propose a half_life_days between "
+                        "0.25 and 3650 based on the fact's relevance horizon; if uncertain, "
+                        "use 0.5 importance and 30 days. Set valid_to only when the user "
+                        "states a concrete end date; otherwise return null and do not invent "
+                        "an expiry. Use action ignore when there is no durable user-authored "
+                        "fact. Never invent identifiers."
                     ),
                     "required_for_create_or_review": [
                         "content",
                         "kind",
                         "scope_type",
                         "grounded_evidence_handles",
+                        "importance",
+                        "half_life_days",
                     ],
                     "scope_guidance": {
                         "agent": "private to the current agent",
@@ -2609,6 +2812,7 @@ class MemoryProcessingService:
                 for item in existing
             )
         policy_started = monotonic()
+        provider_requested_review = candidate.decision_reason == "provider_requested_review"
         decision = decide_candidate(
             candidate,
             user_message_ids=user_message_ids,
@@ -2617,6 +2821,8 @@ class MemoryProcessingService:
             user_content=user_content,
             allow_shared_user_promotion=allow_shared_user_promotion,
         )
+        if provider_requested_review and decision.state is CandidateState.ACCEPTED:
+            decision = CandidateDecision(CandidateState.REVIEW, "provider_requested_review")
         self._emit(
             "memory.policy",
             policy_started,
@@ -4190,6 +4396,7 @@ class MemoryStore(_MemoryStoreBase):
         prior = self._replay(issuer, subject, str(key) if key else None, fingerprint)
         if prior is not None:
             assert isinstance(prior, MemoryRecord)
+            await self._ensure_active_embedding_job(issuer, subject, prior)
             return prior
         now = self._now()
         memory_id = UUID(str(kwargs["memory_id"])) if kwargs.get("memory_id") else uuid4()
@@ -4235,6 +4442,20 @@ class MemoryStore(_MemoryStoreBase):
             now,
         )
         self.memories[memory_id] = record
+        generation = await self.get_active_embedding_generation(issuer, subject)
+        await self._stage_active_embedding_job(issuer, subject, record)
+        if (
+            not kwargs.get("_defer_embedding_queue")
+            and self._embedding_queue_boundary is not None
+            and generation is not None
+        ):
+            await self._embedding_queue_boundary(
+                issuer,
+                subject,
+                memory_id=record.id,
+                revision_id=record.current_revision_id,
+                generation_id=generation.id,
+            )
         self._record_replay(issuer, subject, str(key) if key else None, fingerprint, record)
         return record
 
@@ -4883,9 +5104,27 @@ class MemoryStore(_MemoryStoreBase):
 
     async def get_model_configuration(self, issuer: str, subject: str) -> MemoryModelConfiguration:
         try:
-            return self.model_configurations[(issuer, subject)]
+            configuration = self.model_configurations[(issuer, subject)]
         except KeyError as exc:
             raise MemoryNotFound("memory model configuration not found") from exc
+        if configuration.embedding_generation is None:
+            matches = [
+                item
+                for item in self.embedding_generations.values()
+                if item.issuer == issuer
+                and item.subject == subject
+                and item.status == "active"
+                and item.model_id == configuration.embedding_model_id
+                and item.model_revision == configuration.embedding_model_revision
+            ]
+            if len(matches) == 1:
+                configuration = replace(
+                    configuration,
+                    embedding_generation=matches[0].id,
+                    version=configuration.version + 1,
+                )
+                self.model_configurations[(issuer, subject)] = configuration
+        return configuration
 
     async def queue_embedding_job(
         self, issuer: str, subject: str, *, memory_id: UUID, revision_id: UUID, generation_id: UUID

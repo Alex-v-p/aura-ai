@@ -70,6 +70,7 @@ from aura_core.platform.telemetry import (
     MemoryTraceContext,
     MetadataMetrics,
     Stopwatch,
+    current_memory_trace_context,
     memory_trace_context,
     record_memory_operation,
     record_memory_processing,
@@ -298,6 +299,16 @@ class InstrumentedMemoryRepository:
         self._inner = inner
         self._metrics = metrics
         self._dependency = dependency
+        set_boundary = getattr(inner, "set_embedding_queue_boundary", None)
+        if callable(set_boundary):
+            set_boundary(self.queue_embedding_job)
+
+    def set_embedding_queue_boundary(
+        self, boundary: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        set_boundary = getattr(self._inner, "set_embedding_queue_boundary", None)
+        if callable(set_boundary):
+            set_boundary(boundary or self.queue_embedding_job)
 
     def set_run_recall_metadata_loader(self, loader: Callable[..., Awaitable[object]]) -> None:
         method = getattr(self._inner, "set_run_recall_metadata_loader", None)
@@ -401,9 +412,20 @@ class InstrumentedMemoryRepository:
         # Correlation and identifiers remain trace attributes; every API or
         # worker invocation gets a fresh root so retries cannot be mistaken
         # for one request in telemetry.
-        trace_id = uuid4().hex
+        parent_context = current_memory_trace_context()
+        trace_id = parent_context.trace_id if parent_context is not None else uuid4().hex
+        span_id = uuid4().hex[:16]
+        trace_context = MemoryTraceContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            memory_id=trace_memory_id,
+            memory_revision_id=trace_revision_id,
+            generation_id=trace_generation_id,
+            link_span_ids=(parent_context.span_id,) if parent_context is not None else (),
+        )
         try:
-            result = await method(*args, **kwargs)
+            with memory_trace_context(trace_context):
+                result = await method(*args, **kwargs)
         except Exception as exc:
             record_memory_operation(
                 self._metrics,
@@ -418,6 +440,8 @@ class InstrumentedMemoryRepository:
                 generation_id=trace_generation_id,
                 error_class=self._error_class(exc),
                 operation=operation,
+                span_id=span_id,
+                parent_span_id=parent_context.span_id if parent_context is not None else None,
             )
             raise
         result_memory_id = trace_memory_id
@@ -432,6 +456,10 @@ class InstrumentedMemoryRepository:
             result_memory_id = str(result.memory_id)
         elif isinstance(result, MemoryEmbeddingGeneration):
             generation_id = trace_generation_id or str(result.id)
+        elif isinstance(result, MemoryEmbeddingJob):
+            result_memory_id = trace_memory_id or str(result.memory_id)
+            revision_id = revision_id or str(result.revision_id)
+            generation_id = generation_id or str(result.generation_id)
         record_memory_operation(
             self._metrics,
             timer,
@@ -444,6 +472,8 @@ class InstrumentedMemoryRepository:
             memory_revision_id=revision_id,
             operation=operation,
             generation_id=generation_id,
+            span_id=span_id,
+            parent_span_id=parent_context.span_id if parent_context is not None else None,
         )
         return result
 
@@ -795,8 +825,20 @@ class InstrumentedMemoryRepository:
 
     async def queue_embedding_job(self, issuer: str, subject: str, **kwargs: object) -> object:
         method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "queue_embedding_job"))
+        memory_id = kwargs.get("memory_id")
+        revision_id = kwargs.get("revision_id")
+        generation_id = kwargs.get("generation_id")
         return await self._invoke(
-            "memory.embedding.queue", method, (None, None, None), issuer, subject, **kwargs
+            "memory.embedding.queue",
+            method,
+            (
+                str(memory_id) if isinstance(memory_id, UUID) else None,
+                str(revision_id) if isinstance(revision_id, UUID) else None,
+                str(generation_id) if isinstance(generation_id, UUID) else None,
+            ),
+            issuer,
+            subject,
+            **kwargs,
         )
 
     async def settle_embedding_job(

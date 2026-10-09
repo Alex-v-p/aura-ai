@@ -129,7 +129,13 @@ async def _owner_client(
 
 
 async def _seed_candidate(
-    app: FastAPI, *, subject: str = OWNER, content: str = "The owner prefers tea."
+    app: FastAPI,
+    *,
+    subject: str = OWNER,
+    content: str = "The owner prefers tea.",
+    action: MemoryAction = MemoryAction.CREATE,
+    importance: float | None = 0.8,
+    half_life_days: float | None = 30.0,
 ) -> UUID:
     job = MemoryProcessingJob(uuid4(), ISSUER, subject, uuid4(), uuid4())
     repository = app.state.aura.memory_repository
@@ -139,13 +145,13 @@ async def _seed_candidate(
         job.id,
         ISSUER,
         subject,
-        MemoryAction.CREATE,
+        action,
         content,
         MemoryKind.PREFERENCE,
         MemoryScope(MemoryScopeType.USER),
         0.9,
-        0.8,
-        30.0,
+        importance,
+        half_life_days,
         created_at=datetime.now(UTC),
     )
     await repository.persist_candidate(candidate)
@@ -471,6 +477,36 @@ async def test_candidate_api_is_owner_scoped_and_reject_replay_is_content_free(
     finally:
         await owner.aclose()
         await foreign.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_provider_review_candidate_can_be_approved_unchanged(
+    product_app: FastAPI,
+) -> None:
+    client, session = await _owner_client(product_app)
+    try:
+        candidate_id = await _seed_candidate(
+            product_app,
+            action=MemoryAction.REVIEW,
+            importance=None,
+            half_life_days=None,
+        )
+        response = await client.post(
+            f"/api/v1/memory-candidates/{candidate_id}/approve",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={"expectedVersion": 1},
+        )
+
+        assert response.status_code == 200, response.text
+        approved = response.json()["candidate"]
+        assert approved["action"] == "create"
+        assert approved["state"] == "accepted"
+        assert approved["memoryId"]
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

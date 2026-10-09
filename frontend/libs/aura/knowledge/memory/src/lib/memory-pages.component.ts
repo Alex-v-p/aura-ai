@@ -10,6 +10,7 @@ import { MemoryStore } from './memory-store';
 
 const kinds: ReadonlyArray<MemoryKind> = ['episodic', 'semantic', 'procedural', 'preference', 'system'];
 const statuses: ReadonlyArray<MemoryLifecycleStatus> = ['active', 'dormant', 'archived', 'disabled', 'disputed', 'superseded'];
+const approvalActions: ReadonlyArray<Exclude<MemoryCandidateAction, 'ignore' | 'review'>> = ['create', 'reinforce', 'supersede', 'dispute'];
 
 @Component({ selector: 'aura-memory-page', standalone: true, imports: [A11yModule, DatePipe, PercentPipe, FormsModule, RouterLink, RouterLinkActive], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-pages.component.html', styleUrl: './memory-pages.component.css' })
 export class MemoryPageComponent {
@@ -108,6 +109,7 @@ export class MemoryCandidatesPageComponent {
   readonly agents = inject(AgentStore);
   private readonly route = inject(ActivatedRoute);
   readonly kinds = kinds;
+  readonly approvalActions = approvalActions;
   readonly editing = signal(false);
   readonly rejectReason = signal('');
   readonly edit = signal<MemoryCandidateEdit | null>(null);
@@ -119,10 +121,37 @@ export class MemoryCandidatesPageComponent {
   draftRelatedMemoryId: string | null = null;
   constructor() { void this.store.loadCandidates(); this.route.queryParamMap.subscribe((params) => { const candidateId = params.get('candidateId'); if (candidateId && this.store.candidate()?.id !== candidateId) void this.store.loadCandidate(candidateId); }); }
   select(id: string): void { this.editing.set(false); this.rejectReason.set(''); void this.store.loadCandidate(id); }
-  beginEdit(): void { const candidate = this.store.candidate(); if (!candidate || !candidate.content || !candidate.kind || !candidate.scope || candidate.importance === null || candidate.halfLifeDays === null) return; this.edit.set({ content: candidate.content, action: candidate.action, kind: candidate.kind, scope: candidate.scope, confidence: candidate.confidence, importance: candidate.importance, halfLifeDays: candidate.halfLifeDays, validTo: candidate.validTo, relatedMemoryId: candidate.relatedMemoryId }); this.draftAction = candidate.action; this.draftKind = candidate.kind; this.draftScopeType = candidate.scope.type; this.draftAgentProfileId = candidate.scope.type === 'agent' ? candidate.scope.agentProfileId : ''; this.draftValidTo = candidate.validTo; this.draftRelatedMemoryId = candidate.relatedMemoryId; this.editing.set(true); }
-  async approve(): Promise<void> { const edit = this.edit(); if (this.editing() && (!edit || !edit.content.trim() || edit.confidence < 0 || edit.confidence > 1 || edit.importance < 0 || edit.importance > 1 || edit.halfLifeDays < 0.25 || edit.halfLifeDays > 3650 || (this.draftScopeType === 'agent' && !this.draftAgentProfileId.trim()))) return; const approved = this.editing() && edit ? { ...edit, action: this.draftAction, kind: this.draftKind, scope: this.draftScopeType === 'agent' ? { type: 'agent' as const, agentProfileId: this.draftAgentProfileId.trim() } : { type: 'user' as const }, validTo: this.draftValidTo, relatedMemoryId: this.draftRelatedMemoryId } : undefined; await this.store.approveCandidate(approved); this.editing.set(false); }
+  beginEdit(): void {
+    const candidate = this.store.candidate();
+    if (!candidate?.content?.trim()) return;
+    const action = this.approvalAction(candidate.action);
+    const kind = candidate.kind ?? 'semantic';
+    const scope = candidate.scope ?? { type: 'user' as const };
+    const importance = candidate.importance ?? 0.5;
+    const halfLifeDays = candidate.halfLifeDays ?? 30;
+    this.edit.set({ content: candidate.content, action, kind, scope, confidence: candidate.confidence, importance, halfLifeDays, validTo: candidate.validTo, relatedMemoryId: candidate.relatedMemoryId });
+    this.draftAction = action;
+    this.draftKind = kind;
+    this.draftScopeType = scope.type;
+    this.draftAgentProfileId = scope.type === 'agent' ? scope.agentProfileId : '';
+    this.draftValidTo = candidate.validTo;
+    this.draftRelatedMemoryId = candidate.relatedMemoryId;
+    this.editing.set(true);
+  }
+  async approve(): Promise<void> {
+    const candidate = this.store.candidate();
+    if (!candidate?.content?.trim()) return;
+    const edit = this.edit();
+    if (this.editing() && (!edit || !edit.content.trim() || edit.confidence < 0 || edit.confidence > 1 || edit.importance < 0 || edit.importance > 1 || edit.halfLifeDays < 0.25 || edit.halfLifeDays > 3650 || (this.draftScopeType === 'agent' && !this.draftAgentProfileId.trim()))) return;
+    const approved: MemoryCandidateEdit | undefined = this.editing() && edit
+      ? { ...edit, action: this.draftAction, kind: this.draftKind, scope: this.draftScopeType === 'agent' ? { type: 'agent' as const, agentProfileId: this.draftAgentProfileId.trim() } : { type: 'user' as const }, validTo: this.draftValidTo, relatedMemoryId: this.draftRelatedMemoryId }
+      : undefined;
+    if (await this.store.approveCandidate(approved)) this.editing.set(false);
+  }
   async reject(): Promise<void> { if (this.rejectReason().trim()) await this.store.rejectCandidate(this.rejectReason()); }
   candidateScope(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string { const scope = candidate.scope; return !scope ? 'Unclassified' : scope.type === 'user' ? 'Shared user' : `Agent ${scope.agentProfileId}`; }
+  candidateAction(candidate: { readonly action: MemoryCandidateAction }): string { return this.approvalAction(candidate.action); }
+  private approvalAction(action: MemoryCandidateAction): Exclude<MemoryCandidateAction, 'ignore' | 'review'> { return action === 'ignore' || action === 'review' ? 'create' : action; }
 }
 
 @Component({ selector: 'aura-memory-settings-page', standalone: true, imports: [DatePipe, FormsModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-settings.component.html', styleUrl: './memory-pages.component.css' })

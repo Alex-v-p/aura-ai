@@ -1114,6 +1114,8 @@ def record_memory_operation(
     generation_id: str | None = None,
     error_class: str | None = None,
     operation: str = "memory.persist",
+    span_id: str | None = None,
+    parent_span_id: str | None = None,
 ) -> None:
     """Emit the complete memory measurement set under one trace correlation."""
 
@@ -1130,7 +1132,9 @@ def record_memory_operation(
         identifiers["generation_id"] = generation_id
     metrics.record_span(
         "aura.knowledge.memory_persistence", operation, timer.elapsed_ms(),
-        trace_id=trace_id, span_id=new_span_id(), parent_span_id=None,
+        trace_id=trace_id,
+        span_id=span_id or new_span_id(),
+        parent_span_id=parent_span_id,
         dependency=dependency, outcome=outcome, error_class=error_class, **identifiers,
     )
     # ``trace_id`` is a first-class call argument.  Keeping it out of the

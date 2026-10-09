@@ -15,6 +15,7 @@ import pytest
 import yaml
 from aura_core.domains.interaction.agents.public import MemoryPolicy
 from aura_core.domains.knowledge.memory.public import (
+    CandidateState,
     MemoryAction,
     MemoryCandidate,
     MemoryEmbeddingGeneration,
@@ -23,14 +24,17 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryLifecycleStatus,
     MemoryModelConfiguration,
     MemoryNotFound,
+    MemoryProcessingCommand,
     MemoryProcessingJob,
     MemoryProcessingService,
     MemoryRecord,
     MemoryReindexService,
     MemoryRepository,
     MemoryScope,
+    MemoryScopeAuthorizationRequired,
     MemoryScopeType,
     MemoryStore,
+    ProcessingJobStatus,
     decide_candidate,
 )
 from aura_core.domains.knowledge.memory.recall import (
@@ -899,6 +903,280 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
         )
         for item in measurements
     )
+
+
+@pytest.mark.asyncio
+async def test_manual_approval_embedding_queue_is_instrumented_and_replayable() -> None:
+    class QueueStore(MemoryStore):
+        failures_remaining = 1
+
+        async def queue_embedding_job(self, issuer: str, subject: str, **kwargs: object):
+            if self.failures_remaining:
+                self.failures_remaining -= 1
+                raise RuntimeError("queue unavailable")
+            return await super().queue_embedding_job(issuer, subject, **kwargs)
+
+    from aura_core.bootstrap.memory_uow import InstrumentedMemoryRepository
+
+    metrics = MetadataMetrics()
+    inner = QueueStore()
+    repository = InstrumentedMemoryRepository(inner, metrics, "memory_store")
+    generation = await repository.register_embedding_generation(
+        "https://issuer.example",
+        "owner",
+        generation=1,
+        model_id="embedder",
+        model_revision="rev-1",
+        dimension=2,
+        model_digest="a" * 64,
+    )
+    await repository.activate_embedding_generation(
+        "https://issuer.example", "owner", generation.id
+    )
+    await repository.save_model_configuration(
+        "https://issuer.example",
+        "owner",
+        MemoryModelConfiguration(
+            "https://issuer.example",
+            "owner",
+            "extractor",
+            "embedder",
+            embedding_model_revision="rev-1",
+            embedding_generation=generation.id,
+        ),
+        expected_version=1,
+        dimension=2,
+        model_digest="a" * 64,
+    )
+    job = MemoryProcessingJob(uuid4(), "https://issuer.example", "owner", uuid4(), uuid4())
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        "https://issuer.example",
+        "owner",
+        MemoryAction.CREATE,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.9,
+    )
+    await repository.persist_candidate(candidate)
+    key = str(uuid4())
+
+    approved = await repository.approve_candidate(
+        "https://issuer.example",
+        "owner",
+        candidate.id,
+        expected_version=1,
+        idempotency_key=key,
+    )
+    assert approved.state.value == "accepted"
+    # The durable in-memory job is staged before the instrumented boundary is
+    # attempted.  A boundary failure must not strand the accepted revision.
+    assert len(inner.embedding_jobs) == 1
+
+    replay = await repository.approve_candidate(
+        "https://issuer.example",
+        "owner",
+        candidate.id,
+        expected_version=1,
+        idempotency_key=key,
+    )
+    assert replay == approved
+    assert len(inner.embedding_jobs) == 1
+
+    queue_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.component_id == "aura.knowledge.memory_persistence"
+        and dict(item.trace_attributes).get("operation") == "memory.embedding.queue"
+    ]
+    assert len(queue_spans) == 2
+    assert {dict(item.dimensions)["outcome"] for item in queue_spans} == {"error", "ok"}
+    assert any(dict(item.dimensions).get("error_class") == "persistence" for item in queue_spans)
+    approval_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.component_id == "aura.knowledge.memory_persistence"
+        and dict(item.trace_attributes).get("operation") == "memory.candidate.approve"
+    ]
+    assert approval_spans
+    approval_span_ids = {item.span_id for item in approval_spans}
+    assert {item.parent_span_id for item in queue_spans} <= approval_span_ids
+    assert all(
+        any(
+            item.parent_span_id == approval.span_id and item.trace_id == approval.trace_id
+            for approval in approval_spans
+        )
+        for item in queue_spans
+    )
+    queue_attributes = [dict(item.trace_attributes) for item in queue_spans]
+    assert all(
+        {
+            "memory_id",
+            "memory_revision_id",
+            "generation_id",
+        }
+        <= set(attributes)
+        for attributes in queue_attributes
+    )
+    assert len(
+        {
+            (
+                attributes["memory_id"],
+                attributes["memory_revision_id"],
+                attributes["generation_id"],
+            )
+            for attributes in queue_attributes
+        }
+    ) == 1
+    assert metrics.stats().rejected == 0
+    assert all("The owner prefers tea." not in repr(item) for item in metrics.snapshot())
+
+
+@pytest.mark.asyncio
+async def test_review_candidate_activity_is_not_reported_as_created() -> None:
+    repository = MemoryStore(clock=lambda: datetime.now(UTC))
+    run_id = uuid4()
+    job = MemoryProcessingJob(uuid4(), "https://issuer.example", "owner", run_id, uuid4())
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        job.issuer,
+        job.subject,
+        MemoryAction.CREATE,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.7,
+        state=CandidateState.REVIEW,
+    )
+    await repository.persist_candidate(candidate)
+
+    snapshot = await repository.get_run_memory_activity(run_id, job.issuer, job.subject)
+
+    assert snapshot.items[0].action == "queued_for_review"
+    assert snapshot.items[0].status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_worker_activity_keeps_review_create_candidate_queued_for_review() -> None:
+    from aura_core.domains.execution.runs.events import RunEvent
+    from aura_core.entrypoints.worker.app import emit_memory_activity
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.events: list[RunEvent] = []
+
+        async def publish(self, event: RunEvent) -> None:
+            self.events.append(event)
+
+    command = MemoryProcessingCommand(
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    candidate = MemoryCandidate(
+        uuid4(),
+        command.job_id,
+        "https://issuer.example",
+        "owner",
+        MemoryAction.CREATE,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.7,
+        state=CandidateState.REVIEW,
+    )
+    result = type("Settlement", (), {"candidate": candidate})()
+    publisher = Publisher()
+
+    await emit_memory_activity(
+        publisher,
+        MemoryStore(clock=lambda: datetime.now(UTC)),
+        MetadataMetrics(),
+        command,
+        "queued",
+        None,
+    )
+    await emit_memory_activity(
+        publisher,
+        MemoryStore(clock=lambda: datetime.now(UTC)),
+        MetadataMetrics(),
+        command,
+        "completed",
+        result,
+    )
+
+    repository = MemoryStore(clock=lambda: datetime.now(UTC))
+    job = MemoryProcessingJob(
+        command.job_id,
+        "https://issuer.example",
+        "owner",
+        command.run_id,
+        command.conversation_id,
+        status=ProcessingJobStatus.COMPLETED,
+    )
+    await repository.enqueue_processing_job(job)
+    await repository.persist_candidate(candidate)
+    snapshot = await repository.get_run_memory_activity(
+        command.run_id, job.issuer, job.subject
+    )
+
+    queued_event, completed_event = publisher.events
+    assert queued_event.data["id"] == completed_event.data["id"]
+    assert queued_event.data["action"] == "queued_for_review"
+    assert completed_event.data["action"] == "queued_for_review"
+    assert queued_event.data["status"] == "queued"
+    assert completed_event.data["status"] == "completed"
+    assert completed_event.data["id"] == str(snapshot.items[0].id)
+    assert snapshot.items[0].action == "queued_for_review"
+    assert snapshot.items[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_agent_scope_outside_pinned_job_agent() -> None:
+    repository = MemoryStore(clock=lambda: datetime.now(UTC))
+    current_agent, foreign_agent = uuid4(), uuid4()
+    job = MemoryProcessingJob(
+        uuid4(),
+        "https://issuer.example",
+        "owner",
+        uuid4(),
+        uuid4(),
+        agent_profile_id=current_agent,
+    )
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        job.issuer,
+        job.subject,
+        MemoryAction.CREATE,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.AGENT, foreign_agent),
+        0.9,
+        state=CandidateState.REVIEW,
+    )
+    await repository.persist_candidate(candidate)
+
+    with pytest.raises(MemoryScopeAuthorizationRequired, match="agent scope"):
+        await repository.approve_candidate(
+            job.issuer,
+            job.subject,
+            candidate.id,
+            expected_version=1,
+            idempotency_key=str(uuid4()),
+        )
 
 
 def test_memory_lifecycle_telemetry_separates_sweep_duration_from_transitions() -> None:

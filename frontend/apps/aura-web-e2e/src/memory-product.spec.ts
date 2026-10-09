@@ -108,7 +108,7 @@ test.describe('memory product', () => {
       if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [] } });
       if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [summary], nextCursor: null } });
       if (url.pathname.endsWith('/conversations/conversation-memory-popup')) return route.fulfill({ json: detail });
-      if (url.pathname.endsWith('/runs/run-memory-popup/memory-activity')) return route.fulfill({ json: { runId: run.id, processingStatus: 'settled', lastEventId: null, reconciledAt: now, items: [{ id: 'activity-recalled', action: 'recalled', status: 'completed', scope: { type: 'user' }, candidateId: null, memoryId: 'memory-popup', memoryRevisionId: 'revision-popup', policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'authoritative', occurredAt: now }, { id: 'activity-candidate', action: 'queued_for_review', status: 'queued', scope: { type: 'user' }, candidateId: 'candidate-popup', memoryId: null, memoryRevisionId: null, policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'authoritative', occurredAt: now }] } });
+      if (url.pathname.endsWith('/runs/run-memory-popup/memory-activity')) return route.fulfill({ json: { runId: run.id, processingStatus: 'settled', lastEventId: null, reconciledAt: now, items: [{ id: 'activity-recalled', action: 'recalled', status: 'completed', scope: { type: 'user' }, candidateId: null, memoryId: 'memory-popup', memoryRevisionId: 'revision-popup', policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'authoritative', occurredAt: now }, { id: 'activity-candidate', action: 'queued_for_review', status: 'completed', scope: { type: 'user' }, candidateId: 'candidate-popup', memoryId: null, memoryRevisionId: null, policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'authoritative', occurredAt: now }, { id: 'activity-processing', action: 'queued_for_review', status: 'queued', scope: { type: 'user' }, candidateId: null, memoryId: null, memoryRevisionId: null, policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending', occurredAt: now }] } });
       if (url.pathname.endsWith('/memories/memory-popup')) return route.fulfill({ json: { id: 'memory-popup', scope: { type: 'user' }, status: 'active', pinned: false, version: 1, currentRevision: { id: 'revision-popup', memoryId: 'memory-popup', revision: 1, kind: 'semantic', content: 'Bounded popup record', correctionReason: null, confidence: .9, importance: .8, halfLifeDays: 30, observedAt: now, validFrom: null, validTo: null, createdAt: now }, reinforcedAt: null, dormantAt: null, archivedAt: null, createdAt: now, updatedAt: now, provenance: [{ id: 'provenance-popup', memoryRevisionId: 'revision-popup', type: 'run', sourceId: run.id, sourceContentDigest: 'digest', evidence: null, observedAt: now, createdAt: now }], revisions: [], embeddingGenerations: [], embeddings: [], relations: [] } });
       if (url.pathname.endsWith('/memory-candidates/candidate-popup')) return route.fulfill({ json: { id: 'candidate-popup', jobId: 'job-popup', runId: run.id, version: 1, action: 'create', state: 'review', content: 'Candidate context', kind: 'semantic', scope: { type: 'user' }, confidence: .7, importance: .5, halfLifeDays: 7, validTo: null, sensitivity: 'ordinary', relatedMemoryId: null, memoryId: null, decisionReason: null, createdAt: now, decidedAt: null, groundedMessageIds: ['user-memory-popup'] } });
       return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
@@ -124,6 +124,10 @@ test.describe('memory product', () => {
     await expect(popup).toHaveAttribute('aria-modal', 'false');
     await expect(popup).toHaveAttribute('aria-labelledby', /memory-popup-title-/);
     await expect(popup.getByText('run', { exact: true })).toBeVisible();
+    await expect(popup.getByText('Queued for review', { exact: true })).toBeVisible();
+    await expect(popup.getByText(/Candidate run run-memory-popup · 1 grounded message\(s\)/)).toBeVisible();
+    await expect(popup.getByText('Processing memory', { exact: true })).toBeVisible();
+    await expect(popup.getByText('Memory processing is still in progress', { exact: true })).toBeVisible();
     await expect(popup.getByRole('link', { name: 'Inspect record' })).toHaveAttribute('href', /\/memory\/memory-popup/);
     await expect(popup.getByRole('link', { name: 'Correct' })).toHaveAttribute('href', /action=correct/);
     await expect(popup.getByRole('link', { name: 'Disable' })).toHaveAttribute('href', /action=disable/);
@@ -251,9 +255,46 @@ test.describe('memory product', () => {
     await candidateButton.focus();
     await candidateButton.press('Enter');
     await expect(page.getByRole('heading', { name: 'Keyboard review fixture', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /approve unchanged/i })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /approve memory/i })).toBeEnabled();
     await expect(page.getByRole('button', { name: /edit and approve/i })).toBeEnabled();
     const reviewA11y = await new AxeBuilder({ page }).include('.memory-page').analyze();
     expect(reviewA11y.violations).toEqual([]);
+  });
+
+  test('makes an incomplete provider-review candidate editable with safe approval defaults', async ({ page }) => {
+    let approvalBody: Record<string, unknown> | null = null;
+    const candidate = {
+      id: 'candidate-legacy', jobId: 'job-legacy', runId: 'run-legacy', version: 3, action: 'review', state: 'review',
+      content: 'The owner prefers quiet mornings.', kind: null, scope: null, confidence: .88, importance: null, halfLifeDays: null,
+      validTo: null, sensitivity: 'ordinary', relatedMemoryId: null, memoryId: null, decisionReason: 'provider_requested_review', createdAt: '2026-10-08T09:00:00Z', decidedAt: null,
+    };
+    await mockShellApi(page, async (route, url) => {
+      if (url.pathname.endsWith('/memory-candidates/candidate-legacy/approve')) {
+        approvalBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({ json: { candidate: { ...candidate, action: 'create', state: 'accepted', version: 4, kind: 'semantic', scope: { type: 'user' }, importance: .5, halfLifeDays: 30, groundedMessageIds: ['message-legacy'] }, activityId: 'activity-legacy' } });
+      }
+      if (url.pathname.endsWith('/memory-candidates/candidate-legacy')) return route.fulfill({ json: { ...candidate, groundedMessageIds: ['message-legacy'] } });
+      if (url.pathname.endsWith('/memory-candidates')) return route.fulfill({ json: { items: [candidate], nextCursor: null } });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto('/memory/candidates');
+    const detailResponse = page.waitForResponse((response) => response.ok() && response.url().includes('/memory-candidates/candidate-legacy') && !response.url().endsWith('/approve'));
+    await page.getByRole('button', { name: /owner prefers quiet mornings/i }).click();
+    const detail = await detailResponse;
+    expect(await detail.json()).toMatchObject({ id: 'candidate-legacy', action: 'review', content: 'The owner prefers quiet mornings.' });
+    await expect(page.getByRole('heading', { name: /owner prefers quiet mornings/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /edit and approve/i })).toBeVisible();
+    await page.getByRole('button', { name: /edit and approve/i }).click();
+    await expect(page.getByRole('combobox', { name: 'Approval action' })).toHaveValue('create');
+    await expect(page.getByRole('combobox', { name: 'Memory kind' })).toHaveValue('semantic');
+    await expect(page.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('user');
+    await expect(page.getByRole('spinbutton', { name: 'Memory importance' })).toHaveValue('0.5');
+    await expect(page.getByRole('spinbutton', { name: 'Memory half-life' })).toHaveValue('30');
+    await expect(page.getByRole('combobox', { name: 'Approval action' }).locator('option')).toHaveCount(4);
+    await expect(page.getByText(/optional; leave blank for no expiry/i)).toBeVisible();
+    await page.getByRole('button', { name: /approve edited candidate/i }).click();
+    await expect.poll(() => approvalBody).toMatchObject({ expectedVersion: 3, edit: { action: 'create', kind: 'semantic', scope: { type: 'user' }, importance: .5, halfLifeDays: 30, validTo: null } });
   });
 });

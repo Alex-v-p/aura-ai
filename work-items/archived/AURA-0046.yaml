@@ -1,0 +1,121 @@
+id: AURA-0046
+title: Make reviewed memory candidates approvable and complete
+status: integrated
+change_class: bugfix
+intent: >
+  Ensure provider-requested review candidates retain a concrete owner-approvable
+  memory action, carry usable importance and relevance-horizon defaults, and
+  can be reviewed or edited without validation dead ends.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - Provider review is a review disposition, not a durable memory mutation action
+    - Preserve optional validity end while requiring a usable relevance horizon
+    - Existing review-action candidates must remain approvable without database rewriting
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references: [MOD-017, AUI-023]
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-web.memory
+allowed_paths:
+  - work-items/active/AURA-0046.yaml
+  - work-items/archived/AURA-0046.yaml
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - frontend/libs/aura/knowledge/memory/src/lib/memory-candidates.component.html
+  - frontend/libs/aura/knowledge/memory/src/lib/memory-pages.component.ts
+  - frontend/libs/aura/knowledge/memory/src/lib/memory-store.spec.ts
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/storybook/src/memory-product.stories.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - contracts/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_persistence
+  required_metrics:
+    - memory_candidate_review_outcome
+    - memory_action_outcome
+    - memory_operation_outcome
+  required_evaluators:
+    - memory_extraction_policy
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Candidate compatibility must preserve owner and agent scope authorization
+    - Defaults and approval errors must not expose memory content through telemetry
+  data_classes: [private_memory_content, private_memory_metadata]
+required_agents:
+  implementation: [core_worker, frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, security_privacy_reviewer, observability_steward]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Existing provider-review candidates with grounded content can be approved unchanged as concrete create actions.
+  - New provider-review candidates persist a concrete approvable action while remaining in review state.
+  - Create and review candidates receive usable importance and half-life values when the provider omits them.
+  - Extraction guidance explicitly requests dynamic importance, half-life, and optional validity end proposals.
+  - The review editor opens for incomplete legacy candidates with safe defaults and never offers ignore or review as approval mutations.
+  - An owner can approve the currently failing live candidate and its accepted memory receives an embedding.
+  - Queued memory activity without a candidate or record remains a non-error processing state and reconciles to its terminal result.
+  - A missing configuration generation pointer is recovered from the owner's matching active generation so parked jobs can resume.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0046.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0046.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0046.yaml
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_persistence.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/system/test_memory_api.py services/aura-core/tests/test_memory_evaluation.py
+  - uv run --project services/aura-core ruff check services/aura-core/src/aura_core/domains/knowledge/memory/public.py services/aura-core/src/aura_core/domains/knowledge/memory/repository.py services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_persistence.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/system/test_memory_api.py
+  - uv run --project services/aura-core pyright services/aura-core/src/aura_core/domains/knowledge/memory/public.py services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/memory-product.spec.ts --config=playwright.config.ts --project=desktop
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

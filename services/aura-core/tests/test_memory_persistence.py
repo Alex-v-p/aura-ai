@@ -36,6 +36,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryAction,
     MemoryCandidate,
     MemoryEmbeddingGeneration,
+    MemoryEmbeddingJob,
     MemoryFilters,
     MemoryIdempotencyConflict,
     MemoryKind,
@@ -127,6 +128,8 @@ async def _candidate(
     action: MemoryAction = MemoryAction.CREATE,
     content: str | None = "The owner prefers tea.",
     related_memory_id: UUID | None = None,
+    importance: float | None = 0.8,
+    half_life_days: float | None = 30,
 ) -> MemoryCandidate:
     job = MemoryProcessingJob(uuid4(), ISSUER, subject, uuid4(), uuid4())
     await store.enqueue_processing_job(job)
@@ -140,8 +143,8 @@ async def _candidate(
         MemoryKind.PREFERENCE if content is not None else None,
         MemoryScope(MemoryScopeType.USER) if content is not None else None,
         0.9,
-        importance=0.8 if content is not None else None,
-        half_life_days=30 if content is not None else None,
+        importance=importance if content is not None else None,
+        half_life_days=half_life_days if content is not None else None,
         related_memory_id=related_memory_id,
     )
     return await store.persist_candidate(candidate)
@@ -555,7 +558,7 @@ async def test_status_and_pin_idempotent_replays_recheck_scope_in_both_adapters(
 async def test_sql_concurrent_same_key_create_and_versioned_mutation_replay_exactly(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:
-    store, _ = sql_memory_store
+    store, engine = sql_memory_store
 
     async def create() -> object:
         return await _create(
@@ -967,7 +970,7 @@ async def test_postgres_terminal_processing_rows_are_content_free_and_owner_scop
 async def test_postgres_claim_paths_preserve_pinned_policy_snapshot(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:
-    store, _engine = sql_memory_store
+    store, engine = sql_memory_store
     policy_by_id = uuid4()
     policy_general = uuid4()
     first = MemoryProcessingJob(
@@ -1273,6 +1276,227 @@ async def test_sql_candidate_decisions_replay_conflict_scrub_and_relations(
     assert superseded_result.state is CandidateState.ACCEPTED
     current_superseded = await store.get_memory(ISSUER, OWNER, superseded_memory.id)
     assert current_superseded.status is MemoryLifecycleStatus.SUPERSEDED
+
+
+@pytest.mark.asyncio
+async def test_sql_legacy_review_candidate_approval_normalizes_action_and_decay_defaults(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, engine = sql_memory_store
+    generation = await store.register_embedding_generation(
+        ISSUER,
+        OWNER,
+        generation=1,
+        model_id="embedder",
+        model_revision="rev-1",
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_model_revision="rev-1",
+            embedding_generation=generation.id,
+        ),
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
+    candidate = await _candidate(
+        store,
+        action=MemoryAction.REVIEW,
+        importance=None,
+        half_life_days=None,
+    )
+
+    approved = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key="candidate-legacy-review-defaults",
+    )
+
+    assert approved.state is CandidateState.ACCEPTED
+    assert approved.action is MemoryAction.CREATE
+    assert approved.memory_id is not None
+    record = await store.get_memory(ISSUER, OWNER, approved.memory_id)
+    assert record.current_revision.importance == 0.5
+    assert record.current_revision.half_life_days == 30.0
+    assert record.current_revision.valid_to is None
+    async with engine.connect() as connection:
+        queued_count = (
+            await connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_embedding_jobs "
+                    "WHERE memory_id = :memory_id AND revision_id = :revision_id"
+                ),
+                {"memory_id": record.id, "revision_id": record.current_revision_id},
+            )
+        ).scalar_one()
+    assert queued_count == 1
+
+
+@pytest.mark.asyncio
+async def test_sql_approval_queue_failure_is_repaired_by_idempotent_replay(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, engine = sql_memory_store
+    generation = await store.register_embedding_generation(
+        ISSUER,
+        OWNER,
+        generation=1,
+        model_id="embedder",
+        model_revision="rev-1",
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_model_revision="rev-1",
+            embedding_generation=generation.id,
+        ),
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await store.activate_embedding_generation(ISSUER, OWNER, generation.id)
+    candidate = await _candidate(store, action=MemoryAction.REVIEW)
+    original_queue = store.queue_embedding_job
+    failed = True
+
+    async def fail_once(issuer: str, subject: str, **kwargs: object) -> MemoryEmbeddingJob:
+        nonlocal failed
+        if failed:
+            failed = False
+            raise RuntimeError("injected queue failure")
+        return await original_queue(issuer, subject, **kwargs)
+
+    monkeypatch.setattr(store, "queue_embedding_job", fail_once)
+    approved = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key="candidate-queue-replay",
+    )
+    assert approved.state is CandidateState.ACCEPTED
+
+    # The accepted revision and its embedding job are committed atomically;
+    # the post-acceptance queue boundary can fail without losing retryable
+    # durable work.
+    record = await store.get_memory(ISSUER, OWNER, approved.memory_id)  # type: ignore[arg-type]
+    async with engine.connect() as connection:
+        queued_count = (
+            await connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_embedding_jobs "
+                    "WHERE memory_id = :memory_id AND revision_id = :revision_id"
+                ),
+                {"memory_id": record.id, "revision_id": record.current_revision_id},
+            )
+        ).scalar_one()
+    assert queued_count == 1
+
+    replay = await store.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key="candidate-queue-replay",
+    )
+    assert replay == approved
+    assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_sql_orphaned_active_generation_is_reassociated_without_resave(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _engine = sql_memory_store
+    generation_id = uuid4()
+    now = datetime.now(UTC)
+    async with store.sessions() as session, session.begin():
+        session.add(
+            _memory_mappings.MemoryEmbeddingGenerationRow(
+                id=generation_id,
+                generation=1,
+                model_id="embedder",
+                model_revision="rev-1",
+                model_digest="a" * 64,
+                dimension=3,
+                status="active",
+                created_at=now,
+                activated_at=now,
+                principal_issuer=ISSUER,
+                principal_subject=OWNER,
+            )
+        )
+        session.add(
+            _memory_mappings.MemoryModelConfigurationRow(
+                principal_issuer=ISSUER,
+                principal_subject=OWNER,
+                extraction_model_id="extractor",
+                extraction_model_revision="extractor-rev",
+                embedding_model_id="embedder",
+                embedding_model_revision="rev-1",
+                embedding_generation=None,
+                version=4,
+                updated_at=now,
+            )
+        )
+
+    active = await store.get_active_embedding_generation(ISSUER, OWNER)
+    configuration = await store.get_model_configuration(ISSUER, OWNER)
+
+    assert active is not None
+    assert active.id == generation_id
+    assert configuration.embedding_generation == generation_id
+    assert configuration.version == 5
+
+
+@pytest.mark.asyncio
+async def test_sql_authorized_run_without_memory_jobs_returns_settled_activity(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, _engine = sql_memory_store
+    run_id = uuid4()
+
+    async def recall_metadata_loader(
+        loaded_run_id: UUID, issuer: str, subject: str
+    ) -> tuple[None, None]:
+        assert loaded_run_id == run_id
+        assert issuer == ISSUER
+        assert subject == OWNER
+        return None, None
+
+    store.set_run_recall_metadata_loader(recall_metadata_loader)
+    snapshot = await store.get_run_memory_activity(run_id, ISSUER, OWNER)
+
+    assert snapshot.processing == "settled"
+    assert snapshot.items == ()
+
+    async def missing_run_loader(
+        loaded_run_id: UUID, issuer: str, subject: str
+    ) -> tuple[None, None]:
+        raise MemoryNotFound("run memory activity not found")
+
+    store.set_run_recall_metadata_loader(missing_run_loader)
+    with pytest.raises(MemoryNotFound, match="run memory activity"):
+        await store.get_run_memory_activity(run_id, ISSUER, OWNER)
 
 
 @pytest.mark.asyncio

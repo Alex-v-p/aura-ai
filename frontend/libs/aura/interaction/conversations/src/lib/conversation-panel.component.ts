@@ -194,12 +194,13 @@ export class ConversationPanelComponent {
   memoryActivityRecoveryNotice(): string | null { const store = this.store as unknown as { readonly memoryActivityNotice?: () => string | null }; return store.memoryActivityNotice?.() ?? null; }
   retryMemoryActivity(runId: string): void { const store = this.store as unknown as { readonly retryMemoryActivity?: (id: string) => Promise<void> }; void store.retryMemoryActivity?.(runId); }
   memoryIndicatorLabel(turnId: string, kind: 'recall' | 'update'): string { return kind === 'recall' ? 'Memory recalled for this answer' : 'Memory created or updated from this turn'; }
-  memoryActivityLabel(activity: import('@aura/aura-api-client').MemoryActivity): string { return activity.action === 'recalled' ? 'Recalled' : activity.action === 'queued_for_review' ? 'Queued for review' : activity.action === 'created' ? 'Created' : activity.action === 'reinforced' ? 'Reinforced' : 'Disputed'; }
+  memoryActivityLabel(activity: import('@aura/aura-api-client').MemoryActivity): string { return this.memoryActivityIsProcessing(activity) ? 'Processing memory' : activity.action === 'recalled' ? 'Recalled' : activity.action === 'queued_for_review' ? 'Queued for review' : activity.action === 'created' ? 'Created' : activity.action === 'reinforced' ? 'Reinforced' : 'Disputed'; }
   memoryScopeLabel(activity: import('@aura/aura-api-client').MemoryActivity): string { return activity.scope?.type === 'agent' ? `Private to agent ${activity.scope.agentProfileId}` : activity.scope?.type === 'user' ? 'Shared user scope' : 'Scope withheld'; }
   memoryRouteQuery(activity: import('@aura/aura-api-client').MemoryActivity, action?: 'correct' | 'disable'): Record<string, string> { const scope = activity.scope; return { ...(scope?.type === 'agent' ? { scopeType: 'agent', agentProfileId: scope.agentProfileId } : scope?.type === 'user' ? { scopeType: 'user' } : {}), ...(action ? { action } : {}) }; }
   memoryPopupProvenance(activity: import('@aura/aura-api-client').MemoryActivity): string {
     const store = this.store as unknown as { readonly memoryPopupRecord?: (id: string) => { readonly kind: 'memory' | 'candidate'; readonly detail: { readonly provenance?: ReadonlyArray<{ readonly type: string }>; readonly runId?: string; readonly groundedMessageIds?: ReadonlyArray<string> } } | null; readonly memoryPopupIsLoading?: (id: string) => boolean; readonly memoryPopupError?: (id: string) => string | null };
     const record = store.memoryPopupRecord?.(activity.id);
+    if (this.memoryActivityIsProcessing(activity) && !record) return 'Memory processing is still in progress';
     if (!record) return store.memoryPopupIsLoading?.(activity.id) ? 'Loading owner-authorized provenance…' : store.memoryPopupError?.(activity.id) ?? 'Provenance unavailable';
     if (record.kind === 'memory') return record.detail.provenance?.slice(0, 2).map((item) => item.type).join(', ') || 'No provenance recorded';
     return `Candidate run ${record.detail.runId ?? 'unavailable'} · ${(record.detail.groundedMessageIds ?? []).length} grounded message(s)`;
@@ -207,9 +208,10 @@ export class ConversationPanelComponent {
   memoryPopupRecordId(activity: import('@aura/aura-api-client').MemoryActivity): string {
     const store = this.store as unknown as { readonly memoryPopupRecord?: (id: string) => { readonly kind: 'memory' | 'candidate'; readonly detail: { readonly id: string; readonly currentRevision?: { readonly id: string } } } | null };
     const record = store.memoryPopupRecord?.(activity.id);
-    if (!record) return activity.memoryId ? `Memory ${activity.memoryId}` : activity.candidateId ? `Candidate ${activity.candidateId}` : 'No record identifier';
+    if (!record) return this.memoryActivityIsProcessing(activity) ? 'Processing — record will appear when settled' : activity.memoryId ? `Memory ${activity.memoryId}` : activity.candidateId ? `Candidate ${activity.candidateId}` : 'No record identifier';
     return record.kind === 'memory' ? `Memory ${record.detail.id} · revision ${record.detail.currentRevision?.id ?? 'unavailable'}` : `Candidate ${record.detail.id}`;
   }
+  memoryActivityIsProcessing(activity: import('@aura/aura-api-client').MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
   runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {
     if (!run.startedAt || !run.finishedAt) return '—';
     const milliseconds = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt));

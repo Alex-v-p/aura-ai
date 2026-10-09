@@ -30,6 +30,7 @@ from aura_core.domains.knowledge.memory.public import (
     MEMORY_PROCESSING_TOPIC,
     MemoryProcessingCommand,
     MemoryValidationError,
+    memory_activity_id,
 )
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
@@ -225,6 +226,7 @@ async def emit_memory_activity(
     started = monotonic()
     candidate = getattr(result, "candidate", None) if result is not None else None
     candidate_action = getattr(getattr(candidate, "action", None), "value", None)
+    candidate_state = getattr(getattr(candidate, "state", None), "value", None)
     action_values = {
         "create": "created",
         "reinforce": "reinforced",
@@ -234,6 +236,11 @@ async def emit_memory_activity(
         "ignore": "queued_for_review",
     }
     if candidate_action is None:
+        action = "queued_for_review"
+    elif str(candidate_state) in {"proposed", "review", "retryable"}:
+        # Provider review is a disposition, not a durable create.  The
+        # candidate may carry action=create after normalization, but its
+        # review state must remain visible until the owner decides it.
         action = "queued_for_review"
     elif str(candidate_action) not in action_values:
         raise MemoryValidationError("unsupported memory candidate action")
@@ -248,7 +255,7 @@ async def emit_memory_activity(
             agent_id = getattr(candidate_scope, "agent_profile_id", None)
             if scope_type == "agent" and agent_id is not None:
                 scope["agentProfileId"] = str(agent_id)
-    activity_id = uuid5(MEMORY_ID_NAMESPACE, f"activity:{command.job_id}")
+    activity_id = memory_activity_id(command.job_id)
     event_id = uuid5(MEMORY_ID_NAMESPACE, f"activity-event:{command.job_id}:{status}")
     candidate_id = getattr(candidate, "id", None)
     memory_id = getattr(candidate, "memory_id", None)

@@ -1060,6 +1060,30 @@ async def test_sensitive_provider_mislabel_and_unknown_action_fail_closed() -> N
         ),
         (
             {
+                "action": "review",
+                "content": "password: do-not-persist",
+                "kind": "semantic",
+                "scope_type": "user",
+                "confidence": 0.99,
+                "sensitivity": "ordinary",
+                "grounded_message_ids": [str(message_id)],
+            },
+            CandidateState.REJECTED,
+        ),
+        (
+            {
+                "action": "create",
+                "content": "The owner likes astronomy.",
+                "kind": "semantic",
+                "scope_type": "user",
+                "confidence": 0.99,
+                "sensitivity": "credential",
+                "grounded_message_ids": [str(message_id)],
+            },
+            CandidateState.REJECTED,
+        ),
+        (
+            {
                 "action": "unknown",
                 "content": "A fact",
                 "kind": "semantic",
@@ -1298,25 +1322,228 @@ async def test_structured_request_carries_domain_owned_memory_decision_contract(
     )
 
     assert result.state is CandidateState.REVIEW
+    assert result.action is MemoryAction.CREATE
+    assert result.importance == 0.5
+    assert result.half_life_days == 30.0
     assert seen[0].input["decision_contract"] == {
         "allowed_actions": [item.value for item in MemoryAction],
         "instructions": (
             "Extract only durable facts explicitly stated by the user. For create or review, "
             "copy the durable fact into content, choose kind semantic or preference, choose "
-            "scope_type agent or user, and return the matching opaque evidence handle. Use "
-            "action ignore when there is no durable user-authored fact. Never invent identifiers."
+            "scope_type agent or user, and return the matching opaque evidence handle. Choose "
+            "importance from 0 to 1 based on durable value and propose a half_life_days between "
+            "0.25 and 3650 based on the fact's relevance horizon; if uncertain, use 0.5 importance "
+            "and 30 days. Set valid_to only when the user states a concrete end date; otherwise "
+            "return null and do not invent an expiry. Use action ignore when there is no durable "
+            "user-authored fact. Never invent identifiers."
         ),
         "required_for_create_or_review": [
             "content",
             "kind",
             "scope_type",
             "grounded_evidence_handles",
+            "importance",
+            "half_life_days",
         ],
         "scope_guidance": {
             "agent": "private to the current agent",
             "user": "shared user memory; policy may require review",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_provider_review_candidate_is_approvable_without_edit() -> None:
+    message_id = uuid4()
+
+    class ReviewInference:
+        async def infer(self, request: StructuredInferenceRequest) -> dict[str, object]:
+            handle = str(request.input["evidence_segments"][0]["handle"])  # type: ignore[index]
+            return {
+                "action": "review",
+                "content": "I prefer concise answers.",
+                "kind": "preference",
+                "scope_type": "agent",
+                "confidence": 0.7,
+                "grounded_evidence_handles": [handle],
+            }
+
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository, ReviewInference(), _Embedding(), clock=lambda: NOW
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    candidate = await processor.process(
+        job,
+        user_content="I prefer concise answers.",
+        assistant_content="Understood.",
+        user_message_ids=frozenset({message_id}),
+        run_agent_profile_id=CURRENT_AGENT,
+    )
+
+    assert candidate.state is CandidateState.REVIEW
+    assert candidate.action is MemoryAction.CREATE
+    assert candidate.importance == 0.5
+    assert candidate.half_life_days == 30.0
+    approved = await repository.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=candidate.version,
+        idempotency_key=str(uuid4()),
+    )
+    assert approved.state is CandidateState.ACCEPTED
+    assert approved.action is MemoryAction.CREATE
+    assert approved.memory_id is not None
+
+
+@pytest.mark.asyncio
+async def test_legacy_review_action_candidate_is_approvable_with_safe_defaults() -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    job = MemoryProcessingJob(
+        uuid4(),
+        ISSUER,
+        OWNER,
+        uuid4(),
+        uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        OWNER,
+        MemoryAction.REVIEW,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.AGENT, CURRENT_AGENT),
+        0.9,
+        state=CandidateState.REVIEW,
+    )
+    await repository.persist_candidate(candidate)
+
+    approved = await repository.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key=str(uuid4()),
+    )
+
+    assert approved.state is CandidateState.ACCEPTED
+    assert approved.action is MemoryAction.CREATE
+    assert approved.memory_id is not None
+
+
+@pytest.mark.asyncio
+async def test_approved_candidate_queues_and_replays_embedding_job_repair() -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    generation = await repository.register_embedding_generation(
+        ISSUER,
+        OWNER,
+        generation=1,
+        model_id="embedder",
+        model_revision="rev-1",
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await repository.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_model_revision="rev-1",
+            embedding_generation=generation.id,
+        ),
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    await repository.activate_embedding_generation(ISSUER, OWNER, generation.id)
+    job = MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4())
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        OWNER,
+        MemoryAction.REVIEW,
+        "The owner prefers tea.",
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.9,
+        state=CandidateState.REVIEW,
+    )
+    await repository.persist_candidate(candidate)
+    key = str(uuid4())
+
+    approved = await repository.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key=key,
+    )
+    assert approved.memory_id is not None
+    assert len(repository.embedding_jobs) == 1
+    embedding_job_id = next(iter(repository.embedding_jobs))
+
+    # Simulate a pre-fix accepted receipt whose queue row was lost. Replay is
+    # the supported repair path and must not create a duplicate job.
+    repository.embedding_jobs.clear()
+    replay = await repository.approve_candidate(
+        ISSUER,
+        OWNER,
+        candidate.id,
+        expected_version=1,
+        idempotency_key=key,
+    )
+    assert replay == approved
+    assert set(repository.embedding_jobs) == {embedding_job_id}
+
+
+@pytest.mark.asyncio
+async def test_legacy_credential_labeled_candidate_cannot_be_approved() -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    job = MemoryProcessingJob(uuid4(), ISSUER, OWNER, uuid4(), uuid4())
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        OWNER,
+        MemoryAction.REVIEW,
+        "The owner likes astronomy.",
+        MemoryKind.SEMANTIC,
+        MemoryScope(MemoryScopeType.USER),
+        0.9,
+        sensitivity=MemorySensitivity.CREDENTIAL,
+        state=CandidateState.REVIEW,
+    )
+    await repository.persist_candidate(candidate)
+
+    with pytest.raises(MemoryValidationError, match="credential-like"):
+        await repository.approve_candidate(
+            ISSUER,
+            OWNER,
+            candidate.id,
+            expected_version=1,
+            idempotency_key=str(uuid4()),
+        )
 
 
 @pytest.mark.asyncio
@@ -2346,6 +2573,47 @@ async def test_no_generation_configuration_parks_before_inference() -> None:
     assert await processor.process_job(job.id) is None
     assert inference.calls == []
     assert repository.processing_jobs[job.id].last_error_class == "embedding_generation"
+
+
+@pytest.mark.asyncio
+async def test_orphaned_active_generation_repairs_configuration_and_unparks_job() -> None:
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    inference = _Inference(_candidate())
+    processor = MemoryProcessingService(
+        repository,
+        inference,
+        _Embedding(),
+        clock=lambda: NOW,
+        evidence_loader=lambda loaded: _evidence_for(loaded, "A user fact.", "Noted."),
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_ids=(uuid4(),),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    assert await processor.process_job(job.id) is None
+    assert repository.processing_jobs[job.id].last_error_class == "embedding_generation"
+
+    generation = await _ready_generation(repository, model_id="embedder", dimension=3)
+    configuration = await repository.get_model_configuration(ISSUER, OWNER)
+    # Simulate the legacy split-save state: the matching active generation is
+    # present, but the owner pointer was never written.
+    repository.model_configurations[(ISSUER, OWNER)] = replace(
+        configuration, embedding_generation=None
+    )
+
+    resumed = await processor.process_job(job.id)
+
+    assert resumed is not None
+    repaired = await repository.get_model_configuration(ISSUER, OWNER)
+    assert repaired.embedding_generation == generation.id
+    assert repository.processing_jobs[job.id].status is ProcessingJobStatus.COMPLETED
 
 
 @pytest.mark.asyncio

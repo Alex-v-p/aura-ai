@@ -909,7 +909,7 @@ describe('ConversationStore', () => {
     const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'Answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
     const queued: MemoryActivity = { id: 'memory-activity-1', action: 'queued_for_review', status: 'queued', scope: { type: 'user' }, candidateId: 'candidate-1', memoryId: null, memoryRevisionId: null, policyRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending', occurredAt: now };
     const authoritative: MemoryActivity = { ...queued, action: 'created', status: 'completed', memoryId: 'memory-1', memoryRevisionId: 'revision-1', reconciliationStatus: 'authoritative' };
-    const candidateActivity: MemoryActivity = { ...queued, id: 'memory-activity-candidate', memoryId: null, candidateId: 'candidate-2' };
+    const candidateActivity: MemoryActivity = { ...queued, id: 'memory-activity-candidate', memoryId: null, candidateId: 'candidate-2', reconciliationStatus: 'authoritative' };
     let snapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'queued', items: [queued], lastEventId: 'activity-1', reconciledAt: now };
     const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
     const assistantId = detail.messages[0]?.id;
@@ -934,11 +934,100 @@ describe('ConversationStore', () => {
     await reconcileStore.loadMemoryPopup(assistantId);
     expect(candidateReads).toEqual(['candidate-2']);
     expect(reconcileStore.memoryPopupRecord(candidateActivity.id)?.kind).toBe('candidate');
+    const processingActivity: MemoryActivity = { ...queued, id: 'memory-activity-processing', candidateId: null, memoryId: null };
+    snapshot = { ...snapshot, items: [processingActivity] };
+    await reconcileStore.retryMemoryActivity(run.id);
+    await reconcileStore.loadMemoryPopup(assistantId);
+    expect(candidateReads).toEqual(['candidate-2']);
+    expect(reconcileStore.memoryPopupError(processingActivity.id)).toBeNull();
+    snapshot = { ...snapshot, items: [candidateActivity] };
+    await reconcileStore.retryMemoryActivity(run.id);
     api.getMemoryCandidateDetail = async () => { throw new Error('private candidate evidence'); };
     await reconcileStore.loadMemoryPopup(assistantId);
     expect(reconcileStore.memoryPopupError(candidateActivity.id)).toBe('Record details are temporarily unavailable.');
+    const applyEvent = (reconcileStore as unknown as { applyEvent: (event: RunEvent) => void }).applyEvent.bind(reconcileStore);
+    applyEvent({ schemaVersion: 1, eventId: 'event-memory-candidate-settled', sequence: 2, eventType: 'memory.activity', runId: run.id, conversationId: run.conversationId, occurredAt: now, data: { ...candidateActivity, status: 'completed', reconciliationStatus: 'authoritative' } } as RunEvent);
+    expect(reconcileStore.memoryPopupError(candidateActivity.id)).toBeNull();
     api.getRunMemoryActivity = async () => { throw new Error('temporarily unavailable'); };
     await reconcileStore.retryMemoryActivity(run.id);
     expect(reconcileStore.memoryActivityNotice()).toContain('transcript is preserved');
+  });
+
+  it('treats a missing memory activity projection as settled with no activity', async () => {
+    const now = new Date().toISOString();
+    const assistantMessageId = 'assistant-memory-none';
+    const run: Run = { id: 'run-memory-none', conversationId: 'memory-none', userMessageId: 'user-memory-none', assistantMessageId, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'Answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
+    api.getRunMemoryActivity = async () => { throw { status: 404, message: 'run memory activity not found', retryable: false }; };
+    const noActivityStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(noActivityStore.loading()).toBe(false));
+    expect(noActivityStore.selected().turns[0]?.text).toBe('Answer');
+    expect(noActivityStore.memoryActivityNotice()).toBeNull();
+
+    api.getRunMemoryActivity = async () => { throw { status: 503, message: 'memory projection unavailable', retryable: true }; };
+    await noActivityStore.retryMemoryActivity(run.id);
+    expect(noActivityStore.memoryActivityNotice()).toContain('transcript is preserved');
+
+    api.getRunMemoryActivity = async () => { throw { status: 404, message: 'run memory activity not found', retryable: false }; };
+    await noActivityStore.retryMemoryActivity(run.id);
+    expect(noActivityStore.memoryActivityNotice()).toBeNull();
+  });
+
+  it('silently retries an expected missing projection with bounded backoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date().toISOString();
+      const assistantMessageId = 'assistant-memory-retry';
+      const run: Run = { id: 'run-memory-retry', conversationId: 'memory-retry', userMessageId: 'user-memory-retry', assistantMessageId, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+      const detail = { ...summary(run.conversationId), messages: [{ id: assistantMessageId, conversationId: run.conversationId, role: 'assistant' as const, content: 'Answer', state: 'complete' as const, runId: run.id, createdAt: now, updatedAt: now }], recentRuns: [run], currentRun: null } as ConversationDetail;
+      const terminalActivity: MemoryActivity = { id: 'memory-activity-terminal', action: 'created', status: 'completed', scope: { type: 'user' }, candidateId: 'candidate-terminal', memoryId: 'memory-terminal', memoryRevisionId: 'revision-terminal', policyRevisionId: null, embeddingGenerationId: 'generation-terminal', reconciliationStatus: 'authoritative', occurredAt: now };
+      const terminalSnapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'settled', items: [terminalActivity], lastEventId: null, reconciledAt: now };
+      const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run]);
+      api.getRunMemoryActivity = async () => terminalSnapshot;
+      const retryStore = new ConversationStore(api);
+      await vi.waitFor(() => expect(retryStore.loading()).toBe(false));
+
+      let attempts = 0;
+      const emptySettledSnapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'settled', items: [], lastEventId: null, reconciledAt: now };
+      api.getRunMemoryActivity = async () => {
+        attempts += 1;
+        return attempts === 1 ? emptySettledSnapshot : terminalSnapshot;
+      };
+      await retryStore.retryMemoryActivity(run.id);
+      expect(attempts).toBe(1);
+      expect(retryStore.memoryActivityNotice()).toBeNull();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(attempts).toBe(2);
+      expect(retryStore.memoryActivityNotice()).toBeNull();
+
+      const queuedSnapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'queued', items: [{ ...terminalActivity, id: 'memory-activity-queued', action: 'queued_for_review', status: 'queued', candidateId: null, memoryId: null, memoryRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending' }], lastEventId: null, reconciledAt: now };
+      attempts = 0;
+      api.getRunMemoryActivity = async () => {
+        attempts += 1;
+        return attempts < 5 ? queuedSnapshot : terminalSnapshot;
+      };
+      await retryStore.retryMemoryActivity(run.id);
+      expect(attempts).toBe(1);
+      expect(retryStore.memoryActivityNotice()).toBeNull();
+      // The terminal projection arrives after the old 4.25-second horizon.
+      await vi.advanceTimersByTimeAsync(250 + 1000 + 3000 + 10_000);
+      expect(attempts).toBe(5);
+      expect(retryStore.memoryActivityNotice()).toBeNull();
+
+      attempts = 0;
+      api.getRunMemoryActivity = async () => {
+        attempts += 1;
+        throw { status: 404, message: 'run memory activity not found', retryable: false };
+      };
+      await retryStore.retryMemoryActivity(run.id);
+      await vi.advanceTimersByTimeAsync(400_000);
+      expect(attempts).toBe(9);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(attempts).toBe(9);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

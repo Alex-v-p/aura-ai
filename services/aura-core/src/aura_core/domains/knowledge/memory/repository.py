@@ -36,6 +36,8 @@ from aura_core.domains.knowledge.memory.persistence import (
     MemoryRow,
 )
 from aura_core.domains.knowledge.memory.public import (
+    DEFAULT_MEMORY_HALF_LIFE_DAYS,
+    DEFAULT_MEMORY_IMPORTANCE,
     MEMORY_ID_NAMESPACE,
     PURGE_CONFIRMATION,
     CandidateState,
@@ -68,8 +70,10 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryVersionConflict,
     ProcessingJobStatus,
     _fingerprint,
+    _normalize_candidate_for_approval,
     classify_sensitivity,
     decide_candidate,
+    memory_activity_id,
     validate_memory_text,
     validate_provenance,
     validate_revision,
@@ -116,6 +120,7 @@ class SqlMemoryRepository:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._run_recall_metadata_loader: Callable[..., Awaitable[object]] | None = None
         self._candidate_evidence_loader: Callable[..., Awaitable[object]] | None = None
+        self._embedding_queue_boundary: Callable[..., Awaitable[object]] | None = None
 
     def set_run_recall_metadata_loader(
         self, loader: Callable[..., Awaitable[object]] | None
@@ -126,6 +131,11 @@ class SqlMemoryRepository:
         self, loader: Callable[..., Awaitable[object]] | None
     ) -> None:
         self._candidate_evidence_loader = loader
+
+    def set_embedding_queue_boundary(
+        self, boundary: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        self._embedding_queue_boundary = boundary
 
     def _now(self) -> datetime:
         """Return the repository clock as an aware UTC instant.
@@ -162,13 +172,17 @@ class SqlMemoryRepository:
             )
             recall_metadata: dict[str, object] | None = None
             last_event_id: UUID | None = None
+            run_known = False
             recall_loader = self._run_recall_metadata_loader
             if recall_loader is not None:
                 recalled = await recall_loader(run_id, issuer, subject)
+                # A successful owner-scoped loader response proves that the
+                # run exists even when no recall metadata was recorded.
+                run_known = True
                 metadata, raw_event_id = cast(tuple[object, object], recalled)
                 recall_metadata = cast(dict[str, object] | None, metadata)
                 last_event_id = raw_event_id if isinstance(raw_event_id, UUID) else None
-            if not jobs and recall_metadata is None:
+            if not jobs and not run_known:
                 raise MemoryNotFound("run memory activity not found")
             job_ids = [item.id for item in jobs]
             candidates = (
@@ -204,10 +218,17 @@ class SqlMemoryRepository:
                 elif candidate.state == CandidateState.REJECTED.value:
                     action, status = "queued_for_review", "completed"
                 else:
-                    action, status = "queued_for_review", "queued"
+                    action = "queued_for_review"
+                    candidate_job = next((item for item in jobs if item.id == candidate.job_id), None)
+                    status = (
+                        "completed"
+                        if candidate_job is not None
+                        and candidate_job.status in {"completed", "failed"}
+                        else "queued"
+                    )
                 items.append(
                     MemoryActivityItem(
-                        uuid5(MEMORY_ID_NAMESPACE, f"activity:{candidate.id}"),
+                        memory_activity_id(candidate.job_id),
                         action,
                         status,
                         scope,
@@ -323,9 +344,12 @@ class SqlMemoryRepository:
         self, issuer: str, subject: str
     ) -> MemoryEmbeddingGeneration | None:
         """Return only the owner-selected active generation."""
+        # Loading configuration also performs the narrow legacy repair for an
+        # owner whose active generation exists but was never linked to the
+        # configuration row.
+        configuration = await self.get_model_configuration(issuer, subject)
         async with self.sessions() as session:
-            configuration = await session.get(MemoryModelConfigurationRow, (issuer, subject))
-            if configuration is None or configuration.embedding_generation is None:
+            if configuration.embedding_generation is None:
                 return None
             row = (
                 await session.execute(
@@ -352,6 +376,23 @@ class SqlMemoryRepository:
                 issuer,
                 subject,
             )
+
+    async def _ensure_active_embedding_job(
+        self, issuer: str, subject: str, record: MemoryRecord
+    ) -> None:
+        """Repair a missing queue row without invoking an embedding provider."""
+
+        generation = await self.get_active_embedding_generation(issuer, subject)
+        if generation is None:
+            return
+        queue = self._embedding_queue_boundary or self.queue_embedding_job
+        await queue(
+            issuer,
+            subject,
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            generation_id=generation.id,
+        )
 
     @staticmethod
     def _recall_scope_clause(scopes: tuple[tuple[MemoryScopeType, UUID | None], ...]) -> object:
@@ -1215,6 +1256,12 @@ class SqlMemoryRepository:
                         created_at=now,
                     )
                 )
+            # Stage the durable job in the same transaction as the revision.
+            # ``_defer_embedding_queue`` is retained as an internal compatibility
+            # flag for the post-acceptance instrumentation boundary, but must
+            # never defer durable work.  A boundary outage after acceptance
+            # therefore cannot strand an accepted memory without an embedding
+            # job; the boundary remains an idempotent telemetry/retry hook.
             await self._stage_missing_embedding(session, issuer, subject, memory_id, revision_id)
             self._stage_idempotency(session, issuer, subject, key, fingerprint, memory_id)
         return await self.get_memory(
@@ -2212,10 +2259,34 @@ class SqlMemoryRepository:
         return configuration
 
     async def get_model_configuration(self, issuer: str, subject: str) -> MemoryModelConfiguration:
-        async with self.sessions() as session:
-            row = await session.get(MemoryModelConfigurationRow, (issuer, subject))
+        async with self.sessions() as session, session.begin():
+            row = await session.get(
+                MemoryModelConfigurationRow, (issuer, subject), with_for_update=True
+            )
             if row is None:
                 raise MemoryNotFound("memory model configuration not found")
+            if row.embedding_generation is None:
+                # Some early first-run saves created the configuration and an
+                # active generation in separate operations.  Re-associate only
+                # when there is exactly one owner-scoped active generation
+                # matching the configured model identity; ambiguity remains
+                # fail-closed and can be resolved by an explicit reindex.
+                candidates = (
+                    await session.execute(
+                        select(MemoryEmbeddingGenerationRow).where(
+                            MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                            MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            MemoryEmbeddingGenerationRow.status == "active",
+                            MemoryEmbeddingGenerationRow.model_id == row.embedding_model_id,
+                            MemoryEmbeddingGenerationRow.model_revision
+                            == row.embedding_model_revision,
+                        )
+                    )
+                ).scalars().all()
+                if len(candidates) == 1:
+                    row.embedding_generation = candidates[0].id
+                    row.version += 1
+                    row.updated_at = datetime.now(UTC)
             return MemoryModelConfiguration(
                 issuer,
                 subject,
@@ -2630,6 +2701,7 @@ class SqlMemoryRepository:
             },
         )
         pending_command = False
+        replayed: MemoryCandidate | None = None
         if key:
             async with self.sessions() as session, session.begin():
                 await self._lock_command(session, issuer, subject, f"candidate:{key}")
@@ -2637,7 +2709,7 @@ class SqlMemoryRepository:
                     session, issuer, subject, candidate_id, key, fingerprint
                 )
                 if replay is not None:
-                    return replay
+                    replayed = replay
                 prior = await session.get(
                     MemoryIdempotencyRow, (issuer, subject, f"candidate:{key}")
                 )
@@ -2649,6 +2721,14 @@ class SqlMemoryRepository:
                         and candidate_row.principal_subject == subject
                         and candidate_row.state == CandidateState.RETRYABLE.value
                     )
+        if replayed is not None:
+            if replayed.state is CandidateState.ACCEPTED and replayed.memory_id is not None:
+                record = await self.get_memory(issuer, subject, replayed.memory_id)
+                try:
+                    await self._ensure_active_embedding_job(issuer, subject, record)
+                except Exception:
+                    pass
+            return replayed
         candidate = await self.get_candidate(issuer, subject, candidate_id)
         expected = int(kwargs.get("expected_version", 1))
         if expected != candidate.version:
@@ -2657,6 +2737,7 @@ class SqlMemoryRepository:
             pending_command and candidate.state is CandidateState.RETRYABLE
         ):
             raise MemoryVersionConflict("memory candidate is already decided")
+        job = await self.get_processing_job(candidate.job_id, issuer, subject)
         edit = kwargs.get("edit")
         if isinstance(edit, dict):
             scope_data = cast(dict[str, object], edit["scope"])
@@ -2677,7 +2758,6 @@ class SqlMemoryRepository:
                 valid_to=cast(datetime | None, edit.get("validTo")),
                 related_memory_id=cast(UUID | None, edit.get("relatedMemoryId")),
             )
-            job = await self.get_processing_job(candidate.job_id, issuer, subject)
             grounded = set(candidate.grounded_message_ids)
             if not grounded or not grounded.issubset(set(job.user_message_ids)):
                 raise MemoryValidationError("edited memory candidate grounding is invalid")
@@ -2728,20 +2808,37 @@ class SqlMemoryRepository:
                 raise MemoryValidationError(
                     "edited memory candidate failed deterministic policy"
                 )
+        else:
+            # Provider ``review`` is a disposition, not a durable mutation.
+            # Normalize legacy content-bearing rows at approval time so they
+            # remain owner-approvable without rewriting the database first.
+            candidate = _normalize_candidate_for_approval(candidate)
         if candidate.content is None or not candidate.scope:
             raise MemoryValidationError("memory candidate content and scope are required")
-        if classify_sensitivity(candidate.content) is MemorySensitivity.CREDENTIAL:
+        if (
+            classify_sensitivity(candidate.content) is MemorySensitivity.CREDENTIAL
+            or candidate.sensitivity is MemorySensitivity.CREDENTIAL
+        ):
             raise MemoryValidationError("credential-like candidate content is not accepted")
         if (
             candidate.scope.type is MemoryScopeType.AGENT
             and candidate.scope.agent_profile_id is None
         ):
             raise MemoryValidationError("agent candidate scope requires an agent profile")
+        if (
+            candidate.scope.type is MemoryScopeType.AGENT
+            and candidate.scope.agent_profile_id != job.agent_profile_id
+        ):
+            raise MemoryScopeAuthorizationRequired("candidate agent scope is not authorized")
         validate_revision(
             candidate.content,
             candidate.confidence,
-            candidate.importance or 0.5,
-            candidate.half_life_days or 30.0,
+            candidate.importance
+            if candidate.importance is not None
+            else DEFAULT_MEMORY_IMPORTANCE,
+            candidate.half_life_days
+            if candidate.half_life_days is not None
+            else DEFAULT_MEMORY_HALF_LIFE_DAYS,
             None,
             candidate.valid_to,
         )
@@ -2803,11 +2900,23 @@ class SqlMemoryRepository:
                     kind=candidate.kind or MemoryKind.SEMANTIC,
                     scope=candidate.scope,
                     confidence=candidate.confidence,
-                    importance=candidate.importance or 0.5,
-                    half_life_days=candidate.half_life_days or 30.0,
+                    importance=(
+                        candidate.importance
+                        if candidate.importance is not None
+                        else DEFAULT_MEMORY_IMPORTANCE
+                    ),
+                    half_life_days=(
+                        candidate.half_life_days
+                        if candidate.half_life_days is not None
+                        else DEFAULT_MEMORY_HALF_LIFE_DAYS
+                    ),
                     valid_to=candidate.valid_to,
                     provenance=provenance,
                     idempotency_key=f"memory-action:{candidate.id}",
+                    # The SQL repository stages the durable job atomically in
+                    # create_memory.  The approval boundary below is still
+                    # invoked separately for instrumentation and retry repair.
+                    _defer_embedding_queue=True,
                 )
         elif candidate.action in {MemoryAction.DISPUTE, MemoryAction.SUPERSEDE}:
             if candidate.related_memory_id is None:
@@ -2844,6 +2953,13 @@ class SqlMemoryRepository:
             decided_at=datetime.now(UTC),
         )
         await self.persist_candidate(decided)
+        try:
+            await self._ensure_active_embedding_job(issuer, subject, record)
+        except Exception:
+            # The candidate receipt is already durable. Queue repair is
+            # retried by an idempotent approval replay and never invokes
+            # inference.
+            pass
         return decided
 
     async def reject_candidate(
