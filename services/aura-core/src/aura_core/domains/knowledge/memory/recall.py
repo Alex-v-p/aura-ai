@@ -23,9 +23,9 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryFilters,
     MemoryLifecycleStatus,
     MemoryRecord,
-    MemoryRepository,
     MemoryScopeType,
 )
+from aura_core.domains.knowledge.memory.repository_ports import MemoryRepository
 
 RRF_K = 60
 RETRIEVAL_VERSION = "memory-retrieval-v2"
@@ -54,9 +54,7 @@ class MemoryQueryEmbedding:
             raise ValueError("query embedding contains a non-finite value")
         if self.digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.digest):
             raise ValueError("query embedding digest must be sha256")
-        if self.model_digest is not None and not re.fullmatch(
-            r"[0-9a-f]{64}", self.model_digest
-        ):
+        if self.model_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.model_digest):
             raise ValueError("query embedding model digest must be sha256")
 
 

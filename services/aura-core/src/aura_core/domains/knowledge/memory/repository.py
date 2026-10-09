@@ -86,7 +86,7 @@ MAX_RECALL_CANDIDATES = 50
 def _uuid_or_none(value: object) -> UUID | None:
     try:
         return UUID(str(value)) if value is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -230,7 +230,9 @@ class SqlMemoryRepository:
                     status = "completed"
                 else:
                     action = "queued_for_review"
-                    candidate_job = next((item for item in jobs if item.id == candidate.job_id), None)
+                    candidate_job = next(
+                        (item for item in jobs if item.id == candidate.job_id), None
+                    )
                     status = (
                         "completed"
                         if candidate_job is not None
@@ -245,9 +247,7 @@ class SqlMemoryRepository:
                         scope,
                         candidate_id=candidate.id,
                         memory_id=candidate.memory_id,
-                        occurred_at=candidate.decided_at
-                        or candidate.created_at
-                        or self._now(),
+                        occurred_at=candidate.decided_at or candidate.created_at or self._now(),
                     )
                 )
             if recall_metadata is not None:
@@ -748,11 +748,7 @@ class SqlMemoryRepository:
         if prior.tombstone or prior.memory_id != candidate_id:
             raise MemoryIdempotencyConflict("idempotency key is unavailable")
         row = await session.get(MemoryCandidateRow, candidate_id)
-        if (
-            row is None
-            or row.principal_issuer != issuer
-            or row.principal_subject != subject
-        ):
+        if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
             raise MemoryNotFound("memory candidate not found")
         # A claimed approval has a durable retryable reservation.  Returning
         # ``None`` lets the same idempotent command resume its action after a
@@ -1093,8 +1089,7 @@ class SqlMemoryRepository:
             if criteria.kind:
                 query = query.where(MemoryRow.kind == criteria.kind.value)
             if criteria.scope_type and (
-                not criteria.include_all_scopes
-                or criteria.scope_type is MemoryScopeType.AGENT
+                not criteria.include_all_scopes or criteria.scope_type is MemoryScopeType.AGENT
             ):
                 query = query.where(MemoryRow.scope_type == criteria.scope_type.value)
             if criteria.agent_profile_id:
@@ -1102,6 +1097,7 @@ class SqlMemoryRepository:
             if (
                 criteria.scope_type is MemoryScopeType.AGENT
                 and not criteria.include_all_scopes
+                and criteria.authorized_agent_ids is not None
                 and criteria.agent_profile_id not in criteria.authorized_agent_ids
             ):
                 # An explicit selector is the minimum authorization at this
@@ -2120,9 +2116,7 @@ class SqlMemoryRepository:
             if key:
                 await self._lock_command(session, issuer, subject, f"model:{key}")
                 command_key = f"model:{key}"
-                prior = await session.get(
-                    MemoryIdempotencyRow, (issuer, subject, command_key)
-                )
+                prior = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
                 if prior is not None:
                     if prior.fingerprint != fingerprint:
                         raise MemoryIdempotencyConflict("idempotency key payload conflict")
@@ -2188,9 +2182,13 @@ class SqlMemoryRepository:
             # A model change creates a discoverable building generation while
             # leaving the currently selected generation active until a full
             # reindex atomically activates its replacement.
-            if row is not None and not missing_generation and (
-                row.embedding_model_id != configuration.embedding_model_id
-                or row.embedding_model_revision != configuration.embedding_model_revision
+            if (
+                row is not None
+                and not missing_generation
+                and (
+                    row.embedding_model_id != configuration.embedding_model_id
+                    or row.embedding_model_revision != configuration.embedding_model_revision
+                )
             ):
                 # Only the newest configured target is resumable. Older
                 # building generations remain as audit metadata but cannot
@@ -2310,17 +2308,21 @@ class SqlMemoryRepository:
                 # matching the configured model identity; ambiguity remains
                 # fail-closed and can be resolved by an explicit reindex.
                 candidates = (
-                    await session.execute(
-                        select(MemoryEmbeddingGenerationRow).where(
-                            MemoryEmbeddingGenerationRow.principal_issuer == issuer,
-                            MemoryEmbeddingGenerationRow.principal_subject == subject,
-                            MemoryEmbeddingGenerationRow.status == "active",
-                            MemoryEmbeddingGenerationRow.model_id == row.embedding_model_id,
-                            MemoryEmbeddingGenerationRow.model_revision
-                            == row.embedding_model_revision,
+                    (
+                        await session.execute(
+                            select(MemoryEmbeddingGenerationRow).where(
+                                MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                                MemoryEmbeddingGenerationRow.principal_subject == subject,
+                                MemoryEmbeddingGenerationRow.status == "active",
+                                MemoryEmbeddingGenerationRow.model_id == row.embedding_model_id,
+                                MemoryEmbeddingGenerationRow.model_revision
+                                == row.embedding_model_revision,
+                            )
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 if len(candidates) == 1:
                     row.embedding_generation = candidates[0].id
                     row.version += 1
@@ -2371,6 +2373,18 @@ class SqlMemoryRepository:
                 allow_shared_user_promotion=row.allow_shared_user_promotion,
                 memory_policy_revision_id=row.memory_policy_revision_id,
             )
+
+    async def is_processing_command_purged(
+        self, issuer: str, subject: str, command_id: UUID
+    ) -> bool:
+        """Return whether purge fenced this owner's processing command."""
+
+        async with self.sessions() as session:
+            row = await session.get(
+                MemoryIdempotencyRow,
+                (issuer, subject, f"memory-job:{command_id}"),
+            )
+            return row is not None and row.tombstone
 
     async def enqueue_processing_job(self, job: MemoryProcessingJob) -> MemoryProcessingJob:
         existing_job_id: UUID | None = None
@@ -2845,9 +2859,7 @@ class SqlMemoryRepository:
                 allow_shared_user_promotion=job.allow_shared_user_promotion,
             )
             if decision.state is CandidateState.REJECTED:
-                raise MemoryValidationError(
-                    "edited memory candidate failed deterministic policy"
-                )
+                raise MemoryValidationError("edited memory candidate failed deterministic policy")
         else:
             # Provider ``review`` is a disposition, not a durable mutation.
             # Normalize legacy content-bearing rows at approval time so they
@@ -2873,9 +2885,7 @@ class SqlMemoryRepository:
         validate_revision(
             candidate.content,
             candidate.confidence,
-            candidate.importance
-            if candidate.importance is not None
-            else DEFAULT_MEMORY_IMPORTANCE,
+            candidate.importance if candidate.importance is not None else DEFAULT_MEMORY_IMPORTANCE,
             candidate.half_life_days
             if candidate.half_life_days is not None
             else DEFAULT_MEMORY_HALF_LIFE_DAYS,
@@ -3266,9 +3276,7 @@ class SqlMemoryRepository:
                     content=candidate.content,
                     kind=candidate.kind.value if candidate.kind else None,
                     scope_type=candidate.scope.type.value if candidate.scope else None,
-                    agent_profile_id=candidate.scope.agent_profile_id
-                    if candidate.scope
-                    else None,
+                    agent_profile_id=candidate.scope.agent_profile_id if candidate.scope else None,
                     confidence=candidate.confidence,
                     importance=candidate.importance,
                     half_life_days=candidate.half_life_days,

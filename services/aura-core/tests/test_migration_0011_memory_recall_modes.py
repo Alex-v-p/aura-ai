@@ -52,8 +52,7 @@ def _database_unavailable(exc: BaseException) -> bool:
 
 
 def _run_upgrade(module: Any, connection: Any) -> None:
-    operations = Operations(MigrationContext.configure(connection))
-    with Operations.context(operations):
+    with Operations.context(MigrationContext.configure(connection)):
         module.upgrade()
 
 

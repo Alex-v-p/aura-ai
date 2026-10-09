@@ -712,6 +712,14 @@ class InstrumentedMemoryRepository:
         )
         return result  # type: ignore[return-value]
 
+    async def is_processing_command_purged(
+        self, issuer: str, subject: str, command_id: UUID
+    ) -> bool:
+        # This is an internal pre-inference fence check.  Keep its telemetry
+        # surface identical to the previous private-state check: the query
+        # itself is not a user-visible memory operation.
+        return await self._inner.is_processing_command_purged(issuer, subject, command_id)
+
     async def claim_processing_job_by_id(
         self, job_id: UUID, issuer: str, subject: str
     ) -> MemoryProcessingJob | None:
@@ -750,9 +758,12 @@ class InstrumentedMemoryRepository:
         )
         return result  # type: ignore[return-value]
 
-    async def persist_candidate(self, candidate: object) -> object:
+    async def persist_candidate(self, candidate: MemoryCandidate) -> MemoryCandidate:
         method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "persist_candidate"))
-        return await self._invoke("memory.candidate.persist", method, (None, None, None), candidate)
+        result = await self._invoke(
+            "memory.candidate.persist", method, (None, None, None), candidate
+        )
+        return cast(MemoryCandidate, result)
 
     async def get_candidate_for_job(
         self, job_id: UUID, issuer: str, subject: str
@@ -817,29 +828,61 @@ class InstrumentedMemoryRepository:
             ),
         )
 
-    async def record_action_outcome(self, **kwargs: object) -> None:
+    async def record_action_outcome(
+        self,
+        *,
+        candidate_id: UUID | None,
+        job_id: UUID,
+        issuer: str,
+        subject: str,
+        action: str,
+        outcome: str,
+        memory_id: UUID | None = None,
+        revision_id: UUID | None = None,
+        error_class: str | None = None,
+    ) -> None:
         method = cast(
             Callable[..., Awaitable[object]], getattr(self._inner, "record_action_outcome")
         )
-        await self._invoke("memory.outcome.record", method, (None, None, None), **kwargs)
-
-    async def queue_embedding_job(self, issuer: str, subject: str, **kwargs: object) -> object:
-        method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "queue_embedding_job"))
-        memory_id = kwargs.get("memory_id")
-        revision_id = kwargs.get("revision_id")
-        generation_id = kwargs.get("generation_id")
-        return await self._invoke(
-            "memory.embedding.queue",
+        await self._invoke(
+            "memory.outcome.record",
             method,
+            (None, None, None),
+            candidate_id=candidate_id,
+            job_id=job_id,
+            issuer=issuer,
+            subject=subject,
+            action=action,
+            outcome=outcome,
+            memory_id=memory_id,
+            revision_id=revision_id,
+            error_class=error_class,
+        )
+
+    async def queue_embedding_job(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        memory_id: UUID,
+        revision_id: UUID,
+        generation_id: UUID,
+    ) -> MemoryEmbeddingJob:
+        result = await self._invoke(
+            "memory.embedding.queue",
+            self._inner.queue_embedding_job,
             (
-                str(memory_id) if isinstance(memory_id, UUID) else None,
-                str(revision_id) if isinstance(revision_id, UUID) else None,
-                str(generation_id) if isinstance(generation_id, UUID) else None,
+                str(memory_id),
+                str(revision_id),
+                str(generation_id),
             ),
             issuer,
             subject,
-            **kwargs,
+            memory_id=memory_id,
+            revision_id=revision_id,
+            generation_id=generation_id,
         )
+        return cast(MemoryEmbeddingJob, result)
 
     async def settle_embedding_job(
         self, job_id: UUID, *, issuer: str, subject: str, lease_id: UUID, **kwargs: object
@@ -865,11 +908,14 @@ class InstrumentedMemoryRepository:
         method = cast(Callable[..., Awaitable[object]], getattr(self._inner, "claim_embedding_job"))
         return await method(issuer, subject)
 
-    async def claim_embedding_job_by_id(self, job_id: UUID, issuer: str, subject: str) -> object:
+    async def claim_embedding_job_by_id(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryEmbeddingJob | None:
         method = cast(
             Callable[..., Awaitable[object]], getattr(self._inner, "claim_embedding_job_by_id")
         )
-        return await method(job_id, issuer, subject)
+        result = await method(job_id, issuer, subject)
+        return cast(MemoryEmbeddingJob | None, result)
 
     async def claim_embedding_job_for_revision(
         self,

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+from typing import cast
 from uuid import uuid4, uuid5
 
 import pytest
-from aura_core.domains.interaction.agents.adapters.sql_store import (
-    SqlAgentStore,
-    _is_deterministic_platform_policy,
-    _policy_owner_matches,
-)
+from aura_core.domains.interaction.agents.adapters import sql_store
+from aura_core.domains.interaction.agents.adapters.sql_store import SqlAgentStore
 from aura_core.domains.interaction.agents.persistence import MemoryPolicyRevisionRow
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
@@ -24,6 +23,26 @@ from aura_core.domains.interaction.agents.public import (
 from aura_core.platform.database.engine import make_engine, session_factory
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
+
+_PolicyOwnerMatches = Callable[[MemoryPolicyRevisionRow, str, str], bool]
+_IsDeterministicPlatformPolicy = Callable[[object, object], bool]
+_POLICY_OWNER_MATCHES = "_policy_owner_matches"
+_IS_DETERMINISTIC_PLATFORM_POLICY = "_is_deterministic_platform_policy"
+
+
+def _policy_owner_matches(
+    row: MemoryPolicyRevisionRow, issuer: str, subject: str
+) -> bool:
+    matcher = cast(_PolicyOwnerMatches, getattr(sql_store, _POLICY_OWNER_MATCHES))
+    return matcher(row, issuer, subject)
+
+
+def _is_deterministic_platform_policy(policy_id: object, profile_id: object) -> bool:
+    checker = cast(
+        _IsDeterministicPlatformPolicy,
+        getattr(sql_store, _IS_DETERMINISTIC_PLATFORM_POLICY),
+    )
+    return checker(policy_id, profile_id)
 
 
 def _blank_policy(policy_id: object, agent_profile_id: object) -> MemoryPolicyRevisionRow:

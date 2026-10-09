@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +22,7 @@ from aura_core.domains.knowledge.memory.public import (
 )
 from aura_core.domains.knowledge.memory.recall import (
     MemoryQueryEmbedding,
+    MemoryRecallRepository,
     MemoryRecallRequest,
     MemoryRecallService,
     MemoryRecallTelemetryEvent,
@@ -185,7 +187,7 @@ async def test_off_policy_skips_generation_embedding_and_storage_lookup() -> Non
     agent = uuid4()
     policy = MemoryPolicy(agent, agent, 1, recall_mode=MemoryRecallMode.OFF)
     result = await MemoryRecallService(
-        NoRecallRepository(), telemetry=Collector()
+        cast(MemoryRecallRepository, NoRecallRepository()), telemetry=Collector()
     ).recall(
         MemoryRecallRequest(ISSUER, SUBJECT, agent, "private task", policy)
     )

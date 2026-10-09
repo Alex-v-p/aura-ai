@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NotRequired, TypedDict, Unpack, cast
 from uuid import UUID, uuid4
 
 import aura_core.bootstrap.memory_uow as memory_uow
+import aura_core.entrypoints.worker.app as worker_app
 import pytest
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.memory_uow import memory_command_factory
@@ -41,6 +42,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryProcessingService,
     MemoryProvenance,
     MemoryRecord,
+    MemoryRepository,
     MemoryRetentionBasis,
     MemoryScope,
     MemoryScopeType,
@@ -56,17 +58,14 @@ from aura_core.domains.knowledge.memory.public import (
     decide_candidate,
     normalize_retention_horizon,
 )
-from aura_core.entrypoints.worker.app import (
-    _configure_worker_memory_recall,
-    emit_memory_activity,
-    run_memory_once,
-)
+from aura_core.entrypoints.worker.app import emit_memory_activity, run_memory_once
 from aura_core.platform.outbox import InMemoryOutbox
-from aura_core.platform.telemetry import MetadataMetrics, record_memory_processing
+from aura_core.platform.telemetry import Measurement, MetadataMetrics, record_memory_processing
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.runtime.models.ports import (
     EmbeddingResult,
     ModelDescriptor,
+    ProviderTraceContext,
     StructuredInferenceRequest,
 )
 
@@ -74,6 +73,37 @@ ISSUER = "https://issuer.example"
 OWNER = "owner"
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 CURRENT_AGENT = UUID("11111111-1111-4111-8111-111111111111")
+_CONFIGURE_WORKER_MEMORY_RECALL = "_configure_worker_memory_recall"
+_RESUME_ACCEPTED_CANDIDATE = "_resume_accepted_candidate"
+_configure_worker_memory_recall = cast(
+    Callable[..., object], getattr(worker_app, _CONFIGURE_WORKER_MEMORY_RECALL)
+)
+
+
+class _MemoryProcessingTelemetry(TypedDict):
+    operation: NotRequired[str]
+    duration_ms: float
+    trace_id: str
+    outcome: str
+    error_class: NotRequired[str | None]
+    memory_id: NotRequired[str | None]
+    memory_revision_id: NotRequired[str | None]
+    generation_id: NotRequired[str | None]
+    attempt_count: NotRequired[int | None]
+    backlog: NotRequired[int | None]
+    progress: NotRequired[float | None]
+
+
+def _record_processing_telemetry(
+    metrics: MetadataMetrics,
+    **event: Unpack[_MemoryProcessingTelemetry],
+) -> None:
+    record_memory_processing(
+        metrics,
+        component="aura.knowledge.memory_extraction",
+        dependency="memory_worker",
+        **event,
+    )
 
 
 class _Inference:
@@ -82,22 +112,17 @@ class _Inference:
         self.error = error
         self.calls: list[dict[str, object]] = []
 
-    async def infer(self, request: object) -> object:
+    async def infer(self, request: StructuredInferenceRequest) -> Mapping[str, object]:
         if isinstance(request, Mapping):
             payload = dict(cast(Mapping[str, object], request))
         else:
-            raw_payload = cast(object, getattr(request, "input", {}))
-            payload = (
-                dict(cast(Mapping[str, object], raw_payload))
-                if isinstance(raw_payload, Mapping)
-                else {}
-            )
+            payload = dict(request.input)
         self.calls.append(payload)
         if self.error is not None:
             raise self.error
-        return self.result
+        return cast(Mapping[str, object], self.result)
 
-    async def infer_memory(self, request: object) -> object:
+    async def infer_memory(self, request: StructuredInferenceRequest) -> Mapping[str, object]:
         # Keep compatibility while the Core worker moves to the generic
         # StructuredInferencePort.
         return await self.infer(request)
@@ -121,23 +146,30 @@ class _Embedding:
         self.error = error
         self.calls: list[str] = []
 
-    async def embed(self, model_id: str, content: str) -> object:
+    async def embed(
+        self,
+        model_id: str,
+        text: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> EmbeddingResult:
+        del context
         self.model_id = model_id
-        self.calls.append(content)
+        self.calls.append(text)
         if self.error is not None:
             raise self.error
-        return type(
-            "EmbeddingResult",
-            (),
-            {
-                "vector": self.vector,
-                "digest": self.digest,
-                "model_id": model_id,
-                "model_revision": self.model_revision,
-                "model_digest": self.model_digest,
-                "dimension": len(self.vector),
-            },
-        )()
+        return EmbeddingResult(
+            vector=self.vector,
+            digest=self.digest,
+            model_id=model_id,
+            model_revision=self.model_revision,
+            model_digest=self.model_digest,
+            dimension=len(self.vector),
+        )
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        del model_id
+        return self.error is None
 
 
 class _DurableMemoryStore(MemoryStore):
@@ -462,6 +494,20 @@ class _PurgeDuringLinkStore(MemoryStore):
             ),
         )
         raise RuntimeError("injected crash between memory creation and link")
+
+
+class _PurgeFenceQueryStore(MemoryStore):
+    """Record the typed processing purge-fence query at the repository seam."""
+
+    def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
+        super().__init__(clock=clock)
+        self.purge_fence_queries: list[tuple[str, str, UUID]] = []
+
+    async def is_processing_command_purged(
+        self, issuer: str, subject: str, command_id: UUID
+    ) -> bool:
+        self.purge_fence_queries.append((issuer, subject, command_id))
+        return await super().is_processing_command_purged(issuer, subject, command_id)
 
 
 def _candidate(
@@ -997,7 +1043,9 @@ async def test_rejected_extraction_is_omitted_from_run_activity() -> None:
     store.processing_jobs[job.id] = job
     store.candidates[candidate.id] = candidate
 
-    activity = await store.get_run_memory_activity(run_id, ISSUER, OWNER)
+    activity = await cast(MemoryRepository, store).get_run_memory_activity(
+        run_id, ISSUER, OWNER
+    )
 
     assert activity.items == ()
     assert activity.processing_status == "settled"
@@ -1011,6 +1059,10 @@ async def test_terminal_rejected_activity_has_no_candidate_identifier() -> None:
 
         async def publish(self, event: RunEvent) -> None:
             self.events.append(event)
+
+        async def history(self, run_id: UUID, after: UUID | None = None) -> list[RunEvent]:
+            del run_id, after
+            return list(self.events)
 
     command = MemoryProcessingCommand(
         uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
@@ -1451,16 +1503,11 @@ async def test_schema_valid_domain_invalid_output_settles_processing_job() -> No
 async def test_extraction_telemetry_distinguishes_invalid_output_from_provider_retry() -> None:
     async def run_case(
         result: object, error: Exception | None
-    ) -> tuple[CandidateState, tuple[object, ...]]:
+    ) -> tuple[CandidateState, tuple[Measurement, ...]]:
         metrics = MetadataMetrics()
 
-        def telemetry(**event: object) -> None:
-            record_memory_processing(
-                metrics,
-                component="aura.knowledge.memory_extraction",
-                dependency="memory_worker",
-                **event,
-            )
+        def telemetry(**event: Unpack[_MemoryProcessingTelemetry]) -> None:
+            _record_processing_telemetry(metrics, **event)
 
         processor = MemoryProcessingService(
             MemoryStore(clock=lambda: NOW),
@@ -1809,8 +1856,10 @@ async def test_multi_segment_opaque_handles_and_negation_force_contradiction_rev
     calls: list[list[str]] = []
 
     class ContradictionInference:
-        async def infer(self, request: object) -> object:
-            payload = cast(Mapping[str, object], getattr(request, "input", {}))
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
+            payload = request.input
             segments = cast(list[Mapping[str, object]], payload["evidence_segments"])
             handles = [str(segment["handle"]) for segment in segments]
             calls.append(handles)
@@ -2238,7 +2287,7 @@ async def test_discard_outcome_is_content_free() -> None:
 @pytest.mark.asyncio
 async def test_purge_tombstone_blocks_restart_recreate_and_reembedding() -> None:
     message_id = uuid4()
-    repository = MemoryStore(clock=lambda: NOW)
+    repository = _PurgeFenceQueryStore(clock=lambda: NOW)
     generation = await repository.register_embedding_generation(
         ISSUER,
         OWNER,
@@ -2284,8 +2333,9 @@ async def test_purge_tombstone_blocks_restart_recreate_and_reembedding() -> None
         agent_profile_id=CURRENT_AGENT,
         authorized_agent_ids=frozenset({CURRENT_AGENT}),
     )
+    restarted_inference = _Inference(_candidate(message_id=message_id))
     restarted = MemoryProcessingService(
-        repository, _Inference(_candidate(message_id=message_id)), _Embedding(), clock=lambda: NOW
+        repository, restarted_inference, _Embedding(), clock=lambda: NOW
     )
     await restarted.configure_models(
         MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
@@ -2297,6 +2347,11 @@ async def test_purge_tombstone_blocks_restart_recreate_and_reembedding() -> None
             assistant_content="Noted.",
             user_message_ids=frozenset({message_id}),
         )
+    assert repository.purge_fence_queries == [
+        (ISSUER, OWNER, job.id),
+        (ISSUER, OWNER, job.id),
+    ]
+    assert restarted_inference.calls == []
     assert await repository.list_memories(ISSUER, OWNER) == []
 
 
@@ -2374,9 +2429,11 @@ async def test_distinct_runs_reinforce_one_record_and_append_provenance() -> Non
         def __init__(self, results: Sequence[object]) -> None:
             self.results = list(results)
 
-        async def infer(self, request: object) -> object:
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
             del request
-            return self.results.pop(0)
+            return cast(Mapping[str, object], self.results.pop(0))
 
     first_id, second_id = uuid4(), uuid4()
     first = _candidate(message_id=first_id, action=MemoryAction.CREATE)
@@ -2693,13 +2750,8 @@ async def test_provider_ignore_reinforces_existing_direct_family_fact() -> None:
     repository = MemoryStore(clock=lambda: NOW)
     metrics = MetadataMetrics()
 
-    def telemetry(**event: object) -> None:
-        record_memory_processing(
-            metrics,
-            component="aura.knowledge.memory_extraction",
-            dependency="memory_worker",
-            **event,
-        )
+    def telemetry(**event: Unpack[_MemoryProcessingTelemetry]) -> None:
+        _record_processing_telemetry(metrics, **event)
 
     existing = await repository.create_memory(
         ISSUER,
@@ -2759,6 +2811,7 @@ async def test_provider_ignore_reinforces_existing_direct_family_fact() -> None:
 
     assert result.state is CandidateState.ACCEPTED
     assert result.action is MemoryAction.REINFORCE
+    assert result.decision_reason is not None
     assert result.decision_reason.startswith("provider_ignore_reinforcement@")
     assert result.half_life_days == 365
     assert result.valid_to is None
@@ -3051,7 +3104,7 @@ async def test_fallback_receipt_purge_is_scoped_to_the_purged_memory() -> None:
         ("Star Wars is my favorite movie.", "fallback-a"),
         ("Remember that Star Wars was released in 1977.", "fallback-b"),
     )
-    records = []
+    records: list[MemoryRecord] = []
     for content, key_suffix in values:
         records.append(
             await repository.create_memory(
@@ -3448,7 +3501,11 @@ async def test_provider_ignore_pending_target_resumes_exact_reinforcement() -> N
         clock=lambda: NOW,
     )
 
-    resumed = await processor._resume_accepted_candidate(job, candidate)
+    resume = cast(
+        Callable[[MemoryProcessingJob, MemoryCandidate], Awaitable[MemoryCandidate]],
+        getattr(processor, _RESUME_ACCEPTED_CANDIDATE),
+    )
+    resumed = await resume(job, candidate)
 
     assert resumed.state is CandidateState.ACCEPTED
     assert resumed.memory_id == existing.id
@@ -3509,13 +3566,8 @@ async def test_process_job_records_pending_fallback_resume_once_without_text(
         repository.memories.pop(existing.id)
     metrics = MetadataMetrics()
 
-    def telemetry(**event: object) -> None:
-        record_memory_processing(
-            metrics,
-            component="aura.knowledge.memory_extraction",
-            dependency="memory_worker",
-            **event,
-        )
+    def telemetry(**event: Unpack[_MemoryProcessingTelemetry]) -> None:
+        _record_processing_telemetry(metrics, **event)
 
     processor = MemoryProcessingService(
         repository,
@@ -3829,13 +3881,8 @@ async def test_provider_ignore_revision_race_has_no_accepted_orphan(
     content = "My sister’s birthday is on March 14."
     metrics = MetadataMetrics()
 
-    def telemetry(**event: object) -> None:
-        record_memory_processing(
-            metrics,
-            component="aura.knowledge.memory_extraction",
-            dependency="memory_worker",
-            **event,
-        )
+    def telemetry(**event: Unpack[_MemoryProcessingTelemetry]) -> None:
+        _record_processing_telemetry(metrics, **event)
 
     class RevisionRaceFamilyStore(MemoryStore):
         async def revise_memory(
@@ -4292,7 +4339,7 @@ async def test_agent_scope_background_embedding_uses_owner_and_agent_capabilitie
     claimed = await repository.claim_embedding_job(ISSUER, OWNER)
     assert claimed is not None and claimed.lease_id is not None
     result = _Embedding()
-    vector = cast(EmbeddingResult, await result.embed(generation.model_id, record.content))
+    vector = await result.embed(generation.model_id, record.content)
     await repository.attach_embedding(
         ISSUER, OWNER, record.id, revision_id=record.current_revision_id,
         generation_id=generation.id, vector=vector.vector, digest=vector.digest,

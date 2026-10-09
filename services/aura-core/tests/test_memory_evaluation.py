@@ -16,6 +16,7 @@ import yaml
 from aura_core.domains.interaction.agents.public import MemoryPolicy, MemoryRecallMode
 from aura_core.domains.knowledge.memory.public import (
     MEMORY_EXTRACTION_POLICY_VERSION,
+    PURGE_CONFIRMATION,
     CandidateState,
     MemoryAction,
     MemoryCandidate,
@@ -61,6 +62,7 @@ from aura_core.providers.models.ollama.adapter import OllamaAdapter, OllamaUnava
 from aura_core.runtime.models.ports import (
     ChatModelPort,
     EmbeddingPort,
+    EmbeddingResult,
     ProviderTraceContext,
     StructuredInferenceRequest,
 )
@@ -518,21 +520,34 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
         dimension=generation.dimension,
     )
     await store.activate_embedding_generation("https://issuer.example", "owner", generation.id)
+    class NoopInference:
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
+            del request
+            return {}
+
     class Embedder:
-        async def embed(self, model_id: str, content: str) -> object:
-            del content
-            return type(
-                "EmbeddingResult",
-                (),
-                {
-                    "vector": (0.2, 0.3),
-                    "digest": "c" * 64,
-                    "model_id": model_id,
-                    "model_revision": "rev-2",
-                    "model_digest": "d" * 64,
-                    "dimension": 2,
-                },
-            )()
+        async def embed(
+            self,
+            model_id: str,
+            text: str,
+            *,
+            context: ProviderTraceContext | None = None,
+        ) -> EmbeddingResult:
+            del text, context
+            return EmbeddingResult(
+                vector=(0.2, 0.3),
+                digest="c" * 64,
+                model_id=model_id,
+                model_revision="rev-2",
+                model_digest="d" * 64,
+                dimension=2,
+            )
+
+        async def is_ready(self, model_id: str | None = None) -> bool:
+            del model_id
+            return True
 
     replacement = await store.register_embedding_generation(
         "https://issuer.example",
@@ -551,9 +566,19 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
     )
 
     class FailingEmbedder:
-        async def embed(self, model_id: str, content: str) -> object:
-            del model_id, content
+        async def embed(
+            self,
+            model_id: str,
+            text: str,
+            *,
+            context: ProviderTraceContext | None = None,
+        ) -> EmbeddingResult:
+            del model_id, text, context
             raise RuntimeError("embedding provider unavailable")
+
+        async def is_ready(self, model_id: str | None = None) -> bool:
+            del model_id
+            return False
 
     failed_generation = await store.register_embedding_generation(
         "https://issuer.example",
@@ -582,7 +607,7 @@ async def test_maintenance_integrity_evaluator_executes_lifecycle_and_reindex_fi
     )
     maintained = await MemoryProcessingService(
         store,
-        object(),
+        NoopInference(),
         Embedder(),
         clock=lambda: datetime(2026, 1, 2, tzinfo=UTC),
     ).maintain("https://issuer.example", "owner")
@@ -780,7 +805,9 @@ async def test_off_mode_skips_all_recall_io_but_persistence_remains_available() 
         generation_lookups = 0
         memory_lookups = 0
 
-        async def get_active_embedding_generation(self, issuer: str, subject: str) -> None:
+        async def get_active_embedding_generation(
+            self, issuer: str, subject: str
+        ) -> MemoryEmbeddingGeneration | None:
             self.generation_lookups += 1
             return await super().get_active_embedding_generation(issuer, subject)
 
@@ -858,7 +885,9 @@ async def test_automatic_recall_metadata_is_content_free_and_budget_bounded() ->
     for metadata in result.metadata:
         assert "content" not in metadata
         assert metadata["retrievalVersion"] == "memory-retrieval-v2"
-        assert metadata["queryMatchScore"] >= 0.70
+        score = metadata["queryMatchScore"]
+        assert isinstance(score, (int, float))
+        assert score >= 0.70
 
 
 def test_memory_manifests_declare_component_local_latency_retry_backlog_and_privacy() -> None:
@@ -970,9 +999,10 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
     """Exercise the composed Core seams rather than manually recording spans."""
 
     class Inference:
-        async def infer(self, request: object) -> object:
-            raw_input = getattr(request, "input", {})
-            payload = cast(Mapping[str, object], raw_input)
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
+            payload = request.input
             segments = cast(list[Mapping[str, object]], payload.get("evidence_segments", []))
             handle = str(segments[0]["handle"]) if segments else "unknown"
             return {
@@ -992,23 +1022,29 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
             }
 
     class Embedding:
-        async def embed(self, model_id: str, content: str) -> object:
-            del content
-            return type(
-                "EmbeddingResult",
-                (),
-                {
-                    "vector": (0.1, 0.2),
-                    "digest": "a" * 64,
-                    "model_id": model_id,
-                    "model_revision": None,
-                    "model_digest": {
-                        "embedder": "b" * 64,
-                        "embedder-new": "c" * 64,
-                    }[model_id],
-                    "dimension": 2,
-                },
-            )()
+        async def embed(
+            self,
+            model_id: str,
+            text: str,
+            *,
+            context: ProviderTraceContext | None = None,
+        ) -> EmbeddingResult:
+            del text, context
+            return EmbeddingResult(
+                vector=(0.1, 0.2),
+                digest="a" * 64,
+                model_id=model_id,
+                model_revision=None,
+                model_digest={
+                    "embedder": "b" * 64,
+                    "embedder-new": "c" * 64,
+                }[model_id],
+                dimension=2,
+            )
+
+        async def is_ready(self, model_id: str | None = None) -> bool:
+            del model_id
+            return True
 
     class ProcessingStore(MemoryStore):
         async def persist_candidate(
@@ -1049,10 +1085,10 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
         async def embed(
             self,
             model_id: str,
-            content: str,
+            text: str,
             *,
             context: ProviderTraceContext | None = None,
-        ) -> object:
+        ) -> EmbeddingResult:
             assert context is not None and context.trace_id is not None
             trace_attributes: dict[str, str] = {}
             if context.generation_id is not None:
@@ -1069,7 +1105,7 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
                 provider="test",
                 **trace_attributes,
             )
-            return await super().embed(model_id, content)
+            return await super().embed(model_id, text)
 
     def optional_text(kwargs: Mapping[str, object], key: str) -> str | None:
         value = kwargs.get(key)
@@ -1201,9 +1237,10 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
     assert stale.status is MemoryLifecycleStatus.DORMANT
 
     class ReviewInference:
-        async def infer(self, request: object) -> object:
-            raw_input = getattr(request, "input", {})
-            payload = cast(Mapping[str, object], raw_input)
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
+            payload = request.input
             segments = cast(list[Mapping[str, object]], payload["evidence_segments"])
             return {
                 "action": "create",
@@ -1253,7 +1290,9 @@ async def test_real_processing_maintenance_and_outbox_call_sites_retain_metadata
     assert review.state.value == "review"
 
     class FailingInference:
-        async def infer(self, request: object) -> object:
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
             del request
             raise RuntimeError("structured provider unavailable")
 
@@ -1419,11 +1458,25 @@ async def test_manual_approval_embedding_queue_is_instrumented_and_replayable() 
     class QueueStore(MemoryStore):
         failures_remaining = 1
 
-        async def queue_embedding_job(self, issuer: str, subject: str, **kwargs: object):
+        async def queue_embedding_job(
+            self,
+            issuer: str,
+            subject: str,
+            *,
+            memory_id: UUID,
+            revision_id: UUID,
+            generation_id: UUID,
+        ) -> MemoryEmbeddingJob:
             if self.failures_remaining:
                 self.failures_remaining -= 1
                 raise RuntimeError("queue unavailable")
-            return await super().queue_embedding_job(issuer, subject, **kwargs)
+            return await super().queue_embedding_job(
+                issuer,
+                subject,
+                memory_id=memory_id,
+                revision_id=revision_id,
+                generation_id=generation_id,
+            )
 
     from aura_core.bootstrap.memory_uow import InstrumentedMemoryRepository
 
@@ -1545,6 +1598,45 @@ async def test_manual_approval_embedding_queue_is_instrumented_and_replayable() 
 
 
 @pytest.mark.asyncio
+async def test_instrumented_processing_purge_fence_query_is_owner_scoped() -> None:
+    from aura_core.bootstrap.memory_uow import InstrumentedMemoryRepository
+
+    metrics = MetadataMetrics()
+    repository = InstrumentedMemoryRepository(
+        MemoryStore(clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)),
+        metrics,
+        "memory_store",
+    )
+    job = MemoryProcessingJob(uuid4(), "https://issuer.example", "owner", uuid4(), uuid4())
+    assert await repository.is_processing_command_purged(job.issuer, job.subject, job.id) is False
+    memory = await repository.create_memory(
+        job.issuer,
+        job.subject,
+        content="The owner prefers tea.",
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.USER),
+        confidence=0.9,
+        importance=0.8,
+        half_life_days=30,
+        idempotency_key=f"memory-job:{job.id}",
+    )
+    await repository.purge(
+        job.issuer,
+        job.subject,
+        memory.id,
+        confirmation=PURGE_CONFIRMATION,
+        expected_version=memory.version,
+        idempotency_key="purge-processing-command",
+    )
+
+    assert await repository.is_processing_command_purged(job.issuer, job.subject, job.id) is True
+    assert await repository.is_processing_command_purged(
+        job.issuer, "another-owner", job.id
+    ) is False
+    assert await repository.is_processing_command_purged(job.issuer, job.subject, uuid4()) is False
+
+
+@pytest.mark.asyncio
 async def test_review_candidate_activity_is_not_reported_as_created() -> None:
     repository = MemoryStore(clock=lambda: datetime.now(UTC))
     run_id = uuid4()
@@ -1564,7 +1656,9 @@ async def test_review_candidate_activity_is_not_reported_as_created() -> None:
     )
     await repository.persist_candidate(candidate)
 
-    snapshot = await repository.get_run_memory_activity(run_id, job.issuer, job.subject)
+    snapshot = await cast(MemoryRepository, repository).get_run_memory_activity(
+        run_id, job.issuer, job.subject
+    )
 
     assert snapshot.items[0].action == "queued_for_review"
     assert snapshot.items[0].status == "queued"
@@ -1581,6 +1675,10 @@ async def test_worker_activity_keeps_review_create_candidate_queued_for_review()
 
         async def publish(self, event: RunEvent) -> None:
             self.events.append(event)
+
+        async def history(self, run_id: UUID, after: UUID | None = None) -> list[RunEvent]:
+            del run_id, after
+            return list(self.events)
 
     command = MemoryProcessingCommand(
         uuid4(),
@@ -1636,7 +1734,7 @@ async def test_worker_activity_keeps_review_create_candidate_queued_for_review()
     )
     await repository.enqueue_processing_job(job)
     await repository.persist_candidate(candidate)
-    snapshot = await repository.get_run_memory_activity(
+    snapshot = await cast(MemoryRepository, repository).get_run_memory_activity(
         command.run_id, job.issuer, job.subject
     )
 
