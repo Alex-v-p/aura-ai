@@ -1019,6 +1019,24 @@ _PERSONAL_MEMORY_MARKER = re.compile(
     r"correct|making|working)\b)",
     re.IGNORECASE,
 )
+_DETERMINISTIC_PREFERENCE_STATEMENT = re.compile(
+    r"^\s*(?:[^?!.]{1,240}\b(?:is|are)\s+my\s+(?:favorite|preferred)\b[^?!.]{1,240}"
+    r"|i\s+(?:prefer|like|love)\b[^?!.]{1,240})[.!]?\s*$",
+    re.IGNORECASE,
+)
+_FALLBACK_REINFORCEMENT_MARKER = re.compile(
+    r"^provider_ignore_reinforcement@(?P<version>[1-9][0-9]*)$"
+)
+_FALLBACK_REINFORCEMENT_TARGET_MARKER = re.compile(
+    r"^pif@(?P<memory_id>[0-9a-fA-F]{32})@(?P<version>[1-9][0-9]*)$"
+)
+_TEMPORAL_FALLBACK_QUALIFIER = re.compile(
+    r"\b(?:today|tomorrow|tonight|this\s+(?:time|week|month|year)|"
+    r"next\s+(?:week|month|year)|for\s+now|right\s+now|at\s+the\s+moment|"
+    r"temporarily|until|while|currently|if|when|unless|during|"
+    r"for\s+(?:a|an|one|\d+)\s+(?:day|week|month|year)s?)\b",
+    re.IGNORECASE,
+)
 _DATE_EXPRESSION = (
     r"(?:january|february|march|april|may|june|july|august|september|october|"
     r"november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?|"
@@ -1095,6 +1113,36 @@ def classify_retention_basis(user_content: str) -> MemoryRetentionBasis:
     if _PERSONAL_MEMORY_MARKER.search(user_content):
         return MemoryRetentionBasis.PERSONAL
     return MemoryRetentionBasis.NONE
+
+
+def deterministic_fallback_kind(
+    user_content: str, retention_basis: MemoryRetentionBasis
+) -> MemoryKind | None:
+    """Return a conservative kind for provider-ignore recovery, if any.
+
+    This is deliberately narrower than the general personal classifier.  The
+    fallback may only derive canonical content from an exact owner-authored
+    preference statement or an explicit remember/save command.
+    """
+
+    if _TEMPORAL_FALLBACK_QUALIFIER.search(user_content):
+        return None
+    if retention_basis is MemoryRetentionBasis.PERSONAL and _DETERMINISTIC_PREFERENCE_STATEMENT.search(
+        user_content
+    ):
+        return MemoryKind.PREFERENCE
+    if retention_basis is MemoryRetentionBasis.EXPLICIT_REQUEST and _EXPLICIT_MEMORY_REQUEST.search(
+        user_content
+    ):
+        return MemoryKind.SEMANTIC
+    return None
+
+
+def _deterministic_create_idempotency_key(issuer: str, subject: str, content: str) -> str:
+    """Return a content-free receipt shared by concurrent fallback creates."""
+
+    digest = hashlib.sha256(f"{issuer}\x00{subject}\x00{content}".encode()).hexdigest()
+    return f"memory-fallback:{digest}"
 
 
 def normalize_retention_horizon(
@@ -3085,25 +3133,37 @@ class MemoryProcessingService:
             )
             self.outcomes.append({"job_id": job.id, "action": "review", "outcome": "retryable"})
             return candidate
-        # A provider may conservatively return ``ignore`` for a direct,
-        # already-known family fact.  Preserve that conservative provider
-        # decision for new facts, but allow the deterministic owner-authored
-        # evidence to reinforce an exact active record.  This keeps repeated
-        # turns idempotent when extraction under-classifies a durable fact,
-        # without creating memories from model-free heuristics or broad
-        # personal markers.
+        # A provider may conservatively return ``ignore`` for exact,
+        # owner-authored durable evidence.  Recover only narrow family facts,
+        # unmistakable preferences, and explicit remember/save commands.  The
+        # exact user text remains the canonical content; no model or assistant
+        # text is used to derive a fallback.
         retention_basis = classify_retention_basis(user_content)
         deterministic_family_reinforcement = False
+        deterministic_fallback_reinforcement = False
         fallback_source: str | None = None
         fallback_target_id: UUID | None = None
+        fallback_target_version: int | None = None
+        normalized_content = user_content.strip()
+        family_event = _USER_FAMILY_RELATION_EVENT.search(user_content)
+        deterministic_kind = deterministic_fallback_kind(user_content, retention_basis)
+        allow_deterministic_create = (
+            deterministic_kind is not None
+            and family_event is None
+            and allow_shared_user_promotion
+        )
         if (
             candidate.action is MemoryAction.IGNORE
             and candidate.content is None
-            and retention_basis is MemoryRetentionBasis.PERSONAL
-            and _USER_FAMILY_RELATION_EVENT.search(user_content) is not None
+            and (
+                (
+                    retention_basis is MemoryRetentionBasis.PERSONAL
+                    and family_event is not None
+                )
+                or allow_deterministic_create
+            )
         ):
-            normalized_content = user_content.strip()
-            existing_family_records = await self.repository.list_memories(
+            existing_fallback_records = await self.repository.list_memories(
                 job.issuer,
                 job.subject,
                 MemoryFilters(
@@ -3114,10 +3174,10 @@ class MemoryProcessingService:
                     limit=200,
                 ),
             )
-            existing_family = next(
+            existing_fallback = next(
                 (
                     item
-                    for item in existing_family_records
+                    for item in existing_fallback_records
                     if item.content == normalized_content
                     and (
                         (
@@ -3125,7 +3185,8 @@ class MemoryProcessingService:
                             and allow_shared_user_promotion
                         )
                         or (
-                            item.scope.type is MemoryScopeType.AGENT
+                            family_event is not None
+                            and item.scope.type is MemoryScopeType.AGENT
                             and item.scope.agent_profile_id
                             == (run_agent_profile_id or job.agent_profile_id)
                         )
@@ -3133,17 +3194,20 @@ class MemoryProcessingService:
                 ),
                 None,
             )
-            if existing_family is not None:
-                deterministic_family_reinforcement = True
+            if existing_fallback is not None:
+                allow_deterministic_create = False
+                revision = existing_fallback.current_revision
+                deterministic_family_reinforcement = family_event is not None
+                deterministic_fallback_reinforcement = True
                 fallback_source = "provider_ignore_reinforcement"
-                fallback_target_id = existing_family.id
-                revision = existing_family.current_revision
+                fallback_target_id = existing_fallback.id
+                fallback_target_version = existing_fallback.version
                 candidate = replace(
                     candidate,
                     action=MemoryAction.REINFORCE,
                     content=normalized_content,
-                    kind=existing_family.kind,
-                    scope=existing_family.scope,
+                    kind=existing_fallback.kind,
+                    scope=existing_fallback.scope,
                     confidence=revision.confidence,
                     importance=revision.importance,
                     half_life_days=revision.half_life_days,
@@ -3152,6 +3216,43 @@ class MemoryProcessingService:
                     grounded_message_ids=tuple(sorted(user_message_ids, key=str)),
                     retention_basis=retention_basis,
                     decision_reason="deterministic_reinforcement",
+                )
+            elif allow_deterministic_create:
+                historical_fallback_records = await self.repository.list_memories(
+                    job.issuer,
+                    job.subject,
+                    MemoryFilters(
+                        scope_type=MemoryScopeType.USER,
+                        include_historical=True,
+                        q=normalized_content,
+                        limit=200,
+                    ),
+                )
+                if any(
+                    item.content == normalized_content
+                    and item.scope.type is MemoryScopeType.USER
+                    for item in historical_fallback_records
+                ):
+                    # Historical user records are never reactivated by a
+                    # provider-ignore fallback; owner lifecycle controls or
+                    # explicit UI actions must perform that transition.
+                    allow_deterministic_create = False
+            if allow_deterministic_create:
+                fallback_source = "provider_ignore_deterministic_create"
+                candidate = replace(
+                    candidate,
+                    action=MemoryAction.CREATE,
+                    content=normalized_content,
+                    kind=deterministic_kind,
+                    scope=MemoryScope(MemoryScopeType.USER),
+                    confidence=0.95,
+                    importance=0.7,
+                    half_life_days=365.0,
+                    valid_to=None,
+                    sensitivity=classify_sensitivity(normalized_content),
+                    grounded_message_ids=tuple(sorted(user_message_ids, key=str)),
+                    retention_basis=retention_basis,
+                    decision_reason="deterministic_create",
                 )
 
         conflict = False
@@ -3213,7 +3314,18 @@ class MemoryProcessingService:
         candidate = replace(
             candidate,
             state=decision.state,
-            decision_reason=fallback_source or decision.reason,
+            decision_reason=(
+                (
+                    f"pif@{fallback_target_id.hex}@"
+                    f"{fallback_target_version}"
+                )
+                if (
+                    fallback_source == "provider_ignore_reinforcement"
+                    and fallback_target_id is not None
+                    and fallback_target_version is not None
+                )
+                else fallback_source or decision.reason
+            ),
         )
         candidate = _content_free_candidate(candidate)
         self.candidates[candidate.id] = candidate
@@ -3269,7 +3381,7 @@ class MemoryProcessingService:
             MemoryFilters(
                 scope_type=scope.type,
                 agent_profile_id=scope.agent_profile_id,
-                include_historical=not deterministic_family_reinforcement,
+                include_historical=not deterministic_fallback_reinforcement,
                 limit=100000,
             ),
         )
@@ -3281,7 +3393,7 @@ class MemoryProcessingService:
                 None,
             )
         )
-        if deterministic_family_reinforcement and duplicate is None:
+        if deterministic_fallback_reinforcement and duplicate is None:
             # The exact active target disappeared or changed scope between
             # the owner-scoped lookup and mutation.  Never fall through to
             # CREATE: a purge fence or concurrent lifecycle transition must
@@ -3344,6 +3456,77 @@ class MemoryProcessingService:
                 }
             )
             return candidate
+        if fallback_source == "provider_ignore_deterministic_create":
+            exact = [item for item in matches if candidate.content and item.content == candidate.content]
+            active_exact = next(
+                (item for item in exact if item.status is MemoryLifecycleStatus.ACTIVE), None
+            )
+            if active_exact is not None:
+                duplicate = active_exact
+                deterministic_fallback_reinforcement = True
+                fallback_target_id = active_exact.id
+                fallback_target_version = active_exact.version
+                fallback_source = "provider_ignore_reinforcement"
+            elif exact:
+                candidate = _content_free_candidate(
+                    replace(
+                        candidate,
+                        action=MemoryAction.IGNORE,
+                        content=None,
+                        kind=None,
+                        scope=None,
+                        importance=None,
+                        half_life_days=None,
+                        valid_to=None,
+                        grounded_message_ids=(),
+                        state=CandidateState.REJECTED,
+                        decision_reason="reinforcement_target_unavailable",
+                        retention_basis=MemoryRetentionBasis.NONE,
+                    )
+                )
+                self.candidates[candidate.id] = candidate
+                if callable(persist_candidate):
+                    await persist_candidate(candidate)
+                record_outcome = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "record_action_outcome", None),
+                )
+                if callable(record_outcome):
+                    await record_outcome(
+                        candidate_id=candidate.id,
+                        job_id=job.id,
+                        issuer=job.issuer,
+                        subject=job.subject,
+                        action=MemoryAction.CREATE.value,
+                        outcome="ignored",
+                        error_class="not_found",
+                    )
+                self._emit(
+                    "memory.candidate",
+                    process_started,
+                    trace_id=trace_id,
+                    outcome="rejected",
+                    error_class="not_found",
+                    attempt_count=job.attempt_count,
+                )
+                self._emit(
+                    "memory.job",
+                    process_started,
+                    trace_id=trace_id,
+                    outcome="ok",
+                    error_class="not_found",
+                    attempt_count=job.attempt_count,
+                    backlog=len(self.jobs),
+                )
+                self.outcomes.append(
+                    {
+                        "job_id": job.id,
+                        "action": MemoryAction.CREATE.value,
+                        "outcome": "ignored",
+                        "error_class": "not_found",
+                    }
+                )
+                return candidate
         if duplicate is not None and candidate.action in {
             MemoryAction.CREATE,
             MemoryAction.REINFORCE,
@@ -3367,12 +3550,17 @@ class MemoryProcessingService:
                             authorized_agent_ids=frozenset({scope.agent_profile_id})
                             if scope.agent_profile_id
                             else frozenset(),
-                            expected_version=duplicate.version,
-                            require_active=deterministic_family_reinforcement,
+                            expected_version=(
+                                fallback_target_version
+                                if deterministic_fallback_reinforcement
+                                and fallback_target_version is not None
+                                else duplicate.version
+                            ),
+                            require_active=deterministic_fallback_reinforcement,
                         ),
                     )
                 except (MemoryNotFound, MemoryVersionConflict):
-                    if not deterministic_family_reinforcement:
+                    if not deterministic_fallback_reinforcement:
                         raise
                     candidate = _content_free_candidate(
                         replace(
@@ -3588,7 +3776,13 @@ class MemoryProcessingService:
                 half_life_days=candidate.half_life_days or 30.0,
                 valid_to=candidate.valid_to,
                 provenance=prov,
-                idempotency_key=f"memory-job:{job.id}",
+                idempotency_key=(
+                    _deterministic_create_idempotency_key(
+                        job.issuer, job.subject, candidate.content or ""
+                    )
+                    if fallback_source == "provider_ignore_deterministic_create"
+                    else f"memory-job:{job.id}"
+                ),
                 agent_profile_id=scope.agent_profile_id,
             )
         else:
@@ -3644,7 +3838,9 @@ class MemoryProcessingService:
                 record.reinforced_at = self._now()
                 record.status = MemoryLifecycleStatus.ACTIVE
                 record.provenance.extend(prov)
-        candidate = replace(candidate, memory_id=record.id)
+        if fallback_source == "provider_ignore_reinforcement":
+            fallback_source = f"{fallback_source}@{record.version}"
+        candidate = replace(candidate, memory_id=record.id, decision_reason=fallback_source or candidate.decision_reason)
         link_job = cast(
             Callable[..., Awaitable[object]] | None,
             getattr(self.repository, "link_processing_job_memory", None),
@@ -3900,7 +4096,363 @@ class MemoryProcessingService:
     ) -> MemoryCandidate:
         """Resume the durable action phase without a second model decision."""
 
+        pending_marker = _FALLBACK_REINFORCEMENT_TARGET_MARKER.fullmatch(
+            candidate.decision_reason or ""
+        )
+        if pending_marker is not None:
+            pending_action = candidate.action
+            try:
+                target_id = UUID(pending_marker.group("memory_id"))
+                expected_version = int(pending_marker.group("version"))
+                scope = candidate.scope
+                if scope is None:
+                    raise MemoryNotFound("fallback target scope is unavailable")
+                target = await self.repository.get_memory(
+                    job.issuer,
+                    job.subject,
+                    target_id,
+                    scope_type=scope.type,
+                    agent_profile_id=scope.agent_profile_id,
+                )
+                if target.status is not MemoryLifecycleStatus.ACTIVE:
+                    raise MemoryNotFound("fallback target is no longer active")
+                reinforce = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "reinforce_memory", None),
+                )
+                if not callable(reinforce):
+                    raise MemoryNotFound("fallback reinforcement boundary is unavailable")
+                record = cast(
+                    MemoryRecord,
+                    await reinforce(
+                        job.issuer,
+                        job.subject,
+                        target_id,
+                        provenance=self._job_provenance(job),
+                        idempotency_key=f"memory-action:{candidate.id}",
+                        scope_type=scope.type,
+                        agent_profile_id=scope.agent_profile_id,
+                        authorized_agent_ids=frozenset({scope.agent_profile_id})
+                        if scope.agent_profile_id
+                        else frozenset(),
+                        expected_version=expected_version,
+                        require_active=True,
+                    ),
+                )
+                if (
+                    _USER_FAMILY_RELATION_EVENT.search(candidate.content or "") is not None
+                    and (
+                        (
+                            candidate.half_life_days is not None
+                            and candidate.half_life_days > record.current_revision.half_life_days
+                            and candidate.valid_to is None
+                        )
+                        or (
+                            candidate.valid_to is None
+                            and record.current_revision.valid_to is not None
+                        )
+                    )
+                ):
+                    try:
+                        record = await self.repository.revise_memory(
+                            job.issuer,
+                            job.subject,
+                            target_id,
+                            content=record.content,
+                            half_life_days=candidate.half_life_days,
+                            valid_to=None,
+                            clear_valid_to=True,
+                            expected_version=record.version,
+                            reason="deterministic family-event horizon normalization",
+                            idempotency_key=f"memory-horizon:{candidate.id}",
+                            scope_type=scope.type,
+                            agent_profile_id=scope.agent_profile_id,
+                            authorized_agent_ids=frozenset({scope.agent_profile_id})
+                            if scope.agent_profile_id
+                            else frozenset(),
+                        )
+                    except (MemoryNotFound, MemoryVersionConflict) as exc:
+                        raise MemoryNotFound("fallback horizon target is unavailable") from exc
+                link_job = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "link_processing_job_memory", None),
+                )
+                if callable(link_job):
+                    await link_job(job.id, job.issuer, job.subject, record.id)
+                candidate = replace(
+                    candidate,
+                    memory_id=record.id,
+                    decision_reason=f"provider_ignore_reinforcement@{record.version}",
+                )
+                self.candidates[candidate.id] = candidate
+                persist = cast(
+                    Callable[[MemoryCandidate], Awaitable[object]] | None,
+                    getattr(self.repository, "persist_candidate", None),
+                )
+                if callable(persist):
+                    await persist(candidate)
+                self.outcomes.append(
+                    {
+                        "job_id": job.id,
+                        "action": MemoryAction.REINFORCE.value,
+                        "outcome": "created",
+                        "memory_id": record.id,
+                        "revision_id": record.current_revision_id,
+                    }
+                )
+                record_outcome = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "record_action_outcome", None),
+                )
+                if callable(record_outcome):
+                    await record_outcome(
+                        candidate_id=candidate.id,
+                        job_id=job.id,
+                        issuer=job.issuer,
+                        subject=job.subject,
+                        action=MemoryAction.REINFORCE.value,
+                        outcome="created",
+                        memory_id=record.id,
+                        revision_id=record.current_revision_id,
+                    )
+                return candidate
+            except (MemoryNotFound, MemoryVersionConflict):
+                candidate = _content_free_candidate(
+                    replace(
+                        candidate,
+                        action=MemoryAction.IGNORE,
+                        content=None,
+                        kind=None,
+                        scope=None,
+                        importance=None,
+                        half_life_days=None,
+                        valid_to=None,
+                        grounded_message_ids=(),
+                        state=CandidateState.REJECTED,
+                        decision_reason="reinforcement_target_unavailable",
+                        retention_basis=MemoryRetentionBasis.NONE,
+                    )
+                )
+                self.candidates[candidate.id] = candidate
+                persist = cast(
+                    Callable[[MemoryCandidate], Awaitable[object]] | None,
+                    getattr(self.repository, "persist_candidate", None),
+                )
+                if callable(persist):
+                    await persist(candidate)
+                self.outcomes.append(
+                    {
+                        "job_id": job.id,
+                        "action": pending_action.value,
+                        "outcome": "ignored",
+                        "error_class": "not_found",
+                    }
+                )
+                record_outcome = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "record_action_outcome", None),
+                )
+                if callable(record_outcome):
+                    await record_outcome(
+                        candidate_id=candidate.id,
+                        job_id=job.id,
+                        issuer=job.issuer,
+                        subject=job.subject,
+                        action=pending_action.value,
+                        outcome="ignored",
+                        error_class="not_found",
+                    )
+                return candidate
+
+        if (
+            candidate.memory_id is None
+            and candidate.decision_reason == "provider_ignore_deterministic_create"
+        ):
+            if candidate.content is None:
+                raise MemoryValidationError("deterministic create candidate is incomplete")
+            records = await self.repository.list_memories(
+                job.issuer,
+                job.subject,
+                MemoryFilters(
+                    scope_type=MemoryScopeType.USER,
+                    include_historical=True,
+                    q=candidate.content,
+                    limit=200,
+                ),
+            )
+            exact = [item for item in records if item.content == candidate.content]
+            active = next(
+                (item for item in exact if item.status is MemoryLifecycleStatus.ACTIVE), None
+            )
+            if exact and active is None:
+                candidate = _content_free_candidate(
+                    replace(
+                        candidate,
+                        action=MemoryAction.IGNORE,
+                        content=None,
+                        kind=None,
+                        scope=None,
+                        importance=None,
+                        half_life_days=None,
+                        valid_to=None,
+                        grounded_message_ids=(),
+                        state=CandidateState.REJECTED,
+                        decision_reason="reinforcement_target_unavailable",
+                        retention_basis=MemoryRetentionBasis.NONE,
+                    )
+                )
+                self.candidates[candidate.id] = candidate
+                persist = cast(
+                    Callable[[MemoryCandidate], Awaitable[object]] | None,
+                    getattr(self.repository, "persist_candidate", None),
+                )
+                if callable(persist):
+                    await persist(candidate)
+                return candidate
+            if active is not None:
+                reinforce = cast(
+                    Callable[..., Awaitable[object]] | None,
+                    getattr(self.repository, "reinforce_memory", None),
+                )
+                if not callable(reinforce):
+                    raise MemoryNotFound("deterministic create boundary is unavailable")
+                try:
+                    record = cast(
+                        MemoryRecord,
+                        await reinforce(
+                            job.issuer,
+                            job.subject,
+                            active.id,
+                            provenance=self._job_provenance(job),
+                            idempotency_key=f"memory-action:{candidate.id}",
+                            scope_type=MemoryScopeType.USER,
+                            expected_version=active.version,
+                            require_active=True,
+                        ),
+                    )
+                except (MemoryNotFound, MemoryVersionConflict):
+                    candidate = _content_free_candidate(
+                        replace(
+                            candidate,
+                            action=MemoryAction.IGNORE,
+                            content=None,
+                            kind=None,
+                            scope=None,
+                            importance=None,
+                            half_life_days=None,
+                            valid_to=None,
+                            grounded_message_ids=(),
+                            state=CandidateState.REJECTED,
+                            decision_reason="reinforcement_target_unavailable",
+                            retention_basis=MemoryRetentionBasis.NONE,
+                        )
+                    )
+                    self.candidates[candidate.id] = candidate
+                    persist = cast(
+                        Callable[[MemoryCandidate], Awaitable[object]] | None,
+                        getattr(self.repository, "persist_candidate", None),
+                    )
+                    if callable(persist):
+                        await persist(candidate)
+                    return candidate
+            else:
+                record = await self.repository.create_memory(
+                    job.issuer,
+                    job.subject,
+                    kind=candidate.kind or MemoryKind.SEMANTIC,
+                    scope=MemoryScope(MemoryScopeType.USER),
+                    content=candidate.content,
+                    confidence=candidate.confidence,
+                    importance=candidate.importance or 0.5,
+                    half_life_days=candidate.half_life_days or 30.0,
+                    valid_to=candidate.valid_to,
+                    provenance=self._job_provenance(job),
+                    idempotency_key=_deterministic_create_idempotency_key(
+                        job.issuer, job.subject, candidate.content
+                    ),
+                )
+            link_job = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "link_processing_job_memory", None),
+            )
+            if callable(link_job):
+                await link_job(job.id, job.issuer, job.subject, record.id)
+            candidate = replace(
+                candidate,
+                memory_id=record.id,
+                decision_reason=f"provider_ignore_deterministic_create@{record.version}",
+            )
+            self.candidates[candidate.id] = candidate
+            persist = cast(
+                Callable[[MemoryCandidate], Awaitable[object]] | None,
+                getattr(self.repository, "persist_candidate", None),
+            )
+            if callable(persist):
+                await persist(candidate)
+            record_outcome = cast(
+                Callable[..., Awaitable[object]] | None,
+                getattr(self.repository, "record_action_outcome", None),
+            )
+            if callable(record_outcome):
+                await record_outcome(
+                    candidate_id=candidate.id,
+                    job_id=job.id,
+                    issuer=job.issuer,
+                    subject=job.subject,
+                    action=(
+                        MemoryAction.REINFORCE.value
+                        if active is not None
+                        else MemoryAction.CREATE.value
+                    ),
+                    outcome="created",
+                    memory_id=record.id,
+                    revision_id=record.current_revision_id,
+                )
+            return candidate
+
         if candidate.memory_id is not None:
+            marker = _FALLBACK_REINFORCEMENT_MARKER.fullmatch(candidate.decision_reason or "")
+            if marker is not None:
+                try:
+                    record = await self.repository.get_memory(
+                        job.issuer,
+                        job.subject,
+                        candidate.memory_id,
+                        scope_type=candidate.scope.type if candidate.scope else None,
+                        agent_profile_id=candidate.scope.agent_profile_id
+                        if candidate.scope
+                        else None,
+                    )
+                    if (
+                        record.status is not MemoryLifecycleStatus.ACTIVE
+                        or record.version != int(marker.group("version"))
+                    ):
+                        raise MemoryNotFound("fallback target is no longer the captured active version")
+                except (MemoryNotFound, MemoryVersionConflict):
+                    candidate = _content_free_candidate(
+                        replace(
+                            candidate,
+                            action=MemoryAction.IGNORE,
+                            content=None,
+                            kind=None,
+                            scope=None,
+                            importance=None,
+                            half_life_days=None,
+                            valid_to=None,
+                            grounded_message_ids=(),
+                            state=CandidateState.REJECTED,
+                            decision_reason="reinforcement_target_unavailable",
+                            retention_basis=MemoryRetentionBasis.NONE,
+                        )
+                    )
+                    self.candidates[candidate.id] = candidate
+                    persist = cast(
+                        Callable[[MemoryCandidate], Awaitable[object]] | None,
+                        getattr(self.repository, "persist_candidate", None),
+                    )
+                    if callable(persist):
+                        await persist(candidate)
+                    return candidate
             return candidate
         if candidate.content is None or candidate.scope is None:
             raise MemoryValidationError("accepted candidate is incomplete")
@@ -4081,8 +4633,78 @@ class MemoryProcessingService:
             # the embedding phase after a worker crash without asking the
             # extractor to make a second decision.  Review/rejected outcomes
             # are already terminal and need no provider work.
-            if prior.state is CandidateState.ACCEPTED and prior.memory_id is None:
+            pending_resume = prior.state is CandidateState.ACCEPTED and (
+                _FALLBACK_REINFORCEMENT_TARGET_MARKER.fullmatch(prior.decision_reason or "")
+                is not None
+                or prior.decision_reason == "provider_ignore_deterministic_create"
+            )
+            if prior.state is CandidateState.ACCEPTED and (
+                prior.memory_id is None
+                or _FALLBACK_REINFORCEMENT_MARKER.fullmatch(prior.decision_reason or "")
+                is not None
+            ):
                 prior = await self._resume_accepted_candidate(job, prior)
+            if pending_resume:
+                if prior.state is CandidateState.ACCEPTED and prior.memory_id is not None:
+                    self._emit(
+                        "memory.fallback",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="fallback",
+                        memory_id=prior.memory_id,
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.action",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="accepted",
+                        memory_id=prior.memory_id,
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.candidate",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="accepted",
+                        memory_id=prior.memory_id,
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.job",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="accepted",
+                        memory_id=prior.memory_id,
+                        attempt_count=job.attempt_count,
+                        backlog=len(self.jobs),
+                    )
+                else:
+                    self._emit(
+                        "memory.fallback",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="rejected",
+                        error_class="not_found",
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.candidate",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="rejected",
+                        error_class="not_found",
+                        attempt_count=job.attempt_count,
+                    )
+                    self._emit(
+                        "memory.job",
+                        job_started,
+                        trace_id=trace_id,
+                        outcome="ok",
+                        error_class="not_found",
+                        attempt_count=job.attempt_count,
+                        backlog=len(self.jobs),
+                    )
             if prior.state is CandidateState.ACCEPTED and prior.memory_id is not None:
                 try:
                     config = await self.model_configuration(job.issuer, job.subject)
@@ -5422,6 +6044,22 @@ class MemoryStore(_MemoryStoreBase):
                     candidate = self.candidates.get(candidate_id)
                     if candidate is not None:
                         job_ids.add(candidate.job_id)
+                elif idempotency_key.startswith("memory-fallback:"):
+                    for candidate in self.candidates.values():
+                        if (
+                            candidate.issuer == issuer
+                            and candidate.subject == subject
+                            and candidate.content == value.content
+                            and (
+                                candidate.decision_reason
+                                == "provider_ignore_deterministic_create"
+                                or (candidate.decision_reason or "").startswith(
+                                    "provider_ignore_deterministic_create@"
+                                )
+                            )
+                        ):
+                            candidate_ids.add(candidate.id)
+                            job_ids.add(candidate.job_id)
         job_ids.update(
             candidate.job_id
             for candidate in self.candidates.values()

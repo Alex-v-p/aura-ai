@@ -2759,7 +2759,7 @@ async def test_provider_ignore_reinforces_existing_direct_family_fact() -> None:
 
     assert result.state is CandidateState.ACCEPTED
     assert result.action is MemoryAction.REINFORCE
-    assert result.decision_reason == "provider_ignore_reinforcement"
+    assert result.decision_reason.startswith("provider_ignore_reinforcement@")
     assert result.half_life_days == 365
     assert result.valid_to is None
     assert len(repository.memories) == 1
@@ -2835,6 +2835,744 @@ async def test_provider_ignore_does_not_create_new_family_fact() -> None:
     assert result.state is CandidateState.REJECTED
     assert result.action is MemoryAction.IGNORE
     assert repository.memories == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "kind"),
+    [
+        ("Star Wars is my favorite movie.", MemoryKind.PREFERENCE),
+        ("Remember that Star Wars was released in 1977.", MemoryKind.SEMANTIC),
+    ],
+)
+async def test_provider_ignore_recovers_narrow_preference_or_explicit_request(
+    content: str, kind: MemoryKind
+) -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.ACCEPTED
+    assert result.action is MemoryAction.CREATE
+    assert result.kind is kind
+    assert result.confidence >= 0.85
+    assert result.half_life_days == 365
+    assert result.valid_to is None
+    record = next(iter(repository.memories.values()))
+    assert record.scope.type is MemoryScopeType.USER
+    assert record.content == content
+
+
+@pytest.mark.asyncio
+async def test_concurrent_provider_ignore_preference_creates_one_idempotent_record() -> None:
+    content = "Star Wars is my favorite movie."
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    jobs = [
+        await processor.enqueue(
+            ISSUER,
+            OWNER,
+            run_id=uuid4(),
+            conversation_id=uuid4(),
+            agent_profile_id=CURRENT_AGENT,
+        )
+        for _ in range(2)
+    ]
+
+    results = await asyncio.gather(
+        *(
+            processor.process(
+                job,
+                user_content=content,
+                assistant_content="Understood.",
+                user_message_ids=frozenset({uuid4()}),
+                run_agent_profile_id=CURRENT_AGENT,
+                allow_shared_user_promotion=True,
+            )
+            for job in jobs
+        )
+    )
+
+    assert all(result.state is CandidateState.ACCEPTED for result in results)
+    assert len(repository.memories) == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_create_crash_then_purge_scrubs_receipt_and_candidate() -> None:
+    content = "Star Wars is my favorite movie."
+
+    class CrashBeforeFallbackLink(MemoryStore):
+        async def link_processing_job_memory(
+            self, job_id: UUID, issuer: str, subject: str, memory_id: UUID
+        ) -> None:
+            del job_id, issuer, subject, memory_id
+            raise RuntimeError("injected fallback link crash")
+
+    repository = CrashBeforeFallbackLink(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    with pytest.raises(RuntimeError, match="fallback link crash"):
+        await processor.process(
+            job,
+            user_content=content,
+            assistant_content="Understood.",
+            user_message_ids=frozenset({uuid4()}),
+            run_agent_profile_id=CURRENT_AGENT,
+            allow_shared_user_promotion=True,
+        )
+
+    record = next(iter(repository.memories.values()))
+    await repository.purge(
+        ISSUER,
+        OWNER,
+        record.id,
+        confirmation="PURGE MEMORY",
+        expected_version=record.version,
+        idempotency_key="purge-fallback-crash",
+        scope_type=MemoryScopeType.USER,
+    )
+
+    assert repository.memories == {}
+    assert repository.candidates == {}
+    assert repository.processing_jobs[job.id].status is ProcessingJobStatus.FAILED
+    assert all("content" not in outcome for outcome in repository.outcomes)
+    restarted = MemoryProcessingService(
+        repository,
+        _Inference(),
+        _Embedding(),
+        clock=lambda: NOW,
+        job_loader=lambda job_id: repository.get_processing_job(job_id, ISSUER, OWNER),
+    )
+    assert await restarted.process_job(job.id) is None
+    assert repository.memories == {}
+
+
+@pytest.mark.asyncio
+async def test_fallback_receipt_purge_is_scoped_to_the_purged_memory() -> None:
+    def receipt(content: str) -> str:
+        digest = hashlib.sha256(f"{ISSUER}\x00{OWNER}\x00{content}".encode()).hexdigest()
+        return f"memory-fallback:{digest}"
+
+    repository = MemoryStore(clock=lambda: NOW)
+    values = (
+        ("Star Wars is my favorite movie.", "fallback-a"),
+        ("Remember that Star Wars was released in 1977.", "fallback-b"),
+    )
+    records = []
+    for content, key_suffix in values:
+        records.append(
+            await repository.create_memory(
+                ISSUER,
+                OWNER,
+                kind=MemoryKind.SEMANTIC,
+                scope=MemoryScope(MemoryScopeType.USER),
+                content=content,
+                confidence=0.95,
+                importance=0.7,
+                half_life_days=365,
+                idempotency_key=receipt(content),
+            )
+        )
+        del key_suffix
+    first, second = records
+    await repository.purge(
+        ISSUER,
+        OWNER,
+        first.id,
+        confirmation="PURGE MEMORY",
+        expected_version=first.version,
+        idempotency_key="purge-fallback-a",
+        scope_type=MemoryScopeType.USER,
+    )
+
+    replay = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.SEMANTIC,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=second.content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key=receipt(second.content),
+    )
+    assert replay.id == second.id
+    await repository.purge(
+        ISSUER,
+        OWNER,
+        second.id,
+        confirmation="PURGE MEMORY",
+        expected_version=second.version,
+        idempotency_key="purge-fallback-b",
+        scope_type=MemoryScopeType.USER,
+    )
+    assert repository.memories == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "What is my favorite movie?",
+        "I think Star Wars was released in 1977.",
+        "Star Wars is my favorite movie for now.",
+        "I currently prefer tea.",
+        "I prefer tea tomorrow.",
+        "I like this movie right now.",
+        "I love this temporarily.",
+        "I prefer tea if I am working late.",
+        "Remember that I am busy today.",
+        "Remember that I prefer tea next year.",
+        "Remember that I like tea for a week.",
+        "My password: super-secret-value.",
+    ],
+)
+async def test_provider_ignore_fallback_rejects_questions_epistemic_and_secrets(
+    content: str,
+) -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    inference = _Inference(
+        {
+            "action": "ignore",
+            "content": None,
+            "kind": None,
+            "scope_type": "user",
+            "agent_profile_id": None,
+            "confidence": 0.0,
+            "importance": None,
+            "half_life_days": None,
+            "valid_to": None,
+            "sensitivity": "ordinary",
+            "retention_basis": "none",
+            "grounded_evidence_handles": [],
+            "related_memory_id": None,
+        }
+    )
+    processor = MemoryProcessingService(
+        repository,
+        inference,
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert repository.memories == {}
+    if "password" in content:
+        assert inference.calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_does_not_reactivate_historical_preference() -> None:
+    content = "Star Wars is my favorite movie."
+    repository = MemoryStore(clock=lambda: NOW)
+    historical = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key="historical-preference-fact",
+    )
+    await repository.set_status(
+        ISSUER,
+        OWNER,
+        historical.id,
+        status=MemoryLifecycleStatus.ARCHIVED,
+        expected_version=historical.version,
+        scope_type=MemoryScopeType.USER,
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert repository.memories[historical.id].status is MemoryLifecycleStatus.ARCHIVED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        MemoryLifecycleStatus.DORMANT,
+        MemoryLifecycleStatus.ARCHIVED,
+        MemoryLifecycleStatus.DISABLED,
+        MemoryLifecycleStatus.DISPUTED,
+        MemoryLifecycleStatus.SUPERSEDED,
+    ],
+)
+@pytest.mark.parametrize(
+    ("content", "kind"),
+    [
+        ("Star Wars is my favorite movie.", MemoryKind.PREFERENCE),
+        ("Remember that Star Wars was released in 1977.", MemoryKind.SEMANTIC),
+    ],
+)
+async def test_provider_ignore_never_reactivates_historical_preference_or_explicit(
+    status: MemoryLifecycleStatus, content: str, kind: MemoryKind
+) -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    historical = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=kind,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key=f"historical-{status.value}-{kind.value}",
+    )
+    await repository.set_status(
+        ISSUER,
+        OWNER,
+        historical.id,
+        status=status,
+        expected_version=historical.version,
+        scope_type=MemoryScopeType.USER,
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.REJECTED
+    assert repository.memories[historical.id].status is status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "kind"),
+    [
+        ("Star Wars is my favorite movie.", MemoryKind.PREFERENCE),
+        ("Remember that Star Wars was released in 1977.", MemoryKind.SEMANTIC),
+    ],
+)
+async def test_provider_ignore_reinforces_active_preference_or_explicit_duplicate(
+    content: str, kind: MemoryKind
+) -> None:
+    repository = MemoryStore(clock=lambda: NOW)
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=kind,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key="active-preference-fact",
+    )
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(
+            {
+                "action": "ignore",
+                "content": None,
+                "kind": None,
+                "scope_type": "user",
+                "agent_profile_id": None,
+                "confidence": 0.0,
+                "importance": None,
+                "half_life_days": None,
+                "valid_to": None,
+                "sensitivity": "ordinary",
+                "retention_basis": "none",
+                "grounded_evidence_handles": [],
+                "related_memory_id": None,
+            }
+        ),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(
+        ISSUER,
+        OWNER,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    result = await processor.process(
+        job,
+        user_content=content,
+        assistant_content="Understood.",
+        user_message_ids=frozenset({uuid4()}),
+        run_agent_profile_id=CURRENT_AGENT,
+        allow_shared_user_promotion=True,
+    )
+
+    assert result.state is CandidateState.ACCEPTED
+    assert result.action is MemoryAction.REINFORCE
+    assert result.memory_id == existing.id
+    assert len(repository.memories) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_ignore_pending_target_resumes_exact_reinforcement() -> None:
+    content = "Star Wars is my favorite movie."
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key="pending-preference-fact",
+    )
+    job = MemoryProcessingJob(
+        uuid4(),
+        ISSUER,
+        OWNER,
+        uuid4(),
+        uuid4(),
+        user_message_ids=(uuid4(),),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        OWNER,
+        MemoryAction.REINFORCE,
+        content,
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.95,
+        importance=0.7,
+        half_life_days=365,
+        state=CandidateState.ACCEPTED,
+        decision_reason=(
+            f"pif@{existing.id.hex}@{existing.version}"
+        ),
+    )
+    await repository.persist_candidate(candidate)
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(),
+        _Embedding(),
+        clock=lambda: NOW,
+    )
+
+    resumed = await processor._resume_accepted_candidate(job, candidate)
+
+    assert resumed.state is CandidateState.ACCEPTED
+    assert resumed.memory_id == existing.id
+    assert resumed.decision_reason == "provider_ignore_reinforcement@2"
+    assert repository.memories[existing.id].version == 2
+    assert len(repository.memories) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disappear", [False, True])
+async def test_process_job_records_pending_fallback_resume_once_without_text(
+    disappear: bool,
+) -> None:
+    content = "Star Wars is my favorite movie."
+    repository = _DurableMemoryStore(clock=lambda: NOW)
+    generation = await _ready_generation(repository)
+    existing = await repository.create_memory(
+        ISSUER,
+        OWNER,
+        kind=MemoryKind.PREFERENCE,
+        scope=MemoryScope(MemoryScopeType.USER),
+        content=content,
+        confidence=0.95,
+        importance=0.7,
+        half_life_days=365,
+        idempotency_key=f"telemetry-pending-{disappear}",
+    )
+    job = MemoryProcessingJob(
+        uuid4(),
+        ISSUER,
+        OWNER,
+        uuid4(),
+        uuid4(),
+        user_message_ids=(uuid4(),),
+        agent_profile_id=CURRENT_AGENT,
+    )
+    await repository.enqueue_processing_job(job)
+    candidate = MemoryCandidate(
+        uuid4(),
+        job.id,
+        ISSUER,
+        OWNER,
+        MemoryAction.REINFORCE,
+        content,
+        MemoryKind.PREFERENCE,
+        MemoryScope(MemoryScopeType.USER),
+        0.95,
+        importance=0.7,
+        half_life_days=365,
+        state=CandidateState.ACCEPTED,
+        decision_reason=(
+            f"pif@{existing.id.hex}@{existing.version}"
+        ),
+    )
+    assert len(candidate.decision_reason or "") <= 64
+    await repository.persist_candidate(candidate)
+    if disappear:
+        repository.memories.pop(existing.id)
+    metrics = MetadataMetrics()
+
+    def telemetry(**event: object) -> None:
+        record_memory_processing(
+            metrics,
+            component="aura.knowledge.memory_extraction",
+            dependency="memory_worker",
+            **event,
+        )
+
+    processor = MemoryProcessingService(
+        repository,
+        _Inference(),
+        _Embedding(),
+        clock=lambda: NOW,
+        job_loader=lambda job_id: repository.get_processing_job(job_id, ISSUER, OWNER),
+        telemetry=telemetry,
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(
+            ISSUER,
+            OWNER,
+            "extractor",
+            "embedder",
+            embedding_generation=generation.id,
+        )
+    )
+
+    result = await processor.process_job(job.id)
+
+    assert result is not None
+    measurements = metrics.snapshot()
+    fallback = [item for item in measurements if item.metric == "memory_fallback_outcome"]
+    assert len(fallback) == 1
+    assert all(content not in repr(item) for item in measurements)
+    if disappear:
+        assert result.state is CandidateState.REJECTED
+        assert dict(fallback[0].dimensions)["outcome"] == "rejected"
+        assert any(
+            dict(item.dimensions).get("error_class") == "not_found"
+            for item in measurements
+        )
+        assert not any(item.metric == "memory_action_outcome" for item in measurements)
+        assert len(
+            [item for item in repository.persisted_outcomes if item["job_id"] == job.id]
+        ) == 1
+        assert repository.persisted_outcomes[0]["outcome"] == "ignored"
+        assert repository.persisted_outcomes[0]["error_class"] == "not_found"
+        assert repository.processing_jobs[job.id].memory_id is None
+    else:
+        assert result.state is CandidateState.ACCEPTED
+        assert result.memory_id == existing.id
+        assert dict(fallback[0].dimensions)["outcome"] == "fallback"
+        assert any(item.metric == "memory_action_outcome" for item in measurements)
+        created_outcomes = [
+            item for item in repository.persisted_outcomes if item["job_id"] == job.id
+        ]
+        assert len(created_outcomes) == 1
+        assert created_outcomes[0]["outcome"] == "created"
+        assert repository.processing_jobs[job.id].memory_id == existing.id
+    measurement_count = len(metrics.snapshot())
+    outcome_count = len(repository.persisted_outcomes)
+    assert metrics.stats().rejected == 0
+    assert await processor.process_job(job.id) is None
+    assert len(metrics.snapshot()) == measurement_count
+    assert len(repository.persisted_outcomes) == outcome_count
 
 
 @pytest.mark.asyncio
