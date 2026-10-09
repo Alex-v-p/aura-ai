@@ -8,7 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tooling" / "architecture"))
-SPEC = importlib.util.spec_from_file_location("shape", ROOT / "tooling" / "architecture" / "validate-repository-shape.py")
+SPEC = importlib.util.spec_from_file_location(
+    "shape", ROOT / "tooling" / "architecture" / "validate-repository-shape.py"
+)
 SHAPE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(SHAPE)
@@ -20,7 +22,16 @@ class ShapeTests(unittest.TestCase):
 
     def test_documented_local_runtime_artifacts_are_ignored(self):
         self.assertEqual(
-            {".env", ".env.local-http", ".secrets", ".local-state", ".venv"},
+            {
+                ".env",
+                ".env.local-http",
+                ".secrets",
+                ".local-state",
+                ".venv",
+                ".pytest_cache",
+                ".ruff_cache",
+                ".pyright",
+            },
             SHAPE.LOCAL_RUNTIME_ARTIFACTS,
         )
         with tempfile.TemporaryDirectory() as directory:

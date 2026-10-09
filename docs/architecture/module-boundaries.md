@@ -29,6 +29,9 @@ new product behavior.
 | `aura-core.domains.*` | `services/aura-core/src/aura_core/domains/**` | Each domain's `public.py` plus registered file modules | Platform, runtime, and deliberate public domain surfaces |
 | `aura-core.domains.interaction.agents` | `services/aura-core/src/aura_core/domains/interaction/agents` | `agents/public.py`; SQL and provider adapters remain persistence implementations | Persona public API, runtime capacity and prompting, conversation public API, database primitives |
 | `aura-core.domains.interaction.personas` | `services/aura-core/src/aura_core/domains/interaction/personas` | `personas/public.py`; persistence and adapters remain private | Audit and identity public APIs, database primitives |
+| `aura-core.domains.knowledge.memory` | `services/aura-core/src/aura_core/domains/knowledge/memory` | `memory/public.py` stable facade; `contracts.py` and `ports.py` expose deliberate domain types | Runtime model and embedding ports, the inward `MemoryTelemetry` protocol, and bootstrap-composed repository and telemetry wiring |
+| Memory internal services | `services/aura-core/src/aura_core/domains/knowledge/memory/{candidate_actions,embedding,maintenance,model_service,persistence,processing,repository,repository_ports,store}.py` | Internal implementations only; consumers use the public facade or narrow repository capability protocols | Memory contracts and repository ports; no cross-domain adapter or ORM access |
+| Memory recall seam | `services/aura-core/src/aura_core/domains/knowledge/memory/recall.py` | Registered `MemoryRecallRequest`/`MemoryRecallResult` application seam consumed by conversation storage; retrieval implementation remains composed internally | Memory contracts, narrow repository protocols, and the inward recall telemetry protocol |
 | `aura-core.platform.*` | `services/aura-core/src/aura_core/platform/{auth,database,oidc,outbox,readiness,telemetry}` | Component file or outbox package exports | Core public types and persistence primitives |
 | `aura-core.runtime.*` | `services/aura-core/src/aura_core/runtime/{models,streaming}` | Model ports and stream publisher | Execution event/types and platform primitives |
 | `aura-core.runtime.prompting` | `services/aura-core/src/aura_core/runtime/prompting` | `prompting/public.py` | Agent and persona public APIs |
@@ -44,6 +47,15 @@ new product behavior.
 Generated clients remain transport-only. Core remains provider-agnostic at its
 domain and runtime boundaries, and Observatory remains a separate service with
 no Core implementation or database dependency.
+
+The integrated registry in
+[`tooling/architecture/modules.yaml`](../../tooling/architecture/modules.yaml)
+tracks the memory facade, extracted internal modules, narrow repository
+protocols, and [`bootstrap/memory_uow.py`](../../services/aura-core/src/aura_core/bootstrap/memory_uow.py).
+Bootstrap is the composition boundary: it selects the SQL repository adapter
+and wires the memory services, while the domain depends only on its explicit
+ports. The registry records these reviewed existing roots and dependencies; it
+does not authorize new product behavior.
 
 ## Core and Observatory
 

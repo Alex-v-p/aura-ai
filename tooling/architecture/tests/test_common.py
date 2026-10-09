@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
-import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = importlib.util.spec_from_file_location("aura_common", ROOT / "tooling" / "architecture" / "common.py")
+SPEC = importlib.util.spec_from_file_location(
+    "aura_common", ROOT / "tooling" / "architecture" / "common.py"
+)
 COMMON = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(COMMON)
@@ -22,14 +23,39 @@ class CommonTests(unittest.TestCase):
         }
         for template, schema in pairs.items():
             with self.subTest(template=template):
-                document, errors = COMMON.validate_document(ROOT / "work-items" / "templates" / template, schema)
+                document, errors = COMMON.validate_document(
+                    ROOT / "work-items" / "templates" / template, schema
+                )
                 self.assertIsNotNone(document)
                 self.assertEqual([], errors)
 
     def test_active_bootstrap_work_item_validates(self):
-        item, errors = COMMON.validate_document(ROOT / "work-items" / "archived" / "AURA-0001.yaml", "work-item.schema.json")
+        item, errors = COMMON.validate_document(
+            ROOT / "work-items" / "archived" / "AURA-0001.yaml", "work-item.schema.json"
+        )
         errors.extend(COMMON.semantic_work_item_errors(item))
         self.assertEqual([], errors)
+
+    def test_repository_references_require_existing_nonescaping_paths(self):
+        item = {"sources_of_truth": {"architecture": ["docs/architecture/module-boundaries.md"]}}
+        self.assertEqual([], COMMON.repository_reference_errors(item))
+        item["sources_of_truth"]["architecture"] = ["docs/../AGENTS.md"]
+        self.assertTrue(
+            any("must not escape" in error for error in COMMON.repository_reference_errors(item))
+        )
+        item["sources_of_truth"]["architecture"] = ["docs/architecture/missing.md"]
+        self.assertTrue(
+            any("does not exist" in error for error in COMMON.repository_reference_errors(item))
+        )
+
+    def test_repository_references_accept_existing_globs_and_provenance_text(self):
+        item = {
+            "sources_of_truth": {
+                "contracts": ["contracts/events/runs/v1/*.json"],
+                "decisions": ["Owner-approved repository hygiene plan"],
+            }
+        }
+        self.assertEqual([], COMMON.repository_reference_errors(item))
 
     def test_path_matching(self):
         self.assertTrue(COMMON.path_matches(".codex/hooks.json", ".codex/**"))
@@ -41,7 +67,9 @@ class CommonTests(unittest.TestCase):
         item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
         item["allowed_paths"] = ["services/aura-core/**"]
         item["forbidden_paths"] = ["services/aura-core/migrations/**"]
-        self.assertTrue(any("overlaps" in error for error in COMMON.semantic_work_item_errors(item)))
+        self.assertTrue(
+            any("overlaps" in error for error in COMMON.semantic_work_item_errors(item))
+        )
 
     def test_critical_path_requires_authorization(self):
         item = COMMON.read_yaml(ROOT / "work-items" / "templates" / "work-item.yaml")
@@ -103,8 +131,12 @@ class CommonTests(unittest.TestCase):
 
         self.assertEqual([], COMMON.scope_errors([client_path], item, "contract_steward"))
         client_errors = COMMON.scope_errors([client_path], item, "frontend_worker")
-        self.assertTrue(any("role frontend_worker is not an owner" in error for error in client_errors))
-        self.assertTrue(any("expected one of ['contract_steward']" in error for error in client_errors))
+        self.assertTrue(
+            any("role frontend_worker is not an owner" in error for error in client_errors)
+        )
+        self.assertTrue(
+            any("expected one of ['contract_steward']" in error for error in client_errors)
+        )
         errors = COMMON.scope_errors([sibling_path], item, "contract_steward")
         self.assertTrue(any("role contract_steward is not an owner" in error for error in errors))
 

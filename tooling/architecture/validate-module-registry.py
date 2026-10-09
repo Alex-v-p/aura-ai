@@ -63,7 +63,9 @@ def _path_within(child: Path, parent: Path) -> bool:
     return True
 
 
-def _source_paths(module: dict[str, Any], repo_root: Path, root: Path) -> tuple[list[Path], list[str]]:
+def _source_paths(
+    module: dict[str, Any], repo_root: Path, root: Path
+) -> tuple[list[Path], list[str]]:
     errors: list[str] = []
     raw_sources = module.get("source_files")
     if raw_sources is None and not module.get("python_modules"):
@@ -84,7 +86,9 @@ def _source_paths(module: dict[str, Any], repo_root: Path, root: Path) -> tuple[
         elif path.suffix == ".py":
             paths.append(path)
         else:
-            errors.append(f"source_files[{index}] must identify a Python file or directory: {value!r}")
+            errors.append(
+                f"source_files[{index}] must identify a Python file or directory: {value!r}"
+            )
     return paths, errors
 
 
@@ -103,9 +107,7 @@ def _import_targets(path: Path, module_name: str | None) -> tuple[list[str], lis
                 if node.module:
                     targets.append(node.module)
                     targets.extend(
-                        f"{node.module}.{alias.name}"
-                        for alias in node.names
-                        if alias.name != "*"
+                        f"{node.module}.{alias.name}" for alias in node.names if alias.name != "*"
                     )
                 continue
             if module_name is None:
@@ -129,9 +131,7 @@ def _import_targets(path: Path, module_name: str | None) -> tuple[list[str], lis
             target_base = f"{base}.{node.module}" if node.module else base
             targets.append(target_base)
             targets.extend(
-                f"{target_base}.{alias.name}"
-                for alias in node.names
-                if alias.name != "*"
+                f"{target_base}.{alias.name}" for alias in node.names if alias.name != "*"
             )
     return targets, errors
 
@@ -145,9 +145,7 @@ def _resolve_module(target: str, module_map: dict[str, str]) -> str | None:
     return None
 
 
-def _source_module_name(
-    module: dict[str, Any], source_path: Path, root_path: Path
-) -> str | None:
+def _source_module_name(module: dict[str, Any], source_path: Path, root_path: Path) -> str | None:
     python_modules = module.get("python_modules", [])
     if not isinstance(python_modules, list) or len(python_modules) != 1:
         return None
@@ -200,20 +198,30 @@ def validate_manifest(document: Any, repo_root: Path = ROOT) -> list[str]:
         elif kind not in SUPPORTED_KINDS:
             errors.append(f"{location}.kind is unsupported: {kind!r}")
         for field in ("root", "public_api"):
-            resolved, path_errors = _resolved_path(repo_root, module.get(field), f"{location}.{field}")
+            resolved, path_errors = _resolved_path(
+                repo_root, module.get(field), f"{location}.{field}"
+            )
             errors.extend(path_errors)
             if field == "root" and resolved is not None:
                 normalized = resolved.relative_to(repo_root.resolve()).as_posix()
                 previous = roots.get(normalized)
                 if previous is not None:
-                    errors.append(f"duplicate module root {normalized!r}: {previous} and {module_id}")
+                    errors.append(
+                        f"duplicate module root {normalized!r}: {previous} and {module_id}"
+                    )
                 else:
                     roots[normalized] = str(module_id)
         root_path, root_errors = _resolved_path(repo_root, module.get("root"), f"{location}.root")
         errors.extend(root_errors)
-        public_path, public_errors = _resolved_path(repo_root, module.get("public_api"), f"{location}.public_api")
+        public_path, public_errors = _resolved_path(
+            repo_root, module.get("public_api"), f"{location}.public_api"
+        )
         errors.extend(public_errors)
-        if root_path is not None and public_path is not None and not _path_within(public_path, root_path):
+        if (
+            root_path is not None
+            and public_path is not None
+            and not _path_within(public_path, root_path)
+        ):
             errors.append(f"{location}.public_api must be within its module root")
         python_modules = module.get("python_modules", [])
         if not isinstance(python_modules, list) or any(
@@ -224,7 +232,9 @@ def validate_manifest(document: Any, repo_root: Path = ROOT) -> list[str]:
         if not isinstance(dependencies, list):
             errors.append(f"{location}.dependencies must be a list")
         else:
-            declared_dependencies.extend((str(module_id), dependency) for dependency in dependencies)
+            declared_dependencies.extend(
+                (str(module_id), dependency) for dependency in dependencies
+            )
 
     for module_id, dependency in declared_dependencies:
         if not isinstance(dependency, str) or dependency not in ids:
@@ -252,7 +262,9 @@ def validate_manifest(document: Any, repo_root: Path = ROOT) -> list[str]:
         if not isinstance(module, dict):
             continue
         module_id = str(module.get("id", f"<invalid-{index}>"))
-        root_path, root_errors = _resolved_path(repo_root, module.get("root"), f"modules[{index}].root")
+        root_path, root_errors = _resolved_path(
+            repo_root, module.get("root"), f"modules[{index}].root"
+        )
         errors.extend(root_errors)
         if root_path is None:
             continue
@@ -262,7 +274,11 @@ def validate_manifest(document: Any, repo_root: Path = ROOT) -> list[str]:
             package_roots.append(root_path)
         for source_path in source_paths:
             source_owners.setdefault(source_path, []).append(module_id)
-        declared = set(module.get("dependencies", [])) if isinstance(module.get("dependencies"), list) else set()
+        declared = (
+            set(module.get("dependencies", []))
+            if isinstance(module.get("dependencies"), list)
+            else set()
+        )
         for source_path in source_paths:
             module_name = _source_module_name(module, source_path, root_path)
             targets, parse_errors = _import_targets(source_path, module_name)
@@ -330,7 +346,13 @@ def validate_dependency_rules(document: Any) -> list[str]:
             errors.append(f"{location}.source must be a non-empty path pattern")
         elif Path(source).is_absolute() or ".." in Path(source).parts:
             errors.append(f"{location}.source must be repository-relative and nonescaping")
-        restrictions = ("policy", "forbidden_imports", "forbidden_import_prefixes", "forbidden_segments", "require_cross_domain_public_api")
+        restrictions = (
+            "policy",
+            "forbidden_imports",
+            "forbidden_import_prefixes",
+            "forbidden_segments",
+            "require_cross_domain_public_api",
+        )
         if not any(key in rule for key in restrictions):
             errors.append(f"{location} must declare a policy or restriction")
         if "policy" in rule and (not isinstance(rule["policy"], str) or not rule["policy"].strip()):
@@ -342,12 +364,16 @@ def validate_dependency_rules(document: Any) -> list[str]:
                 or any(not isinstance(value, str) or not value.strip() for value in rule[key])
             ):
                 errors.append(f"{location}.{key} must be a non-empty list of strings")
-        if "require_cross_domain_public_api" in rule and not isinstance(rule["require_cross_domain_public_api"], bool):
+        if "require_cross_domain_public_api" in rule and not isinstance(
+            rule["require_cross_domain_public_api"], bool
+        ):
             errors.append(f"{location}.require_cross_domain_public_api must be boolean")
     return sorted(set(errors))
 
 
-def check(manifest_path: Path = MANIFEST, rules_path: Path = RULES, repo_root: Path = ROOT) -> list[str]:
+def check(
+    manifest_path: Path = MANIFEST, rules_path: Path = RULES, repo_root: Path = ROOT
+) -> list[str]:
     errors: list[str] = []
     try:
         manifest = read_yaml(manifest_path)

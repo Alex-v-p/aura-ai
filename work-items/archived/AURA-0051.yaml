@@ -1,0 +1,104 @@
+id: AURA-0051
+title: Reconcile governance validators and repository hygiene
+status: integrated
+change_class: repository_governance
+intent: >
+  Make repository validation reflect intentional ignored cache artifacts, validate
+  all observable components and repository-local work-item references, reconcile
+  memory boundary documentation, and clear existing tooling and deployment Ruff
+  findings without weakening any governance rule or protected baseline.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - The current user-approved Repository Quality Remediation plan authorizes these repository-governance edits
+  contracts: []
+feature_references: []
+ownership_zones:
+  - repository.architecture.governance
+  - repository.deployment.validation
+  - repository.architecture.documentation
+allowed_paths:
+  - work-items/active/AURA-0051.yaml
+  - work-items/archived/AURA-0051.yaml
+  - work-items/archived/AURA-0048.yaml
+  - tooling/architecture/**/*.py
+  - tooling/architecture/*.py
+  - tooling/architecture/README.md
+  - deploy/**/*.py
+  - docs/architecture/module-boundaries.md
+  - docs/development/architecture-enforcement.md
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - contracts/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/**
+  - frontend/**
+  - compose.yaml
+  - pyproject.toml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation: [platform_worker, delivery_lead]
+  review: [general_reviewer, architecture_guardian]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Repository-shape validation permits only the ignored .pytest_cache .ruff_cache and .pyright top-level cache artifacts in addition to the existing local-runtime artifacts.
+  - The archived AURA-0048 decision reference names ADR-0016 and every repository-local source-of-truth reference in every active and archived work item is safe nonescaping and exists.
+  - No-argument observability validation checks every component manifest in the complete catalogue while --work-item retains work-item-specific obligation validation.
+  - Module-boundary documentation describes the current memory public facade internal modules narrow repository protocols bootstrap adapter and architecture registry entries.
+  - Ruff reports zero findings across tooling and deployment code without configuration changes suppressions or exemptions.
+  - The architecture unit suite and every archived work-item validation pass without ignored regressions.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0051.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0051.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0051.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run ruff check tooling deploy
+  - >-
+    python3 -c "from pathlib import Path; import subprocess, sys; paths =
+    sorted(Path('work-items/archived').glob('*.yaml')); failures = [str(path)
+    for path in paths if subprocess.run([sys.executable,
+    'tooling/architecture/validate-work-item.py', str(path)],
+    check=False).returncode]; raise SystemExit('failed archived work items: ' +
+    ', '.join(failures) if failures else 0)"
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

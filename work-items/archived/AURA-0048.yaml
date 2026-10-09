@@ -19,7 +19,7 @@ sources_of_truth:
     - docs/specifications/clients-and-voice.md
     - docs/specifications/observatory-and-evaluation.md
   decisions:
-    - docs/adr/0012-http-sse-nats-realtime-transport.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
     - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
     - docs/adr/0014-aura-owned-execution-langgraph-backend.md
     - docs/adr/0015-authentik-bff-secrets-extensions.md

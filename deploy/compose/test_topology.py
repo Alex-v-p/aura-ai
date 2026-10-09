@@ -1,12 +1,11 @@
 """Static deployment topology checks that require no secrets or Docker daemon."""
 
 import os
-from pathlib import Path
 import stat
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 
@@ -52,8 +51,8 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("AURA_OLLAMA_URL:", worker)
         self.assertIn("aura-core-egress", api)
         self.assertIn("aura-core-egress", worker)
-        self.assertIn('host.docker.internal:host-gateway', api)
-        self.assertIn('host.docker.internal:host-gateway', worker)
+        self.assertIn("host.docker.internal:host-gateway", api)
+        self.assertIn("host.docker.internal:host-gateway", worker)
         self.assertNotIn("aura-core-egress", web)
         self.assertNotIn("aura-core-egress", migrate)
 
@@ -139,9 +138,7 @@ class ComposeTopologyTests(unittest.TestCase):
 
     def test_callback_query_values_are_excluded_from_proxy_and_api_access_logs(self) -> None:
         nginx = (ROOT / "deploy/docker/aura-web.nginx.conf").read_text(encoding="utf-8")
-        api_dockerfile = (ROOT / "deploy/docker/aura-api.Dockerfile").read_text(
-            encoding="utf-8"
-        )
+        api_dockerfile = (ROOT / "deploy/docker/aura-api.Dockerfile").read_text(encoding="utf-8")
         access_format = nginx.split("log_format aura_access", 1)[1].split(
             "access_log /dev/stdout aura_access;", 1
         )[0]
@@ -156,9 +153,7 @@ class ComposeTopologyTests(unittest.TestCase):
 
     def test_migration_is_a_one_shot_core_cli_job(self) -> None:
         migrate = service_block(self.compose, "aura-core-migrate", "aura-core-postgres")
-        migrate_script = (ROOT / "deploy/docker/aura-core-migrate.sh").read_text(
-            encoding="utf-8"
-        )
+        migrate_script = (ROOT / "deploy/docker/aura-core-migrate.sh").read_text(encoding="utf-8")
 
         self.assertIn("command: [/usr/local/bin/aura-core-migrate]", migrate)
         self.assertIn("healthcheck:\n      disable: true", migrate)
@@ -172,7 +167,8 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}", postgres)
         self.assertIn("aura-core-database-password", postgres)
         self.assertIn(
-            "${AURA_STATE_ROOT:?encrypted state root is required}/aura-core-postgres:/var/lib/postgresql/data",
+            "${AURA_STATE_ROOT:?encrypted state root is required}/"
+            "aura-core-postgres:/var/lib/postgresql/data",
             postgres,
         )
         self.assertIn("networks: [aura-core-db]", postgres)
@@ -225,9 +221,11 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("AURA_ENVIRONMENT: development", local_http)
         self.assertIn('AURA_SECURE_COOKIES: "false"', local_http)
         self.assertIn("AURA_PUBLIC_ORIGIN: http://aura.localhost:4200", local_http)
-        self.assertIn("AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/", local_http)
-        self.assertIn('aliases: [authentik.localhost]', local_http)
-        self.assertIn('127.0.0.1:${AUTHENTIK_PORT:-9000}:9000', local_http)
+        self.assertIn(
+            "AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/", local_http
+        )
+        self.assertIn("aliases: [authentik.localhost]", local_http)
+        self.assertIn("127.0.0.1:${AUTHENTIK_PORT:-9000}:9000", local_http)
         self.assertIn("aura-identity-edge: {}", local_http)
         self.assertIn("authentik-owner-bootstrap:", local_http)
         self.assertIn("profiles: [local-http-bootstrap]", local_http)
@@ -238,8 +236,12 @@ class ComposeTopologyTests(unittest.TestCase):
         server_end = local_http.index("  authentik-owner-bootstrap:\n")
         self.assertIn("aura-identity-edge: {}", local_http[server_start:server_end])
         self.assertIn("ak apply_blueprint /blueprints/custom/aura-oidc.yaml", local_http)
-        self.assertIn("./deploy/authentik/bootstrap-local-owner.py:/bootstrap-local-owner.py:ro", local_http)
-        self.assertIn("./deploy/compose/local-http.sh up", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn(
+            "./deploy/authentik/bootstrap-local-owner.py:/bootstrap-local-owner.py:ro", local_http
+        )
+        self.assertIn(
+            "./deploy/compose/local-http.sh up", (ROOT / "README.md").read_text(encoding="utf-8")
+        )
         self.assertIn("verify-idempotency", script)
         self.assertIn("--profile local-http-bootstrap", script)
         for variable in (
@@ -250,7 +252,10 @@ class ComposeTopologyTests(unittest.TestCase):
             "AUTHENTIK_HOST_BROWSER",
         ):
             self.assertIn(f"-u {variable}", script)
-        self.assertIn("Never rotate", (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8"))
+        self.assertIn(
+            "Never rotate",
+            (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8"),
+        )
 
     def test_local_http_edge_networks_have_exact_merged_membership(self) -> None:
         documents = [
@@ -303,7 +308,8 @@ class ComposeTopologyTests(unittest.TestCase):
             "LOCAL_ENV_FILE=/dev/null\n"
             "die() { printf '%s\\n' \"$1\" >&2; exit 1; }\n"
             "configured_value() { local key=$1 value; value=${!key-}; printf '%s' \"$value\"; }\n"
-            "absolute_path() { case $1 in /*) printf '%s' \"$1\" ;; *) printf '%s/%s' \"$ROOT\" \"$1\" ;; esac; }\n"
+            "absolute_path() { case $1 in /*) printf '%s' \"$1\" ;; "
+            '*) printf \'%s/%s\' "$ROOT" "$1" ;; esac; }\n'
             + "ensure_owner_password() {"
             + helper.split("ensure_owner_password() {", 1)[1].split("\n}\n", 1)[0]
             + "\n}\nensure_owner_password\n"

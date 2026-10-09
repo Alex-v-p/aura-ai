@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _private_pem = _private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
@@ -77,7 +76,8 @@ async def authorize(
     return HTMLResponse(
         "<form method='post' action='/approve?" + hidden + "'>"
         "<label>Username <input name='username' autocomplete='username'></label>"
-        "<label>Password <input type='password' name='password' autocomplete='current-password'></label>"
+        "<label>Password <input type='password' name='password' "
+        "autocomplete='current-password'></label>"
         "<button type='submit'>Sign in</button></form>"
     )
 
