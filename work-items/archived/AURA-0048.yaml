@@ -1,6 +1,6 @@
 id: AURA-0048
 title: Make memory personal-first and eliminate empty review candidates
-status: approved
+status: integrated
 change_class: feature
 intent: >
   Tune automatic extraction toward durable owner-relevant facts and explicit
