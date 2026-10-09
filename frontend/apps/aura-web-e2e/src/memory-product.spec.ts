@@ -261,41 +261,24 @@ test.describe('memory product', () => {
     expect(reviewA11y.violations).toEqual([]);
   });
 
-  test('makes an incomplete provider-review candidate editable with safe approval defaults', async ({ page }) => {
-    let approvalBody: Record<string, unknown> | null = null;
+  test('keeps an incomplete provider diagnostic out of the actionable review queue', async ({ page }) => {
     const candidate = {
       id: 'candidate-legacy', jobId: 'job-legacy', runId: 'run-legacy', version: 3, action: 'review', state: 'review',
-      content: 'The owner prefers quiet mornings.', kind: null, scope: null, confidence: .88, importance: null, halfLifeDays: null,
+      content: null, kind: null, scope: null, confidence: .88, importance: null, halfLifeDays: null,
       validTo: null, sensitivity: 'ordinary', relatedMemoryId: null, memoryId: null, decisionReason: 'provider_requested_review', createdAt: '2026-10-08T09:00:00Z', decidedAt: null,
     };
     await mockShellApi(page, async (route, url) => {
-      if (url.pathname.endsWith('/memory-candidates/candidate-legacy/approve')) {
-        approvalBody = route.request().postDataJSON() as Record<string, unknown>;
-        return route.fulfill({ json: { candidate: { ...candidate, action: 'create', state: 'accepted', version: 4, kind: 'semantic', scope: { type: 'user' }, importance: .5, halfLifeDays: 30, groundedMessageIds: ['message-legacy'] }, activityId: 'activity-legacy' } });
-      }
       if (url.pathname.endsWith('/memory-candidates/candidate-legacy')) return route.fulfill({ json: { ...candidate, groundedMessageIds: ['message-legacy'] } });
       if (url.pathname.endsWith('/memory-candidates')) return route.fulfill({ json: { items: [candidate], nextCursor: null } });
       return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
     });
 
     await page.setViewportSize({ width: 375, height: 800 });
-    await page.goto('/memory/candidates');
-    const detailResponse = page.waitForResponse((response) => response.ok() && response.url().includes('/memory-candidates/candidate-legacy') && !response.url().endsWith('/approve'));
-    await page.getByRole('button', { name: /owner prefers quiet mornings/i }).click();
-    const detail = await detailResponse;
-    expect(await detail.json()).toMatchObject({ id: 'candidate-legacy', action: 'review', content: 'The owner prefers quiet mornings.' });
-    await expect(page.getByRole('heading', { name: /owner prefers quiet mornings/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /edit and approve/i })).toBeVisible();
-    await page.getByRole('button', { name: /edit and approve/i }).click();
-    await expect(page.getByRole('combobox', { name: 'Approval action' })).toHaveValue('create');
-    await expect(page.getByRole('combobox', { name: 'Memory kind' })).toHaveValue('semantic');
-    await expect(page.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('user');
-    await expect(page.getByRole('spinbutton', { name: 'Memory importance' })).toHaveValue('0.5');
-    await expect(page.getByRole('spinbutton', { name: 'Memory half-life' })).toHaveValue('30');
-    await expect(page.getByRole('combobox', { name: 'Approval action' }).locator('option')).toHaveCount(4);
-    await expect(page.getByText(/optional; leave blank for no expiry/i)).toBeVisible();
-    await page.getByRole('button', { name: /approve edited candidate/i }).click();
-    await expect.poll(() => approvalBody).toMatchObject({ expectedVersion: 3, edit: { action: 'create', kind: 'semantic', scope: { type: 'user' }, importance: .5, halfLifeDays: 30, validTo: null } });
+    await page.goto('/memory/candidates?candidateId=candidate-legacy');
+    await expect(page.getByRole('heading', { name: /complete memory proposal/i })).toBeVisible();
+    await expect(page.getByText('Content withheld pending review', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /approve memory/i })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /edit and approve/i })).toBeDisabled();
   });
 
   test('hydrates and attaches an explicit off recall policy accessibly', async ({ page }) => {

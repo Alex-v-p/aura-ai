@@ -5,7 +5,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, memoryActivityIndicators } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
 import { AgentStore, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -188,7 +188,7 @@ export class ConversationPanelComponent {
   }
   openMemoryPopup(turnId: string, opener?: EventTarget | null): void { this.memoryPopupOpener = opener instanceof HTMLButtonElement ? opener : null; this.memoryPopupTurnId.set(turnId); const store = this.store as unknown as { readonly loadMemoryPopup?: (id: string) => Promise<void> }; void store.loadMemoryPopup?.(turnId); queueMicrotask(() => this.memoryPopupClose?.nativeElement.focus()); }
   closeMemoryPopup(returnFocus = true): void { this.memoryPopupTurnId.set(null); if (returnFocus) queueMicrotask(() => this.memoryPopupOpener?.focus()); }
-  memoryActivities(turnId: string): ReadonlyArray<import('@aura/aura-api-client').MemoryActivity> { return this.store.selected().turns.find((turn) => turn.id === turnId)?.memoryActivities ?? []; }
+  memoryActivities(turnId: string): ReadonlyArray<import('@aura/aura-api-client').MemoryActivity> { return visibleMemoryActivities(this.store.selected().turns.find((turn) => turn.id === turnId)?.memoryActivities ?? []); }
   hasRecalledMemory(turnId: string): boolean { return memoryActivityIndicators(this.memoryActivities(turnId)).recalled; }
   hasMemoryUpdate(turnId: string): boolean { return memoryActivityIndicators(this.memoryActivities(turnId)).updated; }
   memoryActivityRecoveryNotice(): string | null { const store = this.store as unknown as { readonly memoryActivityNotice?: () => string | null }; return store.memoryActivityNotice?.() ?? null; }

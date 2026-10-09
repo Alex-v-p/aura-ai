@@ -149,6 +149,21 @@ export class MemoryCandidatesPageComponent {
     if (await this.store.approveCandidate(approved)) this.editing.set(false);
   }
   async reject(): Promise<void> { if (this.rejectReason().trim()) await this.store.rejectCandidate(this.rejectReason()); }
+  /**
+   * A null candidate body is a defensive diagnostic, never owner content
+   * hidden by the API. Keep the fallback explicit so old invalid-provider
+   * rows cannot suggest that an actionable review is waiting.
+   */
+  candidateContent(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string {
+    const content = candidate.content?.trim();
+    return content || this.candidateDiagnostic(candidate);
+  }
+  candidateDiagnostic(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string {
+    const reason = candidate.decisionReason?.toLowerCase() ?? '';
+    if (reason.includes('invalid_provider_output') || reason.includes('malformed') || reason.includes('incomplete')) return 'Aura could not produce a complete memory proposal; this diagnostic is not reviewable.';
+    if (reason.includes('missing_content') || reason.includes('empty_content')) return 'Aura did not provide memory content for this proposal.';
+    return candidate.state === 'review' ? 'This review proposal has no actionable content.' : 'No memory content was retained for this diagnostic.';
+  }
   candidateScope(candidate: NonNullable<ReturnType<MemoryStore['candidate']>>): string { const scope = candidate.scope; return !scope ? 'Unclassified' : scope.type === 'user' ? 'Shared user' : `Agent ${scope.agentProfileId}`; }
   candidateAction(candidate: { readonly action: MemoryCandidateAction }): string { return this.approvalAction(candidate.action); }
   private approvalAction(action: MemoryCandidateAction): Exclude<MemoryCandidateAction, 'ignore' | 'review'> { return action === 'ignore' || action === 'review' ? 'create' : action; }

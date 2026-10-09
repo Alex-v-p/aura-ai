@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import type { AgentMemoryPolicy, MemoryCandidateDetail, MemoryCandidateEdit, MemoryCandidateSummary, MemoryDetail, MemoryModelConfiguration, MemoryModelInventory, MemoryPage, MemoryReindexStatus, MemoryScope } from '@aura/aura-api-client';
 import { AuraMemoryApi } from './memory-api';
-import { isMissingMemoryConfiguration, loadMemorySettings, MEMORY_API, normalizeMemoryFilters, saveMemorySettings, type MemoryApi, type MemoryFilters } from './memory-models';
+import { isActionableReviewCandidate, isMissingMemoryConfiguration, loadMemorySettings, MEMORY_API, normalizeMemoryFilters, saveMemorySettings, type MemoryApi, type MemoryFilters } from './memory-models';
 
 @Injectable({ providedIn: 'root' })
 export class MemoryStore {
@@ -62,8 +62,8 @@ export class MemoryStore {
   async setStatus(status: Parameters<MemoryApi['updateStatus']>[1], relatedMemoryId?: string | null): Promise<boolean> { const current = this.selected(); if (!current) return false; return this.mutate(() => this.api.updateStatus(current.id, status, current.version, relatedMemoryId, current.scope).then((detail) => { this.selected.set(detail); this.replaceSummary(detail); })); }
   async setPinned(pinned: boolean): Promise<boolean> { const current = this.selected(); if (!current) return false; return this.mutate(() => this.api.updatePin(current.id, pinned, current.version, current.scope).then((detail) => { this.selected.set(detail); this.replaceSummary(detail); })); }
   async purgeSelected(confirmation: string): Promise<boolean> { const current = this.selected(); if (!current || confirmation !== 'PURGE MEMORY') return false; return this.mutate(() => this.api.purge(current.id, current.scope, confirmation, current.version).then(() => { this.selected.set(null); this.memories.update((page) => ({ ...page, items: page.items.filter((item) => item.id !== current.id) })); })); }
-  async loadCandidates(state: Parameters<MemoryApi['listCandidates']>[1] = 'review'): Promise<void> { this.loading.set(true); this.notice.set(null); try { const page = await this.api.listCandidates(undefined, state); this.candidates.set(page.items); this.candidateNextCursor.set(page.nextCursor); } catch (error: unknown) { this.notice.set(message(error, 'We could not load review candidates.')); } finally { this.loading.set(false); } }
-  async loadMoreCandidates(state: Parameters<MemoryApi['listCandidates']>[1] = 'review'): Promise<void> { const cursor = this.candidateNextCursor(); if (!cursor || this.candidateLoadingMore()) return; this.candidateLoadingMore.set(true); try { const page = await this.api.listCandidates(cursor, state); this.candidates.update((items) => [...items, ...page.items]); this.candidateNextCursor.set(page.nextCursor); } catch (error: unknown) { this.notice.set(message(error, 'We could not load more review candidates.')); } finally { this.candidateLoadingMore.set(false); } }
+  async loadCandidates(state: Parameters<MemoryApi['listCandidates']>[1] = 'review'): Promise<void> { this.loading.set(true); this.notice.set(null); try { const page = await this.api.listCandidates(undefined, state); this.candidates.set(actionableCandidates(page.items)); this.candidateNextCursor.set(page.nextCursor); } catch (error: unknown) { this.notice.set(message(error, 'We could not load review candidates.')); } finally { this.loading.set(false); } }
+  async loadMoreCandidates(state: Parameters<MemoryApi['listCandidates']>[1] = 'review'): Promise<void> { const cursor = this.candidateNextCursor(); if (!cursor || this.candidateLoadingMore()) return; this.candidateLoadingMore.set(true); try { const page = await this.api.listCandidates(cursor, state); this.candidates.update((items) => [...items, ...actionableCandidates(page.items)]); this.candidateNextCursor.set(page.nextCursor); } catch (error: unknown) { this.notice.set(message(error, 'We could not load more review candidates.')); } finally { this.candidateLoadingMore.set(false); } }
   async loadCandidate(id: string): Promise<void> { this.notice.set(null); try { this.candidate.set(await this.api.getCandidate(id)); } catch (error: unknown) { this.notice.set(message(error, 'We could not load that candidate.')); } }
   async approveCandidate(edit?: MemoryCandidateEdit): Promise<boolean> { const current = this.candidate(); if (!current) return false; return this.mutate(() => this.api.approveCandidate(current.id, current.version, edit).then((receipt) => { this.candidate.set(receipt.candidate); this.candidates.update((items) => items.map((item) => item.id === receipt.candidate.id ? receipt.candidate : item)); })); }
   async rejectCandidate(reason: string): Promise<boolean> { const current = this.candidate(); if (!current || !reason.trim()) return false; return this.mutate(() => this.api.rejectCandidate(current.id, current.version, reason.trim()).then((receipt) => { this.candidate.set(receipt.candidate); this.candidates.update((items) => items.map((item) => item.id === receipt.candidate.id ? receipt.candidate : item)); })); }
@@ -99,3 +99,12 @@ export class MemoryStore {
 }
 
 function message(error: unknown, fallback: string): string { return error instanceof Error ? error.message : fallback; }
+
+/**
+ * Review is an owner decision surface. Defensive provider diagnostics with no
+ * content or decision metadata must not appear as actionable candidates even
+ * if an older Core projection still returns them in the review page.
+ */
+function actionableCandidates(items: ReadonlyArray<MemoryCandidateSummary>): ReadonlyArray<MemoryCandidateSummary> {
+  return items.filter(isActionableReviewCandidate);
+}

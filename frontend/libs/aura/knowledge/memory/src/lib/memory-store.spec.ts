@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSaveMemoryConfiguration, defaultMemoryPolicySettings, expectedMemoryConfigurationVersion, hasMemoryAdvancedFilters, hydratedMemoryModelIds, hydratedMemoryPolicySettings, isMissingMemoryConfiguration, isSelectableMemoryModel, loadMemorySettings, memoryAgentFilterChange, memoryScopeFilterChange, normalizeMemoryFilters, recommendedMemoryModelId, reconcileMemorySettingsRequests, saveMemorySettings } from './memory-models';
+import { canSaveMemoryConfiguration, defaultMemoryPolicySettings, expectedMemoryConfigurationVersion, hasMemoryAdvancedFilters, hydratedMemoryModelIds, hydratedMemoryPolicySettings, isActionableReviewCandidate, isMissingMemoryConfiguration, isSelectableMemoryModel, loadMemorySettings, memoryAgentFilterChange, memoryScopeFilterChange, normalizeMemoryFilters, recommendedMemoryModelId, reconcileMemorySettingsRequests, saveMemorySettings } from './memory-models';
 
 describe('MemoryStore', () => {
   it('bounds literal filters and keeps them in feature state', () => {
@@ -57,6 +57,11 @@ describe('MemoryStore', () => {
     expect(hasMemoryAdvancedFilters({ scopeType: 'all' })).toBe(false);
     expect(hasMemoryAdvancedFilters({ scopeType: 'all', kind: 'preference' })).toBe(true);
     expect(hasMemoryAdvancedFilters({ scopeType: 'all', includeHistorical: true })).toBe(true);
+  });
+  it('keeps incomplete provider diagnostics out of the actionable review queue', () => {
+    const base = { id: 'candidate', jobId: 'job', runId: 'run', version: 1, action: 'review', state: 'review', content: null, kind: null, scope: null, confidence: .7, importance: null, halfLifeDays: null, validTo: null, sensitivity: 'unknown_risk', relatedMemoryId: null, memoryId: null, decisionReason: 'invalid_provider_output', createdAt: '2026-10-08T09:00:00Z', decidedAt: null } as never;
+    expect(isActionableReviewCandidate(base)).toBe(false);
+    expect(isActionableReviewCandidate({ ...base, content: 'The owner prefers tea.', kind: 'preference', scope: { type: 'user' }, importance: .7, halfLifeDays: 365 })).toBe(true);
   });
   it('reconciles independent settings requests without discarding successful results', () => {
     const result = reconcileMemorySettingsRequests({

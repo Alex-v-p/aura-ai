@@ -20,6 +20,12 @@ export interface MemoryFilters {
   readonly includeHistorical?: boolean;
 }
 
+/** Review candidates must be owner-actionable; incomplete provider diagnostics
+ * are retained only as content-free audit metadata by Core. */
+export function isActionableReviewCandidate(candidate: import('@aura/aura-api-client').MemoryCandidateSummary): boolean {
+  return candidate.state !== 'review' || Boolean(candidate.content?.trim() && candidate.kind && candidate.scope && candidate.importance !== null && candidate.halfLifeDays !== null);
+}
+
 export interface MemoryApi {
   listMemories(cursor?: string, filters?: MemoryFilters): Promise<MemoryPage>;
   getMemory(id: string, scope?: MemoryScope): Promise<MemoryDetail>;

@@ -17,6 +17,15 @@ export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: Memo
 export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): { readonly recalled: boolean; readonly updated: boolean } {
   return { recalled: items.some((item) => item.action === 'recalled'), updated: items.some((item) => item.action !== 'recalled') };
 }
+/**
+ * Only recalled records and activities with an owner-authorized record are
+ * meaningful in the conversation footer. A queued projection without either
+ * identifier is an internal processing placeholder; showing it as a creation
+ * indicator makes ignored/rejected extraction look like a broken memory.
+ */
+export function visibleMemoryActivities(items: ReadonlyArray<MemoryActivity>): ReadonlyArray<MemoryActivity> {
+  return items.filter((item) => item.action === 'recalled' || Boolean(item.memoryId || item.candidateId));
+}
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
@@ -684,14 +693,14 @@ export class ConversationStore {
     if (!assistant) return;
     const existing = assistant.memoryActivities ?? [];
     const index = existing.findIndex((item) => item.id === activity.id);
-    const activities = index < 0 ? [...existing, activity] : existing.map((item, itemIndex) => itemIndex === index ? activity : item);
+    const activities = index < 0 ? [...existing, ...visibleMemoryActivities([activity])] : visibleMemoryActivities(existing.map((item, itemIndex) => itemIndex === index ? activity : item));
     this.upsertTurn(conversationId, { ...assistant, memoryActivities: activities });
   }
   private applyMemorySnapshot(snapshot: RunMemoryActivitySnapshot): void {
     const conversation = this.conversations().find((item) => item.runs.some((run) => run.id === snapshot.runId) || item.currentRun?.id === snapshot.runId);
     if (!conversation) return;
     const assistant = [...conversation.turns].reverse().find((turn) => turn.role === 'assistant' && turn.runId === snapshot.runId);
-    if (assistant) this.upsertTurn(conversation.id, { ...assistant, memoryActivities: snapshot.items });
+    if (assistant) this.upsertTurn(conversation.id, { ...assistant, memoryActivities: visibleMemoryActivities(snapshot.items) });
   }
   async retryMemoryActivity(runId: string): Promise<void> {
     if (!this.api.getRunMemoryActivity) return;
@@ -701,7 +710,7 @@ export class ConversationStore {
     await this.readMemoryActivity(conversation.id, runId);
   }
   async loadMemoryPopup(turnId: string): Promise<void> {
-    const activities = this.find(this.selectedId())?.turns.find((turn) => turn.id === turnId)?.memoryActivities ?? [];
+    const activities = visibleMemoryActivities(this.find(this.selectedId())?.turns.find((turn) => turn.id === turnId)?.memoryActivities ?? []);
     if (!activities.length || (!this.api.getMemoryDetail && !this.api.getMemoryCandidateDetail)) return;
     const pending = Object.fromEntries(activities.map((activity) => [activity.id, true]));
     this.memoryPopupLoading.update((items) => ({ ...items, ...pending }));
@@ -774,8 +783,11 @@ export class ConversationStore {
       const snapshot = await this.api.getRunMemoryActivity(runId);
       this.applyMemorySnapshot(snapshot);
       this.setMemoryActivityNotice(conversationId, null);
+      // A settled empty projection is authoritative: ignored and rejected
+      // extraction decisions intentionally have no owner-facing activity.
+      // Retrying it indefinitely creates the misleading unavailable banner
+      // after an otherwise successful conversation.
       const terminal = snapshot.processingStatus === 'settled'
-        && snapshot.items.length > 0
         && snapshot.items.every((item) => item.reconciliationStatus === 'authoritative');
       if (terminal) this.clearMemoryActivityRetry(runId);
       else this.scheduleMemoryActivityRetry(conversationId, runId);

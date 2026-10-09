@@ -25,7 +25,7 @@
         @for (candidate of store.candidates(); track candidate.id) {
           <button class="memory-item" [class.selected]="store.candidate()?.id === candidate.id" type="button" (click)="select(candidate.id)">
             <span class="memory-item-top"><span class="kind-pill">{{ candidateAction(candidate) }}</span><span class="status-pill">{{ candidate.sensitivity }}</span></span>
-            <strong>{{ candidate.content || 'Content withheld pending review' }}</strong>
+            <strong>{{ candidate.content || candidateDiagnostic(candidate) }}</strong>
             <span class="memory-item-meta">{{ candidate.confidence | percent:'1.0-0' }} confidence · {{ candidate.state }}</span>
           </button>
         } @empty { <p class="empty-state">Nothing needs review.</p> }
@@ -37,7 +37,7 @@
         <div class="detail-header">
           <div>
             <p class="eyebrow">Candidate {{ candidate.id }}</p>
-            <h2>{{ candidate.content || 'Content withheld pending review' }}</h2>
+            <h2>{{ candidateContent(candidate) }}</h2>
             <p class="detail-meta"><span class="status-pill">{{ candidate.sensitivity }}</span><span>{{ candidateScope(candidate) }}</span><span>{{ candidate.confidence | percent:'1.0-0' }} confidence</span></p>
           </div>
           <span class="status-pill">{{ candidate.state }}</span>

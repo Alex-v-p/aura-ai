@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
 
 const model = { id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
 const preferredModel = { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'] as const, availability: 'available' as const, selectable: true, disabledReason: null };
@@ -55,6 +55,12 @@ describe('ConversationStore', () => {
     expect(memoryActivityIndicators([recalled])).toEqual({ recalled: true, updated: false });
     expect(memoryActivityIndicators([created])).toEqual({ recalled: false, updated: true });
     expect(memoryActivityIndicators([recalled, created])).toEqual({ recalled: true, updated: true });
+  });
+  it('does not expose identifier-free processing placeholders as memory activity', () => {
+    const placeholder = { id: 'processing', action: 'queued_for_review', status: 'queued', candidateId: null, memoryId: null } as MemoryActivity;
+    const candidate = { ...placeholder, id: 'candidate', candidateId: 'candidate-1' } as MemoryActivity;
+    expect(visibleMemoryActivities([placeholder])).toEqual([]);
+    expect(visibleMemoryActivities([placeholder, candidate])).toEqual([candidate]);
   });
   let store: ConversationStore;
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); });
@@ -999,7 +1005,9 @@ describe('ConversationStore', () => {
       expect(attempts).toBe(1);
       expect(retryStore.memoryActivityNotice()).toBeNull();
       await vi.advanceTimersByTimeAsync(250);
-      expect(attempts).toBe(2);
+      // Empty settled activity is authoritative for ignored/rejected
+      // extraction, so it must not schedule another projection retry.
+      expect(attempts).toBe(1);
       expect(retryStore.memoryActivityNotice()).toBeNull();
 
       const queuedSnapshot: RunMemoryActivitySnapshot = { runId: run.id, processingStatus: 'queued', items: [{ ...terminalActivity, id: 'memory-activity-queued', action: 'queued_for_review', status: 'queued', candidateId: null, memoryId: null, memoryRevisionId: null, embeddingGenerationId: null, reconciliationStatus: 'pending' }], lastEventId: null, reconciledAt: now };
