@@ -1019,6 +1019,68 @@ _PERSONAL_MEMORY_MARKER = re.compile(
     r"correct|making|working)\b)",
     re.IGNORECASE,
 )
+_DATE_EXPRESSION = (
+    r"(?:january|february|march|april|may|june|july|august|september|october|"
+    r"november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|"
+    r"august|september|october|november|december)(?:\s+\d{4})?|"
+    r"\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?"
+)
+_DATED_PERSONAL_EVENT = re.compile(
+    r"\b(?P<subject>[A-Za-z][A-Za-z-]{1,40})['’]s\s+"
+    r"(?P<event>birthday|birth\s+date|anniversary)\b(?!\s+(?:party|celebration|event|"
+    r"plan|plans|planning))[^.!?]{0,32}\b(?P<date>" + _DATE_EXPRESSION + r")\b",
+    re.IGNORECASE,
+)
+_USER_FAMILY_EVENT = re.compile(
+    r"\b(?:my|our)\s+(?:wife|husband|partner|mother|father|mom|dad|sister|brother|"
+    r"friend|daughter|son|child|family|parents)\s+"
+    r"(?P<subject>[A-Za-z][A-Za-z-]{1,40})(?:['’]s)?\s+"
+    r"(?P<event>birthday|birth\s+date|anniversary)\b(?!\s+(?:party|celebration|event|"
+    r"plan|plans|planning))[^.!?]{0,32}\b(?P<date>" + _DATE_EXPRESSION + r")\b",
+    re.IGNORECASE,
+)
+_CANDIDATE_FAMILY_EVENT = re.compile(
+    r"\b(?:my|our)\s+(?P<relation>wife|husband|partner|mother|father|mom|dad|sister|"
+    r"brother|friend|daughter|son|child|family|parents)['’]s?\s+"
+    r"(?P<event>birthday|birth\s+date|anniversary)\b(?!\s+(?:party|celebration|event|"
+    r"plan|plans|planning))[^.!?]{0,32}\b(?P<date>" + _DATE_EXPRESSION + r")\b",
+    re.IGNORECASE,
+)
+_USER_FAMILY_RELATION_EVENT = _CANDIDATE_FAMILY_EVENT
+
+_MONTH_NUMBERS = {
+    month: index
+    for index, month in enumerate(
+        (
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ),
+        start=1,
+    )
+}
+
+
+def _normalized_event_date(value: str) -> str:
+    compact = re.sub(r"\s+", " ", value.casefold().replace(",", "").strip())
+    parts = compact.split()
+    if len(parts) >= 2 and parts[0] in _MONTH_NUMBERS:
+        day = re.sub(r"(?:st|nd|rd|th)$", "", parts[1])
+        return f"{_MONTH_NUMBERS[parts[0]]:02d}-{int(day):02d}-{' '.join(parts[2:])}"
+    if len(parts) >= 2 and parts[1] in _MONTH_NUMBERS:
+        day = re.sub(r"(?:st|nd|rd|th)$", "", parts[0])
+        return f"{_MONTH_NUMBERS[parts[1]]:02d}-{int(day):02d}-{' '.join(parts[2:])}"
+    return compact
 
 
 def classify_retention_basis(user_content: str) -> MemoryRetentionBasis:
@@ -1033,6 +1095,56 @@ def classify_retention_basis(user_content: str) -> MemoryRetentionBasis:
     if _PERSONAL_MEMORY_MARKER.search(user_content):
         return MemoryRetentionBasis.PERSONAL
     return MemoryRetentionBasis.NONE
+
+
+def normalize_retention_horizon(
+    candidate: MemoryCandidate, *, user_content: str
+) -> MemoryCandidate:
+    """Apply bounded deterministic horizons for durable family events."""
+
+    content = candidate.content or ""
+    candidate_event = _DATED_PERSONAL_EVENT.search(content)
+    candidate_relation_event = _CANDIDATE_FAMILY_EVENT.search(content)
+    user_events = {
+        (
+            match.group("subject").casefold(),
+            match.group("event").casefold(),
+            _normalized_event_date(match.group("date")),
+        )
+        for match in _USER_FAMILY_EVENT.finditer(user_content)
+    }
+    user_relation_events = {
+        (
+            match.group("relation").casefold(),
+            match.group("event").casefold(),
+            _normalized_event_date(match.group("date")),
+        )
+        for match in _USER_FAMILY_RELATION_EVENT.finditer(user_content)
+    }
+    stable_family_event = False
+    if candidate_event is not None:
+        stable_family_event = (
+            candidate_event.group("subject").casefold(),
+            candidate_event.group("event").casefold(),
+            _normalized_event_date(candidate_event.group("date")),
+        ) in user_events
+    elif candidate_relation_event is not None:
+        stable_family_event = (
+            candidate_relation_event.group("relation").casefold(),
+            candidate_relation_event.group("event").casefold(),
+            _normalized_event_date(candidate_relation_event.group("date")),
+        ) in user_relation_events
+    if (
+        candidate.action is MemoryAction.IGNORE
+        or not candidate.content
+        or not stable_family_event
+    ):
+        return candidate
+    return replace(
+        candidate,
+        half_life_days=max(candidate.half_life_days or DEFAULT_MEMORY_HALF_LIFE_DAYS, 365.0),
+        valid_to=None,
+    )
 
 
 # Short, conservative credential patterns are applied before a memory reaches
@@ -2993,6 +3105,7 @@ class MemoryProcessingService:
         retention_basis = classify_retention_basis(user_content)
         if candidate.action is not MemoryAction.IGNORE:
             candidate = replace(candidate, retention_basis=retention_basis)
+            candidate = normalize_retention_horizon(candidate, user_content=user_content)
         self._emit(
             "memory.retention_gate",
             retention_gate_started,
@@ -5620,6 +5733,7 @@ __all__ = [
     "MemoryVersionConflict",
     "ProcessingJobStatus",
     "classify_retention_basis",
+    "normalize_retention_horizon",
     "classify_sensitivity",
     "contains_secret",
     "decide_candidate",

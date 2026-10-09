@@ -52,6 +52,7 @@ from aura_core.domains.knowledge.memory.public import (
     classify_sensitivity,
     contains_secret,
     decide_candidate,
+    normalize_retention_horizon,
 )
 from aura_core.entrypoints.worker.app import (
     _configure_worker_memory_recall,
@@ -690,6 +691,146 @@ def test_retention_basis_requires_a_personal_connection_or_explicit_request(
     content: str, expected: MemoryRetentionBasis
 ) -> None:
     assert classify_retention_basis(content) is expected
+
+
+def test_family_birthday_horizon_is_durable_and_open_ended() -> None:
+    candidate = replace(
+        _candidate(content="My sister Nora's birthday is July 14."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(
+        candidate, user_content="My sister Nora's birthday is July 14."
+    )
+
+    assert normalized.half_life_days == 365
+    assert normalized.valid_to is None
+
+
+def test_split_family_evidence_normalizes_canonicalized_birthday() -> None:
+    candidate = replace(
+        _candidate(content="Nora’s birthday is July 14."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(
+        candidate, user_content="My sister Nora’s birthday is July 14."
+    )
+
+    assert normalized.half_life_days == 365
+    assert normalized.valid_to is None
+
+
+def test_family_subject_fallback_does_not_cross_named_subjects() -> None:
+    candidate = replace(
+        _candidate(content="Nora’s birthday is July 14."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(
+        candidate,
+        user_content="My sister Nora is planning Alice’s birthday on July 14.",
+    )
+
+    assert normalized.half_life_days == 30
+    assert normalized.valid_to == NOW + timedelta(days=30)
+
+
+@pytest.mark.parametrize(
+    "user_content",
+    [
+        "My sister Nora's birthday is July 15.",
+        "My sister Nora's birthday is June 14.",
+    ],
+)
+def test_family_subject_fallback_requires_exact_event_date(user_content: str) -> None:
+    candidate = replace(
+        _candidate(content="Nora's birthday is July 14."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(candidate, user_content=user_content)
+
+    assert normalized.half_life_days == 30
+    assert normalized.valid_to == NOW + timedelta(days=30)
+
+
+def test_family_anniversary_horizon_is_durable_and_open_ended() -> None:
+    candidate = replace(
+        _candidate(content="My parents’ anniversary is June 2."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(
+        candidate, user_content="My parents’ anniversary is June 2."
+    )
+
+    assert normalized.half_life_days == 365
+    assert normalized.valid_to is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "My sister's birthday party is Saturday.",
+        "My sister's birthday is Saturday.",
+        "The project deadline is tomorrow.",
+    ],
+)
+def test_family_horizon_normalizer_preserves_transient_or_unrelated_candidates(
+    content: str,
+) -> None:
+    candidate = replace(
+        _candidate(content=content),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+
+    normalized = normalize_retention_horizon(
+        candidate, user_content="My sister's birthday is July 14."
+    )
+
+    assert normalized.half_life_days == 30
+    assert normalized.valid_to == NOW + timedelta(days=30)
+
+
+@pytest.mark.asyncio
+async def test_family_birthday_provider_short_horizon_is_normalized_before_commit() -> None:
+    message_id = uuid4()
+    candidate = replace(
+        _candidate(message_id=message_id, content="My sister Nora's birthday is July 14."),
+        half_life_days=30,
+        valid_to=NOW + timedelta(days=30),
+    )
+    repository = MemoryStore(clock=lambda: NOW)
+    processor = MemoryProcessingService(
+        repository, _Inference(candidate), _Embedding(), clock=lambda: NOW
+    )
+    await processor.configure_models(
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    )
+    job = await processor.enqueue(ISSUER, OWNER, run_id=uuid4(), conversation_id=uuid4())
+
+    result = await processor.process(
+        job,
+        user_content="My sister Nora's birthday is July 14.",
+        assistant_content="Understood.",
+        user_message_ids=frozenset({message_id}),
+        run_agent_profile_id=CURRENT_AGENT,
+    )
+
+    assert result.state is CandidateState.ACCEPTED
+    assert result.half_life_days == 365
+    assert result.valid_to is None
+    record = next(iter(repository.memories.values()))
+    revision = record.revisions[0]
+    assert revision.half_life_days == 365
+    assert revision.valid_to is None
 
 
 def test_memory_command_factory_is_deterministic_identifier_only_and_owner_bound() -> None:
