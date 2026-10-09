@@ -3,7 +3,7 @@ import type {
   AgentMemoryPolicy, MemoryCandidateDetail, MemoryCandidateEdit, MemoryCandidatePage,
   MemoryCandidateState, MemoryCompatibleModel, MemoryDetail, MemoryLifecycleStatus,
   MemoryModelConfiguration, MemoryModelInventory, MemoryPage, MemoryReindexStatus,
-  MemoryScope, MemoryCollectionScopeType, MemoryKind, MemoryProvenanceType,
+  MemoryScope, MemoryCollectionScopeType, MemoryKind, MemoryProvenanceType, MemoryRecallMode,
 } from '@aura/aura-api-client';
 
 export interface MemoryFilters {
@@ -38,12 +38,32 @@ export interface MemoryApi {
   getReindexStatus(): Promise<MemoryReindexStatus>;
   resumeReindex(generationId: string): Promise<MemoryReindexStatus>;
   listAgentPolicies(agentProfileId: string): Promise<{ readonly items: ReadonlyArray<AgentMemoryPolicy>; readonly attachedPolicyRevisionId: string; readonly agentVersion: number }>;
-  createAgentPolicy(agentProfileId: string, body: { readonly sharedUserRead: boolean; readonly currentAgentRead: boolean; readonly sharedUserPromotion: boolean; readonly fallbackRelevanceThreshold: number; readonly maxMemories: number; readonly contextBudgetFraction: number; readonly fallbackAgentProfileIds: ReadonlyArray<string>; readonly expectedRevision: number }): Promise<AgentMemoryPolicy>;
+  createAgentPolicy(agentProfileId: string, body: { readonly recallMode?: MemoryRecallMode; readonly automaticRecallThreshold?: number; readonly sharedUserRead: boolean; readonly currentAgentRead: boolean; readonly sharedUserPromotion: boolean; readonly fallbackRelevanceThreshold: number; readonly maxMemories: number; readonly contextBudgetFraction: number; readonly fallbackAgentProfileIds: ReadonlyArray<string>; readonly expectedRevision: number }): Promise<AgentMemoryPolicy>;
   attachAgentPolicy(agentProfileId: string, policyRevisionId: string, expectedAgentVersion: number): Promise<unknown>;
 }
 
 export const MEMORY_API = new InjectionToken<MemoryApi>('AURA_MEMORY_API');
 export type MemoryModelOption = MemoryCompatibleModel;
+
+export interface MemoryPolicySettings {
+  readonly recallMode: MemoryRecallMode;
+  readonly automaticRecallThreshold: number;
+  readonly sharedUserRead: boolean;
+  readonly currentAgentRead: boolean;
+  readonly sharedUserPromotion: boolean;
+  readonly fallbackRelevanceThreshold: number;
+  readonly maxMemories: number;
+  readonly contextBudgetFraction: number;
+  readonly fallbackAgentProfileIds: ReadonlyArray<string>;
+}
+
+export function defaultMemoryPolicySettings(): MemoryPolicySettings {
+  return { recallMode: 'off', automaticRecallThreshold: 0.70, sharedUserRead: true, currentAgentRead: true, sharedUserPromotion: false, fallbackRelevanceThreshold: 0.45, maxMemories: 2, contextBudgetFraction: 0.05, fallbackAgentProfileIds: [] };
+}
+
+export function hydratedMemoryPolicySettings(policy: AgentMemoryPolicy): MemoryPolicySettings {
+  return { recallMode: policy.recallMode, automaticRecallThreshold: policy.automaticRecallThreshold, sharedUserRead: policy.sharedUserRead, currentAgentRead: policy.currentAgentRead, sharedUserPromotion: policy.sharedUserPromotion, fallbackRelevanceThreshold: policy.fallbackRelevanceThreshold, maxMemories: policy.maxMemories, contextBudgetFraction: policy.contextBudgetFraction, fallbackAgentProfileIds: policy.fallbackAgentProfileIds };
+}
 
 /** Inventory entries are selectable only when Core reports them usable and
  * has not attached a disabling reason. The optional flag keeps the client

@@ -8,7 +8,9 @@ Conversation messages, assembled run context, agent state, long-term memory, sou
 
 Long-term memory may be working, episodic, semantic, procedural, preference, or system memory. Each durable record carries ownership and visibility scope, provenance, observed and validity times, confidence, importance, sensitivity, status, disputes, supersession, reinforcement, and entity relationships as applicable.
 
-The expected scope hierarchy is platform, household, user, workspace, agent, conversation, task, and run. Agent memory policy determines readable scopes, default searches and writes, broader writes requiring confirmation, exclusions, and channel/device sensitivity restrictions.
+The expected scope hierarchy is platform, household, user, workspace, agent, conversation, task, and run. An immutable agent memory policy determines readable scopes, default searches and writes, broader writes requiring confirmation, exclusions, and channel/device sensitivity restrictions. It also selects an explicit conversational recall mode: `off` performs no ambient query embedding or retrieval, while `automatic` admits only memories meeting the policy's query-match threshold and bounded result and context limits. Turning recall off does not disable extraction, review, reinforcement, embedding, or storage.
+
+Automatic recall treats memory as untrusted contextual evidence, not policy or instructions. Authorization, lifecycle, validity, active embedding generation, and scope checks remain deterministic. The built-in Aura agent uses conservative automatic recall; newly created custom agents default to off. Historical conversations and runs remain pinned to the exact agent and memory-policy revisions used when they were created.
 
 ## Memory lifecycle
 

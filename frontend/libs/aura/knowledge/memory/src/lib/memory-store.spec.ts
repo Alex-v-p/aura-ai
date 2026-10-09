@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSaveMemoryConfiguration, expectedMemoryConfigurationVersion, hasMemoryAdvancedFilters, hydratedMemoryModelIds, isMissingMemoryConfiguration, isSelectableMemoryModel, loadMemorySettings, memoryAgentFilterChange, memoryScopeFilterChange, normalizeMemoryFilters, recommendedMemoryModelId, reconcileMemorySettingsRequests, saveMemorySettings } from './memory-models';
+import { canSaveMemoryConfiguration, defaultMemoryPolicySettings, expectedMemoryConfigurationVersion, hasMemoryAdvancedFilters, hydratedMemoryModelIds, hydratedMemoryPolicySettings, isMissingMemoryConfiguration, isSelectableMemoryModel, loadMemorySettings, memoryAgentFilterChange, memoryScopeFilterChange, normalizeMemoryFilters, recommendedMemoryModelId, reconcileMemorySettingsRequests, saveMemorySettings } from './memory-models';
 
 describe('MemoryStore', () => {
   it('bounds literal filters and keeps them in feature state', () => {
@@ -96,5 +96,9 @@ describe('MemoryStore', () => {
     const api = { updateModelConfiguration: async (...args: unknown[]) => { calls.push(args); return configuration; } };
     await expect(saveMemorySettings(api, 'qwen3:8b', 'qwen3-embedding:4b', null)).resolves.toBe(configuration);
     expect(calls).toEqual([['qwen3:8b', 'qwen3-embedding:4b', 1]]);
+  });
+  it('starts policy drafts conservatively and hydrates an attached immutable revision', () => {
+    expect(defaultMemoryPolicySettings()).toMatchObject({ recallMode: 'off', automaticRecallThreshold: .70, maxMemories: 2, contextBudgetFraction: .05 });
+    expect(hydratedMemoryPolicySettings({ recallMode: 'automatic', automaticRecallThreshold: .82, maxMemories: 1, contextBudgetFraction: .03, fallbackAgentProfileIds: ['agent-2'] } as never)).toMatchObject({ recallMode: 'automatic', automaticRecallThreshold: .82, maxMemories: 1, contextBudgetFraction: .03, fallbackAgentProfileIds: ['agent-2'] });
   });
 });

@@ -1,1 +1,45 @@
-<div class="memory-page"><header class="memory-heading"><div><p class="eyebrow">Agent configuration</p><h1>Memory policy</h1><p class="lede">Control this agent's immutable memory access revision.</p></div><a class="back-link" routerLink="/agents">← Agents</a></header>@if (store.notice(); as notice) { <p class="notice" role="alert">{{ notice }}</p> }<section class="settings-grid"><form class="detail-card editor-card" (ngSubmit)="create()"><h2>Create policy revision</h2><label class="check-label"><input type="checkbox" name="sharedUserRead" [(ngModel)]="sharedUserRead" /> Read shared user memory</label><label class="check-label"><input type="checkbox" name="currentAgentRead" [(ngModel)]="currentAgentRead" /> Read this agent's private memory</label><label class="check-label"><input type="checkbox" name="sharedUserPromotion" [(ngModel)]="sharedUserPromotion" /> Allow promotion to shared user scope</label><label>Fallback relevance threshold<input name="threshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="fallbackThreshold" /></label><label>Maximum memories<input name="maxMemories" type="number" min="1" max="8" step="1" [(ngModel)]="maxMemories" /></label><label>Context budget fraction<input name="budget" type="number" min="0.01" max="0.2" step="0.01" [(ngModel)]="budgetFraction" /></label><label>Granted fallback agent IDs<small>Comma-separated IDs. Retrieval only; Aura never contacts or delegates to these agents.</small><input name="fallbackAgents" [(ngModel)]="fallbackAgents" /></label><button class="primary-button" type="submit" [disabled]="!valid() || store.saving()">Create immutable revision</button></form><section class="detail-card"><h2>Policy revisions</h2><p class="muted">Attached revision: {{ store.attachedPolicyRevisionId() || 'none' }}</p>@for (policy of store.policies(); track policy.id) { <article class="policy-row"><div><strong>Revision {{ policy.revision }}</strong><span>{{ policy.createdAt | date:'medium' }}</span></div><p>{{ policy.sharedUserRead ? 'Shared user read' : 'No shared read' }} · {{ policy.currentAgentRead ? 'Private read' : 'No private read' }} · {{ policy.maxMemories }} memories</p><button class="secondary-button" type="button" [disabled]="policy.id === store.attachedPolicyRevisionId() || store.saving()" (click)="attach(policy)">{{ policy.id === store.attachedPolicyRevisionId() ? 'Attached' : 'Attach revision' }}</button></article> } @empty { <p class="empty-state">No policy revisions yet.</p> }</section></section></div>
+<div class="memory-page">
+  <header class="memory-heading">
+    <div><p class="eyebrow">Agent configuration</p><h1>Memory policy</h1><p class="lede">Control this agent's immutable memory access revision.</p></div>
+    <a class="back-link" routerLink="/agents">← Agents</a>
+  </header>
+  @if (store.notice(); as notice) { <p class="notice" role="alert">{{ notice }}</p> }
+  <section class="settings-grid">
+    <form class="detail-card editor-card" (ngSubmit)="create()">
+      <h2>Create policy revision</h2>
+      <fieldset class="policy-mode">
+        <legend>Ambient memory recall</legend>
+        <p class="form-help">Choose whether this agent receives relevant memories automatically with each answer.</p>
+        <div class="mode-options" role="radiogroup" aria-label="Ambient memory recall mode">
+          <label class="mode-option" [class.selected]="recallMode === 'off'"><input type="radio" name="recallMode" value="off" [(ngModel)]="recallMode" /> <span><strong>Off</strong><small>Keep task context focused. Memory creation, review, reinforcement, and storage continue.</small></span></label>
+          <label class="mode-option" [class.selected]="recallMode === 'automatic'"><input type="radio" name="recallMode" value="automatic" [(ngModel)]="recallMode" /> <span><strong>Automatic</strong><small>Include only memories that meet the relevance threshold below.</small></span></label>
+        </div>
+      </fieldset>
+      @if (recallMode === 'automatic') {
+        <label>Automatic recall threshold<input name="automaticThreshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="automaticRecallThreshold" aria-describedby="automatic-threshold-help" /><small id="automatic-threshold-help">A higher value keeps more task context focused. Start at 0.70; Aura combines lexical and semantic relevance.</small></label>
+      } @else {
+        <p class="policy-note" role="status"><strong>Recall is off for this agent.</strong> Completed turns can still create and reinforce memories for later review or another authorized agent.</p>
+      }
+      <label class="check-label"><input type="checkbox" name="sharedUserRead" [(ngModel)]="sharedUserRead" /> Read shared user memory</label>
+      <label class="check-label"><input type="checkbox" name="currentAgentRead" [(ngModel)]="currentAgentRead" /> Read this agent's private memory</label>
+      <label class="check-label"><input type="checkbox" name="sharedUserPromotion" [(ngModel)]="sharedUserPromotion" /> Allow promotion to shared user scope</label>
+      <label>Fallback relevance threshold<input name="threshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="fallbackThreshold" /></label>
+      <label>Maximum memories<input name="maxMemories" type="number" min="1" max="8" step="1" [(ngModel)]="maxMemories" /></label>
+      <label>Context budget fraction<input name="budget" type="number" min="0.01" max="0.2" step="0.01" [(ngModel)]="budgetFraction" /></label>
+      <label>Granted fallback agent IDs<small>Comma-separated IDs. Retrieval only; Aura never contacts or delegates to these agents.</small><input name="fallbackAgents" [(ngModel)]="fallbackAgents" /></label>
+      <p class="form-help">Each save creates an immutable policy revision. Existing conversations keep their pinned revision until explicitly upgraded.</p>
+      <button class="primary-button" type="submit" [disabled]="!valid() || store.saving()">Create immutable revision</button>
+    </form>
+    <section class="detail-card">
+      <h2>Policy revisions</h2>
+      <p class="muted">Attached revision: {{ store.attachedPolicyRevisionId() || 'none' }}</p>
+      @for (policy of store.policies(); track policy.id) {
+        <article class="policy-row">
+          <div><strong>Revision {{ policy.revision }}</strong><span>{{ policy.createdAt | date:'medium' }}</span></div>
+          <p><span class="mode-badge">{{ policy.recallMode === 'automatic' ? 'Automatic recall' : 'Recall off' }}</span> · {{ policy.automaticRecallThreshold | number:'1.2-2' }} threshold · {{ policy.maxMemories }} memories · {{ (policy.contextBudgetFraction * 100) | number:'1.0-0' }}% context</p>
+          <button class="secondary-button" type="button" [disabled]="policy.id === store.attachedPolicyRevisionId() || store.saving()" (click)="attach(policy)">{{ policy.id === store.attachedPolicyRevisionId() ? 'Attached' : 'Attach revision' }}</button>
+        </article>
+      } @empty { <p class="empty-state">No policy revisions yet.</p> }
+    </section>
+  </section>
+</div>

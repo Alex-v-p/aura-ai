@@ -21,6 +21,12 @@ PostgreSQL owns deterministic automation, workflow and scheduler state, and serv
 
 Every tool has a stable identifier and version, typed input and result schemas, read/mutation classification, permission and confirmation policy, timeout and bounded retry rules, idempotency expectations, audit fields, sensitivity classification, validation requirements, and an observable component identifier.
 
+## Future governed memory search
+
+A future read-only `memory.search` model-facing tool may let an agent decide when deeper recall is useful. It must enter through the general tool runtime and reuse the existing authorized memory-recall use case rather than create a parallel retrieval path. Aura policy remains authoritative for owner and agent scope, lifecycle and validity filters, fallback grants, result and context limits, and metadata-only audit. Returned memory remains untrusted evidence and never policy or instruction authority.
+
+This specification reserves the capability only. It does not define a tool schema, grant, executor, or `on_demand` or `hybrid` recall mode, and it does not authorize executable behavior before the general tool runtime is implemented.
+
 ## Deterministic automation
 
 Timers, reminders, schedules, workflow state, approvals, notification delivery, and calendar mutations are deterministic domain functions. Models may interpret intent or assist with ambiguous steps, but they do not simulate durable scheduling, permissions, state transitions, or delivery state.

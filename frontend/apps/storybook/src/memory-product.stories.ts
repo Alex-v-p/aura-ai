@@ -2,8 +2,8 @@ import { applicationConfig, moduleMetadata } from '@storybook/angular';
 import type { Decorator, Meta, StoryObj } from '@storybook/angular';
 import { signal } from '@angular/core';
 import { provideRouter } from '@angular/router';
-import type { MemorySummary } from '@aura/aura-api-client';
-import { MemoryPageComponent, MemorySettingsPageComponent, MemoryCandidatesPageComponent, MemoryStore } from '@aura/aura/knowledge/memory';
+import type { AgentMemoryPolicy, MemorySummary } from '@aura/aura-api-client';
+import { AgentMemoryPolicyPageComponent, MemoryPageComponent, MemorySettingsPageComponent, MemoryCandidatesPageComponent, MemoryStore } from '@aura/aura/knowledge/memory';
 import { AgentStore } from '@aura/aura/interaction/agents';
 
 const now = '2026-10-08T09:00:00.000Z';
@@ -66,6 +66,15 @@ function reviewStore(): MemoryStore {
   return store as unknown as MemoryStore;
 }
 
+function policyStore(recallMode: 'off' | 'automatic'): MemoryStore {
+  const store = fixtureStore() as unknown as Record<string, unknown>;
+  const policy: AgentMemoryPolicy = { id: 'policy-story', agentProfileId: 'agent-story', revision: 3, recallMode, automaticRecallThreshold: .70, sharedUserRead: true, currentAgentRead: true, sharedUserPromotion: false, fallbackRelevanceThreshold: .45, maxMemories: 2, contextBudgetFraction: .05, fallbackAgentProfileIds: [], createdAt: now };
+  store['policies'] = signal([policy]);
+  store['attachedPolicyRevisionId'] = signal(policy.id);
+  store['agentVersion'] = signal(4);
+  return store as unknown as MemoryStore;
+}
+
 const configured = { version: 2, extraction: { modelId: 'qwen3:8b', modelRevision: 'latest', modelDigest: 'a'.repeat(64) }, embedding: { modelId: 'qwen3-embedding:4b', modelRevision: 'latest', modelDigest: 'b'.repeat(64) }, activeGeneration: null, buildingGeneration: null, updatedAt: now };
 const idleReindex = { phase: 'idle', activeGeneration: null, replacementGeneration: null, processedRevisionCount: 0, totalRevisionCount: 0, startedAt: null, updatedAt: null, completedAt: null, retryable: false };
 const runningReindex = { ...idleReindex, phase: 'running' as const, processedRevisionCount: 4, totalRevisionCount: 12, replacementGeneration: { id: 'generation-next', generation: 2, modelId: 'qwen3-embedding:4b', modelRevision: 'latest', modelDigest: 'b'.repeat(64), dimension: 2560, status: 'building' as const, createdAt: now, completedAt: null } };
@@ -94,3 +103,5 @@ export const ConfiguredSettings: Story = { name: 'Settings · configured', rende
 export const ReindexSettings: Story = { name: 'Settings · reindex progress', render: () => ({ template: '<aura-memory-settings-page />' }), decorators: [moduleMetadata({ imports: [MemorySettingsPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: settingsStore(configured, runningReindex) }, provideRouter([])] })] };
 export const SettingsError: Story = { name: 'Settings · recoverable error', render: () => ({ template: '<aura-memory-settings-page />' }), decorators: [moduleMetadata({ imports: [MemorySettingsPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: settingsStore(null, null, 'Model inventory is temporarily unavailable.') }, provideRouter([])] })] };
 export const MobileDarkRecords: Story = { name: 'Records · mobile dark', parameters: { viewport: { defaultViewport: 'mobile1' }, backgrounds: { default: 'dark' } }, decorators: [darkThemeDecorator, applicationConfig({ providers: [{ provide: MemoryStore, useValue: fixtureStore() }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };
+export const AgentPolicyAutomatic: Story = { name: 'Agent policy · automatic recall', render: () => ({ template: '<aura-agent-memory-policy-page />' }), decorators: [moduleMetadata({ imports: [AgentMemoryPolicyPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: policyStore('automatic') }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };
+export const AgentPolicyOff: Story = { name: 'Agent policy · recall off', render: () => ({ template: '<aura-agent-memory-policy-page />' }), decorators: [moduleMetadata({ imports: [AgentMemoryPolicyPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: policyStore('off') }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };

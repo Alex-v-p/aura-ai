@@ -297,4 +297,54 @@ test.describe('memory product', () => {
     await page.getByRole('button', { name: /approve edited candidate/i }).click();
     await expect.poll(() => approvalBody).toMatchObject({ expectedVersion: 3, edit: { action: 'create', kind: 'semantic', scope: { type: 'user' }, importance: .5, halfLifeDays: 30, validTo: null } });
   });
+
+  test('hydrates and attaches an explicit off recall policy accessibly', async ({ page }) => {
+    let createdBody: Record<string, unknown> | null = null;
+    let attachBody: Record<string, unknown> | null = null;
+    const initialPolicy = {
+      id: 'policy-automatic', agentProfileId: 'agent-task', revision: 1,
+      sharedUserRead: true, currentAgentRead: true, sharedUserPromotion: false,
+      fallbackRelevanceThreshold: .7, maxMemories: 2, contextBudgetFraction: .05,
+      fallbackAgentProfileIds: [], recallMode: 'automatic', automaticRecallThreshold: .7,
+      createdAt: '2026-10-08T09:00:00Z',
+    };
+    const offPolicy = { ...initialPolicy, id: 'policy-off', revision: 2, recallMode: 'off' as const };
+    await page.route('**/api/v1/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'fixture-owner', displayName: 'Fixture Owner' }, csrfToken: 'fixture-csrf', idleExpiresAt: '2099-10-08T10:00:00Z', absoluteExpiresAt: '2099-10-09T10:00:00Z' } });
+      if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [{ id: 'fixture-model', displayName: 'Fixture model', provider: 'fixture', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-model' } });
+      if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [], nextCursor: null } });
+      if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [{ id: 'agent-task', status: 'active', version: 3, currentRevision: { id: 'agent-revision-task', profileId: 'agent-task', revision: 1, displayName: 'Task agent', purpose: 'Focused work', instructions: 'Stay focused', personaRevisionId: 'persona-task', promptBundleRevisionId: 'prompt-task', modelPolicyRevisionId: 'model-task', createdAt: '2026-10-08T09:00:00Z' }, createdAt: '2026-10-08T09:00:00Z', updatedAt: '2026-10-08T09:00:00Z' }] } });
+      if (url.pathname.endsWith('/agents/agent-task/memory-policies')) {
+        if (route.request().method() === 'POST') {
+          createdBody = route.request().postDataJSON() as Record<string, unknown>;
+          return route.fulfill({ json: offPolicy });
+        }
+        return route.fulfill({ json: { items: [initialPolicy], attachedPolicyRevisionId: initialPolicy.id, agentVersion: 3 } });
+      }
+      if (url.pathname.endsWith('/agents/agent-task/memory-policies/policy-off/attach')) {
+        attachBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({ json: { id: 'agent-task', version: 4, currentRevision: { id: 'agent-revision-task-2' } } });
+      }
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+
+    await page.goto('/agents/agent-task/memory');
+    await expect(page.getByRole('heading', { name: 'Memory policy', exact: true })).toBeVisible();
+    await expect(page.locator('input[name="recallMode"][value="automatic"]')).toBeChecked();
+    await expect(page.getByRole('spinbutton', { name: /automatic recall threshold/i })).toHaveValue('0.7');
+    await page.locator('input[name="recallMode"][value="off"]').check();
+    await expect(page.getByRole('status')).toContainText('Recall is off for this agent');
+
+    await page.getByRole('button', { name: 'Create immutable revision' }).click();
+    await expect.poll(() => createdBody).toMatchObject({
+      recallMode: 'off', automaticRecallThreshold: .7, maxMemories: 2,
+      contextBudgetFraction: .05, expectedRevision: 1,
+    });
+    await expect(page.getByText('Revision 2', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Attach revision' }).click();
+    await expect.poll(() => attachBody).toMatchObject({ expectedAgentVersion: 3 });
+    const a11y = await new AxeBuilder({ page }).include('.memory-page').analyze();
+    expect(a11y.violations).toEqual([]);
+  });
 });

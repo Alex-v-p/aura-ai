@@ -1,11 +1,11 @@
-import { ChangeDetectionStrategy, Component, ElementRef, inject, signal, ViewChild } from '@angular/core';
-import { DatePipe, PercentPipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, effect, ElementRef, inject, signal, ViewChild } from '@angular/core';
+import { DatePipe, DecimalPipe, PercentPipe } from '@angular/common';
 import { A11yModule } from '@angular/cdk/a11y';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, RouterLinkActive, type ParamMap } from '@angular/router';
-import type { AgentMemoryPolicy, MemoryCandidateAction, MemoryCandidateEdit, MemoryCollectionScopeType, MemoryKind, MemoryLifecycleStatus, MemoryScope } from '@aura/aura-api-client';
+import type { AgentMemoryPolicy, MemoryCandidateAction, MemoryCandidateEdit, MemoryCollectionScopeType, MemoryKind, MemoryLifecycleStatus, MemoryRecallMode, MemoryScope } from '@aura/aura-api-client';
 import { AgentStore } from '@aura/aura/interaction/agents';
-import { canSaveMemoryConfiguration, hasMemoryAdvancedFilters, hydratedMemoryModelIds, isSelectableMemoryModel, memoryAgentFilterChange, memoryScopeFilterChange, recommendedMemoryModelId } from './memory-models';
+import { canSaveMemoryConfiguration, defaultMemoryPolicySettings, hasMemoryAdvancedFilters, hydratedMemoryModelIds, hydratedMemoryPolicySettings, isSelectableMemoryModel, memoryAgentFilterChange, memoryScopeFilterChange, recommendedMemoryModelId } from './memory-models';
 import { MemoryStore } from './memory-store';
 
 const kinds: ReadonlyArray<MemoryKind> = ['episodic', 'semantic', 'procedural', 'preference', 'system'];
@@ -175,20 +175,47 @@ export class MemorySettingsPageComponent {
   async resume(): Promise<void> { await this.store.resumeReindex(); }
 }
 
-@Component({ selector: 'aura-agent-memory-policy-page', standalone: true, imports: [DatePipe, FormsModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-policy.component.html', styleUrl: './memory-pages.component.css' })
+@Component({ selector: 'aura-agent-memory-policy-page', standalone: true, imports: [DatePipe, DecimalPipe, FormsModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './memory-policy.component.html', styleUrl: './memory-pages.component.css' })
 export class AgentMemoryPolicyPageComponent {
   private readonly route = inject(ActivatedRoute);
   readonly store = inject(MemoryStore);
   readonly agentId = this.route.snapshot.paramMap.get('id') ?? '';
-  sharedUserRead = true;
-  currentAgentRead = true;
-  sharedUserPromotion = false;
-  fallbackThreshold = 0.45;
-  maxMemories = 8;
-  budgetFraction = 0.2;
-  fallbackAgents = '';
-  constructor() { if (this.agentId) void this.store.loadPolicies(this.agentId); }
-  async create(): Promise<void> { if (!this.valid()) return; await this.store.createPolicy(this.agentId, { sharedUserRead: this.sharedUserRead, currentAgentRead: this.currentAgentRead, sharedUserPromotion: this.sharedUserPromotion, fallbackRelevanceThreshold: this.fallbackThreshold, maxMemories: this.maxMemories, contextBudgetFraction: this.budgetFraction, fallbackAgentProfileIds: this.fallbackAgents.split(',').map((id) => id.trim()).filter(Boolean), expectedRevision: this.store.policies().at(-1)?.revision ?? 0 }); }
+  private readonly defaults = defaultMemoryPolicySettings();
+  recallMode: MemoryRecallMode = this.defaults.recallMode;
+  automaticRecallThreshold = this.defaults.automaticRecallThreshold;
+  sharedUserRead = this.defaults.sharedUserRead;
+  currentAgentRead = this.defaults.currentAgentRead;
+  sharedUserPromotion = this.defaults.sharedUserPromotion;
+  fallbackThreshold = this.defaults.fallbackRelevanceThreshold;
+  maxMemories = this.defaults.maxMemories;
+  budgetFraction = this.defaults.contextBudgetFraction;
+  fallbackAgents = this.defaults.fallbackAgentProfileIds.join(', ');
+  private hydratedPolicyId: string | null = null;
+  constructor() {
+    effect(() => {
+      const attachedId = this.store.attachedPolicyRevisionId();
+      const attached = this.store.policies().find((policy) => policy.id === attachedId);
+      if (attached && attached.id !== this.hydratedPolicyId) this.hydrate(attached);
+    });
+    if (this.agentId) void this.store.loadPolicies(this.agentId);
+  }
+  async create(): Promise<void> {
+    if (!this.valid()) return;
+    await this.store.createPolicy(this.agentId, { recallMode: this.recallMode, automaticRecallThreshold: this.automaticRecallThreshold, sharedUserRead: this.sharedUserRead, currentAgentRead: this.currentAgentRead, sharedUserPromotion: this.sharedUserPromotion, fallbackRelevanceThreshold: this.fallbackThreshold, maxMemories: this.maxMemories, contextBudgetFraction: this.budgetFraction, fallbackAgentProfileIds: this.fallbackAgents.split(',').map((id) => id.trim()).filter(Boolean), expectedRevision: this.store.policies().at(-1)?.revision ?? 0 });
+  }
   async attach(policy: AgentMemoryPolicy): Promise<void> { await this.store.attachPolicy(this.agentId, policy.id); }
-  valid(): boolean { return this.fallbackThreshold >= 0 && this.fallbackThreshold <= 1 && this.maxMemories >= 1 && this.maxMemories <= 8 && this.budgetFraction > 0 && this.budgetFraction <= 0.2; }
+  valid(): boolean { return this.automaticRecallThreshold >= 0 && this.automaticRecallThreshold <= 1 && this.fallbackThreshold >= 0 && this.fallbackThreshold <= 1 && this.maxMemories >= 1 && this.maxMemories <= 8 && this.budgetFraction > 0 && this.budgetFraction <= 0.2; }
+  private hydrate(policy: AgentMemoryPolicy): void {
+    const settings = hydratedMemoryPolicySettings(policy);
+    this.hydratedPolicyId = policy.id;
+    this.recallMode = settings.recallMode;
+    this.automaticRecallThreshold = settings.automaticRecallThreshold;
+    this.sharedUserRead = settings.sharedUserRead;
+    this.currentAgentRead = settings.currentAgentRead;
+    this.sharedUserPromotion = settings.sharedUserPromotion;
+    this.fallbackThreshold = settings.fallbackRelevanceThreshold;
+    this.maxMemories = settings.maxMemories;
+    this.budgetFraction = settings.contextBudgetFraction;
+    this.fallbackAgents = settings.fallbackAgentProfileIds.join(', ');
+  }
 }

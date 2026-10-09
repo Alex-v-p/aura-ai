@@ -103,6 +103,16 @@ dt { color: var(--text-muted); } dd { margin: 0; text-align: right; }
 .policy-row { align-items: center; display: grid; gap: .5rem; grid-template-columns: 1fr auto; }
 .policy-row p { color: var(--text-muted); font-size: .85rem; grid-column: 1 / 2; margin: 0; }
 .policy-row button { grid-column: 2; grid-row: 1 / span 2; }
+.policy-mode { border: 0; margin: 0; padding: 0; }
+.policy-mode legend { color: var(--text); font-size: .95rem; font-weight: 800; padding: 0; }
+.mode-options { display: grid; gap: .55rem; margin-top: .35rem; }
+.mode-option { align-items: flex-start; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .7rem; display: flex; gap: .65rem; padding: .75rem; }
+.mode-option.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+.mode-option input { accent-color: var(--accent); margin-top: .2rem; }
+.mode-option span { display: grid; gap: .2rem; }
+.mode-option small { color: var(--text-muted); font-size: .76rem; font-weight: 500; line-height: 1.4; }
+.policy-note { background: var(--accent-soft); border-radius: .65rem; color: var(--text); font-size: .82rem; line-height: 1.45; margin: 0; padding: .75rem .85rem; }
+.mode-badge { background: var(--accent-soft); border-radius: 999px; color: var(--text); display: inline-flex; font-size: .68rem; font-weight: 800; padding: .22rem .45rem; }
 .setup-card { align-items: start; display: grid; gap: 1.5rem; grid-template-columns: auto minmax(14rem, 1fr) minmax(18rem, 27rem); margin-bottom: 1.25rem; padding: clamp(1.25rem, 3vw, 2rem); }
 .setup-copy h2, .empty-settings h2 { letter-spacing: -.03em; margin: 0 0 .45rem; }
 .setup-copy > p:not(.eyebrow) { color: var(--text-muted); line-height: 1.55; margin-top: 0; }
