@@ -15,6 +15,7 @@ from aura_core.entrypoints.api.routes import (
     health,
     memories,
     models,
+    notifications,
     personas,
     reminders,
     runs,
@@ -155,6 +156,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(runs.router)
     app.include_router(tools.router)
     app.include_router(reminders.router)
+    app.include_router(notifications.router)
     app.include_router(health.router)
     return app
 

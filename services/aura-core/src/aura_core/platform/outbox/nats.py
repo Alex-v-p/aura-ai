@@ -18,6 +18,8 @@ from aura_core.platform.outbox.service import (
 )
 
 EventHandler = Callable[[UUID, UUID], Awaitable[None]]
+NotificationEventHandler = Callable[[UUID], Awaitable[None]]
+NOTIFICATION_EVENT_SUBJECT = "aura.notifications.events.v1"
 
 
 class NatsOutbox:
@@ -33,6 +35,7 @@ class NatsOutbox:
         self._connection: Any = None
         self._jetstream: Any = None
         self._event_subscription: Any = None
+        self._notification_subscription: Any = None
         self._readiness_detail: str | None = "not connected"
 
     @property
@@ -92,7 +95,25 @@ class NatsOutbox:
             command.wire_payload(),
             headers={"Nats-Msg-Id": str(command.id)},
         )
-        return bool(getattr(acknowledgment, "duplicate", False))
+        duplicate = bool(getattr(acknowledgment, "duplicate", False))
+        # A committed reminder firing has a durable PostgreSQL replay event;
+        # this second publish is only a process-local SSE wakeup.  Keep it
+        # outside JetStream and carry no reminder content or owner identity.
+        if (
+            command.aggregate_type == "automation.reminder"
+            and command.identifier("eventType") == "reminder.fired"
+        ):
+            # Core stages the persisted replay-event identifier in the
+            # identifier-only command.  Keep the command id as a compatibility
+            # fallback for older producers; it is still wake-only and never a
+            # replay cursor or source of notification truth.
+            wake_id = command.identifier("eventId") or command.identifier("replayEventId")
+            try:
+                persisted_event_id = UUID(wake_id) if wake_id is not None else command.id
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_notification_event(persisted_event_id)
+        return duplicate
 
     async def publish_event(self, event: RunEvent) -> None:
         if self._connection is None:
@@ -106,6 +127,19 @@ class NatsOutbox:
                 {"eventId": str(event.event_id), "runId": str(event.run_id)},
                 separators=(",", ":"),
             ).encode(),
+        )
+
+    async def publish_notification_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral, identifier-only notification wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("notification wakeup requires an event identifier")
+        await self._connection.publish(
+            NOTIFICATION_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
         )
 
     async def subscribe_events(self, handler: EventHandler) -> None:
@@ -134,12 +168,35 @@ class NatsOutbox:
             "aura.runs.events.>", cb=callback
         )
 
+    async def subscribe_notification_events(
+        self, handler: NotificationEventHandler
+    ) -> Any:
+        """Subscribe to notification wakeups after database replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._notification_subscription = await self._connection.subscribe(
+            NOTIFICATION_EVENT_SUBJECT, cb=callback
+        )
+        return self._notification_subscription
+
     async def close(self) -> None:
         if self._connection is not None:
             await self._connection.drain()
             self._connection = None
             self._jetstream = None
             self._event_subscription = None
+            self._notification_subscription = None
             self._readiness_detail = "not connected"
 
 

@@ -45,6 +45,10 @@
 .product-link.is-active, .product-link[aria-current='page'] { color: var(--accent); }
 .product-icon { color: currentColor; display: block; flex: 0 0 auto; height: 1.25rem; width: 1.25rem; }
 .product-current-marker { display: none; }
+.notification-destination { align-items: center; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .65rem; color: var(--text-muted); display: flex; gap: .55rem; min-height: 2.5rem; padding: .4rem .6rem; position: relative; text-decoration: none; }
+.notification-destination:hover, .notification-destination.is-active { color: var(--text); }
+.notification-destination.is-active { box-shadow: inset 3px 0 var(--accent); }
+.notification-badge { align-items: center; background: var(--accent); border: 2px solid var(--surface); border-radius: 999px; color: var(--on-accent); display: inline-flex; font-size: .52rem; font-weight: 750; height: 1rem; justify-content: center; line-height: 1; min-width: 1rem; padding: 0 .18rem; position: absolute; right: .18rem; top: -.05rem; }
 .product-link .label { font-size: .55rem; letter-spacing: -.04em; line-height: 1.1; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 .nav-label { color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .09em; margin: 0 .6rem .5rem; text-transform: uppercase; }
 .nav-empty { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .75rem .6rem; }

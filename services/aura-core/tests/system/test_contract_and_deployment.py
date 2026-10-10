@@ -76,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.7.0"
+    assert contract["info"]["version"] == "1.8.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +238,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.7.0"
+    assert contract["info"]["version"] == "1.8.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -302,6 +302,26 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
         definitions["EventProperties"]["properties"]["aggregateType"]["const"]
         == "automation.reminder"
     )
+
+
+def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.8.0"
+    paths = contract["paths"]
+    assert "/api/v1/notifications/stream" in paths
+    acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
+    refs = {parameter["$ref"] for parameter in acknowledge["parameters"]}
+    assert {
+        "#/components/parameters/CsrfToken",
+        "#/components/parameters/IdempotencyKey",
+    } <= refs
+    schemas = contract["components"]["schemas"]
+    assert schemas["NotificationStatus"]["enum"] == ["delivered", "acknowledged"]
+    assert "unacknowledgedCount" in schemas["NotificationPage"]["required"]
+    stream_event = schemas["NotificationLifecycleEvent"]["properties"]
+    assert not {"content", "prompt", "response", "ownerSubject"} & set(stream_event)
 
 
 def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:

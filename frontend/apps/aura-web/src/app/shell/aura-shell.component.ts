@@ -1,9 +1,10 @@
 import { A11yModule } from '@angular/cdk/a11y';
 import { CdkOverlayOrigin, OverlayModule, type ConnectedPosition } from '@angular/cdk/overlay';
-import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListener, Input, OnDestroy, Output, ViewChild, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListener, Input, OnDestroy, Output, ViewChild, inject, signal } from '@angular/core';
 import { AdaptiveLayoutComponent } from '@aura/shared/layout';
 import { ThemePreference, ThemeSelectComponent } from '@aura/shared/ui';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { NotificationStore } from '@aura/aura/automation/notifications';
 import { normalizeActivityBoundary } from './shell-conversation-filters';
 
 export interface ShellConversationSummary { readonly id: string; readonly title: string; readonly active: boolean; readonly status?: string; readonly archived?: boolean; readonly agentProfileId?: string; readonly modelId?: string; readonly latestRunStatus?: string; }
@@ -19,6 +20,7 @@ export type ShellConversationAction = { readonly id: string; readonly action: 'r
   styleUrl: './aura-shell.component.css',
 })
 export class AuraShellComponent implements OnDestroy {
+  readonly notifications = inject(NotificationStore);
   @Input() conversations: ReadonlyArray<ShellConversationSummary> = [];
   @Input() agentOptions: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
   @Input() modelOptions: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
@@ -79,12 +81,14 @@ export class AuraShellComponent implements OnDestroy {
   };
 
   constructor() {
+    void this.notifications.start();
     this.viewportQuery?.addEventListener('change', this.viewportListener);
     this.wideDesktopQuery?.addEventListener('change', this.viewportListener);
     this.reducedMotionQuery?.addEventListener('change', this.viewportListener);
   }
 
   ngOnDestroy(): void {
+    this.notifications.stop();
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.viewportQuery?.removeEventListener('change', this.viewportListener);
     this.wideDesktopQuery?.removeEventListener('change', this.viewportListener);

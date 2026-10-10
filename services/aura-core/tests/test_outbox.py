@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -84,6 +85,29 @@ def test_generic_aggregate_command_rejects_content_identifiers() -> None:
             uuid4(),
             identifiers=(("content", "private-reminder"),),
         )
+
+
+def test_notification_event_schema_and_outbox_payload_are_identifier_only() -> None:
+    root = Path(__file__).parents[3]
+    schema = json.loads(
+        (root / "contracts/events/automation/v1/notification-events.schema.json").read_text()
+    )
+    props = schema["$defs"]["NotificationEventProperties"]["properties"]
+    assert not {"content", "prompt", "response", "credential"} & set(props)
+    command = make_aggregate_command(
+        "aura.automation.notifications.v1",
+        uuid4(),
+        "automation.reminder",
+        uuid4(),
+        identifiers=(
+            ("eventType", "reminder.fired"),
+            ("status", "fired"),
+            ("version", 2),
+        ),
+    )
+    payload = json.loads(command.wire_payload())
+    assert "runId" not in payload and "conversationId" not in payload
+    assert not {"content", "prompt", "response"} & set(payload)
 
 
 def test_generic_envelope_rejects_run_identity_mixing() -> None:

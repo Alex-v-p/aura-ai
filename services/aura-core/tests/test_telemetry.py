@@ -83,6 +83,123 @@ def test_metadata_metrics_is_bounded_and_separates_dimensions_from_trace_fields(
     assert metrics.stats().rejected == 2
 
 
+def test_notification_delivery_metrics_are_registered_and_content_free() -> None:
+    metrics = MetadataMetrics()
+    scheduler_metrics = (
+        "reminder_scheduler_scan_duration_ms",
+        "reminder_due_lag_ms",
+        "reminder_fired_count",
+        "reminder_duplicate_prevention_count",
+        "reminder_fire_persistence_outcome",
+        "reminder_failure_count",
+        "reminder_fire_duration_ms",
+    )
+    notification_count_metrics = (
+        "notification_sse_connection_count",
+        "notification_sse_replay_count",
+        "notification_acknowledgement_outcome",
+        "notification_failure_count",
+    )
+    notification_duration_metrics = (
+        "notification_sse_duration_ms",
+        "notification_sse_replay_duration_ms",
+        "notification_acknowledgement_duration_ms",
+    )
+    for name in scheduler_metrics:
+        metrics.observe("aura.automation.reminder_scheduler", name, 1.0, outcome="ok")
+    for name in notification_count_metrics:
+        metrics.increment("aura.automation.notification_delivery", name, outcome="ok")
+    for name in notification_duration_metrics:
+        metrics.observe("aura.automation.notification_delivery", name, 1.0, outcome="ok")
+    retained = metrics.snapshot()
+    assert {item.metric for item in retained} == set(
+        scheduler_metrics + notification_count_metrics + notification_duration_metrics
+    )
+    assert all("content" not in repr(item).lower() for item in retained)
+    assert metrics.stats().rejected == 0
+
+
+def test_scheduler_and_notification_spans_use_duration_metrics_and_valid_trace_links() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    parent = new_span_id()
+    metrics.record_span(
+        "aura.automation.reminder_scheduler",
+        "reminder.scan",
+        2.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=parent,
+        dependency="postgresql",
+        outcome="ok",
+        result_count="1",
+    )
+    metrics.record_span(
+        "aura.automation.reminder_scheduler",
+        "reminder.fire",
+        3.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=parent,
+        dependency="postgresql",
+        outcome="ok",
+    )
+    metrics.record_span(
+        "aura.automation.notification_delivery",
+        "notification.sse.replay",
+        4.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=parent,
+        dependency="postgresql",
+        outcome="ok",
+    )
+    metrics.record_span(
+        "aura.automation.notification_delivery",
+        "notification.acknowledge",
+        5.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=parent,
+        dependency="postgresql",
+        outcome="ok",
+    )
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert {item.metric for item in spans} == {
+        "reminder_scheduler_scan_duration_ms",
+        "reminder_fire_duration_ms",
+        "notification_sse_replay_duration_ms",
+        "notification_acknowledgement_duration_ms",
+    }
+    assert all(item.trace_id == trace_id for item in spans)
+    assert all(item.parent_span_id == parent for item in spans)
+    assert metrics.stats().rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_telemetry_lifecycle_flushes_on_shutdown() -> None:
+    exported: list[TelemetryBatch] = []
+
+    class Exporter:
+        async def export(self, batch: TelemetryBatch) -> None:
+            exported.append(batch)
+
+    metrics = MetadataMetrics(exporter=Exporter())
+    metrics.observe(
+        "aura.automation.reminder_scheduler",
+        "reminder_scheduler_scan_duration_ms",
+        1.0,
+        outcome="ok",
+    )
+    lifecycle = TelemetryLifecycle(metrics, interval_seconds=60.0)
+    await lifecycle.start()
+    assert lifecycle.running
+    assert await lifecycle.stop()
+    assert not lifecycle.running
+    assert exported and exported[-1].measurements
+    assert metrics.stats().rejected == 0
+
+
 def test_model_inventory_telemetry_is_registered_and_metadata_only() -> None:
     metrics = MetadataMetrics()
     trace_id = uuid4().hex

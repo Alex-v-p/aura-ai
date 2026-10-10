@@ -113,3 +113,13 @@ def test_governed_tool_runtime_is_the_forward_head_after_personal_first() -> Non
     spec.loader.exec_module(module)
     assert module.revision == "0013_governed_tool_runtime"
     assert module.down_revision == "0012_memory_personal_first"
+
+
+def test_notification_delivery_migration_follows_reminder_foundation() -> None:
+    path = MIGRATION_DIR / "0015_notification_delivery.py"
+    spec = importlib.util.spec_from_file_location("aura_migration_0015", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0015_notification_delivery"
+    assert module.down_revision == "0014_reminder_foundation"

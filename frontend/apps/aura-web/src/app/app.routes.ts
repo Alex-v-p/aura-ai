@@ -4,6 +4,7 @@ import { AgentCreatePageComponent, AgentDetailPageComponent, AgentListPageCompon
 import { PersonaCreatePageComponent, PersonaDetailPageComponent, PersonaListPageComponent } from '@aura/aura/interaction/personas';
 import { AgentMemoryPolicyPageComponent, MemoryCandidatesPageComponent, MemoryPageComponent, MemorySettingsPageComponent } from '@aura/aura/knowledge/memory';
 import { RemindersPageComponent } from '@aura/aura/automation/reminders';
+import { NotificationsPageComponent } from '@aura/aura/automation/notifications';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'conversation' },
@@ -21,6 +22,7 @@ export const routes: Routes = [
   { path: 'memory/settings', component: MemorySettingsPageComponent },
   { path: 'memory/:id', component: MemoryPageComponent },
   { path: 'reminders', component: RemindersPageComponent },
+  { path: 'notifications', component: NotificationsPageComponent },
   { path: 'agents/:id/memory', component: AgentMemoryPolicyPageComponent },
   { path: '**', redirectTo: 'conversation' },
 ];

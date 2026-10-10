@@ -96,6 +96,24 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.platform.database.base
   - aura-core.platform.telemetry
+- id: aura-core.domains.automation.notifications
+  root: services/aura-core/src/aura_core/domains/automation/notifications
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  python_modules:
+  - aura_core.domains.automation.notifications
+  source_files:
+  - services/aura-core/src/aura_core/domains/automation/notifications/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  dependencies:
+  - aura-core.domains.automation.reminders
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
 - id: aura-core.bootstrap.reminder_uow
   root: services/aura-core/src/aura_core/bootstrap/reminder_uow.py
   kind: python
@@ -105,6 +123,17 @@ modules:
   dependencies:
   - aura-core.domains.automation.reminders
   - aura-core.platform.database.base
+  - aura-core.platform.telemetry
+- id: aura-core.bootstrap.notification_uow
+  root: services/aura-core/src/aura_core/bootstrap/notification_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/notification_uow.py
+  python_modules:
+  - aura_core.bootstrap.notification_uow
+  dependencies:
+  - aura-core.bootstrap.reminder_uow
+  - aura-core.domains.automation.notifications
+  - aura-core.domains.automation.reminders
   - aura-core.platform.telemetry
 - id: aura-core.domains.automation
   root: services/aura-core/src/aura_core/domains/automation/__init__.py
@@ -302,7 +331,9 @@ modules:
   dependencies:
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.health
+  - aura-core.bootstrap.notification_uow
   - aura-core.bootstrap.reminder_uow
+  - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.public
@@ -316,6 +347,7 @@ modules:
   - aura-core.entrypoints.api.routes.health
   - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
+  - aura-core.entrypoints.api.routes.notifications
   - aura-core.entrypoints.api.routes.reminders
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.routes.tools
@@ -375,6 +407,22 @@ modules:
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.runtime.streaming.publisher
+- id: aura-core.entrypoints.scheduler
+  root: services/aura-core/src/aura_core/entrypoints/scheduler
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  python_modules:
+  - aura_core.entrypoints.scheduler
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/scheduler/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  dependencies:
+  - aura-core.bootstrap.reminder_uow
+  - aura-core.bootstrap.notification_uow
+  - aura-core.domains.automation.reminders
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.telemetry
 - id: aura-core.platform.database
   root: services/aura-core/src/aura_core/platform/database
   kind: package
@@ -484,6 +532,7 @@ modules:
   - aura_core.bootstrap.database
   dependencies:
   - aura-core.domains.automation.reminders
+  - aura-core.domains.automation.notifications
   - aura-core.domains.execution.runs
   - aura-core.domains.execution.runs.persistence
   - aura-core.domains.governance.audit
@@ -986,6 +1035,7 @@ modules:
   - aura-core.entrypoints.api.routes.health
   - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
+  - aura-core.entrypoints.api.routes.notifications
   - aura-core.entrypoints.api.routes.personas
   - aura-core.entrypoints.api.routes.reminders
   - aura-core.entrypoints.api.routes.runs
@@ -1128,7 +1178,9 @@ modules:
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.health
+  - aura-core.bootstrap.notification_uow
   - aura-core.bootstrap.reminder_uow
+  - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.identity.application
@@ -1163,6 +1215,18 @@ modules:
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.notifications
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/notifications.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/notifications.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.notifications
+  dependencies:
+  - aura-core.domains.automation.notifications
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.cli
   root: services/aura-core/src/aura_core/entrypoints/cli.py
   kind: python
@@ -1430,6 +1494,13 @@ modules:
   dependencies:
   - aura-web.api-client
   - aura-web.shared-ui
+- id: aura-web.automation-notifications
+  root: frontend/libs/aura/automation/notifications
+  kind: frontend-feature
+  public_api: frontend/libs/aura/automation/notifications/src/index.ts
+  dependencies:
+  - aura-web.api-client
+  - aura-web.automation-reminders
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract
@@ -1444,4 +1515,9 @@ modules:
   root: contracts/events/automation/v1
   kind: event-contract
   public_api: contracts/events/automation/v1/reminder-events.schema.json
+  dependencies: []
+- id: aura-contract.automation-notification-events
+  root: contracts/events/automation/v1/notification-events.schema.json
+  kind: event-contract
+  public_api: contracts/events/automation/v1/notification-events.schema.json
   dependencies: []

@@ -47,6 +47,8 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.2.0",
     "aura.automation.reminder_management": "1.0.0",
+    "aura.automation.reminder_scheduler": "1.0.0",
+    "aura.automation.notification_delivery": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -159,6 +161,28 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "reminder_outbox_duplicates",
             "reminder_version_conflict_count",
             "reminder_idempotency_conflict_count",
+        }
+    ),
+    "aura.automation.reminder_scheduler": frozenset(
+        {
+            "reminder_scheduler_scan_duration_ms",
+            "reminder_due_lag_ms",
+            "reminder_fired_count",
+            "reminder_duplicate_prevention_count",
+            "reminder_fire_persistence_outcome",
+            "reminder_failure_count",
+            "reminder_fire_duration_ms",
+        }
+    ),
+    "aura.automation.notification_delivery": frozenset(
+        {
+            "notification_sse_connection_count",
+            "notification_sse_replay_count",
+            "notification_acknowledgement_outcome",
+            "notification_failure_count",
+            "notification_sse_duration_ms",
+            "notification_sse_replay_duration_ms",
+            "notification_acknowledgement_duration_ms",
         }
     ),
     "aura.knowledge.memory_extraction": frozenset({
@@ -305,6 +329,12 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "reminder.cancel",
         }
     ),
+    "aura.automation.reminder_scheduler": frozenset(
+        {"reminder.scan", "reminder.fire", "reminder.persistence"}
+    ),
+    "aura.automation.notification_delivery": frozenset(
+        {"notification.sse.connect", "notification.sse.replay", "notification.acknowledge"}
+    ),
     "aura.knowledge.memory_extraction": frozenset({
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
         "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
@@ -347,6 +377,8 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
     "aura.knowledge.memory_persistence": "memory_operation_duration_ms",
     "aura.automation.reminder_management": "reminder_command_duration_ms",
+    "aura.automation.reminder_scheduler": "reminder_scheduler_scan_duration_ms",
+    "aura.automation.notification_delivery": "notification_sse_duration_ms",
     "aura.knowledge.memory_extraction": "operation_duration_ms",
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
     "aura.runtime.structured_inference": "structured_inference_duration_ms",
@@ -387,6 +419,12 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "model_inventory_duration_ms",
     ("aura.runtime.structured_inference", "model.capability.verify"):
         "model_capability_verification_duration_ms",
+    ("aura.automation.reminder_scheduler", "reminder.fire"):
+        "reminder_fire_duration_ms",
+    ("aura.automation.notification_delivery", "notification.sse.replay"):
+        "notification_sse_replay_duration_ms",
+    ("aura.automation.notification_delivery", "notification.acknowledge"):
+        "notification_acknowledgement_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -458,6 +496,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "recall_mode",
         "gate_outcome",
         "reminder_id",
+        "notification_id",
+        "event_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -487,6 +527,8 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "embedding_generation_id",
         "fallback_grant_id",
         "reminder_id",
+        "notification_id",
+        "event_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(

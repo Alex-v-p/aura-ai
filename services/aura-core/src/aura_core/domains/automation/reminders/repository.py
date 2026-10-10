@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -57,9 +58,19 @@ def _owner(issuer: str, subject: str) -> tuple[str, str]:
 
 
 def _idempotency_lock_key(issuer: str, subject: str, idempotency_key: str) -> str:
-    """Return a stable, non-sensitive advisory-lock key for one owner command."""
+    """Return a stable, NUL-free advisory-lock key for one owner command.
 
-    return f"aura.reminder:{issuer}\0{subject}\0{idempotency_key}"
+    PostgreSQL text parameters reject literal NUL bytes.  JSON's canonical
+    escaped representation preserves the three-field partitioning while
+    remaining unambiguous for arbitrary authenticated text values.
+    """
+
+    encoded = json.dumps(
+        [issuer, subject, idempotency_key],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return f"aura.reminder:{encoded}"
 
 
 def _item(row: ReminderRow) -> Reminder:
@@ -203,6 +214,30 @@ class MemoryReminderRepository:
     async def cancel(self, issuer: str, subject: str, reminder_id: UUID, *, expected_version: int, idempotency_key: str) -> Reminder:
         return await self._transition(issuer, subject, reminder_id, expected_version=expected_version, idempotency_key=idempotency_key, target=ReminderStatus.CANCELED)
 
+    async def fire_due(
+        self,
+        *,
+        transaction: object | None = None,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> tuple[Reminder, ...]:
+        del transaction
+        if not 1 <= limit <= 100:
+            raise ValueError("reminder delivery batch must contain 1 to 100 reminders")
+        current = now or self._time()
+        current = current.astimezone(UTC) if current.tzinfo else current.replace(tzinfo=UTC)
+        async with self._lock:
+            due = [
+                item
+                for item in self._items.values()
+                if item.status is ReminderStatus.SCHEDULED and item.due_at <= current
+            ]
+            due.sort(key=lambda item: (item.due_at, item.id))
+            fired = tuple(item.with_status(ReminderStatus.FIRED, current) for item in due[:limit])
+            for item in fired:
+                self._items[item.id] = item
+            return fired
+
 
 class SqlReminderRepository:
     """Transactional PostgreSQL adapter for the public reminder port."""
@@ -233,6 +268,45 @@ class SqlReminderRepository:
     def _time(self) -> datetime:
         value = self._clock()
         return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+    async def fire_due(
+        self,
+        *,
+        transaction: object | None = None,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> tuple[Reminder, ...]:
+        if not 1 <= limit <= 100:
+            raise ValueError("reminder delivery batch must contain 1 to 100 reminders")
+        if not isinstance(transaction, AsyncSession):
+            raise ValueError("reminder firing requires the caller transaction")
+        current = now or self._time()
+        current = current.astimezone(UTC) if current.tzinfo else current.replace(tzinfo=UTC)
+        # SQLAlchemy emits the equivalent FOR UPDATE SKIP LOCKED claim.
+        rows = list(
+            (
+                await transaction.execute(
+                    select(ReminderRow)
+                    .where(
+                        ReminderRow.status == ReminderStatus.SCHEDULED.value,
+                        ReminderRow.due_at <= current,
+                    )
+                    .order_by(ReminderRow.due_at, ReminderRow.id)
+                    .limit(limit)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        fired: list[Reminder] = []
+        for row in rows:
+            row.status = ReminderStatus.FIRED.value
+            row.version += 1
+            row.fired_at = current
+            row.updated_at = current
+            fired.append(_item(row))
+        return tuple(fired)
 
     async def create(self, issuer: str, subject: str, *, content: str, due_at: datetime, idempotency_key: str) -> Reminder:
         issuer, subject = _owner(issuer, subject)

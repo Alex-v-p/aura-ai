@@ -1,14 +1,21 @@
 """API composition state."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from uuid import UUID
 
 from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
+from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.domains.automation.notifications.public import (
+    NOTIFICATION_COMPONENT,
+    NOTIFICATION_TOPIC,
+    NotificationApplicationService,
+    NotificationRepository,
+)
 from aura_core.domains.automation.reminders.public import (
     REMINDER_TOPIC,
     ReminderApplicationService,
@@ -123,6 +130,8 @@ class AppState:
         self.memory_repository: MemoryRepository
         self.reminder_repository: ReminderRepository
         self.reminder_service: ReminderApplicationService
+        self.notification_repository: NotificationRepository
+        self.notification_service: NotificationApplicationService
         self.memory_worker: object | None = None
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
@@ -152,6 +161,13 @@ class AppState:
             )
             self.reminder_repository = reminder_repository(None, testing=True, metrics=self.metrics)
             self.reminder_service = reminder_service(self.reminder_repository)
+            self.notification_repository = notification_repository(
+                None,
+                testing=True,
+                reminder_repository=self.reminder_repository,
+                metrics=self.metrics,
+            )
+            self.notification_service = notification_service(self.notification_repository)
             async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
                 return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
 
@@ -208,7 +224,7 @@ class AppState:
             )
             self.nats = NatsOutbox(
                 self.settings.nats_url,
-                additional_subjects=(memory_topic, REMINDER_TOPIC),
+                additional_subjects=(memory_topic, REMINDER_TOPIC, NOTIFICATION_TOPIC),
             )
             self.outbox = TransactionalOutboxTransport()
             self.publisher = PersistentEventPublisher(self.sql_store.append_event)
@@ -229,6 +245,12 @@ class AppState:
                 self.sessions_factory, metrics=self.metrics
             )
             self.reminder_service = reminder_service(self.reminder_repository)
+            self.notification_repository = notification_repository(
+                self.sessions_factory,
+                reminder_delivery=self.reminder_repository,
+                metrics=self.metrics,
+            )
+            self.notification_service = notification_service(self.notification_repository)
             cast(Any, self.memory_repository).set_run_recall_metadata_loader(
                 self.sql_store.get_run_memory_recall_metadata
             )
@@ -324,6 +346,13 @@ class AppState:
             assert self.nats is not None
             await self.nats.connect()
             await self.nats.subscribe_events(self._ingest_event_wakeup)
+            notification_subscribe = getattr(self.nats, "subscribe_notification_events", None)
+            if callable(notification_subscribe):
+                subscribe = cast(
+                    Callable[[Callable[[UUID], Awaitable[None]]], Awaitable[object]],
+                    notification_subscribe,
+                )
+                await subscribe(self._ingest_notification_wakeup)
             self.dispatcher_task = asyncio.create_task(self._dispatch_outbox())
         except Exception:
             self.startup_errors["nats"] = "transport unavailable"
@@ -406,6 +435,11 @@ class AppState:
                     dispatch_span_id = new_span_id()
                     try:
                         duplicate = await self.nats.publish(command)
+                        wakeup_id = command.identifier("eventId")
+                        publish_wakeup = getattr(self.nats, "publish_notification_event", None)
+                        if wakeup_id is not None and callable(publish_wakeup):
+                            publish = cast(Callable[[UUID], Awaitable[None]], publish_wakeup)
+                            await publish(UUID(wakeup_id))
                     except Exception:
                         self.metrics.record_span(
                             component,
@@ -529,6 +563,25 @@ class AppState:
         event = await self.sql_store.event(event_id, run_id)
         if event is not None:
             await self.publisher.ingest_external(event)
+
+    async def _ingest_notification_wakeup(self, event_id: UUID) -> None:
+        """Wake notification SSE consumers; PostgreSQL remains authoritative."""
+
+        self.metrics.record_span(
+            NOTIFICATION_COMPONENT,
+            "notification.sse.replay",
+            0.0,
+            trace_id=event_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=None,
+            dependency="nats_jetstream",
+            outcome="ok",
+            event_id=str(event_id),
+        )
+        wake = getattr(self.notification_repository, "notify_wakeup", None)
+        if callable(wake):
+            notify = cast(Callable[[UUID], Awaitable[None]], wake)
+            await notify(event_id)
 
     async def models(self) -> tuple[list[ModelDescriptor], str | None]:
         try:

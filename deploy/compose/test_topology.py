@@ -56,6 +56,7 @@ class ComposeTopologyTests(unittest.TestCase):
     def test_only_core_entrypoints_receive_provider_egress(self) -> None:
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        scheduler = service_block(self.compose, "aura-core-scheduler", "aura-core-migrate")
         web = service_block(self.compose, "aura-web", "aura-core-api")
         migrate = service_block(self.compose, "aura-core-migrate", "aura-core-postgres")
 
@@ -66,6 +67,11 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("aura-core-egress", worker)
         self.assertIn("host.docker.internal:host-gateway", api)
         self.assertIn("host.docker.internal:host-gateway", worker)
+        self.assertIn("AURA_ROLE: scheduler", scheduler)
+        self.assertIn("AURA_DATABASE_PASSWORD_FILE", scheduler)
+        self.assertIn("networks: [aura-core-db]", scheduler)
+        for forbidden in ("AURA_NATS", "AURA_VALKEY", "AURA_OLLAMA", "AURA_OIDC", "aura-core-bus", "aura-core-cache", "aura-core-egress", "host.docker.internal"):
+            self.assertNotIn(forbidden, scheduler)
         self.assertNotIn("aura-core-egress", web)
         self.assertNotIn("aura-core-egress", migrate)
 
@@ -173,6 +179,19 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("/app/.venv/bin/python -m aura_core.entrypoints.cli migrate", migrate_script)
         self.assertIn("/app/.venv/bin/python -m aura_core.entrypoints.cli seed", migrate_script)
         self.assertNotIn("uv run", migrate_script)
+
+    def test_scheduler_starts_prebuilt_runtime_without_package_manager(self) -> None:
+        scheduler_dockerfile = (ROOT / "deploy/docker/aura-scheduler.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'CMD ["/app/.venv/bin/python", "-c", '
+            '"from aura_core.entrypoints.scheduler.app import main; main()"]',
+            scheduler_dockerfile,
+        )
+        self.assertNotIn("CMD [\"uv\"", scheduler_dockerfile)
+        self.assertNotIn("uv run", scheduler_dockerfile)
 
     def test_core_postgres_uses_pgvector_postgresql_17_without_new_exposure(self) -> None:
         postgres = service_block(self.compose, "aura-core-postgres", "aura-nats")

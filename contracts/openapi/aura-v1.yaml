@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.7.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
+    "version": "1.8.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -17,6 +17,7 @@
     { "name": "Tools" },
     { "name": "Memories" },
     { "name": "Reminders" },
+    { "name": "Notifications" },
     { "name": "Health" }
   ],
   "paths": {
@@ -839,6 +840,72 @@
         }
       }
     },
+    "/api/v1/notifications": {
+      "get": {
+        "operationId": "listNotifications",
+        "tags": ["Notifications"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/NotificationStatus" }, "description": "Optional lifecycle-state filter. Omission returns delivered and acknowledged notifications." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped notification page ordered by createdAt descending with notification ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/NotificationId" }],
+      "get": {
+        "operationId": "getNotification",
+        "tags": ["Notifications"],
+        "responses": {
+          "200": { "description": "Owner-scoped notification detail. The referenced reminder is fetched separately through the owner-authorized reminder API.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}/acknowledge": {
+      "post": {
+        "operationId": "acknowledgeNotification",
+        "tags": ["Notifications"],
+        "parameters": [{ "$ref": "#/components/parameters/NotificationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationAcknowledgeRequest" } } } },
+        "responses": {
+          "200": { "description": "Notification acknowledged without changing the referenced reminder", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/notifications/stream": {
+      "get": {
+        "operationId": "streamNotificationEvents",
+        "tags": ["Notifications"],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed owner-authorized persisted notification event. Replay resumes strictly after this event." }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped persisted notification replay followed by live metadata-only events and heartbeats", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/NotificationStreamEvent" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Last-Event-ID is not an owner-authorized persisted notification event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from the notification list before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -873,6 +940,7 @@
       "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -1972,6 +2040,67 @@
         "type": "object", "additionalProperties": false,
         "required": ["expectedVersion"],
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
+      "Notification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable inbox record. Reminder content is retrieved separately through the reminder API.",
+        "required": ["id", "reminderId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "reminderId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "NotificationPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "unacknowledgedCount"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Notification" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "unacknowledgedCount": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "NotificationAcknowledgeRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "NotificationStreamEvent": {
+        "description": "Metadata-only notification stream envelope. Reminder content, notification content, owner identity, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/NotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/NotificationHeartbeatEvent" }
+        ],
+        "discriminator": { "propertyName": "eventType" }
+      },
+      "NotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" },
+          "reminderId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "notificationVersion": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "NotificationHeartbeatEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventType", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventType": { "type": "string", "const": "heartbeat" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
       },
       "ErrorEnvelope": {
         "type": "object", "additionalProperties": false,

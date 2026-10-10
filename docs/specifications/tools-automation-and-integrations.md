@@ -49,8 +49,16 @@ authenticated reminder API and management workspace may expose content only to
 the owning principal.  Lifecycle events use the generic transactional outbox
 with an `automation.reminder` aggregate and identifier-only metadata; content
 does not enter transport envelopes, telemetry, or ordinary audit metadata.
-Recurrence, editing, deletion, notifications, external delivery, and
-model-facing mutation tools remain separate approved slices.
+Recurrence, editing, deletion, external delivery, and model-facing mutation
+tools remain separate approved slices.  The follow-on delivery slice adds a
+database-only one-second scheduler that claims due reminders with PostgreSQL
+row locks, atomically creates one durable owner inbox notification, persists a
+content-free replay event, and stages the identifier-only lifecycle outbox
+event.  In-app delivery means durable inbox availability; acknowledgement
+never completes the reminder.  Live notification SSE replays owner-authorized
+PostgreSQL events before following ephemeral NATS wakeups, so reconnects and
+offline visits recover from the inbox without retaining reminder content in
+transport, telemetry, or ordinary audit metadata.
 
 ## Home Assistant
 

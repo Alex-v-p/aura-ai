@@ -124,6 +124,36 @@ services:
       aura-valkey: {condition: service_healthy}
     restart: unless-stopped
 
+  aura-core-scheduler:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-scheduler.Dockerfile
+      target: runtime
+    init: true
+    environment:
+      AURA_ENVIRONMENT: production
+      AURA_ROLE: scheduler
+      AURA_DATABASE_HOST: aura-core-postgres
+      AURA_DATABASE_PORT: "5432"
+      AURA_DATABASE_NAME: ${AURA_CORE_DATABASE_NAME:-aura}
+      AURA_DATABASE_USER: ${AURA_CORE_DATABASE_USER:-aura}
+      AURA_DATABASE_PASSWORD_FILE: /run/secrets/aura-core-database-password
+    secrets: [aura-core-database-password]
+    # The scheduler is deliberately database-only.  It must not inherit the
+    # worker's NATS, Valkey, provider, browser, identity, or egress paths.
+    networks: [aura-core-db]
+    depends_on:
+      aura-core-migrate: {condition: service_completed_successfully}
+      aura-core-postgres: {condition: service_healthy}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    restart: unless-stopped
+
   aura-core-migrate:
     build:
       context: .

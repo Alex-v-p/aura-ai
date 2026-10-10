@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from aura_core.domains.automation.reminders import repository as reminder_repository
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Principal, Settings
 from fastapi import FastAPI
@@ -55,9 +57,32 @@ def _openapi() -> dict[str, Any]:
     return json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
 
 
+def test_sql_advisory_lock_key_is_deterministic_unambiguous_and_nul_free() -> None:
+    make_lock_key = cast(
+        Callable[[str, str, str], str],
+        reminder_repository._idempotency_lock_key,  # pyright: ignore[reportPrivateUsage]
+    )
+    commands = (
+        ("issuer\x00one", "subject", "request"),
+        ("issuer", "subject", "request"),
+        ("issuer", "subject", "request\x00suffix"),
+        ("issuer", "subject\x00suffix", "request"),
+        ("issuer:subject", "request", "id"),
+        ("issuer", "subject:request", "id"),
+    )
+    keys = [make_lock_key(*command) for command in commands]
+
+    # The same owner command must serialize on the same advisory lock, while
+    # owner and idempotency components remain independently partitioned even
+    # when values contain delimiter-like or PostgreSQL-incompatible bytes.
+    assert keys[0] == make_lock_key(*commands[0])
+    assert len(set(keys)) == len(commands)
+    assert all("\x00" not in key for key in keys)
+
+
 def test_reminder_contract_is_versioned_owner_authenticated_and_mutations_are_protected() -> None:
     spec = _openapi()
-    assert spec["info"]["version"] == "1.7.0"
+    assert spec["info"]["version"] == "1.8.0"
     expected = {
         "/api/v1/reminders",
         "/api/v1/reminders/{reminder_id}",

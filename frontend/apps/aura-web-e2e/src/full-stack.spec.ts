@@ -30,6 +30,23 @@ interface MemoryActivityResponse extends JsonObject {
   readonly items?: ReadonlyArray<JsonObject>;
 }
 
+interface ReminderResponse extends JsonObject {
+  readonly id?: string;
+  readonly status?: string;
+}
+
+interface NotificationResponse extends JsonObject {
+  readonly id?: string;
+  readonly reminderId?: string;
+  readonly status?: string;
+  readonly version?: number;
+}
+
+interface NotificationPageResponse extends JsonObject {
+  readonly items?: ReadonlyArray<NotificationResponse>;
+  readonly unacknowledgedCount?: number;
+}
+
 const configuredModes = (process.env['AURA_E2E_IDENTITY_MODES'] ?? process.env['AURA_E2E_IDENTITY_MODE'] ?? 'local-identity')
   .split(',')
   .map((mode) => mode.trim())
@@ -109,6 +126,87 @@ async function waitForSettledMemoryActivity(
   }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
   expect(activity.items?.every((item) => ['completed', 'failed'].includes(String(item['status'] ?? '')))).toBe(true);
   return activity;
+}
+
+async function waitForReminderStatus(
+  page: Page,
+  config: StackConfig,
+  reminderId: string,
+  status: string,
+): Promise<ReminderResponse> {
+  let reminder: ReminderResponse = {};
+  await expect.poll(async () => {
+    const response = await page.request.get(new URL(`/api/v1/reminders/${reminderId}`, config.baseUrl).toString());
+    if (!response.ok()) return false;
+    reminder = (await response.json()) as ReminderResponse;
+    return reminder.status === status;
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+  return reminder;
+}
+
+async function waitForReminderNotification(
+  page: Page,
+  config: StackConfig,
+  reminderId: string,
+): Promise<NotificationResponse> {
+  let matching: NotificationResponse[] = [];
+  await expect.poll(async () => {
+    const response = await page.request.get(new URL('/api/v1/notifications?limit=100', config.baseUrl).toString());
+    if (!response.ok()) return false;
+    const payload = (await response.json()) as NotificationPageResponse;
+    matching = (payload.items ?? []).filter((item) => item.reminderId === reminderId);
+    return matching.length === 1;
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+  const notification = matching[0];
+  if (!notification) throw new Error(`No notification was created for reminder ${reminderId}`);
+  return notification;
+}
+
+async function readNotificationStream(
+  page: Page,
+  targetNotificationId: string | undefined,
+  lastEventId: string | undefined,
+): Promise<JsonObject[]> {
+  return page.evaluate(async ({ targetNotificationId: targetId, lastEventId: cursor }) => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), cursor ? 3_000 : 20_000);
+    const events: JsonObject[] = [];
+    try {
+      const response = await fetch('/api/v1/notifications/stream', {
+        credentials: 'include',
+        headers: { Accept: 'text/event-stream', ...(cursor ? { 'Last-Event-ID': cursor } : {}) },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`Notification stream failed with ${response.status}`);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Notification stream did not return a body');
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? '';
+        for (const block of blocks) {
+          const data = block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+          if (!data) continue;
+          const payload = JSON.parse(data) as JsonObject;
+          events.push(payload);
+          if (targetId && payload['notificationId'] === targetId) {
+            controller.abort();
+            return events;
+          }
+        }
+      }
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === 'AbortError') return events;
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    return events;
+  }, { targetNotificationId, lastEventId });
 }
 
 async function signIn(page: Page, config: StackConfig): Promise<void> {
@@ -292,6 +390,85 @@ for (const mode of configuredModes) {
         const parsed = new URL(url);
         expect(parsed.search).not.toMatch(/token|authorization|access_token/i);
       }
+    });
+
+    test('fires one durable reminder notification and catches up after SSE reconnect', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the reminder notification check`);
+      if (!config) return;
+      test.setTimeout(120_000);
+
+      await signIn(page, config);
+      const session = await apiSession(page, config);
+      const reminderContent = `real-stack-notification-${mode}-${Date.now()}`;
+      const dueAt = new Date(Date.now() + 8_000).toISOString();
+      const createResponse = await page.request.post(new URL('/api/v1/reminders', config.baseUrl).toString(), {
+        headers: csrfHeaders(session, config.baseUrl),
+        data: { content: reminderContent, dueAt },
+      });
+      expect(createResponse.status(), await createResponse.text()).toBe(201);
+      const createdReminder = (await createResponse.json()) as ReminderResponse;
+      const reminderId = createdReminder.id;
+      expect(typeof reminderId).toBe('string');
+      if (typeof reminderId !== 'string') return;
+
+      const firedReminder = await waitForReminderStatus(page, config, reminderId, 'fired');
+      expect(firedReminder.status).toBe('fired');
+      const notification = await waitForReminderNotification(page, config, reminderId);
+      expect(notification).toMatchObject({ reminderId, status: 'delivered', version: 1 });
+      const notificationId = notification.id;
+      expect(typeof notificationId).toBe('string');
+      if (typeof notificationId !== 'string') return;
+
+      const streamRequests: Array<Record<string, string>> = [];
+      const onRequest = (request: import('@playwright/test').Request): void => {
+        const url = new URL(request.url());
+        if (url.pathname.endsWith('/api/v1/notifications/stream')) streamRequests.push(request.headers());
+      };
+      page.on('request', onRequest);
+      try {
+        const replayedEvents = await readNotificationStream(page, notificationId, undefined);
+        const deliveredEvent = replayedEvents.find((event) => event['notificationId'] === notificationId);
+        expect(deliveredEvent).toMatchObject({
+          eventType: 'notification.delivered',
+          notificationId,
+          reminderId,
+          status: 'delivered',
+        });
+        const eventId = deliveredEvent?.['eventId'];
+        expect(typeof eventId).toBe('string');
+        if (typeof eventId !== 'string') return;
+
+        const reconnectEvents = await readNotificationStream(page, undefined, eventId);
+        expect(reconnectEvents.some((event) => event['notificationId'] === notificationId)).toBe(false);
+        expect(streamRequests.some((headers) => headers['last-event-id'] === eventId)).toBe(true);
+      } finally {
+        page.off('request', onRequest);
+      }
+
+      const acknowledgeResponse = await page.request.post(new URL(`/api/v1/notifications/${notificationId}/acknowledge`, config.baseUrl).toString(), {
+        headers: csrfHeaders(session, config.baseUrl),
+        data: { expectedVersion: notification.version },
+      });
+      expect(acknowledgeResponse.status(), await acknowledgeResponse.text()).toBe(200);
+      const acknowledged = (await acknowledgeResponse.json()) as NotificationResponse;
+      expect(acknowledged).toMatchObject({ id: notificationId, reminderId, status: 'acknowledged', version: 2 });
+
+      // The stream is deliberately closed above. The persisted inbox remains
+      // authoritative while the browser is offline and must catch up on the
+      // next list request without creating a second notification.
+      const offlineCatchUp = await page.request.get(new URL('/api/v1/notifications?limit=100', config.baseUrl).toString());
+      expect(offlineCatchUp.ok(), await offlineCatchUp.text()).toBeTruthy();
+      const catchUpPage = (await offlineCatchUp.json()) as NotificationPageResponse;
+      const catchUpItems = (catchUpPage.items ?? []).filter((item) => item.reminderId === reminderId);
+      expect(catchUpItems).toHaveLength(1);
+      expect(catchUpItems[0]).toMatchObject({ id: notificationId, status: 'acknowledged' });
+
+      await page.goto(new URL('/notifications', config.baseUrl).toString());
+      await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+      await expect(page.getByText('A reminder is due.', { exact: true })).toBeVisible();
+      await expect(page.locator('li.notification-card .notification-status').filter({ hasText: 'Acknowledged' }).first()).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Acknowledge' })).toHaveCount(0);
     });
 
     test('keeps an independent conversation running in the background', async ({ page }) => {

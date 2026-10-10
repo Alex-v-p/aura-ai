@@ -69,7 +69,13 @@
           }
           @if (hasMoreConversations) { <button class="load-more" type="button" [disabled]="loadingMoreConversations" (click)="loadMore.emit()">{{ loadingMoreConversations ? 'Loading…' : 'Load more conversations' }}</button> }
         </div>
-        <div class="sidebar-bottom"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
+        <div class="sidebar-bottom">
+          <a class="notification-destination" routerLink="/notifications" routerLinkActive="is-active" ariaCurrentWhenActive="page" [attr.aria-label]="notifications.unreadCount() ? 'Notifications, ' + notifications.unreadCount() + ' unread' : 'Notifications'" title="Notifications" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
+            <span class="label">Notifications</span>@if (notifications.unreadCount()) { <span class="notification-badge" aria-hidden="true">{{ notifications.unreadCount() > 99 ? '99+' : notifications.unreadCount() }}</span> }
+          </a>
+          <aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" />
+        </div>
       }
     </nav>
     <main id="main-content" class="main-content" tabindex="-1"><ng-content /></main>

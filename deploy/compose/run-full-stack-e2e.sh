@@ -5,6 +5,8 @@ set -eu
 
 mode=${AURA_E2E_MODE:-external}
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+# The browser suite covers notification inbox reconciliation, Last-Event-ID
+# replay, and reconnect recovery against this disposable stack.
 # Docker Desktop only permits bind sources it can see within the shared
 # workspace. Keep this disposable, ignored directory beside the project
 # rather than using /tmp, which may be private to the host shell.
@@ -61,7 +63,7 @@ case "$mode" in
     export AURA_OWNER_SUBJECT=owner
     export AURA_PUBLIC_ORIGIN=http://aura-web:8080
     docker compose --progress quiet -p aura-e2e-provider -f "$root/deploy/compose/e2e/provider.yaml" up --build --detach --wait
-    docker compose --progress quiet -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/e2e/external-aura.yaml" --profile checks up --build --detach --wait aura-web aura-core-api aura-core-worker
+    docker compose --progress quiet -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/e2e/external-aura.yaml" --profile checks up --build --detach --wait aura-web aura-core-api aura-core-worker aura-core-scheduler
     docker compose --progress quiet -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/e2e/external-aura.yaml" --profile checks build frontend-e2e
     docker compose -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/e2e/external-aura.yaml" --profile checks run --rm --no-deps frontend-e2e
     ;;
@@ -82,7 +84,7 @@ case "$mode" in
     export AUTHENTIK_SECRET_KEY_FILE="$fixture_root/authentik-key"
     export AUTHENTIK_BOOTSTRAP_PASSWORD_FILE="$fixture_root/authentik-bootstrap"
     export AUTHENTIK_VALKEY_PASSWORD_FILE="$fixture_root/authentik-valkey"
-    docker compose --progress quiet -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/local-identity.yaml" -f "$root/deploy/compose/e2e/local-aura.yaml" --profile local-identity --profile checks up --build --detach --wait aura-web aura-core-api aura-core-worker aura-e2e-ollama authentik-server authentik-worker
+    docker compose --progress quiet -p aura-e2e -f "$root/compose.yaml" -f "$root/deploy/compose/local-identity.yaml" -f "$root/deploy/compose/e2e/local-aura.yaml" --profile local-identity --profile checks up --build --detach --wait aura-web aura-core-api aura-core-worker aura-core-scheduler aura-e2e-ollama authentik-server authentik-worker
     # Authentik discovers and applies custom blueprints asynchronously after
     # its HTTP readiness endpoint turns green. Wait for the configured OIDC
     # discovery document so the browser test cannot race provider creation.

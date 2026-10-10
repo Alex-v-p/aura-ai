@@ -1,0 +1,46 @@
+<section class="notifications-page" aria-labelledby="notifications-heading">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Aura inbox</p>
+      <h1 id="notifications-heading">Notifications</h1>
+      <p class="lede">Durable updates from your reminders. They stay here until you acknowledge them.</p>
+    </div>
+    <span class="connection" [class.is-live]="store.connectionState() === 'live'" role="status"><span class="connection-dot" aria-hidden="true"></span>{{ store.connectionState() === 'live' ? 'Live' : store.connectionState() === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
+  </header>
+
+  @if (store.notice()) { <p class="notice" [class.is-error]="store.errorStatus() !== null" role="alert">{{ store.notice() }}</p> }
+  <div class="filter-row"><label for="notification-filter">Show</label><select id="notification-filter" [value]="store.filter()" (change)="store.setFilter($any($event.target).value)"><option value="all">All notifications</option><option value="delivered">Unread</option><option value="acknowledged">Acknowledged</option></select></div>
+  @if (store.loading() && store.collection().items.length === 0) { <p class="state" role="status">Loading notifications…</p> }
+  @else if (store.collection().items.length === 0) { <div class="empty state"><span class="empty-icon" aria-hidden="true">✓</span><h2>All caught up</h2><p>When a reminder is due, its notification will appear here.</p></div> }
+  @else {
+    <ul class="notification-list" aria-label="Your notifications">
+      @for (notification of store.collection().items; track notification.id) {
+        <li class="notification-card" [class.is-unread]="!isAcknowledged(notification)">
+          <button class="notification-main" type="button" (click)="inspect(notification)" [attr.aria-label]="'Open notification: ' + content(notification)">
+            <span class="notification-marker" aria-hidden="true"></span>
+            <span class="notification-copy"><strong>{{ content(notification) }}</strong><small>Reminder due {{ formatDate(notification.deliveredAt) }}</small></span>
+            <span class="notification-status">{{ isAcknowledged(notification) ? 'Acknowledged' : 'Unread' }}</span>
+          </button>
+          @if (!isAcknowledged(notification)) { <button class="secondary-button" type="button" [disabled]="store.saving()" (click)="acknowledge(notification)">Acknowledge</button> }
+        </li>
+      }
+    </ul>
+    @if (store.collection().nextCursor) { <button class="load-more" type="button" [disabled]="store.loading()" (click)="store.loadMore()">{{ store.loading() ? 'Loading…' : 'Load older notifications' }}</button> }
+  }
+
+  @if (store.selected(); as notification) {
+    <div class="detail-backdrop" role="presentation" (click)="closeDetail()">
+      <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="notification-detail-heading" (click)="$event.stopPropagation()">
+        <button class="close-button" type="button" aria-label="Close notification details" (click)="closeDetail()">×</button>
+        <p class="eyebrow">Reminder notification</p>
+        <h2 id="notification-detail-heading">{{ content(notification) }}</h2>
+        <p class="detail-time">Delivered {{ formatDate(notification.deliveredAt) }}</p>
+        <p class="detail-status" role="status">{{ isAcknowledged(notification) ? 'Acknowledged' : 'Unread' }}</p>
+        <div class="detail-actions">
+          @if (!isAcknowledged(notification)) { <button class="primary-button" type="button" [disabled]="store.saving()" (click)="acknowledge(notification)">{{ store.saving() ? 'Saving…' : 'Acknowledge' }}</button> }
+          @if (canComplete(notification)) { <button class="secondary-button" type="button" (click)="completeReminder(notification)">Mark reminder complete</button> }
+        </div>
+      </div>
+    </div>
+  }
+</section>

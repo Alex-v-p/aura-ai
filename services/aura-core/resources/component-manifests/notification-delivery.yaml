@@ -1,0 +1,49 @@
+component:
+  id: aura.automation.notification_delivery
+  version: 1.0.0
+  owner: automation.notifications
+  category: delivery
+input:
+  schema: aura-notification-events-v1
+  replayable: true
+  replay_reason: Persisted owner-authorized events recover missed or duplicate NATS wakeups.
+output:
+  schema: server-sent-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - nats-jetstream
+metrics:
+  - notification_sse_connection_count
+  - notification_sse_replay_count
+  - notification_acknowledgement_outcome
+  - notification_failure_count
+  - notification_sse_duration_ms
+  - notification_sse_replay_duration_ms
+  - notification_acknowledgement_duration_ms
+metric_semantics:
+  notification_sse_connection_count: Authorized notification stream connections.
+  notification_sse_replay_count: Persisted owner-authorized events replayed before wakeups.
+  notification_acknowledgement_outcome: Metadata-only acknowledgement result.
+  notification_failure_count: Metadata-only notification persistence or stream failure.
+  notification_sse_duration_ms: Duration of an authorized notification stream operation.
+  notification_sse_replay_duration_ms: Duration of persisted replay serialization.
+  notification_acknowledgement_duration_ms: Duration of a durable acknowledgement operation.
+capture_policy: metadata_only
+evaluators:
+  - notification_owner_authorization
+  - notification_replay_recovery
+cardinality:
+  metric_attributes: [dependency, outcome, error_class, status]
+  trace_only: [trace_id, span_id, parent_span_id, notification_id, reminder_id, event_id, event_status, event_version]
+  prohibited: [content, prompt, response, payload, token, credential, owner_subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

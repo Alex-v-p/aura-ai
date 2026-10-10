@@ -96,7 +96,19 @@ class ReminderTransitionError(ReminderError):
     pass
 
 
-class ReminderRepository(Protocol):
+class ReminderDeliveryPort(Protocol):
+    """Transaction-scoped public port for scheduler-owned firing."""
+
+    async def fire_due(
+        self,
+        *,
+        transaction: object | None = None,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> tuple[Reminder, ...]: ...
+
+
+class ReminderRepository(ReminderDeliveryPort, Protocol):
     async def create(
         self, issuer: str, subject: str, *, content: str, due_at: datetime, idempotency_key: str
     ) -> Reminder: ...
@@ -343,6 +355,7 @@ __all__ = [
     "ReminderNotFound",
     "ReminderPage",
     "ReminderRepository",
+    "ReminderDeliveryPort",
     "ReminderStatus",
     "ReminderTransitionError",
     "ReminderValidationError",

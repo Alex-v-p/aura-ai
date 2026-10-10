@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 4e34908b894e9a86c69882da3df5dc3093f969920931c6cece2925b6ee79cc92
+// Contract SHA-256: 00b6bb7f1e9c074b92e98eec6603ff28cb3bcd56944d8d2ed08840315821e000
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -251,6 +251,20 @@ export type CreateReminderRequest = { readonly "content": string; readonly "dueA
 
 export type ReminderTransitionRequest = { readonly "expectedVersion": number; };
 
+export type NotificationStatus = "delivered" | "acknowledged";
+
+export type Notification = { readonly "id": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
+
+export type NotificationPage = { readonly "items": ReadonlyArray<Notification>; readonly "nextCursor": string | null; readonly "unacknowledgedCount": number; };
+
+export type NotificationAcknowledgeRequest = { readonly "expectedVersion": number; };
+
+export type NotificationStreamEvent = NotificationLifecycleEvent | NotificationHeartbeatEvent;
+
+export type NotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
+
+export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
+
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
 
 export type FieldError = { readonly "field": string; readonly "code": string; readonly "message": string; };
@@ -316,6 +330,10 @@ export interface AuraApiOperations {
   readonly getReminder: { readonly response: Reminder; readonly body: never; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly completeReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly cancelReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listNotifications: { readonly response: NotificationPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: NotificationStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -390,6 +408,10 @@ export const AURA_API_OPERATIONS = {
   getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', responseMode: 'json' },
   completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', responseMode: 'json' },
   cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', responseMode: 'json' },
+  listNotifications: { method: 'GET', pathTemplate: '/api/v1/notifications', responseMode: 'json' },
+  getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', responseMode: 'json' },
+  acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', responseMode: 'json' },
+  streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', responseMode: 'event-stream' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;
