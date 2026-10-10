@@ -483,6 +483,64 @@ modules:
   - aura_core.domains.knowledge.memory.persistence
   dependencies:
   - aura-core.platform.database.base
+- id: aura-core.domains.knowledge.memory.ports
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/ports.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.ports
+  dependencies:
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.knowledge.memory.contracts
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/contracts.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/contracts.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.contracts
+  dependencies: []
+- id: aura-core.domains.knowledge.memory.maintenance
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/maintenance.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/maintenance.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.maintenance
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.repository-ports
+- id: aura-core.domains.knowledge.memory.candidate-actions
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/candidate_actions.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/candidate_actions.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.candidate_actions
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.repository-ports
+- id: aura-core.domains.knowledge.memory.processing
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/processing.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/processing.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.processing
+  dependencies:
+  - aura-core.domains.knowledge.memory.candidate-actions
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.embedding
+  - aura-core.domains.knowledge.memory.maintenance
+  - aura-core.domains.knowledge.memory.ports
+  - aura-core.domains.knowledge.memory.repository-ports
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.knowledge.memory.embedding
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/embedding.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/embedding.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.embedding
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.ports
+  - aura-core.domains.knowledge.memory.repository-ports
+  - aura-core.runtime.models.ports
 - id: aura-core.domains.knowledge.memory.public
   root: services/aura-core/src/aura_core/domains/knowledge/memory/public.py
   kind: python
@@ -490,6 +548,23 @@ modules:
   python_modules:
   - aura_core.domains.knowledge.memory.public
   dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.embedding
+  - aura-core.domains.knowledge.memory.ports
+  - aura-core.domains.knowledge.memory.processing
+  - aura-core.domains.knowledge.memory.store
+  - aura-core.domains.knowledge.memory.model-service
+  - aura-core.domains.knowledge.memory.repository-ports
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.knowledge.memory.model-service
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/model_service.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/model_service.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.model_service
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.repository-ports
   - aura-core.runtime.models.ports
 - id: aura-core.domains.knowledge.memory.repository
   root: services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
@@ -500,6 +575,14 @@ modules:
   dependencies:
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
+- id: aura-core.domains.knowledge.memory.repository-ports
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/repository_ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/repository_ports.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.repository_ports
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
 - id: aura-core.domains.knowledge.memory.recall
   root: services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
   kind: python
@@ -508,7 +591,17 @@ modules:
   - aura_core.domains.knowledge.memory.recall
   dependencies:
   - aura-core.domains.knowledge.memory.public
+  - aura-core.domains.knowledge.memory.repository-ports
   - aura-core.domains.interaction.agents.public
+- id: aura-core.domains.knowledge.memory.store
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/store.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/store.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.store
+  dependencies:
+  - aura-core.domains.knowledge.memory.contracts
+  - aura-core.domains.knowledge.memory.repository-ports
 - id: aura-core.domains.execution.runs.dto
   root: services/aura-core/src/aura_core/domains/execution/runs/dto.py
   kind: python
@@ -940,6 +1033,8 @@ modules:
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.platform.auth
+  - aura-core.platform.telemetry
+  - aura-core.runtime.models.ports
 - id: aura-core.entrypoints.api.routes.runs
   root: services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
   kind: python

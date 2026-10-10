@@ -400,7 +400,7 @@ async def test_agent_memory_policy_modes_defaults_and_immutable_attach(api_app: 
         assert current["maxMemories"] == 2
         assert current["contextBudgetFraction"] == 0.05
 
-        body = {
+        body: dict[str, object] = {
             "sharedUserRead": True,
             "currentAgentRead": True,
             "sharedUserPromotion": False,

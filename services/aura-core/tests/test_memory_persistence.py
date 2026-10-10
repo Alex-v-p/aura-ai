@@ -107,7 +107,7 @@ async def sql_memory_store() -> AsyncIterator[tuple[SqlMemoryRepository, AsyncEn
 
 async def _create(
     store: MemoryStore | SqlMemoryRepository, *, subject: str = OWNER, **kwargs: object
-):
+) -> MemoryRecord:
     return await store.create_memory(
         ISSUER,
         subject,
@@ -558,9 +558,9 @@ async def test_status_and_pin_idempotent_replays_recheck_scope_in_both_adapters(
 async def test_sql_concurrent_same_key_create_and_versioned_mutation_replay_exactly(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:
-    store, engine = sql_memory_store
+    store, _engine = sql_memory_store
 
-    async def create() -> object:
+    async def create() -> MemoryRecord:
         return await _create(
             store,
             content="Concurrent idempotent memory.",
@@ -970,7 +970,7 @@ async def test_postgres_terminal_processing_rows_are_content_free_and_owner_scop
 async def test_postgres_claim_paths_preserve_pinned_policy_snapshot(
     sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
 ) -> None:
-    store, engine = sql_memory_store
+    store, _engine = sql_memory_store
     policy_by_id = uuid4()
     policy_general = uuid4()
     first = MemoryProcessingJob(
@@ -1169,6 +1169,8 @@ async def test_postgres_purge_scrubs_linked_candidate_outcome_embedding_and_retr
     assert counts["memory_embedding_jobs"] == 0
     assert counts["memory_purge_fences"] == 1
     assert counts["memory_command_idempotency"] == 0
+    assert await store.is_processing_command_purged(ISSUER, OWNER, job.id) is True
+    assert await store.is_processing_command_purged(ISSUER, OWNER, uuid4()) is False
     # The delayed processing job must not recreate the purged memory.
     assert await store.get_processing_job(job.id, ISSUER, OWNER)
 
@@ -1378,12 +1380,25 @@ async def test_sql_approval_queue_failure_is_repaired_by_idempotent_replay(
     original_queue = store.queue_embedding_job
     failed = True
 
-    async def fail_once(issuer: str, subject: str, **kwargs: object) -> MemoryEmbeddingJob:
+    async def fail_once(
+        issuer: str,
+        subject: str,
+        *,
+        memory_id: UUID,
+        revision_id: UUID,
+        generation_id: UUID,
+    ) -> MemoryEmbeddingJob:
         nonlocal failed
         if failed:
             failed = False
             raise RuntimeError("injected queue failure")
-        return await original_queue(issuer, subject, **kwargs)
+        return await original_queue(
+            issuer,
+            subject,
+            memory_id=memory_id,
+            revision_id=revision_id,
+            generation_id=generation_id,
+        )
 
     monkeypatch.setattr(store, "queue_embedding_job", fail_once)
     approved = await store.approve_candidate(
@@ -1486,7 +1501,7 @@ async def test_sql_authorized_run_without_memory_jobs_returns_settled_activity(
     store.set_run_recall_metadata_loader(recall_metadata_loader)
     snapshot = await store.get_run_memory_activity(run_id, ISSUER, OWNER)
 
-    assert snapshot.processing == "settled"
+    assert snapshot.processing_status == "settled"
     assert snapshot.items == ()
 
     async def missing_run_loader(
@@ -1685,6 +1700,47 @@ async def test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex(
             model_digest="c" * 64,
             idempotency_key="model-config-stale",
         )
+
+
+@pytest.mark.asyncio
+async def test_sql_model_configuration_reuses_matching_generation_when_link_is_missing(
+    sql_memory_store: tuple[SqlMemoryRepository, AsyncEngine],
+) -> None:
+    store, engine = sql_memory_store
+    configuration = MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder")
+    initial = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        configuration,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+    assert initial.embedding_generation is not None
+
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE memory_model_configurations "
+                "SET embedding_generation = NULL "
+                "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+            ),
+            {"issuer": ISSUER, "subject": OWNER},
+        )
+
+    repaired = await store.save_model_configuration(
+        ISSUER,
+        OWNER,
+        configuration,
+        expected_version=1,
+        dimension=3,
+        model_digest="a" * 64,
+    )
+
+    assert repaired.embedding_generation == initial.embedding_generation
+    generations = await store.list_embedding_generations(ISSUER, OWNER)
+    assert len(generations) == 1
+    assert generations[0].id == initial.embedding_generation
 
 
 @pytest.mark.asyncio

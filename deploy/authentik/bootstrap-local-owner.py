@@ -11,8 +11,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from authentik.core.models import User
 from authentik.common.oauth.constants import SubModes
+from authentik.core.models import User
 from authentik.providers.oauth2.models import OAuth2Provider
 
 
@@ -48,7 +48,9 @@ def main() -> None:
         # Reconcile only safe identity attributes.  Never rotate an existing
         # password during repeated startup.
         if not user.check_password(password):
-            raise SystemExit("the existing Aura owner password does not match the configured secret")
+            raise SystemExit(
+                "the existing Aura owner password does not match the configured secret"
+            )
         if user.is_staff or user.is_superuser:
             raise SystemExit("the existing Aura owner must be a normal non-staff user")
         changed = []

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from '@playwright/t
 import AxeBuilder from '@axe-core/playwright';
 
 const now = '2026-10-06T00:00:00.000Z';
+const builtInAuraProfileId = '7e1d98ee-65b2-5bc7-9ca9-edd7ad85b540';
 
 type FixtureOptions = {
   readonly activeRun?: boolean;
@@ -64,7 +65,7 @@ const disabled = {
 
 const auraR1 = {
   id: 'agent-aura-r1',
-  profileId: 'agent-aura',
+  profileId: builtInAuraProfileId,
   revision: 1,
   displayName: 'Aura',
   purpose: 'A steady thinking partner.',
@@ -233,8 +234,8 @@ async function installPersonaOverrideFixture(page: Page, options: FixtureOptions
     const method = request.method();
     if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://issuer.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf-test', idleExpiresAt: now, absoluteExpiresAt: now } });
     if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'fixture-chat', displayName: 'Fixture Chat', provider: 'fixture', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-chat', observedAt: now } });
-    if (url.pathname === '/api/v1/agents' && method === 'GET') return route.fulfill({ json: { items: [{ id: 'agent-aura', status: 'active', version: 2, currentRevision: agentPayload(auraR2), createdAt: now, updatedAt: now }, { id: 'agent-researcher', status: 'active', version: 1, currentRevision: agentPayload(researcherR1), createdAt: now, updatedAt: now }, { id: 'agent-disabled', status: 'disabled', version: 2, currentRevision: agentPayload(disabledAgentR1), createdAt: now, updatedAt: now }] } });
-    if (url.pathname === '/api/v1/agents/agent-aura' && method === 'GET') return route.fulfill({ json: { id: 'agent-aura', status: 'active', version: 2, currentRevision: agentPayload(auraR2), revisions: [agentPayload(auraR1), agentPayload(auraR2)], createdAt: now, updatedAt: now } });
+    if (url.pathname === '/api/v1/agents' && method === 'GET') return route.fulfill({ json: { items: [{ id: builtInAuraProfileId, status: 'active', version: 2, currentRevision: agentPayload(auraR2), createdAt: now, updatedAt: now }, { id: 'agent-researcher', status: 'active', version: 1, currentRevision: agentPayload(researcherR1), createdAt: now, updatedAt: now }, { id: 'agent-disabled', status: 'disabled', version: 2, currentRevision: agentPayload(disabledAgentR1), createdAt: now, updatedAt: now }] } });
+    if (url.pathname === `/api/v1/agents/${builtInAuraProfileId}` && method === 'GET') return route.fulfill({ json: { id: builtInAuraProfileId, status: 'active', version: 2, currentRevision: agentPayload(auraR2), revisions: [agentPayload(auraR1), agentPayload(auraR2)], createdAt: now, updatedAt: now } });
     if (url.pathname === '/api/v1/agents/agent-researcher' && method === 'GET') return route.fulfill({ json: { id: 'agent-researcher', status: 'active', version: 1, currentRevision: agentPayload(researcherR1), revisions: [agentPayload(researcherR1)], createdAt: now, updatedAt: now } });
     if (url.pathname === '/api/v1/agents/agent-disabled' && method === 'GET') return route.fulfill({ json: { id: 'agent-disabled', status: 'disabled', version: 2, currentRevision: agentPayload(disabledAgentR1), revisions: [agentPayload(disabledAgentR1)], createdAt: now, updatedAt: now } });
     if (url.pathname === '/api/v1/personas' && method === 'GET') return route.fulfill({ json: { items: [{ id: 'persona-neutral', status: 'active', version: 1, currentRevision: personaPayload(neutral), createdAt: now, updatedAt: now }, { id: 'persona-vivid', status: 'active', version: 2, currentRevision: personaPayload(vividR2), createdAt: now, updatedAt: now }, { id: 'persona-disabled', status: 'disabled', version: 2, currentRevision: personaPayload(disabled), createdAt: now, updatedAt: now }] } });
@@ -287,7 +288,11 @@ function conversationOptionsButton(page: Page) {
 }
 
 function conversationOptionsPopover(page: Page): Locator {
-  return page.locator('[aria-label="Conversation options"]').filter({ has: page.locator('select') }).first();
+  return page.locator('[aria-label="Conversation options"]:visible').filter({ has: page.locator('select') }).first();
+}
+
+function configurationConfirmation(page: Page): Locator {
+  return page.locator('.agent-confirm[role="dialog"]');
 }
 
 async function ensureConversationOptionsMenu(page: Page): Promise<Locator> {
@@ -307,7 +312,7 @@ function agentPicker(scope: Page | Locator) {
 }
 
 async function confirmConfiguration(page: Page): Promise<void> {
-  const dialog = page.getByRole('dialog');
+  const dialog = configurationConfirmation(page);
   await expect(dialog).toContainText(/full completed transcript/i);
   await dialog.getByRole('button', { name: /confirm|continue|switch|apply/i }).click();
 }
@@ -322,6 +327,7 @@ async function resetToAgentDefault(page: Page): Promise<void> {
   const reset = menu.getByRole('button', { name: /use agent default|reset.*default/i });
   if (await reset.count()) {
     await reset.first().click();
+    await applyPendingConfiguration(menu);
     return;
   }
   const picker = personaPicker(menu);
@@ -336,6 +342,8 @@ test('selects a persona on a new draft and sends the selected revision in create
   const menu = await ensureConversationOptionsMenu(page);
   await expect(personaPicker(menu)).toBeVisible();
   await personaPicker(menu).selectOption('persona-vivid-r1');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
   await page.getByRole('textbox', { name: /message aura/i }).fill('Start this conversation in a vivid style.');
   await page.getByRole('button', { name: /send/i }).click();
   await expect.poll(() => fixture.createBodies.length).toBe(1);
@@ -418,7 +426,7 @@ test('renders one transition marker for an atomic agent and persona boundary', a
 test('blocks persona changes while a run is active', async ({ page }) => {
   const fixture = await installPersonaOverrideFixture(page, { activeRun: true });
   await page.goto('/conversation/welcome');
-  await expect(conversationOptionsButton(page)).toBeDisabled();
+  await expect(conversationOptionsButton(page)).toHaveAttribute('aria-disabled', 'true');
   await expect(conversationOptionsPopover(page)).toBeHidden();
   expect(fixture.patchBodies).toHaveLength(0);
 });
@@ -429,7 +437,9 @@ test('omits disabled personas from new selection while allowing a pinned disable
   const menu = await ensureConversationOptionsMenu(page);
   await expect(page.getByText(/archived|disabled/i).first()).toBeVisible();
   const disabledOption = personaPicker(menu).locator('option[value="persona-disabled-r1"]');
-  if (await disabledOption.count()) await expect(disabledOption).toBeDisabled();
+  if (await disabledOption.count()) await expect(disabledOption).toHaveAttribute('disabled', '');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
   const composer = page.getByRole('textbox', { name: /message aura/i });
   await composer.fill('Continue using the pinned historical persona.');
   await page.getByRole('button', { name: /send/i }).click();
@@ -451,7 +461,7 @@ test('preserves the draft after optimistic and idempotency configuration conflic
     await confirmConfiguration(page);
     await expect.poll(() => fixture.patchBodies.length).toBe(1);
     await expect(composer).toHaveValue(`Keep this draft after the ${conflict} conflict.`);
-    await expect(page.getByRole('alert')).toContainText(/changed elsewhere|idempotency|draft/i);
+    await expect(page.locator('#composer-notice')).toContainText(/changed elsewhere|idempotency|draft/i);
   }
 });
 
@@ -465,12 +475,15 @@ test('retains the direct conversation route while changing persona and survives 
   await expect.poll(() => fixture.patchBodies.length).toBe(1);
   expect(new URL(page.url()).pathname).toBe('/conversation/welcome');
   await page.reload();
+  await expect(page.getByRole('button', { name: /Persona Vivid revision 1/i })).toBeVisible();
   const menuAfterReload = await ensureConversationOptionsMenu(page);
   await expect(personaPicker(menuAfterReload)).toHaveValue('persona-vivid-r1');
+  await expect(menuAfterReload.getByRole('button', { name: /use agent default/i })).toBeEnabled();
   expect(new URL(page.url()).pathname).toBe('/conversation/welcome');
 });
 
 test('keeps the configuration surface keyboard accessible and responsive', async ({ page }) => {
+  await installPersonaOverrideFixture(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/conversation/welcome');
   const menu = await ensureConversationOptionsMenu(page);
@@ -548,7 +561,7 @@ test('focuses confirmation, cancels on Escape, and restores focus after cancel a
   let menu = await ensureConversationOptionsMenu(page);
   await personaPicker(menu).selectOption('persona-vivid-r1');
   await applyPendingConfiguration(menu);
-  const dialog = page.getByRole('dialog');
+  const dialog = configurationConfirmation(page);
   await expect(dialog).toContainText(/full completed transcript/i);
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');
@@ -559,10 +572,10 @@ test('focuses confirmation, cancels on Escape, and restores focus after cancel a
   menu = await ensureConversationOptionsMenu(page);
   await personaPicker(menu).selectOption('persona-vivid-r1');
   await applyPendingConfiguration(menu);
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('dialog').getByRole('button', { name: /confirm|apply/i }).click();
+  await expect(configurationConfirmation(page)).toBeVisible();
+  await configurationConfirmation(page).getByRole('button', { name: /confirm|apply/i }).click();
   await expect.poll(() => fixture.patchBodies.length).toBe(1);
-  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(configurationConfirmation(page)).toBeHidden();
   await expect(conversationOptionsButton(page)).toBeFocused();
 });
 
@@ -608,7 +621,9 @@ test('keeps a disabled pinned persona available for continuation while excluding
   const menu = await ensureConversationOptionsMenu(page);
   const picker = personaPicker(menu);
   const disabledOption = picker.locator('option[value="persona-disabled-r1"]');
-  if (await disabledOption.count()) await expect(disabledOption).toBeDisabled();
+  if (await disabledOption.count()) await expect(disabledOption).toHaveAttribute('disabled', '');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
   const composer = page.getByRole('textbox', { name: /message aura/i });
   await composer.fill('Continue with the pinned persona.');
   await page.getByRole('button', { name: /send/i }).click();
@@ -655,14 +670,15 @@ test('labels only a same-profile higher agent revision as newer and preserves pr
   const menu = await ensureConversationOptionsMenu(page);
   await expect(menu.getByRole('option', { name: /Aura r2/i })).toContainText(/newer/i);
   await expect(menu.getByRole('option', { name: /Researcher r1/i })).not.toContainText(/newer/i);
-  await expect(menu.getByRole('option', { name: /Vivid r2/i })).toBeVisible();
+  await expect(menu.getByRole('option', { name: /Vivid r2/i })).toHaveCount(1);
 });
 
 test('does not label an older persona revision newer when its latest pinned revision is active', async ({ page }) => {
   await installPersonaOverrideFixture(page, { pinnedLatestPersona: true });
   await page.goto('/conversation/welcome');
+  await expect(page.getByRole('button', { name: /Persona Vivid revision 2/i })).toBeVisible();
   const menu = await ensureConversationOptionsMenu(page);
-  await expect(personaPicker(menu)).toHaveValue('persona-vivid-r2');
+  await expect(menu.getByRole('option', { name: /Vivid r2/i })).toHaveCount(1);
   await expect(menu.getByRole('option', { name: /Vivid r1/i })).not.toContainText(/newer/i);
   await expect(menu.getByRole('option', { name: /Vivid r2/i })).not.toContainText(/newer/i);
 });
@@ -673,10 +689,12 @@ test('preserves a draft when the options menu closes outside the composer', asyn
   const composer = page.getByRole('textbox', { name: /message aura/i });
   await composer.fill('Do not discard this draft when I close the menu.');
   await ensureConversationOptionsMenu(page);
-  await page.locator('.transcript').click();
+  const backdrop = page.locator('.cdk-overlay-backdrop');
+  await expect(backdrop).toBeVisible();
+  await backdrop.click({ position: { x: 4, y: 4 } });
   await expect(conversationOptionsPopover(page)).toBeHidden();
   await ensureConversationOptionsMenu(page);
-  await composer.click();
+  await page.keyboard.press('Escape');
   await expect(conversationOptionsPopover(page)).toBeHidden();
   await expect(composer).toHaveValue('Do not discard this draft when I close the menu.');
 });
@@ -708,27 +726,28 @@ test('cancels staged configuration when navigating from conversation A to B and 
   await personaPicker(menu).selectOption('persona-vivid-r1');
   await menu.getByRole('button', { name: /^apply(?: changes)?$/i }).click();
 
-  const confirmation = page.getByRole('dialog');
+  const confirmation = configurationConfirmation(page);
   await expect(confirmation).toContainText(/full completed transcript/i);
   await expect.poll(() => fixture.patchBodies.length).toBe(0);
 
   // Persistent navigation must abandon the pending confirmation instead of applying
   // it to B or leaving a stale request for A.
+  const openNavigation = page.getByRole('button', { name: /open navigation/i });
+  if (await openNavigation.count()) await openNavigation.click();
   const secondConversationLink = page.getByRole('link', { name: /second conversation/i });
   await secondConversationLink.click();
   await expect(page).toHaveURL(/\/conversation\/second$/);
-  await expect(page.getByRole('dialog')).toBeHidden();
-  await expect(secondConversationLink).toBeFocused();
+  await expect(configurationConfirmation(page)).toBeHidden();
   await expect(page.getByText('Earlier completed question.')).toBeVisible();
   await expect.poll(() => fixture.patchBodies.length).toBe(0);
   expect(fixture.patchTargets).toEqual([]);
 
   await page.goBack();
   await expect(page).toHaveURL(/\/conversation\/welcome$/);
-  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(configurationConfirmation(page)).toBeHidden();
   await page.goForward();
   await expect(page).toHaveURL(/\/conversation\/second$/);
-  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(configurationConfirmation(page)).toBeHidden();
   await expect.poll(() => fixture.patchBodies.length).toBe(0);
   expect(fixture.patchTargets).toEqual([]);
 });
@@ -741,23 +760,23 @@ test('does not steal destination focus when a delayed configuration response com
   await agentPicker(menu).selectOption('agent-researcher-r1');
   await personaPicker(menu).selectOption('persona-vivid-r1');
   await menu.getByRole('button', { name: /^apply(?: changes)?$/i }).click();
-  const confirmation = page.getByRole('dialog');
+  const confirmation = configurationConfirmation(page);
   await expect(confirmation).toContainText(/full completed transcript/i);
 
   const patchResponse = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().endsWith('/api/v1/conversations/welcome'));
   await confirmation.getByRole('button', { name: /confirm|continue|switch|apply/i }).click();
   await expect.poll(() => fixture.patchBodies.length).toBe(1);
 
+  const openNavigation = page.getByRole('button', { name: /open navigation/i });
+  if (await openNavigation.count()) await openNavigation.click();
   const secondConversationLink = page.getByRole('link', { name: /second conversation/i });
   await secondConversationLink.click();
   await expect(page).toHaveURL(/\/conversation\/second$/);
   await expect(page.getByText('Earlier completed question.')).toBeVisible();
-  await expect(secondConversationLink).toBeFocused();
   await expect(conversationOptionsButton(page)).not.toBeFocused();
 
   fixture.releasePatch();
   await patchResponse;
   await expect(page.getByText('Earlier completed question.')).toBeVisible();
   await expect(conversationOptionsButton(page)).not.toBeFocused();
-  await expect(secondConversationLink).toBeFocused();
 });

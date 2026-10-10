@@ -43,8 +43,7 @@ def _upgrade(url: str, revision: str) -> None:
 
 
 def _run_upgrade(module: Any, connection: Any) -> None:
-    operations = Operations(MigrationContext.configure(connection))
-    with Operations.context(operations):
+    with Operations.context(MigrationContext.configure(connection)):
         module.upgrade()
 
 

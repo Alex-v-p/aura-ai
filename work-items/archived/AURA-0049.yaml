@@ -1,0 +1,132 @@
+id: AURA-0049
+title: Restore memory module boundaries and strict typing
+status: integrated
+change_class: repository_governance
+intent: >
+  Decompose the memory implementation into focused internal modules, restore
+  strict typing across the affected Core tests, and reconcile the architecture
+  registry without changing memory behavior or public contracts.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - Preserve all imports exported by aura_core.domains.knowledge.memory.public and memory.__init__
+    - Preserve memory authorization retention purge idempotency redaction and observable behavior
+  contracts: []
+feature_references: [MEM-001, MEM-002, MEM-003, MEM-004, MEM-005, MEM-006, MEM-010, MEM-011, MEM-012, MEM-013, MEM-014, MEM-015, MEM-016, MEM-017, MEM-021, MEM-024, MEM-025, MEM-026, MEM-027, MEM-028, MEM-029, MEM-030, MEM-031, MEM-032, MEM-033, MEM-034, EVA-007]
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-core.runtime.models.ports
+  - aura-core.platform.telemetry
+  - repository.architecture.registry
+allowed_paths:
+  - work-items/active/AURA-0049.yaml
+  - work-items/archived/AURA-0049.yaml
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_memory_maintenance.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_memory_recall.py
+  - services/aura-core/tests/test_agent_memory_policy_sql.py
+  - services/aura-core/tests/test_migration_0011_memory_recall_modes.py
+  - services/aura-core/tests/test_migration_0012_memory_personal_first.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - docs/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/entrypoints/**
+  - services/aura-core/src/aura_core/platform/**
+  - services/aura-core/src/aura_core/runtime/**
+  - frontend/**
+  - deploy/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_maintenance
+    - aura.knowledge.memory_persistence
+    - aura.knowledge.memory_retrieval
+  required_metrics:
+    - memory_extraction_duration_ms
+    - memory_maintenance_duration_ms
+    - memory_operation_duration_ms
+    - memory_retrieval_duration_ms
+    - memory_processing_errors
+  required_evaluators:
+    - memory_extraction_policy
+    - memory_maintenance_integrity
+    - memory_retrieval_quality
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Preserve owner and scope authorization across all extracted modules
+    - Telemetry must remain content-free and must not capture prompts memory text embeddings or secrets
+    - Preserve retention purge idempotency and duplicate-handling behavior
+  data_classes:
+    - private memory records and owner agent identifiers
+    - content-free memory operation and evaluation metadata
+required_agents:
+  implementation: [core_worker, test_evaluation_engineer, platform_worker]
+  review: [general_reviewer, architecture_guardian, observability_steward, security_privacy_reviewer]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The memory public facade and package exports remain source compatible and all memory behavior tests pass unchanged in intent.
+  - Memory processing maintenance persistence and repository capabilities live in focused internal modules without import cycles.
+  - Services depend on narrow typed protocols while MemoryRepository remains available as a composite public protocol.
+  - Structured inference embedding and telemetry collaborators use explicit typed ports and do not use TypeError signature probing.
+  - Strict Pyright reports zero errors for all of services/aura-core without exclusions or weakened rules.
+  - The architecture registry declares every extracted module and the existing models route dependencies on telemetry and runtime model ports.
+  - No public contract migration baseline authorization retention purge idempotency redaction or telemetry-capture behavior changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0049.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0049.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0049.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0049.yaml
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,110 @@
+id: AURA-0050
+title: Restore frontend accessibility and deterministic browser coverage
+status: integrated
+change_class: bugfix
+intent: >
+  Correct conversation-panel accessibility and align browser coverage with the
+  accepted four-destination shell and consolidated options experience while
+  ensuring tests always exercise fresh current source by default.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/clients-and-voice.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Preserve Memory as the fourth navigation destination
+    - Preserve the consolidated conversation options dialog
+  contracts: []
+feature_references: [CLI-001, CLI-002, CLI-003, CMP-003]
+ownership_zones:
+  - aura-web.shell
+  - aura-web.interaction.conversations
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0050.yaml
+  - work-items/archived/AURA-0050.yaml
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/agents-personas.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0020-review-regressions.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0023-persona-overrides.spec.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/safe-markdown.component.ts
+  - frontend/libs/aura/interaction/agents/src/lib/agent-pages.component.ts
+  - frontend/libs/aura/interaction/personas/src/lib/persona-pages.component.ts
+  - frontend/playwright.config.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - docs/**
+  - evaluations/**
+  - services/**
+  - tooling/**
+  - deploy/**
+  - frontend/libs/platform/aura-api-client/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation: [frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Conversation metadata controls expose valid group semantics and every interactive control has a nonempty accessible name.
+  - Storybook conversation fixtures use a real typed store and complete seeded conversation data without unsafe double casts.
+  - Browser tests assert all four navigation destinations including Memory and exercise the current consolidated options dialog.
+  - Default Playwright execution starts dedicated fresh current-source application and Storybook servers and does not silently reuse Compose or another stale process.
+  - Frontend lint unit production-build Storybook-build responsive browser and isolated accessibility checks pass without reverting accepted UI behavior.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0050.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0050.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0050.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

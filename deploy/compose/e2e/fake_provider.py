@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption,
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _private_pem = _private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
@@ -77,7 +76,8 @@ async def authorize(
     return HTMLResponse(
         "<form method='post' action='/approve?" + hidden + "'>"
         "<label>Username <input name='username' autocomplete='username'></label>"
-        "<label>Password <input type='password' name='password' autocomplete='current-password'></label>"
+        "<label>Password <input type='password' name='password' "
+        "autocomplete='current-password'></label>"
         "<button type='submit'>Sign in</button></form>"
     )
 
@@ -134,9 +134,21 @@ async def tags() -> dict[str, list[dict[str, str]]]:
         raise HTTPException(status_code=404)
     return {
         "models": [
-            {"name": "fixture-chat"},
-            {"name": "fixture-chat-2"},
-            {"name": "embed"},
+            {
+                "name": "fixture-chat",
+                "digest": "5aab3664f58aecf3728756feafd39dfc723fdfd43dff233a622eea824574d18b",
+                "modified_at": "2026-10-09T00:00:00Z",
+            },
+            {
+                "name": "fixture-chat-2",
+                "digest": "2da0d79fc1a6e1cb9edef7bc5a3c41ee4e31df2eb8f53f35487639a0f9ed8951",
+                "modified_at": "2026-10-09T00:00:00Z",
+            },
+            {
+                "name": "embed",
+                "digest": "8a1eed22144c3f04485a69eea62bfd3fa1026de39dc252b77ba9b1f3f08b00ec",
+                "modified_at": "2026-10-09T00:00:00Z",
+            },
         ]
     }
 

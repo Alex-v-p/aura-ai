@@ -23,6 +23,12 @@ python3 tooling/architecture/validate-observability.py
 python3 tooling/architecture/validate-baseline-protection.py
 ```
 
-A missing subsystem is reported as `skipped` with a reason. This is intentionally distinct from passing an architecture check. Import, frontend, generated-client, and instrumentation enforcement becomes substantive as their source roots and manifests appear.
+A missing subsystem is reported as `skipped` with a reason. The no-argument
+observability command validates the complete component-manifest catalogue;
+passing `--work-item` additionally checks that work item's declared affected
+components, metrics, evaluators, and capture policy. This is intentionally
+distinct from passing an architecture check. Import, frontend, generated-client,
+and instrumentation enforcement becomes substantive as their source roots and
+manifests appear.
 
 Hooks cannot see every hosted or specialized tool and may be untrusted or time out. Command rules govern commands outside the sandbox, not arbitrary file edits. Neither mechanism replaces validators or protected-branch settings.

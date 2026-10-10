@@ -12,7 +12,7 @@ CORE = ROOT / "services" / "aura-core" / "src" / "aura_core"
 def imported_names(path: Path) -> list[str]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (OSError, SyntaxError):
+    except OSError, SyntaxError:
         return []
     names = []
     for node in ast.walk(tree):
@@ -37,13 +37,29 @@ def check() -> list[str]:
             match = name.split("aura_core.domains.", 1)
             if len(match) == 2:
                 parts = match[1].split(".")
-                if parts and parts[0] != owner and any(part in {"adapters", "persistence"} for part in parts):
-                    errors.append(f"{path.relative_to(ROOT)} imports another domain's internals: {name}")
+                if (
+                    parts
+                    and parts[0] != owner
+                    and any(part in {"adapters", "persistence"} for part in parts)
+                ):
+                    errors.append(
+                        f"{path.relative_to(ROOT)} imports another domain's internals: {name}"
+                    )
     return errors
 
 
 if __name__ == "__main__":
     if not CORE.is_dir():
-        raise SystemExit(emit("skipped", "python-import-boundaries", ["Aura Core source tree does not exist yet."]))
+        raise SystemExit(
+            emit(
+                "skipped", "python-import-boundaries", ["Aura Core source tree does not exist yet."]
+            )
+        )
     problems = check()
-    raise SystemExit(emit("failed" if problems else "passed", "python-import-boundaries", problems or ["Python import boundaries hold."]))
+    raise SystemExit(
+        emit(
+            "failed" if problems else "passed",
+            "python-import-boundaries",
+            problems or ["Python import boundaries hold."],
+        )
+    )

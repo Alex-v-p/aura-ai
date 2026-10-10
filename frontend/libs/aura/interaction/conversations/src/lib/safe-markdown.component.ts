@@ -95,12 +95,12 @@ interface MarkdownElementNode {
     .markdown-html blockquote { border-inline-start: 3px solid var(--aura-border, #c9d1d9); margin-inline: 0; padding-inline-start: 1rem; color: var(--aura-muted, #52606d); }
     .markdown-html table { border-collapse: collapse; width: 100%; }
     .markdown-html th, .markdown-html td { border: 1px solid var(--aura-border, #c9d1d9); padding: .35rem .5rem; text-align: start; }
-    .markdown-html a { color: var(--aura-link, #155eef); text-decoration: underline; }
+    .markdown-html a { color: var(--aura-link, #000f2e); text-decoration: underline; }
     .markdown-html code { border-radius: .25rem; background: color-mix(in srgb, currentColor 10%, transparent); padding: .1rem .25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
-    .code-block { margin: .8rem 0; overflow: hidden; border: 1px solid var(--aura-border, #c9d1d9); border-radius: .5rem; background: #111827; color: #f9fafb; }
-    .code-block-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid #374151; padding: .4rem .65rem; }
+    .code-block { margin: .8rem 0; overflow: hidden; border: 1px solid var(--aura-border, #c9d1d9); border-radius: .5rem; background: #fff; color: #000f2e; }
+    .code-block-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid #c9d1d9; padding: .4rem .65rem; }
     .code-language { font: 600 .75rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: lowercase; }
-    .code-copy { border: 1px solid #6b7280; border-radius: .25rem; background: transparent; color: inherit; cursor: pointer; padding: .25rem .5rem; }
+    .code-copy { border: 1px solid #52606d; border-radius: .25rem; background: transparent; color: inherit; cursor: pointer; padding: .25rem .5rem; }
     .code-copy:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
     .code-block pre { overflow-x: auto; margin: 0; padding: .75rem; }
     .code-block code { padding: 0; background: transparent; font: .875rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }

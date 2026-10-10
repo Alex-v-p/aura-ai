@@ -12,6 +12,19 @@ import type { PersonaReference } from '@aura/aura-api-client';
 import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
 import { SafeMarkdownComponent } from './safe-markdown.component';
 
+export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
+  return useAgentDefault ? '' : reference?.revisionId ?? '';
+}
+
+export function visibleFocusTarget(preferred: HTMLElement | null, fallback: HTMLElement | null): HTMLElement | null {
+  const isVisibleFocusable = (element: HTMLElement | null): element is HTMLElement => {
+    if (!element || !element.isConnected || element.hidden || element.hasAttribute('disabled') || element.getAttribute('aria-hidden') === 'true' || element.tabIndex < 0) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse';
+  };
+  return isVisibleFocusable(preferred) ? preferred : isVisibleFocusable(fallback) ? fallback : null;
+}
+
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
@@ -50,6 +63,10 @@ export class ConversationPanelComponent {
   private hadPendingConfiguration = false;
   private pendingConfigurationOriginId: string | null = null;
   private opener: HTMLButtonElement | null = null;
+
+  configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
+    return configurationRevisionValue(reference, useAgentDefault);
+  }
 
   constructor() {
     effect(() => {
@@ -195,9 +212,10 @@ export class ConversationPanelComponent {
     const focusId = this.store.runInspectorFocusId();
     this.store.runInspectorFocusId.set(null);
     this.runInspectorOpen.set(false);
-    if (returnFocus) queueMicrotask(() => {
-      const target = focusId ? document.getElementById(focusId) : null;
-      if (target instanceof HTMLElement) target.focus();
+    if (returnFocus) setTimeout(() => {
+      const opener = focusId ? document.getElementById(focusId) : null;
+      const navigationTrigger = document.querySelector<HTMLButtonElement>('[aria-label="Open navigation"]');
+      visibleFocusTarget(opener, navigationTrigger)?.focus();
     });
   }
   openMemoryPopup(turnId: string, opener?: EventTarget | null): void { this.memoryPopupOpener = opener instanceof HTMLButtonElement ? opener : null; this.memoryPopupTurnId.set(turnId); const store = this.store as unknown as { readonly loadMemoryPopup?: (id: string) => Promise<void> }; void store.loadMemoryPopup?.(turnId); queueMicrotask(() => this.memoryPopupClose?.nativeElement.focus()); }

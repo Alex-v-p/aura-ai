@@ -8,11 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tooling" / "architecture"))
-SPEC = importlib.util.spec_from_file_location("module_registry", ROOT / "tooling" / "architecture" / "validate-module-registry.py")
+SPEC = importlib.util.spec_from_file_location(
+    "module_registry", ROOT / "tooling" / "architecture" / "validate-module-registry.py"
+)
 REGISTRY = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(REGISTRY)
@@ -53,7 +53,9 @@ class ModuleRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "src").mkdir()
-            errors = REGISTRY.validate_manifest(manifest(module("a", "src"), module("b", "src")), root)
+            errors = REGISTRY.validate_manifest(
+                manifest(module("a", "src"), module("b", "src")), root
+            )
         self.assertTrue(any("duplicate module root" in error for error in errors))
 
     def test_unknown_dependency_fails_closed(self):
@@ -67,7 +69,9 @@ class ModuleRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "src").mkdir()
-            errors = REGISTRY.validate_manifest(manifest(module("a", "src", ["a"]), module("a", "other")), root)
+            errors = REGISTRY.validate_manifest(
+                manifest(module("a", "src", ["a"]), module("a", "other")), root
+            )
         self.assertTrue(any("duplicate module id" in error for error in errors))
         self.assertTrue(any("cannot depend on itself" in error for error in errors))
 
@@ -100,7 +104,7 @@ class ModuleRegistryTests(unittest.TestCase):
             root = Path(directory)
             package_root = root / "services" / "aura-core" / "src" / "aura_core" / "example"
             package_root.mkdir(parents=True)
-            (package_root / "__init__.py").write_text("\"\"\"Example package.\"\"\"\n", encoding="utf-8")
+            (package_root / "__init__.py").write_text('"""Example package."""\n', encoding="utf-8")
             (package_root / "present.py").write_text("VALUE = 1\n", encoding="utf-8")
             (package_root / "omitted.py").write_text("VALUE = 2\n", encoding="utf-8")
             errors = REGISTRY.validate_manifest(
@@ -111,9 +115,7 @@ class ModuleRegistryTests(unittest.TestCase):
                         "kind": "package",
                         "public_api": "services/aura-core/src/aura_core/example/present.py",
                         "python_modules": ["aura_core.example"],
-                        "source_files": [
-                            "services/aura-core/src/aura_core/example/__init__.py"
-                        ],
+                        "source_files": ["services/aura-core/src/aura_core/example/__init__.py"],
                         "dependencies": [],
                     },
                     {
@@ -188,7 +190,9 @@ class ModuleRegistryTests(unittest.TestCase):
             malformed.write_text("modules: [", encoding="utf-8")
             outside = temporary / "outside.yaml"
             outside.write_text(
-                "version: 1\nmodules:\n  - id: x\n    root: ../outside\n    kind: python\n    public_api: ../outside\n    python_modules: []\n    dependencies: []\n",
+                "version: 1\nmodules:\n  - id: x\n    root: ../outside\n"
+                "    kind: python\n    public_api: ../outside\n"
+                "    python_modules: []\n    dependencies: []\n",
                 encoding="utf-8",
             )
             missing_code, missing_payload = run("--manifest", str(temporary / "missing.yaml"))

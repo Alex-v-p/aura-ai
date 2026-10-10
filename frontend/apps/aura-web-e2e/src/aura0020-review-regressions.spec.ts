@@ -72,6 +72,7 @@ async function installFake(page: Page, disabled: boolean): Promise<{ readonly ru
     if (url.pathname === '/api/v1/agents' && request.method() === 'GET') return route.fulfill({ json: { items: [activeAgent, disabledAgent] } });
     if (url.pathname === '/api/v1/agents/agent-researcher' && request.method() === 'GET') return route.fulfill({ json: activeAgent });
     if (url.pathname === '/api/v1/agents/agent-disabled' && request.method() === 'GET') return route.fulfill({ json: disabledAgent });
+    if (url.pathname === '/api/v1/agents/general' && request.method() === 'GET') return route.fulfill({ json: activeAgent });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: [summary], nextCursor: null } });
     if (url.pathname === '/api/v1/conversations/conversation-1' && request.method() === 'GET') return route.fulfill({ json: { ...summary, messages: [{ id: 'assistant-1', conversationId: summary.id, role: 'assistant', content: 'Existing answer.', state: 'complete', runId: null, createdAt: now, updatedAt: now }], recentRuns: [], agentAssignments: summary.agentAssignments } });
     if (url.pathname === '/api/v1/conversations/conversation-1/runs' && request.method() === 'POST') {
@@ -86,7 +87,7 @@ async function installFake(page: Page, disabled: boolean): Promise<{ readonly ru
 
 test('Enter on a disabled agent is a no-op and keeps the draft', async ({ page }) => {
   await installFake(page, true);
-  await page.goto('/conversation');
+  await page.goto('/conversation/conversation-1');
   const composer = page.getByRole('textbox', { name: /message aura/i });
   await composer.fill('Keep this draft while disabled.');
   await composer.press('Enter');
@@ -96,7 +97,7 @@ test('Enter on a disabled agent is a no-op and keeps the draft', async ({ page }
 
 test('server-side 409 immediately before submit preserves the exact draft', async ({ page }) => {
   const requests = await installFake(page, false);
-  await page.goto('/conversation');
+  await page.goto('/conversation/conversation-1');
   const composer = page.getByRole('textbox', { name: /message aura/i });
   await composer.fill('The server may reject this, but do not lose it.');
   await composer.press('Enter');

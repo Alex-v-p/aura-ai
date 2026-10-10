@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -20,6 +21,11 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryValidationError,
     ProcessingJobStatus,
 )
+from aura_core.runtime.models.ports import (
+    EmbeddingResult,
+    ProviderTraceContext,
+    StructuredInferenceRequest,
+)
 
 ISSUER = "https://issuer.example"
 OWNER = "owner"
@@ -27,25 +33,31 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 class _Embedding:
-    async def embed(self, model_id: str, content: str) -> object:
-        del content
+    async def embed(
+        self,
+        model_id: str,
+        text: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> EmbeddingResult:
+        del text, context
         model_digest = {
             "embed-c": "d" * 64,
             "embedder-new": "c" * 64,
         }.get(model_id, "a" * 64)
         model_revision = "rev-new" if model_id == "embedder-new" else None
-        return type(
-            "EmbeddingResult",
-            (),
-            {
-                "vector": (0.1, 0.2),
-                "digest": "f" * 64,
-                "model_id": model_id,
-                "model_revision": model_revision,
-                "model_digest": model_digest,
-                "dimension": 2,
-            },
-        )()
+        return EmbeddingResult(
+            vector=(0.1, 0.2),
+            digest="f" * 64,
+            model_id=model_id,
+            model_revision=model_revision,
+            model_digest=model_digest,
+            dimension=2,
+        )
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        del model_id
+        return True
 
 
 async def _memory(store: MemoryStore, content: str) -> MemoryRecord:
@@ -312,23 +324,29 @@ async def test_reindex_transient_failure_keeps_building_generation_resumable() -
         def __init__(self) -> None:
             self.calls = 0
 
-        async def embed(self, model_id: str, content: str) -> object:
-            del content
+        async def embed(
+            self,
+            model_id: str,
+            text: str,
+            *,
+            context: ProviderTraceContext | None = None,
+        ) -> EmbeddingResult:
+            del text, context
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("temporary embedding outage")
-            return type(
-                "EmbeddingResult",
-                (),
-                {
-                    "vector": (0.1, 0.2),
-                    "digest": "b" * 64,
-                    "model_id": model_id,
-                    "model_revision": None,
-                    "model_digest": "a" * 64,
-                    "dimension": 2,
-                },
-            )()
+            return EmbeddingResult(
+                vector=(0.1, 0.2),
+                digest="b" * 64,
+                model_id=model_id,
+                model_revision=None,
+                model_digest="a" * 64,
+                dimension=2,
+            )
+
+        async def is_ready(self, model_id: str | None = None) -> bool:
+            del model_id
+            return self.calls == 0
 
     embedder = FlakyEmbedder()
     reindex = MemoryReindexService(store, embedder)
@@ -483,7 +501,14 @@ async def test_maintenance_does_not_silently_drop_the_two_hundred_first_record()
             half_life_days=0.25,
             observed_at=NOW,
         )
-    processor = MemoryProcessingService(store, object(), object(), clock=lambda: NOW)
+    class NoopInference:
+        async def infer(
+            self, request: StructuredInferenceRequest
+        ) -> Mapping[str, object]:
+            del request
+            return {}
+
+    processor = MemoryProcessingService(store, NoopInference(), _Embedding(), clock=lambda: NOW)
     changed = await processor.maintain(ISSUER, OWNER, now=NOW + timedelta(days=2))
     assert changed == 201
     assert all(item.status is MemoryLifecycleStatus.DORMANT for item in store.memories.values())

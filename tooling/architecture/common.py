@@ -6,8 +6,9 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
     import yaml
@@ -16,6 +17,23 @@ except ImportError as exc:  # pragma: no cover - environment failure
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "work-items" / "schema"
+
+# Work-item source-of-truth entries may also record an owner decision or an
+# external reference.  These prefixes are deliberately excluded from local
+# path validation; everything that looks like a repository path is checked
+# below against the repository root.
+EXTERNAL_REFERENCE_PREFIXES = ("http://", "https://", "external:")
+LOCAL_REFERENCE_ROOTS = {
+    ".agents",
+    ".codex",
+    "AGENTS.md",
+    "contracts",
+    "docs",
+    "frontend",
+    "services",
+    "tooling",
+    "work-items",
+}
 
 
 def read_yaml(path: Path) -> Any:
@@ -68,7 +86,11 @@ def patterns_overlap(left: str, right: str) -> bool:
     right_root = norm_path(right).split("*", 1)[0].rstrip("/")
     if not left_root or not right_root:
         return True
-    return left_root == right_root or left_root.startswith(right_root + "/") or right_root.startswith(left_root + "/")
+    return (
+        left_root == right_root
+        or left_root.startswith(right_root + "/")
+        or right_root.startswith(left_root + "/")
+    )
 
 
 def git_changed_paths(root: Path = ROOT) -> list[str]:
@@ -119,15 +141,22 @@ def _json_types(schema_type: Any) -> tuple[str, ...]:
 
 def _is_type(value: Any, expected: str) -> bool:
     return {
-        "object": isinstance(value, dict), "array": isinstance(value, list),
-        "string": isinstance(value, str), "boolean": isinstance(value, bool),
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "boolean": isinstance(value, bool),
         "integer": isinstance(value, int) and not isinstance(value, bool),
         "number": isinstance(value, (int, float)) and not isinstance(value, bool),
         "null": value is None,
     }.get(expected, True)
 
 
-def validate_schema(value: Any, schema: dict[str, Any], root_schema: dict[str, Any] | None = None, location: str = "$") -> list[str]:
+def validate_schema(
+    value: Any,
+    schema: dict[str, Any],
+    root_schema: dict[str, Any] | None = None,
+    location: str = "$",
+) -> list[str]:
     root_schema = root_schema or schema
     if "$ref" in schema:
         ref = schema["$ref"]
@@ -146,10 +175,14 @@ def validate_schema(value: Any, schema: dict[str, Any], root_schema: dict[str, A
         return [f"{location}: expected type {schema['type']}"]
     if isinstance(value, dict):
         required = schema.get("required", [])
-        errors.extend(f"{location}: missing required key {key}" for key in required if key not in value)
+        errors.extend(
+            f"{location}: missing required key {key}" for key in required if key not in value
+        )
         properties = schema.get("properties", {})
         if schema.get("additionalProperties") is False:
-            errors.extend(f"{location}: unexpected key {key}" for key in value if key not in properties)
+            errors.extend(
+                f"{location}: unexpected key {key}" for key in value if key not in properties
+            )
         for key, child in properties.items():
             if key in value:
                 errors.extend(validate_schema(value[key], child, root_schema, f"{location}.{key}"))
@@ -162,7 +195,9 @@ def validate_schema(value: Any, schema: dict[str, Any], root_schema: dict[str, A
                 errors.append(f"{location}: items must be unique")
         if "items" in schema:
             for index, item in enumerate(value):
-                errors.extend(validate_schema(item, schema["items"], root_schema, f"{location}[{index}]"))
+                errors.extend(
+                    validate_schema(item, schema["items"], root_schema, f"{location}[{index}]")
+                )
     if isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
             errors.append(f"{location}: must contain at least {schema['minLength']} characters")
@@ -185,8 +220,81 @@ def validate_document(path: Path, schema_name: str) -> tuple[Any, list[str]]:
     return document, validate_schema(document, schema)
 
 
-def semantic_work_item_errors(item: dict[str, Any]) -> list[str]:
+def _looks_like_repository_reference(value: str) -> bool:
+    """Return whether a source-of-truth value names a local repository path."""
+
+    normalized = value.replace("\\", "/")
+    path = Path(normalized)
+    first_segment = normalized.removeprefix("./").split("/", 1)[0]
+    return (
+        normalized == "AGENTS.md"
+        or path.suffix
+        in {
+            ".md",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".toml",
+        }
+        or first_segment in LOCAL_REFERENCE_ROOTS
+    )
+
+
+def repository_reference_errors(item: dict[str, Any], item_path: Path | None = None) -> list[str]:
+    """Validate repository-local source references in a work item.
+
+    Plain-language owner decisions and external references are intentionally
+    left as provenance text.  A path-like value must be relative, may not
+    escape with ``..``, and must resolve to an existing file or glob match.
+    """
+
     errors: list[str] = []
+    origin = item_path or ROOT / "work-items" / "<unknown>.yaml"
+    sources = item.get("sources_of_truth", {})
+    if not isinstance(sources, dict):
+        return errors
+    for category, values in sources.items():
+        if not isinstance(values, list):
+            continue
+        for index, raw_value in enumerate(values):
+            if not isinstance(raw_value, str):
+                continue
+            value = raw_value.strip()
+            if not value or value.startswith(EXTERNAL_REFERENCE_PREFIXES):
+                continue
+            normalized = value.replace("\\", "/")
+            path = Path(normalized)
+            location = f"{origin}:{category}[{index}]"
+            if path.is_absolute() or any(part == ".." for part in path.parts):
+                errors.append(
+                    f"{location}: repository reference must not escape the repository: {raw_value}"
+                )
+                continue
+            if not _looks_like_repository_reference(value):
+                continue
+            if "\\" in raw_value and "\\" not in normalized:
+                errors.append(
+                    f"{location}: repository reference uses an unsafe path separator: {raw_value}"
+                )
+                continue
+            matches = list(ROOT.glob(normalized))
+            if not matches:
+                errors.append(f"{location}: repository reference does not exist: {raw_value}")
+                continue
+            for match in matches:
+                try:
+                    match.resolve().relative_to(ROOT.resolve())
+                except ValueError:
+                    errors.append(
+                        f"{location}: repository reference escapes the repository: {raw_value}"
+                    )
+                    break
+    return errors
+
+
+def semantic_work_item_errors(item: dict[str, Any], item_path: Path | None = None) -> list[str]:
+    errors: list[str] = []
+    errors.extend(repository_reference_errors(item, item_path))
     allowed = item.get("allowed_paths", [])
     forbidden = item.get("forbidden_paths", [])
     for left in allowed:
@@ -196,19 +304,34 @@ def semantic_work_item_errors(item: dict[str, Any]) -> list[str]:
     execution = item.get("execution", {})
     if execution.get("max_parallel_writers", 1) > execution.get("max_parallel_agents", 1):
         errors.append("max_parallel_writers cannot exceed max_parallel_agents")
-    if execution.get("parallelism_class") == "local" and execution.get("max_parallel_writers", 1) != 1:
+    if (
+        execution.get("parallelism_class") == "local"
+        and execution.get("max_parallel_writers", 1) != 1
+    ):
         errors.append("local parallelism requires exactly one writer")
-    if execution.get("parallelism_class") == "fanout" and not item.get("required_agents", {}).get("integration"):
+    if execution.get("parallelism_class") == "fanout" and not item.get("required_agents", {}).get(
+        "integration"
+    ):
         errors.append("fanout work requires an Integration Maintainer")
-    if item.get("contracts", {}).get("compatibility_requirement") != "none" and not item.get("contracts", {}).get("affected"):
+    if item.get("contracts", {}).get("compatibility_requirement") != "none" and not item.get(
+        "contracts", {}
+    ).get("affected"):
         errors.append("contract compatibility requirements need at least one affected contract")
-    if item.get("data", {}).get("migration_required") and not item.get("data", {}).get("owning_service"):
+    if item.get("data", {}).get("migration_required") and not item.get("data", {}).get(
+        "owning_service"
+    ):
         errors.append("migrations require an owning_service")
-    if item.get("observability", {}).get("applicable") and not item.get("observability", {}).get("affected_components"):
+    if item.get("observability", {}).get("applicable") and not item.get("observability", {}).get(
+        "affected_components"
+    ):
         errors.append("applicable observability requires affected_components")
-    if item.get("security_privacy", {}).get("applicable") and not item.get("security_privacy", {}).get("concerns"):
+    if item.get("security_privacy", {}).get("applicable") and not item.get(
+        "security_privacy", {}
+    ).get("concerns"):
         errors.append("applicable security/privacy review requires concerns")
-    if item.get("change_class") == "repository_governance" and not item.get("human_approval_required"):
+    if item.get("change_class") == "repository_governance" and not item.get(
+        "human_approval_required"
+    ):
         errors.append("repository governance changes require human approval")
     if item.get("baseline_changes_allowed") and not item.get("human_approval_required"):
         errors.append("baseline changes require human approval")
@@ -225,7 +348,10 @@ def critical_path_errors(paths: Iterable[str], item: dict[str, Any]) -> list[str
             if not item.get("human_approval_required"):
                 errors.append(f"{path}: critical path requires human_approval_required")
             if item.get("change_class") not in rule.get("change_classes", []):
-                errors.append(f"{path}: change class {item.get('change_class')} is not authorized for critical pattern {rule['pattern']}")
+                errors.append(
+                    f"{path}: change class {item.get('change_class')} is not authorized "
+                    f"for critical pattern {rule['pattern']}"
+                )
             if rule.get("baseline_permission") and not item.get("baseline_changes_allowed"):
                 errors.append(f"{path}: protected baseline change is not authorized")
     return errors
@@ -235,7 +361,9 @@ def scope_errors(paths: Iterable[str], item: dict[str, Any], role: str | None = 
     allowed = item.get("allowed_paths", [])
     forbidden = item.get("forbidden_paths", [])
     errors: list[str] = []
-    ownership = read_yaml(ROOT / "tooling" / "architecture" / "path-ownership.yaml").get("ownership", [])
+    ownership = read_yaml(ROOT / "tooling" / "architecture" / "path-ownership.yaml").get(
+        "ownership", []
+    )
     for raw_path in paths:
         path = norm_path(raw_path)
         if matching_patterns(path, forbidden):
@@ -248,7 +376,10 @@ def scope_errors(paths: Iterable[str], item: dict[str, Any], role: str | None = 
         if role and matches:
             most_specific = max(matches, key=lambda entry: len(entry["pattern"].replace("*", "")))
             if role not in most_specific.get("roles", []):
-                errors.append(f"{path}: role {role} is not an owner; expected one of {most_specific.get('roles', [])}")
+                errors.append(
+                    f"{path}: role {role} is not an owner; expected one of "
+                    f"{most_specific.get('roles', [])}"
+                )
     errors.extend(critical_path_errors(paths, item))
     return sorted(set(errors))
 
@@ -263,7 +394,8 @@ def extract_patch_paths(command: str) -> list[str]:
 def likely_write_command(command: str) -> bool:
     patterns = [
         r"(^|[;&|]\s*)(rm|mv|cp|install|mkdir|touch|truncate)\b",
-        r"(^|\s)(>|>>)\s*\S", r"\b(git\s+(add|commit|reset|clean|checkout|restore)|sed\s+-i|perl\s+-i)\b",
+        r"(^|\s)(>|>>)\s*\S",
+        r"\b(git\s+(add|commit|reset|clean|checkout|restore)|sed\s+-i|perl\s+-i)\b",
         r"\b(python|python3|node|ruby)\b.*\b(write_text|write_bytes|open\([^)]*['\"]w)",
     ]
     return any(re.search(pattern, command, re.MULTILINE) for pattern in patterns)
@@ -280,7 +412,17 @@ def hook_input() -> dict[str, Any]:
 
 
 def hook_block(event: str, reason: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": event,
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
 
 
 def continuation(reason: str) -> None:

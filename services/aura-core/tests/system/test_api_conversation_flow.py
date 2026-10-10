@@ -24,7 +24,12 @@ from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Settings
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.gateway import ModelGateway
-from aura_core.runtime.models.ports import ChatMessage, EmbeddingResult, StructuredInferenceRequest
+from aura_core.runtime.models.ports import (
+    ChatMessage,
+    EmbeddingResult,
+    ProviderTraceContext,
+    StructuredInferenceRequest,
+)
 from fastapi import FastAPI
 
 from conftest import ScriptedModel, owner_client
@@ -86,7 +91,14 @@ class _PreferenceEmbedding:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def embed(self, model_id: str, text: str) -> EmbeddingResult:
+    async def embed(
+        self,
+        model_id: str,
+        text: str,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> EmbeddingResult:
+        del context
         self.calls.append(text)
         return EmbeddingResult(
             vector=(0.1, 0.2, 0.3),
@@ -96,6 +108,10 @@ class _PreferenceEmbedding:
             model_digest="e" * 64,
             digest=hashlib.sha256(text.encode()).hexdigest(),
         )
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        del model_id
+        return True
 
 
 @pytest.mark.asyncio

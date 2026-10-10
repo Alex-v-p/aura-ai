@@ -139,7 +139,7 @@ async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays
             "description": "Research-oriented answers.",
             "instructions": "Cite sources and separate facts from hypotheses.",
         }
-        persona_key = "sql-persona-create"
+        persona_key = str(uuid4())
         created_persona = await first_client.post(
             "/api/v1/personas",
             headers={"X-CSRF-Token": first_session.csrf_token, "Idempotency-Key": persona_key},
@@ -175,7 +175,7 @@ async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays
             "instructions": persona_payload["instructions"],
             "expectedVersion": persona["version"],
         }
-        persona_revision_key = "sql-persona-revision"
+        persona_revision_key = str(uuid4())
         revised_persona = await second_client.post(
             f"/api/v1/personas/{persona_id}/revisions",
             headers={
@@ -216,7 +216,7 @@ async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays
             "instructions": "Cite sources.",
             "personaRevisionId": persona["currentRevision"]["id"],
         }
-        agent_key = "sql-agent-create"
+        agent_key = str(uuid4())
         created_agent = await third_client.post(
             "/api/v1/agents",
             headers={"X-CSRF-Token": third_session.csrf_token, "Idempotency-Key": agent_key},
@@ -253,7 +253,7 @@ async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays
             "personaRevisionId": agent["currentRevision"]["personaRevisionId"],
             "expectedVersion": agent["version"],
         }
-        agent_revision_key = "sql-agent-revision"
+        agent_revision_key = str(uuid4())
         revised_agent = await fourth_client.post(
             f"/api/v1/agents/{agent_id}/revisions",
             headers={
@@ -289,7 +289,7 @@ async def test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays
         assert conflict_agent_revision.status_code == 409
 
         status_payload = {"status": "disabled", "expectedVersion": agent["version"]}
-        status_key = "sql-agent-status"
+        status_key = str(uuid4())
         disabled_agent = await fifth_client.patch(
             f"/api/v1/agents/{agent_id}",
             headers={"X-CSRF-Token": fifth_session.csrf_token, "Idempotency-Key": status_key},

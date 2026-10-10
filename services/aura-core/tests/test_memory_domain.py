@@ -5,8 +5,11 @@ from math import isclose
 from uuid import uuid4
 
 import pytest
+from aura_core.domains.knowledge.memory import public as memory_public
 from aura_core.domains.knowledge.memory.public import (
     MAX_HALF_LIFE_DAYS,
+    MEMORY_PROVENANCE_TYPES,
+    MEMORY_RELATION_TYPES,
     MIN_HALF_LIFE_DAYS,
     PURGE_CONFIRMATION,
     MemoryFilters,
@@ -19,9 +22,11 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryScope,
     MemoryScopeType,
     MemoryStore,
+    MemoryTelemetry,
     MemoryValidationError,
     MemoryVersionConflict,
     contains_secret,
+    deterministic_fallback_kind,
     validate_revision,
 )
 
@@ -29,6 +34,78 @@ ISSUER = "https://issuer.example"
 OWNER = "owner"
 OTHER_OWNER = "other-owner"
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+_LEGACY_PUBLIC_EXPORTS = frozenset(
+    {
+        "ARCHIVE_AFTER_DAYS",
+        "DORMANT_THRESHOLD",
+        "MAX_HALF_LIFE_DAYS",
+        "MIN_HALF_LIFE_DAYS",
+        "PURGE_CONFIRMATION",
+        "CandidateDecision",
+        "CandidateState",
+        "MemoryAction",
+        "MemoryAuditRecord",
+        "MemoryCandidate",
+        "MemoryCatalog",
+        "MemoryEmbedding",
+        "MemoryError",
+        "MemoryEmbeddingGeneration",
+        "MemoryFilters",
+        "MemoryIdempotencyConflict",
+        "MemoryKind",
+        "MemoryLifecycleStatus",
+        "MemoryNotFound",
+        "MemoryProvenance",
+        "MemoryPurgeConfirmationRequired",
+        "MemoryPurgeReplayNotFound",
+        "MemoryRecord",
+        "MemoryRelation",
+        "MemoryScopeAuthorizationRequired",
+        "MemoryRepository",
+        "MemoryRevision",
+        "MemoryScope",
+        "MemoryScopeType",
+        "MemoryCollectionScopeType",
+        "MemoryService",
+        "MEMORY_ACTION_SCHEMA",
+        "MEMORY_EXTRACTION_POLICY_VERSION",
+        "MEMORY_ID_NAMESPACE",
+        "MEMORY_PROCESSING_SCHEMA_VERSION",
+        "MEMORY_PROCESSING_TOPIC",
+        "MEMORY_PROVENANCE_TYPES",
+        "MEMORY_RELATION_TYPES",
+        "SENSITIVITY_POLICY_VERSION",
+        "MemoryEmbeddingJob",
+        "MemoryModelConfiguration",
+        "MemoryModelApplicationService",
+        "MemoryModelConfigurationSnapshot",
+        "MemoryModelDescriptor",
+        "MemoryReindexSnapshot",
+        "MemoryProcessingCommand",
+        "MemoryProcessingJob",
+        "MemoryProcessingService",
+        "MemoryProcessingSettlement",
+        "MemoryProcessor",
+        "MemoryReindexService",
+        "MemoryRetentionBasis",
+        "MemorySensitivity",
+        "MemoryStore",
+        "MemoryTurnEvidence",
+        "MemoryValidationError",
+        "MemoryVersionConflict",
+        "ProcessingJobStatus",
+        "classify_retention_basis",
+        "normalize_retention_horizon",
+        "classify_sensitivity",
+        "contains_secret",
+        "decide_candidate",
+        "deterministic_fallback_kind",
+        "validate_memory_text",
+        "validate_provenance",
+        "validate_revision",
+    }
+)
 
 
 def _provenance(*, evidence: str = "owner supplied evidence") -> MemoryProvenance:
@@ -54,6 +131,93 @@ async def _create(
         half_life_days=30,
         **kwargs,
     )
+
+
+def test_public_facade_preserves_legacy_exports_and_memory_telemetry() -> None:
+    """The facade keeps every supported import stable after internal extraction."""
+
+    assert MemoryTelemetry is memory_public.MemoryTelemetry
+    assert MEMORY_PROVENANCE_TYPES is memory_public.MEMORY_PROVENANCE_TYPES
+    assert MEMORY_RELATION_TYPES is memory_public.MEMORY_RELATION_TYPES
+    assert deterministic_fallback_kind is memory_public.deterministic_fallback_kind
+    assert _LEGACY_PUBLIC_EXPORTS <= set(memory_public.__all__)
+
+    for name in _LEGACY_PUBLIC_EXPORTS | {"MemoryTelemetry"}:
+        assert getattr(memory_public, name) is not None
+    for name in memory_public.__all__:
+        assert getattr(memory_public, name) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("scope", "not-a-memory-scope"),
+        ("agent_profile_id", "not-a-uuid"),
+        ("authorized_agent_ids", ["not-a-uuid"]),
+    ),
+)
+async def test_create_rejects_malformed_non_null_scope_context(
+    field: str, value: object
+) -> None:
+    store = MemoryStore(clock=lambda: NOW)
+    create_kwargs: dict[str, object] = {
+        "content": "The owner prefers concise answers.",
+        "kind": MemoryKind.PREFERENCE,
+        "scope": MemoryScope(MemoryScopeType.USER),
+        "confidence": 0.9,
+        "importance": 0.8,
+        "half_life_days": 30,
+    }
+    create_kwargs[field] = value
+
+    with pytest.raises(MemoryValidationError):
+        await store.create_memory(ISSUER, OWNER, **create_kwargs)
+    assert store.memories == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("scope_type", "not-a-memory-scope"),
+        ("agent_profile_id", "not-a-uuid"),
+        ("authorized_agent_ids", ["not-a-uuid"]),
+    ),
+)
+async def test_read_rejects_malformed_non_null_scope_context(field: str, value: object) -> None:
+    store = MemoryStore(clock=lambda: NOW)
+    memory = await _create(store)
+
+    with pytest.raises(MemoryValidationError):
+        await store.get_memory(ISSUER, OWNER, memory.id, **{field: value})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("scope_type", "not-a-memory-scope"),
+        ("agent_profile_id", "not-a-uuid"),
+        ("authorized_agent_ids", ["not-a-uuid"]),
+    ),
+)
+async def test_purge_rejects_malformed_non_null_scope_context(
+    field: str, value: object
+) -> None:
+    store = MemoryStore(clock=lambda: NOW)
+    memory = await _create(store)
+
+    with pytest.raises(MemoryValidationError):
+        await store.purge(
+            ISSUER,
+            OWNER,
+            memory.id,
+            confirmation=PURGE_CONFIRMATION,
+            expected_version=memory.version,
+            **{field: value},
+        )
+    assert memory.id in store.memories
 
 
 @pytest.mark.asyncio
