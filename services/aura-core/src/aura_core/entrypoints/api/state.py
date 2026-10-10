@@ -8,6 +8,12 @@ from uuid import UUID
 from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
+from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.domains.automation.reminders.public import (
+    REMINDER_TOPIC,
+    ReminderApplicationService,
+    ReminderRepository,
+)
 from aura_core.domains.execution.runs.public import RunCoordinator
 from aura_core.domains.governance.identity.application import LoginConfiguration, LoginService
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
@@ -115,6 +121,8 @@ class AppState:
         self.agent_service: AgentConfigurationService
         self.persona_service: PersonaConfigurationService
         self.memory_repository: MemoryRepository
+        self.reminder_repository: ReminderRepository
+        self.reminder_service: ReminderApplicationService
         self.memory_worker: object | None = None
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
@@ -142,6 +150,8 @@ class AppState:
             self.memory_repository = memory_uow.memory_repository(
                 None, testing=True, metrics=self.metrics
             )
+            self.reminder_repository = reminder_repository(None, testing=True, metrics=self.metrics)
+            self.reminder_service = reminder_service(self.reminder_repository)
             async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
                 return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
 
@@ -198,7 +208,7 @@ class AppState:
             )
             self.nats = NatsOutbox(
                 self.settings.nats_url,
-                additional_subjects=(memory_topic,),
+                additional_subjects=(memory_topic, REMINDER_TOPIC),
             )
             self.outbox = TransactionalOutboxTransport()
             self.publisher = PersistentEventPublisher(self.sql_store.append_event)
@@ -215,6 +225,10 @@ class AppState:
             self.memory_repository = memory_uow.memory_repository(
                 self.sessions_factory, metrics=self.metrics
             )
+            self.reminder_repository = reminder_repository(
+                self.sessions_factory, metrics=self.metrics
+            )
+            self.reminder_service = reminder_service(self.reminder_repository)
             cast(Any, self.memory_repository).set_run_recall_metadata_loader(
                 self.sql_store.get_run_memory_recall_metadata
             )
@@ -337,26 +351,55 @@ class AppState:
 
         assert self.sql_store is not None
         assert self.nats is not None
+        active_component = "aura.execution.run_coordinator"
+        reminder_persistence_failure = False
         while True:
             try:
+                active_component = "aura.execution.run_coordinator"
+                reminder_persistence_failure = False
                 commands = await self.sql_store.pending_commands()
                 for command in commands:
-                    # Outbox dispatch is part of the existing run-coordinator
-                    # boundary; no unregistered platform telemetry component
-                    # may silently reject these measurements.
-                    component = "aura.execution.run_coordinator"
+                    is_reminder = command.aggregate_type == "automation.reminder"
+                    # Run commands retain their established ownership. Generic
+                    # reminder commands belong to the reminder observable
+                    # component and never acquire fabricated run identities.
+                    component = (
+                        "aura.automation.reminder_management"
+                        if is_reminder
+                        else "aura.execution.run_coordinator"
+                    )
+                    active_component = component
                     trace_identifiers = identifier_trace_metadata(command)
+                    # Generic automation events use lifecycle identifiers that
+                    # are trace attributes, not metric dimensions.  Keep the
+                    # legacy run/memory envelopes unchanged while mapping the
+                    # generic status/version keys to bounded trace names.
+                    if command.aggregate_type is not None:
+                        if "status" in trace_identifiers:
+                            trace_identifiers["event_status"] = trace_identifiers.pop("status")
+                        if "version" in trace_identifiers:
+                            trace_identifiers["event_version"] = trace_identifiers.pop("version")
+                        if is_reminder and command.aggregate_id is not None:
+                            trace_identifiers["reminder_id"] = str(command.aggregate_id)
+                    command_run_id = command.run_id
+                    command_conversation_id = command.conversation_id
                     metadata = {
                         "trace_id": command.correlation_id.hex
                         if command.correlation_id
-                        else command.run_id.hex,
-                        "run_id": str(command.run_id),
-                        "conversation_id": str(command.conversation_id),
+                        else (command.aggregate_id or command.id).hex,
                         "command_id": str(command.id),
-                        "correlation_id": str(command.correlation_id or command.run_id),
+                        "correlation_id": str(
+                            command.correlation_id or command.aggregate_id or command.id
+                        ),
                         **trace_identifiers,
                     }
-                    metadata["causation_id"] = str(command.causation_id or command.run_id)
+                    metadata["causation_id"] = str(
+                        command.causation_id or command.aggregate_id or command.id
+                    )
+                    if command_run_id is not None:
+                        metadata["run_id"] = str(command_run_id)
+                    if command_conversation_id is not None:
+                        metadata["conversation_id"] = str(command_conversation_id)
                     trace_metadata = dict(trace_identifiers)
                     trace_metadata["causation_id"] = metadata["causation_id"]
                     dispatch_timer = Stopwatch()
@@ -374,8 +417,8 @@ class AppState:
                             dependency="nats_jetstream",
                             outcome="error",
                             error_class="delivery",
-                            run_id=metadata["run_id"],
-                            conversation_id=metadata["conversation_id"],
+                            run_id=metadata.get("run_id"),
+                            conversation_id=metadata.get("conversation_id"),
                             command_id=metadata["command_id"],
                             correlation_id=metadata["correlation_id"],
                             **trace_metadata,
@@ -390,38 +433,68 @@ class AppState:
                         parent_span_id=None,
                         dependency="nats_jetstream",
                         outcome="duplicate" if duplicate else "ok",
-                        run_id=metadata["run_id"],
-                        conversation_id=metadata["conversation_id"],
+                        run_id=metadata.get("run_id"),
+                        conversation_id=metadata.get("conversation_id"),
                         command_id=metadata["command_id"],
                         correlation_id=metadata["correlation_id"],
                         **trace_metadata,
                     )
                     persistence_timer = Stopwatch()
                     persistence_span_id = new_span_id()
-                    await self.sql_store.mark_published(command.id)
+                    persistence_component = (
+                        component
+                        if is_reminder
+                        else "aura.interaction.conversation_persistence"
+                    )
+                    persistence_operation = (
+                        "outbox.persist" if is_reminder else "conversation.persist"
+                    )
+                    try:
+                        await self.sql_store.mark_published(command.id)
+                    except Exception:
+                        if is_reminder:
+                            reminder_persistence_failure = True
+                        self.metrics.record_span(
+                            persistence_component,
+                            persistence_operation,
+                            persistence_timer.elapsed_ms(),
+                            trace_id=metadata["trace_id"],
+                            span_id=persistence_span_id,
+                            parent_span_id=dispatch_span_id,
+                            dependency="postgresql",
+                            outcome="error",
+                            error_class="persistence",
+                            run_id=metadata.get("run_id"),
+                            conversation_id=metadata.get("conversation_id"),
+                            command_id=metadata["command_id"],
+                            correlation_id=metadata["correlation_id"],
+                            **trace_metadata,
+                        )
+                        raise
                     self.metrics.record_span(
-                        "aura.interaction.conversation_persistence",
-                        "conversation.persist",
+                        persistence_component,
+                        persistence_operation,
                         persistence_timer.elapsed_ms(),
                         trace_id=metadata["trace_id"],
                         span_id=persistence_span_id,
                         parent_span_id=dispatch_span_id,
                         dependency="postgresql",
                         outcome="ok",
-                        run_id=metadata["run_id"],
-                        conversation_id=metadata["conversation_id"],
+                        run_id=metadata.get("run_id"),
+                        conversation_id=metadata.get("conversation_id"),
                         command_id=metadata["command_id"],
+                        correlation_id=metadata["correlation_id"],
                         **trace_metadata,
                     )
                     self.metrics.increment(
                         component,
-                        "outbox_dispatched",
+                        "reminder_outbox_dispatched" if is_reminder else "outbox_dispatched",
                         **metadata,
                     )
                     if duplicate:
                         self.metrics.increment(
                             component,
-                            "outbox_duplicates",
+                            "reminder_outbox_duplicates" if is_reminder else "outbox_duplicates",
                             **metadata,
                         )
                 await asyncio.sleep(0.2 if commands else 1.0)
@@ -430,11 +503,22 @@ class AppState:
             except Exception:
                 # Readiness exposes the dependency failure; the dispatcher
                 # keeps retrying so a transient NATS outage is recoverable.
-                self.metrics.increment(
-                    "aura.execution.run_coordinator",
-                    "errors",
-                    error_class="delivery",
-                )
+                if (
+                    active_component == "aura.automation.reminder_management"
+                    and not reminder_persistence_failure
+                ):
+                    self.metrics.increment(
+                        active_component,
+                        "reminder_command_outcome",
+                        dependency="nats_jetstream",
+                        outcome="error",
+                    )
+                elif active_component != "aura.automation.reminder_management":
+                    self.metrics.increment(
+                        active_component,
+                        "errors",
+                        error_class="delivery",
+                    )
                 await asyncio.sleep(1.0)
 
     async def _ingest_event_wakeup(self, event_id: UUID, run_id: UUID) -> None:

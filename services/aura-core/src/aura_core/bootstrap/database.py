@@ -2,6 +2,7 @@
 
 from sqlalchemy import MetaData
 
+from aura_core.domains.automation.reminders import persistence as reminder_persistence
 from aura_core.domains.execution.runs import persistence as run_persistence
 from aura_core.domains.governance.audit import persistence as audit_persistence
 from aura_core.domains.governance.identity import persistence as identity_persistence
@@ -13,6 +14,7 @@ from aura_core.platform.outbox import persistence as outbox_persistence
 
 _MAPPING_MODULES = (
     run_persistence,
+    reminder_persistence,
     audit_persistence,
     identity_persistence,
     agent_persistence,

@@ -260,7 +260,7 @@ class NatsRunConsumer:
         self.metrics.increment(
             self.component,
             "consumer_received",
-            trace_id=(command.correlation_id or command.run_id).hex,
+            trace_id=(command.correlation_id or _require_run_id(command)).hex,
             run_id=str(command.run_id),
             conversation_id=str(command.conversation_id),
             command_id=str(command.id),
@@ -273,7 +273,7 @@ class NatsRunConsumer:
             self.metrics.increment(
                 self.component,
                 "consumer_redelivered",
-                trace_id=(command.correlation_id or command.run_id).hex,
+                trace_id=(command.correlation_id or _require_run_id(command)).hex,
                 run_id=str(command.run_id),
                 conversation_id=str(command.conversation_id),
                 command_id=str(command.id),
@@ -285,7 +285,7 @@ class NatsRunConsumer:
             self.metrics.increment(
                 self.component,
                 "outbox_duplicates",
-                trace_id=(command.correlation_id or command.run_id).hex,
+                trace_id=(command.correlation_id or _require_run_id(command)).hex,
                 run_id=str(command.run_id),
                 conversation_id=str(command.conversation_id),
                 command_id=str(command.id),
@@ -311,7 +311,7 @@ class NatsRunConsumer:
             except Exception:
                 metadata = (
                     {
-                        "trace_id": (command.correlation_id or command.run_id).hex,
+                        "trace_id": (command.correlation_id or _require_run_id(command)).hex,
                         "run_id": str(command.run_id),
                         "conversation_id": str(command.conversation_id),
                     }
@@ -329,7 +329,7 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_acknowledged",
-                    trace_id=(command.correlation_id or command.run_id).hex,
+                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
                     run_id=str(command.run_id),
                     conversation_id=str(command.conversation_id),
                     command_id=str(command.id),
@@ -371,7 +371,7 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_nacked",
-                    trace_id=(command.correlation_id or command.run_id).hex,
+                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
                     run_id=str(command.run_id),
                     conversation_id=str(command.conversation_id),
                     command_id=str(command.id),
@@ -400,7 +400,7 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_rejected",
-                    trace_id=(command.correlation_id or command.run_id).hex,
+                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
                     run_id=str(command.run_id),
                     conversation_id=str(command.conversation_id),
                     command_id=str(command.id),
@@ -475,3 +475,11 @@ async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> N
 
 def _optional_command_metadata(command: OutboxCommand) -> dict[str, str]:
     return identifier_trace_metadata(command)
+
+
+def _require_run_id(command: OutboxCommand) -> UUID:
+    """Return the run identity guaranteed by the run consumer subject."""
+
+    if command.run_id is None or command.conversation_id is None:
+        raise ValueError("run consumer received a non-run outbox command")
+    return command.run_id

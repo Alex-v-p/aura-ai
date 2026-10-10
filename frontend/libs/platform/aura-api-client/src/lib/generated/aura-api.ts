@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 95933bb94704d1d3f7974a8e44700181fbb3cc96edea5b496d2b879239f9e57a
+// Contract SHA-256: 4e34908b894e9a86c69882da3df5dc3093f969920931c6cece2925b6ee79cc92
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -239,6 +239,18 @@ export type ToolStatus = "pending" | "executing" | "completed" | "denied" | "fai
 
 export type ToolStatusData = { readonly "callId": string; readonly "toolId": string; readonly "toolVersion": number; readonly "status": ToolStatus; readonly "errorClass"?: "capability" | "validation" | "policy" | "budget" | "timeout" | "provider_protocol" | "execution" | "cancellation"; readonly "errorCode"?: string; readonly "resultCount"?: number; };
 
+export type ReminderStatus = "scheduled" | "fired" | "completed" | "canceled";
+
+export type ReminderListView = "upcoming" | "history";
+
+export type Reminder = { readonly "id": string; readonly "content": string; readonly "dueAt": string; readonly "status": ReminderStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "firedAt": string | null; readonly "completedAt": string | null; readonly "canceledAt": string | null; };
+
+export type ReminderPage = { readonly "items": ReadonlyArray<Reminder>; readonly "nextCursor": string | null; };
+
+export type CreateReminderRequest = { readonly "content": string; readonly "dueAt": string; };
+
+export type ReminderTransitionRequest = { readonly "expectedVersion": number; };
+
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
 
 export type FieldError = { readonly "field": string; readonly "code": string; readonly "message": string; };
@@ -299,6 +311,11 @@ export interface AuraApiOperations {
   readonly listAgentToolPolicies: { readonly response: AgentToolPolicyCollection; readonly body: never; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createAgentToolPolicy: { readonly response: AgentToolPolicy; readonly body: CreateAgentToolPolicyRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly attachAgentToolPolicy: { readonly response: AgentDetail; readonly body: AttachAgentToolPolicyRequest; readonly path: { readonly "agent_profile_id": string; readonly "tool_policy_revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listReminders: { readonly response: ReminderPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "view"?: ReminderListView; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createReminder: { readonly response: Reminder; readonly body: CreateReminderRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getReminder: { readonly response: Reminder; readonly body: never; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly completeReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly cancelReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -368,6 +385,11 @@ export const AURA_API_OPERATIONS = {
   listAgentToolPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
   createAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
   attachAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach', responseMode: 'json' },
+  listReminders: { method: 'GET', pathTemplate: '/api/v1/reminders', responseMode: 'json' },
+  createReminder: { method: 'POST', pathTemplate: '/api/v1/reminders', responseMode: 'json' },
+  getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', responseMode: 'json' },
+  completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', responseMode: 'json' },
+  cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

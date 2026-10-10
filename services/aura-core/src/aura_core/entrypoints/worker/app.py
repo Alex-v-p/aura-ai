@@ -66,6 +66,8 @@ async def run_once(
     if command is None:
         return
     try:
+        if command.run_id is None:
+            raise ValueError("run consumer received a command without a run identity")
         await coordinator.execute(command.run_id, provider)
     except Exception:
         # Leave the JetStream delivery unacknowledged so it can be redelivered.

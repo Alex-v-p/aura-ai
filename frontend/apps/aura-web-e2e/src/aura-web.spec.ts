@@ -1,7 +1,7 @@
 import { expect, test, type Locator } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const DESTINATION_LABELS = ['Conversations', 'Agents', 'Personas', 'Memory'] as const;
+const DESTINATION_LABELS = ['Conversations', 'Agents', 'Personas', 'Memory', 'Reminders'] as const;
 
 async function expectExpandedDestinationTiles(productNav: Locator): Promise<void> {
   const metrics = await productNav.locator('a').evaluateAll((links) => {

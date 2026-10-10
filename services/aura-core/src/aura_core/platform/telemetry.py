@@ -46,6 +46,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.2.0",
+    "aura.automation.reminder_management": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -148,6 +149,16 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "memory_operation_outcome",
             "memory_lifecycle_status",
             "memory_scope_type",
+        }
+    ),
+    "aura.automation.reminder_management": frozenset(
+        {
+            "reminder_command_duration_ms",
+            "reminder_command_outcome",
+            "reminder_outbox_dispatched",
+            "reminder_outbox_duplicates",
+            "reminder_version_conflict_count",
+            "reminder_idempotency_conflict_count",
         }
     ),
     "aura.knowledge.memory_extraction": frozenset({
@@ -282,6 +293,18 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "memory.embedding.settle",
         }
     ),
+    "aura.automation.reminder_management": frozenset(
+        {
+            "outbox.dispatch",
+            "outbox.persist",
+            "reminder.create",
+            "reminder.fire",
+            "reminder.get",
+            "reminder.list",
+            "reminder.complete",
+            "reminder.cancel",
+        }
+    ),
     "aura.knowledge.memory_extraction": frozenset({
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
         "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
@@ -323,6 +346,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "prompt_compile_duration_ms",
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
     "aura.knowledge.memory_persistence": "memory_operation_duration_ms",
+    "aura.automation.reminder_management": "reminder_command_duration_ms",
     "aura.knowledge.memory_extraction": "operation_duration_ms",
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
     "aura.runtime.structured_inference": "structured_inference_duration_ms",
@@ -383,6 +407,8 @@ _DIMENSION_KEYS = frozenset(
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
+        "aggregate_id",
+        "aggregate_type",
         "agent_revision_id",
         "agent_revision_number",
         "profile_id",
@@ -425,13 +451,18 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "candidate_count",
         "recalled_count",
         "context_tokens",
+        "event_status",
+        "event_type",
+        "event_version",
         "fallback_grant_id",
         "recall_mode",
         "gate_outcome",
+        "reminder_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
     {
+        "aggregate_id",
         "agent_revision_id",
         "profile_id",
         "persona_revision_id",
@@ -455,6 +486,7 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "policy_revision_id",
         "embedding_generation_id",
         "fallback_grant_id",
+        "reminder_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -473,6 +505,7 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "candidate_count",
         "recalled_count",
         "context_tokens",
+        "event_version",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -492,6 +525,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "embedding_provider",
             "query_embedding",
             "memory_worker",
+            "reminder_store",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -532,7 +566,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     ),
     "outcome": frozenset(
         {
-            "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
+            "accepted", "canceled", "conflict", "duplicate", "error", "fallback",
+            "generated", "ignored",
             "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",

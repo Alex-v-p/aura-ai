@@ -7,6 +7,7 @@ from aura_core.platform.outbox.service import (
     OutboxTransport,
     TransactionalOutboxTransport,
     identifier_trace_metadata,
+    make_aggregate_command,
     make_identifier_command,
     make_run_command,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "SqlOutboxRepository",
     "TransactionalOutboxTransport",
     "identifier_trace_metadata",
+    "make_aggregate_command",
     "make_identifier_command",
     "make_run_command",
 ]

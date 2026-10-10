@@ -36,11 +36,33 @@ _CONTENT_KEY_PARTS = (
     "token",
     "payload",
 )
+_AGGREGATE_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+IdentifierValue = str | int
+
+
+def _valid_identifier_value(
+    value: IdentifierValue,
+    *,
+    allow_integer: bool,
+    key: str,
+) -> bool:
+    if type(value) is str:
+        return (
+            bool(value)
+            and len(value) <= 255
+            and _IDENTIFIER_VALUE.fullmatch(value) is not None
+            and all(ord(character) >= 0x20 for character in value)
+        )
+    if not allow_integer or type(value) is not int or value < 0 or value > 2_147_483_647:
+        return False
+    return not key.casefold().endswith("version") or value >= 1
 
 
 def validate_identifier_metadata(
-    identifiers: Iterable[tuple[str, str]],
-) -> tuple[tuple[str, str], ...]:
+    identifiers: Iterable[tuple[str, IdentifierValue]],
+    *,
+    allow_integer: bool = False,
+) -> tuple[tuple[str, IdentifierValue], ...]:
     """Validate the transport's bounded, content-free identifier envelope."""
 
     normalized = tuple(identifiers)
@@ -52,11 +74,7 @@ def validate_identifier_metadata(
             type(key) is not str
             or not _IDENTIFIER_KEY.fullmatch(key)
             or key in seen
-            or type(value) is not str
-            or not value
-            or len(value) > 255
-            or _IDENTIFIER_VALUE.fullmatch(value) is None
-            or any(ord(character) < 0x20 for character in value)
+            or not _valid_identifier_value(value, allow_integer=allow_integer, key=key)
         ):
             raise ValueError("outbox command contains invalid identifier metadata")
         lowered = key.casefold()
@@ -76,18 +94,44 @@ class OutboxTransport(Protocol):
 class OutboxCommand:
     id: UUID
     topic: str
-    run_id: UUID
-    conversation_id: UUID
+    run_id: UUID | None
+    conversation_id: UUID | None
     created_at: datetime
     correlation_id: UUID | None = None
     causation_id: UUID | None = None
-    identifiers: tuple[tuple[str, str], ...] = ()
+    identifiers: tuple[tuple[str, IdentifierValue], ...] = ()
     attempt_id: UUID | None = None
     generation_id: UUID | None = None
     schema_version: int = 1
+    # Generic aggregate commands intentionally have no run or conversation
+    # identity. Legacy run and memory commands populate both fields; generic
+    # construction leaves both absent and serializes only aggregateType/
+    # aggregateId.
+    aggregate_type: str | None = None
+    aggregate_id: UUID | None = None
 
     def __post_init__(self) -> None:
-        validate_identifier_metadata(self.identifiers)
+        validate_identifier_metadata(
+            self.identifiers,
+            allow_integer=self.aggregate_type is not None,
+        )
+        if (self.aggregate_type is None) != (self.aggregate_id is None):
+            raise ValueError("outbox command must provide both aggregate type and id")
+        if self.aggregate_type is not None:
+            if (
+                type(self.aggregate_type) is not str
+                or type(self.aggregate_id) is not UUID
+                or _AGGREGATE_TYPE.fullmatch(self.aggregate_type) is None
+            ):
+                raise ValueError("outbox command has an invalid aggregate type")
+            if self.run_id is not None or self.conversation_id is not None:
+                raise ValueError(
+                    "generic outbox command cannot contain run or conversation identifiers"
+                )
+        elif self.run_id is None or self.conversation_id is None:
+            raise ValueError(
+                "legacy outbox command requires run and conversation identifiers"
+            )
 
     @classmethod
     def from_record(
@@ -100,22 +144,44 @@ class OutboxCommand:
         schema_version = payload.get("schemaVersion")
         if type(schema_version) is not int:
             raise ValueError("outbox command has an invalid schema version")
-        run_id = UUID(str(payload["runId"]))
+        is_generic = "aggregateType" in payload or "aggregateId" in payload
+        if is_generic and {"aggregateType", "aggregateId"} != (
+            {"aggregateType", "aggregateId"} & payload.keys()
+        ):
+            raise ValueError("generic outbox command requires aggregate type and id")
+        if is_generic and ("runId" in payload or "conversationId" in payload):
+            raise ValueError("generic outbox command cannot contain run identifiers")
+        if is_generic and (
+            type(payload.get("aggregateType")) is not str
+            or type(payload.get("aggregateId")) is not str
+        ):
+            raise ValueError("generic outbox command has invalid aggregate identity")
+        run_id = UUID(str(payload["runId"])) if "runId" in payload else None
+        fallback_id: UUID = (
+            run_id or UUID(str(payload["aggregateId"])) if is_generic else command_id
+        )
+        conversation_id = (
+            UUID(str(payload["conversationId"]))
+            if "conversationId" in payload
+            else None
+        )
         identifiers = tuple(
-            (str(key), str(value))
+            (str(key), value)
             for key, value in payload.items()
             if key not in {
                 "schemaVersion",
                 "commandId",
                 "runId",
                 "conversationId",
+                "aggregateType",
+                "aggregateId",
                 "createdAt",
                 "correlationId",
                 "causationId",
                 "attemptId",
                 "generationId",
             }
-            and type(value) is str
+            and (type(value) is str or (is_generic and type(value) is int))
         )
         unknown = [
             key
@@ -126,28 +192,32 @@ class OutboxCommand:
                 "commandId",
                 "runId",
                 "conversationId",
+                "aggregateType",
+                "aggregateId",
                 "createdAt",
                 "correlationId",
                 "causationId",
                 "attemptId",
                 "generationId",
             }
-            and type(value) is not str
+            and not (type(value) is str or (is_generic and type(value) is int))
         ]
         if unknown:
-            raise ValueError("outbox command contains non-string identifier metadata")
+            raise ValueError("outbox command contains invalid identifier metadata")
         return cls(
             command_id,
             topic,
             run_id,
-            UUID(str(payload["conversationId"])),
+            conversation_id,
             created_at,
-            UUID(str(payload.get("correlationId", run_id))),
-            UUID(str(payload.get("causationId", run_id))),
+            UUID(str(payload.get("correlationId", fallback_id))),
+            UUID(str(payload.get("causationId", fallback_id))),
             identifiers,
             UUID(str(payload["attemptId"])) if "attemptId" in payload else None,
             UUID(str(payload["generationId"])) if "generationId" in payload else None,
             schema_version,
+            str(payload["aggregateType"]) if is_generic else None,
+            UUID(str(payload["aggregateId"])) if is_generic else None,
         )
 
     def wire_payload(self) -> bytes:
@@ -156,15 +226,27 @@ class OutboxCommand:
     def payload(self) -> dict[str, object]:
         """Return the generic identifier-only envelope for a command."""
 
-        payload: dict[str, object] = {
-            "schemaVersion": self.schema_version,
-            "commandId": str(self.id),
-            "runId": str(self.run_id),
-            "conversationId": str(self.conversation_id),
-            "createdAt": self.created_at.isoformat(),
-            "correlationId": str(self.correlation_id or self.id),
-            "causationId": str(self.causation_id or self.run_id),
-        }
+        payload: dict[str, object]
+        if self.aggregate_type is not None:
+            payload = {
+                "schemaVersion": self.schema_version,
+                "commandId": str(self.id),
+                "aggregateType": self.aggregate_type,
+                "aggregateId": str(self.aggregate_id),
+                "createdAt": self.created_at.isoformat(),
+                "correlationId": str(self.correlation_id or self.id),
+                "causationId": str(self.causation_id or self.aggregate_id),
+            }
+        else:
+            payload = {
+                "schemaVersion": self.schema_version,
+                "commandId": str(self.id),
+                "runId": str(self.run_id),
+                "conversationId": str(self.conversation_id),
+                "createdAt": self.created_at.isoformat(),
+                "correlationId": str(self.correlation_id or self.id),
+                "causationId": str(self.causation_id or self.run_id),
+            }
         for key, value in self.identifiers:
             payload[key] = value
         if self.attempt_id is not None:
@@ -174,7 +256,8 @@ class OutboxCommand:
         return payload
 
     def identifier(self, name: str) -> str | None:
-        return dict(self.identifiers).get(name)
+        value = dict(self.identifiers).get(name)
+        return str(value) if value is not None else None
 
 
 def make_run_command(run_id: UUID, conversation_id: UUID) -> OutboxCommand:
@@ -216,13 +299,59 @@ def make_identifier_command(
     )
 
 
+def make_aggregate_command(
+    topic: str,
+    command_id: UUID,
+    aggregate_type: str,
+    aggregate_id: UUID,
+    *,
+    correlation_id: UUID | None = None,
+    causation_id: UUID | None = None,
+    identifiers: Iterable[tuple[str, UUID | str | int]] = (),
+) -> OutboxCommand:
+    """Build an identifier-only command for a non-run aggregate.
+
+    Generic aggregate events deliberately carry no fabricated run or
+    conversation identifiers.  The aggregate identity is validated as part
+    of the envelope, while any event-specific metadata remains subject to the
+    same content-free identifier checks as legacy commands.
+    """
+
+    normalized_identifiers: list[tuple[str, IdentifierValue]] = []
+    for key, value in identifiers:
+        if type(key) is not str or (
+            type(value) not in {str, int} and not isinstance(value, UUID)
+        ):
+            raise ValueError("outbox command identifiers must be strings, integers, or UUIDs")
+        normalized_identifiers.append((key, str(value) if isinstance(value, UUID) else value))
+    return OutboxCommand(
+        command_id,
+        topic,
+        None,
+        None,
+        datetime.now(UTC),
+        correlation_id or command_id,
+        causation_id or aggregate_id,
+        validate_identifier_metadata(
+            tuple(normalized_identifiers),
+            allow_integer=True,
+        ),
+        schema_version=1,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+    )
+
+
 def identifier_trace_metadata(command: OutboxCommand) -> dict[str, str]:
     """Map caller-owned identifier keys to approved snake_case trace names."""
 
     metadata: dict[str, str] = {}
+    if command.aggregate_type is not None:
+        metadata["aggregate_type"] = command.aggregate_type
+        metadata["aggregate_id"] = str(command.aggregate_id)
     for key, value in command.identifiers:
         normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
-        metadata[normalized] = value
+        metadata[normalized] = str(value)
     if command.attempt_id is not None:
         metadata["attempt_id"] = str(command.attempt_id)
     if command.generation_id is not None:

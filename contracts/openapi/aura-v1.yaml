@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.6.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, memory content, tool arguments and results, and embedding vectors are never exposed by this API."
+    "version": "1.7.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -16,6 +16,7 @@
     { "name": "Runs" },
     { "name": "Tools" },
     { "name": "Memories" },
+    { "name": "Reminders" },
     { "name": "Health" }
   ],
   "paths": {
@@ -759,6 +760,85 @@
         }
       }
     },
+    "/api/v1/reminders": {
+      "get": {
+        "operationId": "listReminders",
+        "tags": ["Reminders"],
+        "parameters": [
+          { "name": "view", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/ReminderListView" }], "default": "upcoming" }, "description": "Upcoming returns scheduled reminders ordered by dueAt ascending. History returns fired, completed, and canceled reminders ordered by updatedAt descending." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and view-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder page with deterministic ordering and reminder ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      },
+      "post": {
+        "operationId": "createReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReminderRequest" } } } },
+        "responses": {
+          "201": { "description": "One-shot owner-scoped reminder created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ReminderId" }],
+      "get": {
+        "operationId": "getReminder",
+        "tags": ["Reminders"],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}/complete": {
+      "post": {
+        "operationId": "completeReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Scheduled or fired reminder completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}/cancel": {
+      "post": {
+        "operationId": "cancelReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Scheduled reminder canceled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -792,6 +872,7 @@
       "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -1852,6 +1933,45 @@
           "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
           "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
         }
+      },
+      "ReminderStatus": { "type": "string", "enum": ["scheduled", "fired", "completed", "canceled"] },
+      "ReminderListView": { "type": "string", "enum": ["upcoming", "history"] },
+      "Reminder": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "content", "dueAt", "status", "version", "createdAt", "updatedAt", "firedAt", "completedAt", "canceledAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "UTC timestamp. Create input must be RFC 3339 with an explicit offset and strictly in the future; Core normalizes it to UTC." },
+          "status": { "$ref": "#/components/schemas/ReminderStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "firedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "canceledAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Reminder" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "CreateReminderRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["content", "dueAt"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000, "description": "Core trims leading and trailing whitespace before validation and persistence." },
+          "dueAt": { "type": "string", "format": "date-time", "description": "RFC 3339 timestamp with an explicit offset. Must resolve to a strictly future instant and is normalized to UTC." }
+        }
+      },
+      "ReminderTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
       },
       "ErrorEnvelope": {
         "type": "object", "additionalProperties": false,

@@ -1,0 +1,46 @@
+component:
+  id: aura.automation.reminder_management
+  version: 1.0.0
+  owner: automation.reminders
+  category: persistence
+input:
+  schema: aura-reminder-command-v1
+  replayable: true
+  replay_reason: Reminder commands are owner-scoped, idempotent, and content is resolved from Core persistence.
+output:
+  schema: aura-reminder-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - transactional_outbox
+metrics:
+  - reminder_command_duration_ms
+  - reminder_command_outcome
+  - reminder_outbox_dispatched
+  - reminder_outbox_duplicates
+  - reminder_version_conflict_count
+  - reminder_idempotency_conflict_count
+metric_semantics:
+  reminder_command_duration_ms: Owner-scoped reminder command duration.
+  reminder_command_outcome: Metadata-only lifecycle command outcome.
+  reminder_version_conflict_count: Optimistic concurrency conflicts.
+  reminder_idempotency_conflict_count: Mismatched idempotency-key reuse conflicts.
+capture_policy: metadata_only
+evaluators:
+  - reminder_lifecycle_correctness
+  - reminder_owner_authorization
+  - reminder_time_normalization
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, reminder_id, aggregate_id, aggregate_type, event_type, event_status, event_version, command_id, correlation_id, causation_id]
+  prohibited: [content, prompt, response, payload, token, credential, owner_subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

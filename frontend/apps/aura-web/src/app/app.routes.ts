@@ -3,6 +3,7 @@ import { ConversationPanelComponent } from '@aura/aura/interaction/conversations
 import { AgentCreatePageComponent, AgentDetailPageComponent, AgentListPageComponent, AgentToolPolicyPageComponent } from '@aura/aura/interaction/agents';
 import { PersonaCreatePageComponent, PersonaDetailPageComponent, PersonaListPageComponent } from '@aura/aura/interaction/personas';
 import { AgentMemoryPolicyPageComponent, MemoryCandidatesPageComponent, MemoryPageComponent, MemorySettingsPageComponent } from '@aura/aura/knowledge/memory';
+import { RemindersPageComponent } from '@aura/aura/automation/reminders';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'conversation' },
@@ -19,6 +20,7 @@ export const routes: Routes = [
   { path: 'memory/candidates', component: MemoryCandidatesPageComponent },
   { path: 'memory/settings', component: MemorySettingsPageComponent },
   { path: 'memory/:id', component: MemoryPageComponent },
+  { path: 'reminders', component: RemindersPageComponent },
   { path: 'agents/:id/memory', component: AgentMemoryPolicyPageComponent },
   { path: '**', redirectTo: 'conversation' },
 ];

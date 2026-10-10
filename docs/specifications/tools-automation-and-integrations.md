@@ -41,6 +41,17 @@ Timers, reminders, schedules, workflow state, approvals, notification delivery, 
 
 The catalogue envisions durable timers and reminders, explicit recurrence, reusable schedules, multi-step workflows, approved event triggers, persisted progress, cancellation, approvals, multi-channel notification routing, delivery status, calendar read/write operations, conflict awareness, time-zone handling, ownership, history, and evaluation.
 
+The first approved reminder slice is intentionally narrower: Aura Core owns
+owner-scoped, one-shot reminders with trimmed private content, an explicit
+offset-aware UTC due instant, deterministic scheduled/fired/completed/canceled
+lifecycle transitions, optimistic versions, and UUID idempotency keys.  The
+authenticated reminder API and management workspace may expose content only to
+the owning principal.  Lifecycle events use the generic transactional outbox
+with an `automation.reminder` aggregate and identifier-only metadata; content
+does not enter transport envelopes, telemetry, or ordinary audit metadata.
+Recurrence, editing, deletion, notifications, external delivery, and
+model-facing mutation tools remain separate approved slices.
+
 ## Home Assistant
 
 Home Assistant remains authoritative for devices, entities, areas, scenes, and automations. Aura provides governed queries and typed actions through scoped adapters. Clear approved commands may use a deterministic intent path; ambiguous targets require clarification. High-impact actions require explicit policy evaluation and configured confirmation.

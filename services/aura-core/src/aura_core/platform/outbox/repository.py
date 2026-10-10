@@ -26,6 +26,7 @@ class SqlOutboxRepository:
             OutboxRow(
                 id=command_id,
                 topic="aura.runs.execute.v1",
+                aggregate_type="run",
                 aggregate_id=run_id,
                 payload={
                     "schemaVersion": 1,
@@ -51,11 +52,15 @@ class SqlOutboxRepository:
 
         existing = await session.get(OutboxRow, command.id)
         if existing is None:
+            aggregate_id = command.aggregate_id or command.run_id
+            if aggregate_id is None:
+                raise ValueError("outbox command has no aggregate identity")
             session.add(
                 OutboxRow(
                     id=command.id,
                     topic=command.topic,
-                    aggregate_id=command.run_id,
+                    aggregate_type=command.aggregate_type or "run",
+                    aggregate_id=aggregate_id,
                     payload=json.loads(command.wire_payload()),
                 )
             )
