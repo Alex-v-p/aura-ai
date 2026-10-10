@@ -96,6 +96,35 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.platform.database.base
   - aura-core.platform.telemetry
+- id: aura-core.domains.automation.reminders.proposals
+  root: services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
+  python_modules:
+  - aura_core.domains.automation.reminders.proposals
+  source_files:
+  - services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
+  dependencies:
+  - aura-core.domains.automation.reminders
+  - aura-core.platform.database.base
+- id: aura-core.domains.governance.approvals
+  root: services/aura-core/src/aura_core/domains/governance/approvals
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/governance/approvals/public.py
+  python_modules:
+  - aura_core.domains.governance.approvals
+  source_files:
+  - services/aura-core/src/aura_core/domains/governance/approvals/__init__.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/persistence.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/public.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+  dependencies:
+  - aura-core.domains.automation.reminders
+  - aura-core.domains.governance.audit.public
+  - aura-core.domains.governance.identity.public
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
 - id: aura-core.domains.automation.notifications
   root: services/aura-core/src/aura_core/domains/automation/notifications
   kind: package
@@ -342,6 +371,7 @@ modules:
   - aura-core.entrypoints.api.errors
   - aura-core.entrypoints.api.routes
   - aura-core.entrypoints.api.routes.auth
+  - aura-core.entrypoints.api.routes.approvals
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.routes.health
@@ -531,6 +561,8 @@ modules:
   python_modules:
   - aura_core.bootstrap.database
   dependencies:
+  - aura-core.domains.automation.reminders.proposals
+  - aura-core.domains.governance.approvals
   - aura-core.domains.automation.reminders
   - aura-core.domains.automation.notifications
   - aura-core.domains.execution.runs
@@ -557,6 +589,16 @@ modules:
   python_modules:
   - aura_core.bootstrap.health
   dependencies: []
+- id: aura-core.bootstrap.approval-uow
+  root: services/aura-core/src/aura_core/bootstrap/approval_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/approval_uow.py
+  python_modules:
+  - aura_core.bootstrap.approval_uow
+  dependencies:
+  - aura-core.domains.automation.reminders.proposals
+  - aura-core.domains.governance.approvals
+  - aura-core.platform.telemetry
 - id: aura-core.bootstrap.memory-uow
   root: services/aura-core/src/aura_core/bootstrap/memory_uow.py
   kind: python
@@ -1031,6 +1073,7 @@ modules:
   - aura-core.entrypoints.api.routes
   - aura-core.entrypoints.api.routes.agents
   - aura-core.entrypoints.api.routes.auth
+  - aura-core.entrypoints.api.routes.approvals
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.health
   - aura-core.entrypoints.api.routes.memories
@@ -1175,6 +1218,8 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.state
   dependencies:
+  - aura-core.bootstrap.approval-uow
+  - aura-core.domains.governance.approvals
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.health
@@ -1227,6 +1272,18 @@ modules:
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
+- id: aura-core.entrypoints.api.routes.approvals
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/approvals.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/approvals.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.approvals
+  dependencies:
+  - aura-core.domains.governance.approvals
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.cli
   root: services/aura-core/src/aura_core/entrypoints/cli.py
   kind: python
@@ -1245,12 +1302,15 @@ modules:
   python_modules:
   - aura_core.entrypoints.worker.app
   dependencies:
+  - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.memory-uow
+  - aura-core.bootstrap.reminder_uow
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.approvals
   - aura-core.domains.interaction.agents.adapters
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.personas.adapters
@@ -1470,6 +1530,7 @@ modules:
   kind: frontend-feature
   public_api: frontend/libs/aura/interaction/conversations/src/index.ts
   dependencies:
+  - aura-web.governance-approvals
   - aura-web.api-client
   - aura-web.interaction-agents
   - aura-web.interaction-personas
@@ -1501,6 +1562,12 @@ modules:
   dependencies:
   - aura-web.api-client
   - aura-web.automation-reminders
+- id: aura-web.governance-approvals
+  root: frontend/libs/aura/governance/approvals
+  kind: frontend-feature
+  public_api: frontend/libs/aura/governance/approvals/src/index.ts
+  dependencies:
+  - aura-web.api-client
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract

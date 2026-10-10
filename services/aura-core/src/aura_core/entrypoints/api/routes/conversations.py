@@ -45,6 +45,7 @@ class CreateConversationRequest(BaseModel):
     modelId: str | None = Field(default=None, min_length=1, max_length=255)
     agentRevisionId: UUID | None = None
     personaRevisionId: UUID | None = None
+    clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class UpdateConversationRequest(BaseModel):
@@ -67,6 +68,7 @@ class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=32768)
     conversationVersion: int = Field(ge=1)
+    clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class UpdateConversationMetadataRequest(BaseModel):
@@ -176,6 +178,7 @@ def conversation_payload(
         "agentProfileId": str(conversation.agent_profile_id),
         "agentRevisionId": str(conversation.agent_revision_id),
         "modelId": conversation.model_id,
+        "clientTimeZone": conversation.client_time_zone,
         "version": conversation.version,
         "createdAt": conversation.created_at.isoformat(),
         "updatedAt": conversation.updated_at.isoformat(),
@@ -355,6 +358,7 @@ async def create_conversation(
             idempotency_key,
             body.agentRevisionId,
             body.personaRevisionId,
+            body.clientTimeZone,
         )
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
@@ -364,6 +368,8 @@ async def create_conversation(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PersonaUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidConversationMetadata as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _record_model_persistence(request, run, persistence_timer.elapsed_ms(), routing_duration_ms)
     await state(request).coordinator.enqueue(run)
     return {
@@ -644,6 +650,7 @@ async def create_run(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> dict[str, object]:
     persistence_timer = Stopwatch()
+    timezone_outcome = "omitted" if body.clientTimeZone is None else "valid"
     try:
         conversation, message, run = await state(request).store.add_run(
             conversation_id,
@@ -652,6 +659,7 @@ async def create_run(
             body.conversationVersion,
             idempotency_key,
             session.principal.issuer,
+            body.clientTimeZone,
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
@@ -661,8 +669,17 @@ async def create_run(
         ArchivedConversationConflict,
         IdempotencyConflict,
         AgentUnavailable,
+        InvalidConversationMetadata,
     ) as exc:
+        if isinstance(exc, InvalidConversationMetadata):
+            timezone_outcome = "invalid"
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        state(request).metrics.increment(
+            "aura.runtime.prompt_compilation",
+            "client_timezone_validation_outcome",
+            outcome=timezone_outcome,
+        )
     _record_model_persistence(request, run, persistence_timer.elapsed_ms())
     await state(request).coordinator.enqueue(run)
     return {

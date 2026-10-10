@@ -1,6 +1,6 @@
 # Tools, automation, and integrations
 
-> **Status:** Architecture baseline with implemented governed read-only tool runtime v1, plus envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
+> **Status:** Architecture baseline with implemented governed tools (`memory.search@1` and approval-backed `reminder.create@1`), plus envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
 
 ## Baseline separation
 
@@ -33,7 +33,42 @@ Aura uses provider-native tool calls through a provider-neutral runtime interfac
 
 The authenticated catalog and policy APIs, additive agent/run policy identifiers and counters, and metadata-only `tool.status` event are authoritative in `contracts/openapi/aura-v1.yaml` version 1.6.0 and `contracts/events/runs/v1/run-events.schema.json`. Provider-native call identifiers and payloads, tool arguments, queries, raw results, memory content, prompts, responses, credentials, and hidden reasoning are excluded from these public contracts.
 
-This slice does not authorize mutating tools, confirmation workflows, shell or filesystem access, network fetching, Home Assistant, calendars, documents, automation, external providers, or Observatory product behavior. Those remain envisioned capabilities requiring separately approved scope and policy.
+## Approval-backed reminder creation v1
+
+The additive registry entry `reminder.create@1` is the first governed
+mutation. It accepts only an object containing trimmed private `content` and an
+RFC3339 offset-aware `dueAt`; Core normalizes the instant to UTC, enforces a
+strictly future one-shot reminder, and returns only the reminder identifier,
+status, and UTC due time. The tool is private, requires `reminders:write`, has
+unconditional confirmation, zero retries, a bounded timeout, and idempotent
+execution. A model request can never create a reminder before the owner has
+approved its durable proposal.
+
+Approval is owner-scoped and expires at the earlier of one hour after creation
+or the requested due instant. Pending, approved, rejected, expired, canceled,
+executing, completed, and failed state remain inspectable. Approval and
+resumption races use PostgreSQL row locks, expected versions, and idempotency;
+approval atomically queues the waiting run and the worker performs exactly one
+shared reminder-create use case before one tools-disabled synthesis step.
+
+The built-in Aura successor policy grants exactly `memory.search@1` and
+`reminder.create@1`; custom agents remain deny-by-default and existing
+conversations retain their pinned immutable revisions. An optional browser
+IANA timezone is captured at run admission and pinned immutably. Prompt
+compilation supplies server-derived local date/time and zone provenance; if no
+timezone is pinned, ambiguous natural-language times require clarification and
+an explicit offset.
+
+Approval detail responses may include private proposal content only after
+owner authorization. Approval SSE, run events, audit, telemetry, NATS
+wakeups, and transactional-outbox envelopes are metadata-only: identifiers,
+bounded statuses, versions, and lifecycle timestamps only. Persisted
+PostgreSQL replay is authoritative, so reconnects, duplicate wakeups, and
+offline inbox visits cannot lose a decision or disclose reminder content.
+
+This slice does not authorize shell or filesystem access, network fetching,
+Home Assistant, calendars, documents, recurring or edited reminders, external
+providers, or Observatory product behavior.
 
 ## Deterministic automation
 

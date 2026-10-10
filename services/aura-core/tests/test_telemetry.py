@@ -286,9 +286,9 @@ def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> 
     assert all("arguments" not in dict(item.trace_attributes) for item in measurements)
     assert all("result" not in dict(item.trace_attributes) for item in measurements)
     assert metrics.stats().rejected >= 3
-    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.0.0"
-    assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.0.0"
-    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.0.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.1.0"
+    assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.1.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.1.0"
 
 
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:
@@ -1048,3 +1048,49 @@ def _contains_uuid(values: dict[str, object]) -> bool:
             continue
         return True
     return False
+
+
+def test_aura0056_telemetry_vocabulary_accepts_approval_sse_and_reminder_tool() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    metrics.increment(
+        "aura.governance.approval_workflow",
+        "approval_sse_connection_count",
+        outcome="opened",
+    )
+    metrics.observe(
+        "aura.governance.approval_workflow",
+        "approval_sse_replay_count",
+        1.0,
+        outcome="ok",
+    )
+    metrics.record_span(
+        "aura.governance.approval_workflow",
+        "approval.sse",
+        2.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="approval-replay",
+        outcome="closed",
+        error_class="stream_error",
+    )
+    metrics.increment(
+        "aura.runtime.tool_execution",
+        "reminder_create_tool_outcome",
+        outcome="completed",
+        idempotency="approval-derived",
+    )
+
+    assert metrics.stats().rejected == 0
+
+
+def test_optional_client_timezone_omission_is_a_registered_outcome() -> None:
+    metrics = MetadataMetrics()
+    metrics.increment(
+        "aura.runtime.prompt_compilation",
+        "client_timezone_validation_outcome",
+        outcome="omitted",
+    )
+
+    assert metrics.stats().rejected == 0

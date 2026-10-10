@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.policy_evaluation
-  version: 1.0.0
+  version: 1.1.0
   owner: runtime.tools
   category: policy
 input:
@@ -28,6 +28,7 @@ capture_policy: metadata_only
 evaluators:
   - tool_argument_accuracy
   - tool_permission_enforcement
+  - reminder_tool_permission_enforcement
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
   trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id]

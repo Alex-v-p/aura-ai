@@ -11,12 +11,14 @@
     { "$ref": "#/$defs/RunErrorEvent" },
     { "$ref": "#/$defs/MemoryActivityEvent" },
     { "$ref": "#/$defs/ToolStatusEvent" },
+    { "$ref": "#/$defs/ApprovalStatusEvent" },
     { "$ref": "#/$defs/HeartbeatEvent" }
   ],
   "$defs": {
     "Uuid": { "type": "string", "format": "uuid" },
     "Timestamp": { "type": "string", "format": "date-time" },
-    "RunStatus": { "type": "string", "enum": ["queued", "running", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+    "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+    "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier validated by the producer against its deployed timezone database." },
     "BaseProperties": {
       "type": "object",
       "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"],
@@ -45,6 +47,10 @@
         "toolPolicyRevisionId": { "$ref": "#/$defs/Uuid" },
         "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1 },
         "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "clientTimeZone": { "oneOf": [{ "$ref": "#/$defs/ClientTimeZone" }, { "type": "null" }], "description": "Validated timezone pinned at run admission. Optional for pre-1.9 producers." },
+        "approvalId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
+        "pendingToolCallId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
+        "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/$defs/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
@@ -172,7 +178,11 @@
     },
     "ToolStatus": {
       "type": "string",
-      "enum": ["pending", "executing", "completed", "denied", "failed"]
+      "enum": ["pending", "awaiting_confirmation", "executing", "completed", "denied", "failed"]
+    },
+    "RunToolLifecycleStatus": {
+      "type": "string",
+      "enum": ["awaiting_confirmation", "approved", "denied", "executing", "completed", "failed"]
     },
     "ToolStatusData": {
       "type": "object",
@@ -194,6 +204,37 @@
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
           "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "tool.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ToolStatusData" }
+        } }
+      ]
+    },
+    "ApprovalStatus": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected", "expired", "canceled"]
+    },
+    "ApprovalExecutionStatus": {
+      "type": "string",
+      "enum": ["not_started", "queued", "executing", "completed", "failed", "denied"]
+    },
+    "ApprovalStatusData": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Metadata-only approval lifecycle state. Proposal content, requested due time, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+      "required": ["approvalId", "proposalId", "runId", "conversationId", "status", "executionStatus", "version"],
+      "properties": {
+        "approvalId": { "$ref": "#/$defs/Uuid" },
+        "proposalId": { "$ref": "#/$defs/Uuid" },
+        "runId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "$ref": "#/$defs/Uuid" },
+        "status": { "$ref": "#/$defs/ApprovalStatus" },
+        "executionStatus": { "$ref": "#/$defs/ApprovalExecutionStatus" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ApprovalStatusEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "approval.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ApprovalStatusData" }
         } }
       ]
     },

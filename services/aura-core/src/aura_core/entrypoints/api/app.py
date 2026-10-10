@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from aura_core.entrypoints.api.errors import install_error_handlers
 from aura_core.entrypoints.api.routes import (
     agents,
+    approvals,
     auth,
     conversations,
     health,
@@ -151,6 +152,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(memories.router)
     app.include_router(memories.candidate_router)
     app.include_router(agents.router)
+    app.include_router(approvals.router)
     app.include_router(personas.router)
     app.include_router(conversations.router)
     app.include_router(runs.router)

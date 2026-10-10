@@ -1,6 +1,6 @@
 component:
   id: aura.execution.run_coordinator
-  version: 1.5.0
+  version: 1.6.0
   owner: aura-core
   category: execution
 input:
@@ -21,6 +21,7 @@ dependencies:
   - aura.runtime.tool_selection
   - aura.runtime.policy_evaluation
   - aura.runtime.tool_execution
+  - aura.governance.approval_workflow
 metrics:
   - queue_wait_ms
   - run_duration_ms
@@ -35,6 +36,8 @@ metrics:
   - consumer_acknowledged
   - lease_expired
   - errors
+evaluators:
+  - approval_race_exactly_once
 metric_semantics:
   queue_wait_ms: Persisted run started_at minus persisted run created_at.
   run_duration_ms: Monotonic elapsed execution time tagged with terminal status.

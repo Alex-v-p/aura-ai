@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.tool_execution
-  version: 1.0.0
+  version: 1.1.0
   owner: runtime.tools
   category: execution
 input:
@@ -19,6 +19,7 @@ metrics:
   - tool_execution_duration_ms
   - tool_execution_outcome
   - tool_timeout_count
+  - reminder_create_tool_outcome
 metric_semantics:
   tool_execution_duration_ms: Bounded tool handler duration.
   tool_execution_outcome: Content-free execution outcome.
@@ -27,9 +28,10 @@ capture_policy: metadata_only
 evaluators:
   - tool_execution_completion
   - memory_scope_authorization
+  - confirmation_side_effect_prevention
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id, idempotency]
   prohibited: [prompt, response, arguments, query, content, result, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

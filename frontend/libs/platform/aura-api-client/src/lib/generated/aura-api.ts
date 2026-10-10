@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 00b6bb7f1e9c074b92e98eec6603ff28cb3bcd56944d8d2ed08840315821e000
+// Contract SHA-256: b098755581accbd1c179a216468b284a13f89ce2f37c9c07c3d6cdf81343fb72
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -173,13 +173,13 @@ export type CreatePersonaRevisionRequest = { readonly "displayName": string; rea
 
 export type UpdatePersonaStatusRequest = { readonly "status": ProfileStatus; readonly "expectedVersion": number; };
 
-export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; };
+export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
 
 export type UpdateConversationRequest = { readonly "modelId"?: string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "useAgentDefaultPersona"?: true; readonly "transcriptSharingConfirmed"?: boolean; readonly "version": number; };
 
 export type UpdateConversationMetadataRequest = { readonly "title"?: string; readonly "archived"?: boolean; readonly "version": number; };
 
-export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; };
+export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
 
 export type ConversationPage = { readonly "items": ReadonlyArray<ConversationSummary>; readonly "nextCursor": string | null; };
 
@@ -197,9 +197,13 @@ export type ConversationDetail = ConversationSummary & { readonly "messages": Re
 
 export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
-export type RunStatus = "queued" | "running" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
+export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
+
+export type ClientTimeZone = string;
+
+export type RunToolLifecycleStatus = "awaiting_confirmation" | "approved" | "denied" | "executing" | "completed" | "failed";
 
 export type ConversationArchiveState = "active" | "archived" | "all";
 
@@ -207,7 +211,7 @@ export type RunError = { readonly "code": string; readonly "message": string; re
 
 export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; };
 
-export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | HeartbeatEvent;
+export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
 
 export type RunEventBase = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "sequence": number; readonly "eventType": string; readonly "runId": string; readonly "conversationId": string; readonly "occurredAt": string; };
 
@@ -225,6 +229,8 @@ export type MemoryActivityEvent = RunEventBase & { readonly "eventType": "memory
 
 export type ToolStatusEvent = RunEventBase & { readonly "eventType": "tool.status"; readonly "data": ToolStatusData; };
 
+export type ApprovalStatusEvent = RunEventBase & { readonly "eventType": "approval.status"; readonly "data": ApprovalStatusData; };
+
 export type HeartbeatEvent = RunEventBase & { readonly "eventType": "heartbeat"; readonly "data": { readonly "serverTime": string; }; };
 
 export type RunSnapshotData = { readonly "run": Run; readonly "assistantMessage": Message | null; };
@@ -235,9 +241,11 @@ export type AssistantDeltaData = { readonly "messageId": string; readonly "offse
 
 export type AssistantSnapshotData = { readonly "message": Message; };
 
-export type ToolStatus = "pending" | "executing" | "completed" | "denied" | "failed";
+export type ToolStatus = "pending" | "awaiting_confirmation" | "executing" | "completed" | "denied" | "failed";
 
 export type ToolStatusData = { readonly "callId": string; readonly "toolId": string; readonly "toolVersion": number; readonly "status": ToolStatus; readonly "errorClass"?: "capability" | "validation" | "policy" | "budget" | "timeout" | "provider_protocol" | "execution" | "cancellation"; readonly "errorCode"?: string; readonly "resultCount"?: number; };
+
+export type ApprovalStatusData = { readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; };
 
 export type ReminderStatus = "scheduled" | "fired" | "completed" | "canceled";
 
@@ -250,6 +258,26 @@ export type ReminderPage = { readonly "items": ReadonlyArray<Reminder>; readonly
 export type CreateReminderRequest = { readonly "content": string; readonly "dueAt": string; };
 
 export type ReminderTransitionRequest = { readonly "expectedVersion": number; };
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "canceled";
+
+export type ApprovalExecutionStatus = "not_started" | "queued" | "executing" | "completed" | "failed" | "denied";
+
+export type Approval = { readonly "id": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolCallId": string; readonly "toolId": "reminder.create"; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
+
+export type ReminderProposalDetail = { readonly "id": string; readonly "content": string; readonly "dueAt": string; };
+
+export type ApprovalDetail = Approval & { readonly "proposal": ReminderProposalDetail; };
+
+export type ApprovalPage = { readonly "items": ReadonlyArray<Approval>; readonly "nextCursor": string | null; };
+
+export type ApprovalDecisionRequest = { readonly "expectedVersion": number; };
+
+export type ApprovalStreamEvent = ApprovalEvent | ApprovalHeartbeatEvent;
+
+export type ApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolId": "reminder.create"; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
+
+export type ApprovalHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 
 export type NotificationStatus = "delivered" | "acknowledged";
 
@@ -330,6 +358,11 @@ export interface AuraApiOperations {
   readonly getReminder: { readonly response: Reminder; readonly body: never; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly completeReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly cancelReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listApprovals: { readonly response: ApprovalPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: ApprovalStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getApproval: { readonly response: ApprovalDetail; readonly body: never; readonly path: { readonly "approval_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly approveApproval: { readonly response: Approval; readonly body: ApprovalDecisionRequest; readonly path: { readonly "approval_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly rejectApproval: { readonly response: Approval; readonly body: ApprovalDecisionRequest; readonly path: { readonly "approval_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly streamApprovals: { readonly response: ApprovalStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly listNotifications: { readonly response: NotificationPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: NotificationStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
@@ -408,6 +441,11 @@ export const AURA_API_OPERATIONS = {
   getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', responseMode: 'json' },
   completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', responseMode: 'json' },
   cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', responseMode: 'json' },
+  listApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals', responseMode: 'json' },
+  getApproval: { method: 'GET', pathTemplate: '/api/v1/approvals/{approval_id}', responseMode: 'json' },
+  approveApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/approve', responseMode: 'json' },
+  rejectApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/reject', responseMode: 'json' },
+  streamApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals/stream', responseMode: 'event-stream' },
   listNotifications: { method: 'GET', pathTemplate: '/api/v1/notifications', responseMode: 'json' },
   getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', responseMode: 'json' },
   acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', responseMode: 'json' },

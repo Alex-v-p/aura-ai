@@ -1,6 +1,8 @@
 """Regression coverage for durable run-event sequencing."""
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -207,3 +209,28 @@ async def test_tool_status_replay_boundary_validates_before_persistence() -> Non
                     await publisher.hydrate([event])
                 else:
                     await publisher.ingest_external(event)
+
+
+def test_approval_run_lifecycle_is_versioned_and_metadata_only() -> None:
+    schema_path = (
+        Path(__file__).parents[3]
+        / "contracts/events/runs/v1/run-events.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert "waiting_for_confirmation" in schema["$defs"]["RunStatus"]["enum"]
+    assert "awaiting_confirmation" in schema["$defs"]["ToolStatus"]["enum"]
+    run_properties = schema["$defs"]["Run"]["properties"]
+    assert {
+        "clientTimeZone",
+        "approvalId",
+        "pendingToolCallId",
+        "toolLifecycleStatus",
+    } <= set(run_properties)
+    properties = schema["$defs"]["ToolStatusData"]["properties"]
+    assert not {
+        "content",
+        "dueAt",
+        "arguments",
+        "prompt",
+        "response",
+    } & set(properties)

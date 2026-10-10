@@ -695,7 +695,7 @@ for (const mode of configuredModes) {
       await expect(page.getByRole('heading', { level: 1, name: 'Model settings', exact: true })).toBeVisible({ timeout: 15_000 });
     });
 
-    test('exposes the governed read-only memory tool policy seam', async ({ page }) => {
+    test('exposes the governed built-in memory-and-reminder tool policy seam', async ({ page }) => {
       const config = stackConfig(mode);
       test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the tool policy seam`);
       if (!config) return;
@@ -706,6 +706,18 @@ for (const mode of configuredModes) {
       const tools = (await toolsResponse.json()) as { items?: Array<JsonObject> };
       expect(tools.items).toEqual([
         expect.objectContaining({ id: 'memory.search', version: 1, classification: 'read', permissionScope: 'memory:read' }),
+        expect.objectContaining({
+          id: 'reminder.create',
+          version: 1,
+          classification: 'mutation',
+          permissionScope: 'reminders:write',
+          confirmation: 'always',
+          timeoutMs: 10000,
+          retryLimit: 0,
+          idempotency: 'idempotent',
+          sensitivity: 'private',
+          observableComponent: 'aura.runtime.tool_execution',
+        }),
       ]);
       expect(JSON.stringify(tools.items)).not.toMatch(/handler|schema|credential|query|content/i);
 
@@ -719,7 +731,11 @@ for (const mode of configuredModes) {
       expect(policyResponse.ok(), await policyResponse.text()).toBeTruthy();
       const policy = (await policyResponse.json()) as JsonObject;
       const attached = (policy['items'] as Array<JsonObject> | undefined)?.find((item) => item['id'] === policy['attachedPolicyRevisionId']);
-      expect(attached).toMatchObject({ maxCallsPerRun: 1, timeoutMs: 30000, retryLimit: 0, grants: [{ toolId: 'memory.search', toolVersion: 1 }] });
+      expect(attached).toMatchObject({ maxCallsPerRun: 1, timeoutMs: 10000, retryLimit: 0 });
+      expect(attached?.['grants']).toEqual([
+        { toolId: 'memory.search', toolVersion: 1 },
+        { toolId: 'reminder.create', toolVersion: 1 },
+      ]);
     });
   });
 }

@@ -38,7 +38,7 @@
 .rename-form button { background: transparent; border: 1px solid var(--border); border-radius: .35rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .65rem; padding: .35rem; }
 .load-more { margin: .45rem .35rem; }
 .sr-only { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
-.product-nav { display: grid; flex: 0 0 auto; gap: .3rem; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: .9rem; padding: 0; }
+.product-nav { display: grid; flex: 0 0 auto; gap: .1rem; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: .9rem; padding: 0; }
 .product-link { align-items: center; border: 0; border-radius: .7rem; color: var(--text-muted); display: flex; flex-direction: column; gap: .25rem; justify-content: center; min-height: 2.75rem; min-width: 0; padding: 0; position: relative; text-align: center; text-decoration: none; transition: color .15s; }
 .product-link:hover { color: var(--text); }
 .product-link:focus-visible { z-index: 1; }
@@ -49,7 +49,7 @@
 .notification-destination:hover, .notification-destination.is-active { color: var(--text); }
 .notification-destination.is-active { box-shadow: inset 3px 0 var(--accent); }
 .notification-badge { align-items: center; background: var(--accent); border: 2px solid var(--surface); border-radius: 999px; color: var(--on-accent); display: inline-flex; font-size: .52rem; font-weight: 750; height: 1rem; justify-content: center; line-height: 1; min-width: 1rem; padding: 0 .18rem; position: absolute; right: .18rem; top: -.05rem; }
-.product-link .label { font-size: .55rem; letter-spacing: -.04em; line-height: 1.1; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.product-link .label { font-size: .48rem; letter-spacing: -.055em; line-height: 1.1; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 .nav-label { color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .09em; margin: 0 .6rem .5rem; text-transform: uppercase; }
 .nav-empty { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .75rem .6rem; }
 .conversation-link { align-items: center; background: transparent; border: 0; border-radius: .6rem; color: var(--text-muted); cursor: pointer; display: flex; font: inherit; font-size: .82rem; gap: .55rem; min-height: 2.5rem; overflow: hidden; padding: .45rem .6rem; text-align: left; text-decoration: none; width: 100%; }

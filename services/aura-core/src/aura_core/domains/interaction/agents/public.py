@@ -37,6 +37,8 @@ GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID = uuid5(
     NAMESPACE, "general-assistant-memory-personal-first-policy-3"
 )
 GENERAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-1")
+GENERAL_SUCCESSOR_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-2")
+GENERAL_SUCCESSOR_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-2")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -171,6 +173,10 @@ class ToolPolicy:
     timeout_ms: int = 30_000
     retry_limit: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Permission scopes are part of the immutable policy snapshot.  A grant
+    # alone is insufficient for mutating tools; the successor Aura policy is
+    # the only seeded policy that authorizes reminders:write.
+    permission_scopes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.revision < 1:
@@ -187,6 +193,10 @@ class ToolPolicy:
             raise ValueError("a granted tool policy must permit one call")
         if not self.grants and self.max_calls_per_run != 0:
             raise ValueError("an empty tool policy must deny calls")
+        if any(
+            ":" not in scope for scope in self.permission_scopes
+        ):
+            raise ValueError("tool permission scopes must be namespaced strings")
 
 
 AgentToolPolicy = ToolPolicy
@@ -349,6 +359,20 @@ class AgentCatalog:
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
             tool_policy_revision_id=GENERAL_TOOL_POLICY_ID,
         )
+        successor = AgentRevision(
+            GENERAL_SUCCESSOR_REVISION_ID,
+            GENERAL_PROFILE_ID,
+            2,
+            "Aura",
+            "A helpful local-first household assistant.",
+            "You are Aura, a helpful local-first household assistant.",
+            NEUTRAL_PERSONA_REVISION_ID,
+            PROMPT_BUNDLE_ID,
+            GENERAL_POLICY_ID,
+            "You are Aura, a helpful local-first household assistant.",
+            memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+            tool_policy_revision_id=GENERAL_SUCCESSOR_TOOL_POLICY_ID,
+        )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
             GENERAL_MEMORY_POLICY_ID,
             GENERAL_PROFILE_ID,
@@ -365,14 +389,24 @@ class AgentCatalog:
             1,
             grants=(ToolGrant("memory.search", 1),),
             max_calls_per_run=1,
+            permission_scopes=frozenset({"memory:read"}),
+        )
+        self.tool_policies[GENERAL_SUCCESSOR_TOOL_POLICY_ID] = ToolPolicy(
+            GENERAL_SUCCESSOR_TOOL_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            2,
+            grants=(ToolGrant("memory.search", 1), ToolGrant("reminder.create", 1)),
+            max_calls_per_run=1,
+            timeout_ms=10_000,
+            permission_scopes=frozenset({"memory:read", "reminders:write"}),
         )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
                 GENERAL_PROFILE_ID,
                 "general-assistant",
                 "Aura",
-                current_revision_id=revision.id,
-                revisions=[revision],
+                current_revision_id=successor.id,
+                revisions=[revision, successor],
             )
         }
 
@@ -682,7 +716,10 @@ class AgentCatalog:
     ) -> ToolPolicy:
         if agent_profile_id not in self.agents:
             raise ConfigurationNotFound("agent not found")
-        if any(grant != ToolGrant("memory.search", 1) for grant in grants):
+        if any(
+            grant not in {ToolGrant("memory.search", 1), ToolGrant("reminder.create", 1)}
+            for grant in grants
+        ):
             raise ValueError("unknown tool grant")
         fingerprint = _canonical_fingerprint(
             "tool-policy",
@@ -1305,6 +1342,8 @@ __all__ = [
     "GENERAL_MEMORY_POLICY_ID",
     "GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID",
     "GENERAL_TOOL_POLICY_ID",
+    "GENERAL_SUCCESSOR_TOOL_POLICY_ID",
+    "GENERAL_SUCCESSOR_REVISION_ID",
     "platform_memory_policy_id",
     "is_platform_memory_policy",
     "MemoryPolicy",

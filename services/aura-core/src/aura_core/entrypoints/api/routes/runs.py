@@ -185,11 +185,11 @@ async def cancel_run(
 ) -> dict[str, object]:
     persistence_timer = Stopwatch()
     try:
-        run = await state(request).store.request_cancel(
+        run = await state(request).coordinator.cancel(
             run_id,
             session.principal.subject,
-            idempotency_key,
             session.principal.issuer,
+            idempotency_key,
         )
     except ConversationNotFound as exc:
         _record_command_error(request, run_id, "run.cancel", persistence_timer.elapsed_ms())

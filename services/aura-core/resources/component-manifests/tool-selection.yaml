@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.tool_selection
-  version: 1.0.0
+  version: 1.1.0
   owner: runtime.tools
   category: selection
 input:
@@ -18,15 +18,17 @@ dependencies:
 metrics:
   - tool_selection_duration_ms
   - tool_selection_outcome
+  - reminder_create_tool_outcome
 metric_semantics:
   tool_selection_duration_ms: Bounded native provider selection duration.
   tool_selection_outcome: Content-free selection branch outcome.
 capture_policy: metadata_only
 evaluators:
   - tool_selection_quality
+  - reminder_tool_selection_and_arguments
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id, idempotency]
   prohibited: [prompt, response, arguments, query, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

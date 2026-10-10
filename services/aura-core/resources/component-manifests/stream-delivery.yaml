@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.stream_delivery
-  version: 1.2.0
+  version: 1.3.0
   owner: aura-core
   category: delivery
 input:
@@ -24,6 +24,8 @@ metrics:
   - events_delivered
   - stream_delivery_duration_ms
   - errors
+evaluators:
+  - approval_reconnect_reconciliation
 metric_semantics:
   memory_activity_publication_duration_ms: Identifier-only durable activity publication duration.
   memory_activity_publication_outcome: Metadata-only durable activity publication outcome.

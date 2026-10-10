@@ -8,7 +8,10 @@ tools (currently only ``memory.search``).
 from aura_core.runtime.tools.public import (
     MEMORY_SEARCH_TOOL_ID,
     MEMORY_SEARCH_TOOL_VERSION,
+    REMINDER_CREATE_TOOL_ID,
+    REMINDER_CREATE_TOOL_VERSION,
     MemorySearchContext,
+    ReminderCreateContext,
     ToolCall,
     ToolDescriptor,
     ToolExecutionError,
@@ -25,7 +28,10 @@ from aura_core.runtime.tools.public import (
 __all__ = [
     "MEMORY_SEARCH_TOOL_ID",
     "MEMORY_SEARCH_TOOL_VERSION",
+    "REMINDER_CREATE_TOOL_ID",
+    "REMINDER_CREATE_TOOL_VERSION",
     "MemorySearchContext",
+    "ReminderCreateContext",
     "ToolCall",
     "ToolDescriptor",
     "ToolExecutionError",

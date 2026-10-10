@@ -38,6 +38,10 @@
           <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3.2 2"/><path d="M8 3.8 6.5 2.5M16 3.8l1.5-1.3"/></svg>
           <span class="label">Reminders</span><span class="product-current-marker" aria-hidden="true">✓</span>
         </a>
+        <a class="product-link" routerLink="/approvals" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Approvals" title="Approvals" (click)="closeMobileNavigation(isMobileViewport())">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3.5h10a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>
+          <span class="label">Approvals</span>@if (approvals.pendingCount()) { <span class="notification-badge" aria-hidden="true">{{ approvals.pendingCount() > 99 ? '99+' : approvals.pendingCount() }}</span> }<span class="product-current-marker" aria-hidden="true">✓</span>
+        </a>
       </div>
       @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
         <div class="conversation-nav" aria-label="Conversations">

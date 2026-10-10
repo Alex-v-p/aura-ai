@@ -21,6 +21,7 @@ class ConversationRow(Base):
     agent_profile_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     agent_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     persona_override_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    client_time_zone: Mapped[str | None] = mapped_column(String(128))
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

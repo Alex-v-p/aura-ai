@@ -1,18 +1,48 @@
 import asyncio
-from collections.abc import Sequence
+import json
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
-from aura_core.domains.execution.runs.public import RunClaimLost, RunCoordinator, RunStatus
+from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.domains.automation.reminders.proposals import MemoryReminderProposalRepository
+from aura_core.domains.automation.reminders.public import (
+    ReminderApplicationService,
+    ReminderView,
+)
+from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
+from aura_core.domains.execution.runs.ports import ChatCompletionPort
+from aura_core.domains.execution.runs.public import (
+    RunClaim,
+    RunClaimLost,
+    RunCoordinator,
+    RunError,
+    RunRepository,
+    RunStatus,
+)
+from aura_core.domains.governance.approvals.public import (
+    Approval,
+    ApprovalApplicationService,
+    ApprovalDetail,
+    ApprovalExecutionStatus,
+)
+from aura_core.domains.governance.approvals.repository import MemoryApprovalRepository
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     ConversationStore,
+    InvalidConversationMetadata,
     MessageState,
     ModelUnavailable,
     VersionConflict,
+    server_local_time,
+    validate_client_time_zone,
 )
+from aura_core.entrypoints.worker import app as worker_app
 from aura_core.platform.outbox import InMemoryOutbox
 from aura_core.platform.telemetry import MetadataMetrics, new_span_id
 from aura_core.providers.models.ollama.fake import FakeChatModel
@@ -25,6 +55,60 @@ from aura_core.runtime.models.ports import (
     ModelToolCall,
 )
 from aura_core.runtime.streaming.publisher import EventPublisher
+
+ResumeApproval = Callable[
+    [
+        Approval,
+        ApprovalApplicationService,
+        SqlConversationStore,
+        RunCoordinator,
+        ChatCompletionPort,
+        MetadataMetrics,
+    ],
+    Awaitable[None],
+]
+_resume_approval = cast(ResumeApproval, vars(worker_app)["_resume_approval"])
+
+
+def test_client_timezone_is_optional_but_validated_as_an_iana_identifier() -> None:
+    assert validate_client_time_zone(None) is None
+    assert validate_client_time_zone("Europe/Brussels") == "Europe/Brussels"
+    for value in ("", " UTC", "UTC ", "not/a-zone", "../etc/passwd"):
+        with pytest.raises(InvalidConversationMetadata):
+            validate_client_time_zone(value)
+
+
+def test_server_clock_renders_pinned_zone_and_dst_equivalent_instants() -> None:
+    first = datetime(2026, 3, 29, 1, 30, tzinfo=UTC)
+    second = datetime(2026, 3, 29, 3, 30, tzinfo=ZoneInfo("Europe/Brussels"))
+    assert first == second
+    assert server_local_time(first, "Europe/Brussels") == "2026-03-29T03:30:00+02:00"
+    assert server_local_time(first, None) is None
+
+
+def test_timezone_contracts_match_runtime_length_pattern_and_digit_zones() -> None:
+    repository = Path(__file__).parents[3]
+    openapi = json.loads(
+        (repository / "contracts/openapi/aura-v1.yaml").read_text(encoding="utf-8")
+    )
+    run_events = json.loads(
+        (repository / "contracts/events/runs/v1/run-events.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    definitions = (
+        openapi["components"]["schemas"]["ClientTimeZone"],
+        run_events["$defs"]["ClientTimeZone"],
+    )
+    for definition in definitions:
+        assert definition["maxLength"] == 128
+        assert definition["pattern"] == r"^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$"
+    for candidate in ("CST6CDT", "EST5EDT", "PST8PDT"):
+        try:
+            ZoneInfo(candidate)
+        except Exception:
+            continue
+        assert validate_client_time_zone(candidate) == candidate
 
 
 class _FakeMemoryRecall:
@@ -86,6 +170,7 @@ class _NativeToolProvider:
     ) -> None:
         self.tool_messages: list[object] = []
         self.synthesis_messages: list[ChatMessage] = []
+        self.synthesis_calls = 0
         self.tool_capable = tool_capable
         self.selection_events = tuple(
             selection_events
@@ -110,8 +195,163 @@ class _NativeToolProvider:
 
     async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
         del model_id
+        self.synthesis_calls += 1
         self.synthesis_messages = list(messages)
         yield "The owner prefers tea."
+
+
+class _SynthesisFailureProvider(_NativeToolProvider):
+    async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+        del model_id, messages
+        self.synthesis_calls += 1
+        raise RuntimeError("synthesis unavailable")
+        yield "unreachable"
+
+
+class _CrashBoundary(BaseException):
+    """Simulated worker loss that bypasses normal exception settlement."""
+
+
+class _CrashOnceReminderService:
+    def __init__(self, inner: ReminderApplicationService, *, after_commit: bool) -> None:
+        self.inner = inner
+        self.after_commit = after_commit
+        self.crashed = False
+
+    async def create(self, issuer: str, subject: str, **kwargs: object) -> object:
+        content = cast(str, kwargs["content"])
+        due_at = cast(datetime, kwargs["due_at"])
+        idempotency_key = cast(str, kwargs["idempotency_key"])
+        if self.crashed:
+            return await self.inner.create(
+                issuer,
+                subject,
+                content=content,
+                due_at=due_at,
+                idempotency_key=idempotency_key,
+            )
+        self.crashed = True
+        if not self.after_commit:
+            raise _CrashBoundary
+        await self.inner.create(
+            issuer,
+            subject,
+            content=content,
+            due_at=due_at,
+            idempotency_key=idempotency_key,
+        )
+        raise _CrashBoundary
+
+
+class _BlockingReminderService:
+    def __init__(self, inner: ReminderApplicationService) -> None:
+        self.inner = inner
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def create(self, issuer: str, subject: str, **kwargs: object) -> object:
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+        return await self.inner.create(
+            issuer,
+            subject,
+            content=cast(str, kwargs["content"]),
+            due_at=cast(datetime, kwargs["due_at"]),
+            idempotency_key=cast(str, kwargs["idempotency_key"]),
+        )
+
+
+class _CrashAfterClaimStore:
+    """Lose a worker after durable claim and before handler dispatch."""
+
+    def __init__(self, inner: ConversationStore) -> None:
+        self.inner = inner
+        self.crashed = False
+
+    async def start_run(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: UUID | None = None,
+        lease_seconds: float = 300.0,
+    ) -> RunClaim:
+        claim = await self.inner.start_run(
+            run_id, worker_id=worker_id, lease_seconds=lease_seconds
+        )
+        if claim.acquired and not self.crashed:
+            self.crashed = True
+            raise _CrashBoundary
+        return claim
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
+class _CrashAfterFinishStore:
+    """Lose a worker after the terminal run row commits."""
+
+    def __init__(self, inner: ConversationStore) -> None:
+        self.inner = inner
+        self.crashed = False
+
+    async def finish_run(
+        self,
+        run_id: UUID,
+        status: RunStatus,
+        error: RunError | None = None,
+        *,
+        attempt_id: UUID | None = None,
+    ) -> tuple[object, object, object | None]:
+        result = await self.inner.finish_run(
+            run_id, status, error, attempt_id=attempt_id
+        )
+        if status is RunStatus.COMPLETED and not self.crashed:
+            self.crashed = True
+            raise _CrashBoundary
+        return result
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
+class _FailingCompletionApprovalService:
+    def __init__(
+        self, inner: ApprovalApplicationService, *, fail_completion: bool = True
+    ) -> None:
+        self.inner = inner
+        self.calls = 0
+        self.fail_completion = fail_completion
+
+    async def set_execution_status(
+        self,
+        approval_id: UUID,
+        status: ApprovalExecutionStatus,
+        *,
+        issuer: str | None = None,
+        subject: str | None = None,
+        run_id: UUID | None = None,
+        expected_version: int | None = None,
+    ) -> Approval:
+        self.calls += 1
+        status_value = getattr(status, "value", status)
+        if status_value == "completed" and self.fail_completion:
+            raise RuntimeError("approval completion persistence unavailable")
+        return await self.inner.set_execution_status(
+            approval_id,
+            status,
+            issuer=issuer,
+            subject=subject,
+            run_id=run_id,
+            expected_version=expected_version,
+        )
+
+    async def get(self, issuer: str, subject: str, approval_id: UUID) -> ApprovalDetail:
+        return await self.inner.get(issuer, subject, approval_id)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
 
 
 @pytest.mark.asyncio
@@ -130,6 +370,568 @@ async def test_create_is_atomic_and_idempotent() -> None:
     assert first[0].title == "Hello Aura"
     assert len(first[0].messages) == 1
     assert first[2].status == RunStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_waiting_transition_releases_attempt_and_duplicate_resume_is_idempotent() -> None:
+    models = await FakeChatModel().list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Create a reminder", "fake", models, str(uuid4())
+    )
+    claim = await store.start_run(run.id, worker_id=uuid4())
+    assert claim.acquired
+    assert claim.run.attempt_id is not None
+    approval_id = uuid4()
+    tool_call_id = uuid4()
+
+    waiting = await store.wait_for_confirmation(
+        run.id, claim.run.attempt_id, approval_id, tool_call_id
+    )
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.attempt_id is None
+    assert waiting.lease_expires_at is None
+    assert waiting.approval_id == approval_id
+    assert waiting.pending_tool_call_id == tool_call_id
+    assert waiting.tool_lifecycle_status == "awaiting_confirmation"
+
+    resumed = await store.resume_waiting_run(run.id, approval_id, approved=True)
+    duplicate = await store.resume_waiting_run(run.id, approval_id, approved=True)
+    assert resumed.status is duplicate.status is RunStatus.QUEUED
+    assert resumed.tool_lifecycle_status == duplicate.tool_lifecycle_status == "approved"
+    assert (await store.find_run_any(run.id))[1].status is RunStatus.QUEUED
+    assert conversation.id == resumed.conversation_id
+
+
+@pytest.mark.asyncio
+async def test_approved_reminder_resumption_is_exactly_once_and_synthesis_has_tools_disabled(
+) -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "private reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Create a reminder", "tool-model", models, str(uuid4())
+    )
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approvals,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    assert pending.approval.status.value == "pending"
+    assert (
+        await reminders.list(
+            "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+        )
+    ).items == ()
+
+    approved = await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="approval-once",
+    )
+    assert approved.status.value == "approved"
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    await coordinator.execute(run.id, provider)
+    await coordinator.execute(run.id, provider)
+    _, completed = await store.find_run_any(run.id)
+    assert completed.status is RunStatus.COMPLETED
+    reminders_page = await reminders.list(
+        "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+    )
+    assert len(reminders_page.items) == 1
+    # The resumed path invokes one tools-disabled synthesis call. Duplicate
+    # delivery cannot re-enter provider tool selection or create another row.
+    assert provider.tool_messages == ["selection"]
+    assert provider.synthesis_messages
+
+
+@pytest.mark.asyncio
+async def test_reminder_commit_then_synthesis_failure_settles_once_and_replays_safely() -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _SynthesisFailureProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "committed reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Synthesis failure", "tool-model", models, str(uuid4())
+    )
+    proposals = MemoryReminderProposalRepository(clock=lambda: now)
+    approvals = MemoryApprovalRepository(proposals, clock=lambda: now)
+    approval_service = ApprovalApplicationService(approvals)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approval_service,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="synthesis-failure-approval",
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    await coordinator.execute(run.id, provider)
+    _, failed = await store.find_run_any(run.id)
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    reminders_page = await reminders.list(
+        "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+    )
+    assert failed.status is RunStatus.FAILED
+    assert execution_status == "failed"
+    assert provider.synthesis_calls == 1
+    assert len(reminders_page.items) == 1
+    events = await approvals.replay("https://issuer", "owner")
+    execution_statuses = [
+        getattr(event.execution_status, "value", event.execution_status) for event in events
+    ]
+    assert "completed" not in execution_statuses
+    assert execution_statuses.count("failed") == 1
+
+    # A redelivery after terminal failure cannot re-enter the provider or
+    # mutate the approval from failed back to another terminal state.
+    await coordinator.execute(run.id, provider)
+    _, replayed = await store.find_run_any(run.id)
+    replay_detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    replay_status = getattr(
+        replay_detail.approval.execution_status,
+        "value",
+        replay_detail.approval.execution_status,
+    )
+    replay_reminders = await reminders.list(
+        "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+    )
+    assert replayed.status is RunStatus.FAILED
+    assert replay_status == "failed"
+    assert provider.synthesis_calls == 1
+    assert len(replay_reminders.items) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_finish_crash_replays_without_duplicate_reminder_or_synthesis() -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "terminal crash reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Terminal crash", "tool-model", models, str(uuid4())
+    )
+    proposals = MemoryReminderProposalRepository(clock=lambda: now)
+    approvals = MemoryApprovalRepository(proposals, clock=lambda: now)
+    approval_service = ApprovalApplicationService(approvals)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(reminders, clock=lambda: now)
+    metrics = MetadataMetrics()
+    initial = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approval_service,
+        reminder_service=service,
+        metrics=metrics,
+    )
+    await initial.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="terminal-crash-approval",
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    crash_store = _CrashAfterFinishStore(store)
+    recovering = RunCoordinator(
+        cast(RunRepository, crash_store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approval_service,
+        reminder_service=service,
+        metrics=metrics,
+    )
+    with pytest.raises(_CrashBoundary):
+        await recovering.execute(run.id, provider)
+    _, finished = await store.find_run_any(run.id)
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    assert finished.status is RunStatus.COMPLETED
+    assert finished.approval_id == waiting.approval_id
+    assert execution_status == "executing"
+    assert provider.synthesis_calls == 1
+    assert len(
+        (
+            await reminders.list(
+                "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+            )
+        ).items
+    ) == 1
+
+    failing_approvals = _FailingCompletionApprovalService(approval_service)
+    recovering.approval_service = failing_approvals
+    typed_store = cast(SqlConversationStore, store)
+    typed_provider = cast(ChatCompletionPort, provider)
+    with pytest.raises(RuntimeError):
+        await _resume_approval(
+            (await failing_approvals.get("https://issuer", "owner", waiting.approval_id)).approval,
+            cast(ApprovalApplicationService, failing_approvals),
+            typed_store,
+            recovering,
+            typed_provider,
+            metrics,
+        )
+    successful_approvals = _FailingCompletionApprovalService(
+        approval_service, fail_completion=False
+    )
+    recovering.approval_service = successful_approvals
+    normalized = await successful_approvals.get("https://issuer", "owner", waiting.approval_id)
+    await _resume_approval(
+        normalized.approval,
+        cast(ApprovalApplicationService, successful_approvals),
+        typed_store,
+        recovering,
+        typed_provider,
+        metrics,
+    )
+    completed_outcomes = [
+        measurement
+        for measurement in metrics.snapshot()
+        if measurement.metric == "reminder_create_tool_outcome"
+        and dict(measurement.dimensions).get("outcome") == "completed"
+    ]
+    completed_spans = [
+        measurement
+        for measurement in metrics.snapshot()
+        if measurement.kind == "span"
+        and measurement.metric == "tool_execution_duration_ms"
+        and dict(measurement.dimensions).get("outcome") == "completed"
+    ]
+    assert len(completed_outcomes) == 1
+    assert len(completed_spans) == 1
+    assert metrics.stats().rejected == 0
+    before_duplicate = len(
+        [
+            measurement
+            for measurement in metrics.snapshot()
+            if measurement.metric == "reminder_create_tool_outcome"
+            and dict(measurement.dimensions).get("outcome") == "completed"
+        ]
+    )
+    await _resume_approval(
+        normalized.approval,
+        cast(ApprovalApplicationService, successful_approvals),
+        typed_store,
+        recovering,
+        typed_provider,
+        metrics,
+    )
+    assert len(
+        [
+            measurement
+            for measurement in metrics.snapshot()
+            if measurement.metric == "reminder_create_tool_outcome"
+            and dict(measurement.dimensions).get("outcome") == "completed"
+        ]
+    ) == before_duplicate
+    _, replayed = await store.find_run_any(run.id)
+    replay_detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    replay_status = getattr(
+        replay_detail.approval.execution_status,
+        "value",
+        replay_detail.approval.execution_status,
+    )
+    assert replayed.status is RunStatus.COMPLETED
+    assert replay_status == "completed"
+    assert provider.synthesis_calls == 1
+    assert len(
+        (
+            await reminders.list(
+                "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+            )
+        ).items
+    ) == 1
+    replay_events = await approvals.replay("https://issuer", "owner")
+    assert [
+        getattr(event.execution_status, "value", event.execution_status)
+        for event in replay_events
+    ].count("completed") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_commit", [False, True])
+async def test_reminder_resume_recovers_worker_crash_before_or_after_commit(
+    after_commit: bool,
+) -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "crash-safe reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Crash recovery", "tool-model", models, str(uuid4())
+    )
+    proposals = MemoryReminderProposalRepository(clock=lambda: now)
+    approvals = MemoryApprovalRepository(proposals, clock=lambda: now)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(reminders, clock=lambda: now)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        lease_seconds=0.01,
+        approval_service=approvals,
+        reminder_service=_CrashOnceReminderService(service, after_commit=after_commit),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    approved = await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="crash-approval",
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    with pytest.raises(_CrashBoundary):
+        await coordinator.execute(run.id, provider)
+    await asyncio.sleep(0.03)
+    await coordinator.execute(run.id, provider)
+
+    _, recovered = await store.find_run_any(run.id)
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    reminders_page = await reminders.list(
+        "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+    )
+    assert approved.status.value == "approved"
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    assert execution_status == "completed"
+    assert recovered.status is RunStatus.COMPLETED
+    assert len(reminders_page.items) == 1
+    assert provider.tool_messages == ["selection"]
+    assert provider.synthesis_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_executing_resume_redelivery_before_lease_expiry_is_not_reclaimed() -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "lease-safe reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Lease race", "tool-model", models, str(uuid4())
+    )
+    proposals = MemoryReminderProposalRepository(clock=lambda: now)
+    approvals = MemoryApprovalRepository(proposals, clock=lambda: now)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    blocking = _BlockingReminderService(ReminderApplicationService(reminders, clock=lambda: now))
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        lease_seconds=30.0,
+        approval_service=approvals,
+        reminder_service=blocking,
+    )
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="lease-race-approval",
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    execution = asyncio.create_task(coordinator.execute(run.id, provider))
+    await asyncio.wait_for(blocking.entered.wait(), timeout=1)
+    redelivery = await store.start_run(run.id, worker_id=uuid4(), lease_seconds=30.0)
+    assert not redelivery.acquired
+    assert redelivery.run.status is RunStatus.RUNNING
+    assert redelivery.run.tool_lifecycle_status == "executing"
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    assert execution_status == "executing"
+    blocking.release.set()
+    await execution
+    _, completed = await store.find_run_any(run.id)
+    assert completed.status is RunStatus.COMPLETED
+    assert blocking.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [True, False])
+async def test_post_claim_crash_retries_approval_outcomes_and_reconciles_once(
+    approved: bool,
+) -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.create",
+                {"content": "post-claim reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Post-claim crash", "tool-model", models, str(uuid4())
+    )
+    proposals = MemoryReminderProposalRepository(clock=lambda: now)
+    approvals = MemoryApprovalRepository(proposals, clock=lambda: now)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(reminders, clock=lambda: now)
+    await RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approvals,
+        reminder_service=service,
+    ).execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    if approved:
+        await approvals.approve(
+            "https://issuer",
+            "owner",
+            waiting.approval_id,
+            expected_version=pending.approval.version,
+            idempotency_key="post-claim-approve",
+        )
+    else:
+        await approvals.reject(
+            "https://issuer",
+            "owner",
+            waiting.approval_id,
+            expected_version=pending.approval.version,
+            idempotency_key="post-claim-reject",
+        )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=approved)
+
+    crash_store = _CrashAfterClaimStore(store)
+    recovering = RunCoordinator(
+        cast(RunRepository, crash_store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        lease_seconds=0.02,
+        approval_service=approvals,
+        reminder_service=service,
+    )
+    with pytest.raises(_CrashBoundary):
+        await recovering.execute(run.id, provider)
+    _, claimed = await store.find_run_any(run.id)
+    assert claimed.status is RunStatus.RUNNING
+    assert claimed.tool_lifecycle_status == ("approved" if approved else "denied")
+
+    # A redelivery before lease expiry is not an acknowledgement opportunity:
+    # it must leave the handler untouched for retry.
+    await recovering.execute(run.id, provider)
+    _, still_claimed = await store.find_run_any(run.id)
+    assert still_claimed.status is RunStatus.RUNNING
+    assert provider.synthesis_calls == 0
+    assert (
+        await reminders.list(
+            "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+        )
+    ).items == ()
+
+    await asyncio.sleep(0.04)
+    await recovering.execute(run.id, provider)
+    _, completed = await store.find_run_any(run.id)
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    reminders_page = await reminders.list(
+        "https://issuer", "owner", view=ReminderView.UPCOMING, limit=10
+    )
+    assert completed.status is RunStatus.COMPLETED
+    assert provider.synthesis_calls == 1
+    assert execution_status == ("completed" if approved else "denied")
+    assert len(reminders_page.items) == (1 if approved else 0)
 
 
 @pytest.mark.asyncio
@@ -160,7 +962,9 @@ async def test_native_tool_run_executes_granted_search_and_replays_safe_events()
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
     metrics = MetadataMetrics()
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store), EventPublisher(), InMemoryOutbox(), metrics
+    )
 
     await coordinator.execute(run.id, provider)
 
@@ -210,7 +1014,7 @@ async def test_tool_capability_unavailable_falls_back_to_text_with_safe_failure(
     conversation, _, run = await store.create(
         "https://issuer", "owner", "Answer directly.", "tool-model", models, str(uuid4())
     )
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
 
     await coordinator.execute(run.id, provider)
 
@@ -249,7 +1053,7 @@ async def test_failing_tool_search_publishes_failed_without_claiming_completion(
 
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
 
     await coordinator.execute(run.id, provider)
 
@@ -313,7 +1117,7 @@ async def test_malformed_native_selection_uses_content_free_synthesis_without_ex
 
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
 
     await coordinator.execute(run.id, provider)
 
@@ -359,7 +1163,7 @@ async def test_native_selection_eof_without_completion_fails_closed_before_execu
 
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
 
     await coordinator.execute(run.id, provider)
 
@@ -405,7 +1209,7 @@ async def test_global_run_timeout_during_tool_attempt_is_not_user_cancellation()
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
     metrics = MetadataMetrics()
     coordinator = RunCoordinator(
-        store,
+        cast(RunRepository, store),
         EventPublisher(),
         InMemoryOutbox(),
         metrics,
@@ -466,7 +1270,7 @@ async def test_tool_counter_claim_loss_prevents_execution_and_synthesis() -> Non
     store.increment_tool_calls = increment_tool_calls  # type: ignore[attr-defined]
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
 
     await coordinator.execute(run.id, provider)
 
@@ -505,7 +1309,7 @@ async def test_cancellation_during_tool_attempt_publishes_failed_status_before_c
 
     store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
     store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
-    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
     task = asyncio.create_task(coordinator.execute(run.id, provider))
     await asyncio.wait_for(entered.wait(), timeout=1)
     await coordinator.cancel(run.id, "owner", "https://issuer", str(uuid4()))

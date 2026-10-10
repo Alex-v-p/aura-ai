@@ -72,6 +72,45 @@ class ReminderPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ReminderProposal:
+    """Validated private arguments awaiting a governance decision.
+
+    This is a public automation DTO.  Its persistence adapter remains private
+    to automation; governance receives only this port and never imports the
+    proposal table mapping.
+    """
+
+    id: UUID
+    issuer: str
+    subject: str
+    content: str
+    due_at: datetime
+    run_id: UUID
+    conversation_id: UUID
+    tool_call_id: UUID
+    created_at: datetime
+    expires_at: datetime
+
+
+class ReminderProposalPort(Protocol):
+    async def create(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        content: str,
+        due_at: datetime,
+        run_id: UUID,
+        conversation_id: UUID,
+        tool_call_id: UUID,
+        now: datetime | None = None,
+        transaction: object | None = None,
+    ) -> ReminderProposal: ...
+
+    async def get(self, issuer: str, subject: str, proposal_id: UUID) -> ReminderProposal: ...
+
+
 class ReminderError(Exception):
     """Base class for deterministic reminder failures."""
 
@@ -324,15 +363,17 @@ def as_payload(item: Reminder) -> dict[str, object]:
     }
 
 
-def from_payload(payload: dict[str, object]) -> Reminder:
+def from_payload(
+    payload: dict[str, object], *, issuer: str = "", subject: str = ""
+) -> Reminder:
     def stamp(name: str) -> datetime | None:
         value = payload.get(name)
         return datetime.fromisoformat(str(value)) if value is not None else None
 
     return Reminder(
         UUID(str(payload["id"])),
-        "",
-        "",
+        issuer,
+        subject,
         str(payload["content"]),
         datetime.fromisoformat(str(payload["dueAt"])),
         ReminderStatus(str(payload["status"])),

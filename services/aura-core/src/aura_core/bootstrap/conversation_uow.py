@@ -41,6 +41,7 @@ from aura_core.domains.interaction.conversations.context import (
 )
 from aura_core.domains.interaction.conversations.public import (
     GENERAL_AGENT,
+    LEGACY_TIME_CLARIFICATION,
     ActiveRunConflict,
     AgentAssignment,
     AgentSwitchConfirmationRequired,
@@ -69,8 +70,11 @@ from aura_core.domains.interaction.conversations.public import (
     decode_cursor,
     encode_cursor,
     filters_fingerprint,
+    needs_legacy_time_clarification,
     now,
     pending_title_for,
+    server_local_time,
+    validate_client_time_zone,
     validate_manual_title,
 )
 from aura_core.domains.interaction.personas.public import (
@@ -528,6 +532,7 @@ class SqlConversationStore:
             agent_profile_id=row.agent_profile_id,
             agent_revision_id=row.agent_revision_id,
             persona_override_revision_id=row.persona_override_revision_id,
+            client_time_zone=row.client_time_zone,
             model_id=row.model_id,
             version=row.version,
             title_state=row.title_state,
@@ -590,10 +595,13 @@ class SqlConversationStore:
         idempotency_key: str,
         agent_revision_id: UUID | None = None,
         persona_revision_id: UUID | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         self._validate_model(model_id, models)
+        client_time_zone = validate_client_time_zone(client_time_zone)
         fingerprint = _fingerprint(
-            "create", message, model_id, agent_revision_id, persona_revision_id
+            "create", message, model_id, agent_revision_id, persona_revision_id,
+            client_time_zone,
         )
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
@@ -637,6 +645,7 @@ class SqlConversationStore:
                 agent_profile_id=revision.profile_id,
                 agent_revision_id=revision.id,
                 persona_override_revision_id=persona_revision_id,
+                client_time_zone=client_time_zone,
                 model_id=model_id,
                 version=1,
                 title_state=TitleState.PENDING,
@@ -675,6 +684,7 @@ class SqlConversationStore:
                 tool_call_limit=tool_call_limit,
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
+                client_time_zone=client_time_zone,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1368,12 +1378,11 @@ class SqlConversationStore:
         expected_version: int,
         idempotency_key: str,
         issuer: str | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if self.agent_store is not None:
             await self.agent_store.refresh()
-        fingerprint = hashlib.sha256(
-            f"run:{conversation_id}:{message}:{expected_version}".encode()
-        ).hexdigest()
+        client_time_zone = validate_client_time_zone(client_time_zone)
         if issuer is None:
             raise ValueError("issuer is required")
         identity_issuer = issuer
@@ -1383,11 +1392,17 @@ class SqlConversationStore:
                 session, identity_issuer, subject, idempotency_key
             )
             if prior is not None:
+                prior_row = await self._row(
+                    session, UUID(prior.response["conversationId"]), subject, issuer
+                )
+                pinned_time_zone = client_time_zone or prior_row.client_time_zone
+                fingerprint = hashlib.sha256(
+                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+                ).hexdigest()
                 if prior.fingerprint != fingerprint:
                     raise IdempotencyConflict
                 response = prior.response
-                row = await self._row(session, UUID(response["conversationId"]), subject, issuer)
-                loaded = await self._load(session, row)
+                loaded = await self._load(session, prior_row)
                 user = next(
                     item for item in loaded.messages if item.id == UUID(response["messageId"])
                 )
@@ -1396,6 +1411,10 @@ class SqlConversationStore:
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
             if row.archived_at is not None:
                 raise ArchivedConversationConflict
+            pinned_time_zone = client_time_zone or row.client_time_zone
+            fingerprint = hashlib.sha256(
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+            ).hexdigest()
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
                 raise VersionConflict if row.version != expected_version else ActiveRunConflict
@@ -1439,6 +1458,7 @@ class SqlConversationStore:
                 tool_call_limit=tool_call_limit,
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
+                client_time_zone=pinned_time_zone,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1518,6 +1538,11 @@ class SqlConversationStore:
                 raise ConversationNotFound
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 run.status = RunStatus.CANCEL_REQUESTED
+                await self.runs.save(session, run)
+            elif run.status is RunStatus.WAITING_FOR_CONFIRMATION:
+                run.status = RunStatus.CANCELED
+                run.finished_at = now()
+                run.lease_expires_at = None
                 await self.runs.save(session, run)
             if prior is None:
                 self.conversations.stage_idempotency(
@@ -1603,6 +1628,7 @@ class SqlConversationStore:
                 tool_calls_used=0,
                 tool_timeout_ms=prior.tool_timeout_ms,
                 tool_retry_limit=prior.tool_retry_limit,
+                client_time_zone=prior.client_time_zone,
             )
             self.runs.stage(session, retried)
             await session.flush()
@@ -1888,6 +1914,21 @@ class SqlConversationStore:
                 acquired = True
             elif (
                 run.status == RunStatus.RUNNING
+                and run.approval_id is not None
+                and run.tool_lifecycle_status in {"approved", "denied", "executing"}
+                and run.lease_expires_at is not None
+                and run.lease_expires_at <= current
+            ):
+                # Recover an interrupted approval-backed mutation. The
+                # shared reminder idempotency key makes replay safe if the
+                # process died before or after the reminder commit.
+                run.started_at = current
+                run.attempt_id = worker_id or uuid4()
+                run.attempt_count += 1
+                run.lease_expires_at = current + timedelta(seconds=lease_seconds)
+                acquired = True
+            elif (
+                run.status == RunStatus.RUNNING
                 and run.lease_expires_at is not None
                 and run.lease_expires_at <= current
             ):
@@ -1921,6 +1962,15 @@ class SqlConversationStore:
         async with self.sessions() as session, session.begin():
             rows = await self.runs.expired(session, now())
             for run in rows:
+                if (
+                    run.approval_id is not None
+                    and run.tool_lifecycle_status in {"approved", "denied", "executing"}
+                ):
+                    # Approval-backed execution is recoverable. Leave the
+                    # expired RUNNING row intact so start_run can reclaim it
+                    # and replay the approval-derived reminder idempotency.
+                    expired.append(run)
+                    continue
                 run.status, run.finished_at = RunStatus.INTERRUPTED, now()
                 run.error = RunError(
                     "WORKER_LEASE_EXPIRED",
@@ -2028,6 +2078,99 @@ class SqlConversationStore:
                 ),
             )
 
+    async def wait_for_confirmation(
+        self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID,
+        *, transaction: object | None = None,
+    ) -> Run:
+        if transaction is not None:
+            if not isinstance(transaction, AsyncSession):
+                raise TypeError("run transaction must be an async database session")
+            run = await self.runs.get(transaction, run_id, lock=True)
+            if run is None or run.status is not RunStatus.RUNNING or run.attempt_id != attempt_id:
+                raise RunClaimLost
+            run.status = RunStatus.WAITING_FOR_CONFIRMATION
+            run.approval_id = approval_id
+            run.pending_tool_call_id = tool_call_id
+            run.tool_lifecycle_status = "awaiting_confirmation"
+            run.lease_expires_at = None
+            run.attempt_id = None
+            await self.runs.save(transaction, run)
+            return run
+
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or run.status is not RunStatus.RUNNING or run.attempt_id != attempt_id:
+                raise RunClaimLost
+            run.status = RunStatus.WAITING_FOR_CONFIRMATION
+            run.approval_id = approval_id
+            run.pending_tool_call_id = tool_call_id
+            run.tool_lifecycle_status = "awaiting_confirmation"
+            run.lease_expires_at = None
+            run.attempt_id = None
+            await self.runs.save(session, run)
+            return run
+
+    async def lock_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        if not isinstance(transaction, AsyncSession):
+            raise TypeError("run transaction must be an async database session")
+        run = await self.runs.get(transaction, run_id, lock=True)
+        if (
+            run is None
+            or run.approval_id != approval_id
+            or run.status is not RunStatus.WAITING_FOR_CONFIRMATION
+        ):
+            raise RunClaimLost
+        return run
+    async def resume_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        transaction: object | None = None,
+    ) -> Run:
+        if transaction is not None:
+            if not isinstance(transaction, AsyncSession):
+                raise TypeError("run transaction must be an async database session")
+            run = await self.runs.get(transaction, run_id, lock=True)
+            if run is None or run.approval_id != approval_id:
+                raise RunClaimLost
+            if run.status is RunStatus.QUEUED:
+                return run
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                raise RunClaimLost
+            run.status = RunStatus.QUEUED
+            run.tool_lifecycle_status = "approved" if approved else "denied"
+            await self.runs.save(transaction, run)
+            return run
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or run.approval_id != approval_id:
+                raise RunClaimLost
+            if run.status is RunStatus.QUEUED:
+                return run
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                raise RunClaimLost
+            run.status = RunStatus.QUEUED
+            run.tool_lifecycle_status = "approved" if approved else "denied"
+            await self.runs.save(session, run)
+            return run
+
+    async def cancel_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        if not isinstance(transaction, AsyncSession):
+            raise TypeError("run transaction must be an async database session")
+        run = await self.runs.get(transaction, run_id, lock=True)
+        if run is None or run.approval_id != approval_id:
+            raise RunClaimLost
+        if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+            raise RunClaimLost
+        run.status = RunStatus.CANCELED
+        run.tool_lifecycle_status = "denied"
+        run.lease_expires_at = None
+        run.attempt_id = None
+        await self.runs.save(transaction, run)
+        return run
+
     async def context(
         self,
         conversation_id: UUID,
@@ -2062,6 +2205,13 @@ class SqlConversationStore:
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
+        local_zone = run.client_time_zone if run is not None else conversation.client_time_zone
+        local_now = server_local_time(now(), local_zone)
+        if local_now is not None:
+            prompt = (
+                f"{prompt}\n\nCurrent local date and time (server-derived; zone "
+                f"{local_zone}): {local_now}"
+            )
         query = ""
         if run is not None:
             query = next(
@@ -2074,6 +2224,8 @@ class SqlConversationStore:
                 ),
                 "",
             )
+        if local_now is None and needs_legacy_time_clarification(query):
+            prompt = f"{prompt}\n\n{LEGACY_TIME_CLARIFICATION}"
         memory: Sequence[object]
         memory_fraction = 0.2
         if run:

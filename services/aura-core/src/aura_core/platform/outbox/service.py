@@ -10,6 +10,8 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 RUN_COMMAND_TOPIC = "aura.runs.execute.v1"
+APPROVAL_EVENT_TOPIC = "aura.approvals.events.v1"
+RUN_RESUME_TOPIC = "aura.runs.resume.v1"
 _IDENTIFIER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")
 _IDENTIFIER_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 _IDENTIFIER_SUFFIXES = (
@@ -35,6 +37,11 @@ _CONTENT_KEY_PARTS = (
     "password",
     "token",
     "payload",
+    "dueat",
+    "requestedtime",
+    "localdate",
+    "localtime",
+    "timezone",
 )
 _AGGREGATE_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 IdentifierValue = str | int
@@ -149,20 +156,21 @@ class OutboxCommand:
             {"aggregateType", "aggregateId"} & payload.keys()
         ):
             raise ValueError("generic outbox command requires aggregate type and id")
-        if is_generic and ("runId" in payload or "conversationId" in payload):
-            raise ValueError("generic outbox command cannot contain run identifiers")
         if is_generic and (
             type(payload.get("aggregateType")) is not str
             or type(payload.get("aggregateId")) is not str
         ):
             raise ValueError("generic outbox command has invalid aggregate identity")
-        run_id = UUID(str(payload["runId"])) if "runId" in payload else None
+        # Generic envelopes may carry run/conversation references as ordinary
+        # identifier metadata (for approval correlation), but they must never
+        # populate the legacy command identity fields.
+        run_id = UUID(str(payload["runId"])) if "runId" in payload and not is_generic else None
         fallback_id: UUID = (
             run_id or UUID(str(payload["aggregateId"])) if is_generic else command_id
         )
         conversation_id = (
             UUID(str(payload["conversationId"]))
-            if "conversationId" in payload
+            if "conversationId" in payload and not is_generic
             else None
         )
         identifiers = tuple(
@@ -171,8 +179,7 @@ class OutboxCommand:
             if key not in {
                 "schemaVersion",
                 "commandId",
-                "runId",
-                "conversationId",
+                *(() if is_generic else ("runId", "conversationId")),
                 "aggregateType",
                 "aggregateId",
                 "createdAt",
@@ -190,8 +197,7 @@ class OutboxCommand:
             not in {
                 "schemaVersion",
                 "commandId",
-                "runId",
-                "conversationId",
+                *(() if is_generic else ("runId", "conversationId")),
                 "aggregateType",
                 "aggregateId",
                 "createdAt",
@@ -339,6 +345,76 @@ def make_aggregate_command(
         schema_version=1,
         aggregate_type=aggregate_type,
         aggregate_id=aggregate_id,
+    )
+
+
+def make_approval_event_command(
+    approval_id: UUID,
+    *,
+    event_id: UUID,
+    status: str,
+    version: int,
+    run_id: UUID,
+    conversation_id: UUID,
+    event_type: str = "approval.updated",
+    command_id: UUID | None = None,
+) -> OutboxCommand:
+    """Build an identifier-only durable approval lifecycle signal.
+
+    Approval proposal content and requested times remain in Core-owned
+    PostgreSQL.  The outbox envelope carries only bounded identifiers and
+    state metadata; run and conversation identities are identifier fields,
+    not fabricated legacy run-envelope fields.
+    """
+
+    return make_aggregate_command(
+        APPROVAL_EVENT_TOPIC,
+        command_id or uuid4(),
+        "governance.approval",
+        approval_id,
+        identifiers=(
+            ("approvalId", approval_id),
+            ("eventId", event_id),
+            ("eventType", event_type),
+            ("status", status),
+            ("version", version),
+            ("runId", run_id),
+            ("conversationId", conversation_id),
+        ),
+    )
+
+
+def make_approval_resume_command(
+    run_id: UUID,
+    conversation_id: UUID,
+    *,
+    approval_id: UUID,
+    event_id: UUID,
+    status: str,
+    version: int,
+    command_id: UUID | None = None,
+) -> OutboxCommand:
+    """Build an identifier-only durable wakeup for a waiting run.
+
+    The worker re-reads the authoritative approval and run rows after this
+    signal.  A duplicate or lost wakeup is therefore safe: PostgreSQL state
+    and the approval-derived idempotency key decide whether resumption runs.
+    """
+
+    return make_aggregate_command(
+        RUN_RESUME_TOPIC,
+        command_id or uuid4(),
+        "execution.run",
+        run_id,
+        identifiers=(
+            ("runId", run_id),
+            ("conversationId", conversation_id),
+            ("approvalId", approval_id),
+            ("eventId", event_id),
+            ("eventType", "approval.resumed"),
+            ("status", status),
+            ("version", version),
+        ),
     )
 
 

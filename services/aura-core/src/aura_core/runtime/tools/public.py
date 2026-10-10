@@ -21,10 +21,13 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 MEMORY_SEARCH_TOOL_ID = "memory.search"
 MEMORY_SEARCH_TOOL_VERSION = 1
+REMINDER_CREATE_TOOL_ID = "reminder.create"
+REMINDER_CREATE_TOOL_VERSION = 1
 MAX_TOOL_RESULT_ITEMS = 8
 MAX_TOOL_RESULT_CONTENT = 4096
 _SAFE_ERROR_CLASSES = frozenset(
@@ -42,6 +45,8 @@ _SAFE_ERROR_CODES = frozenset(
         "TOOL_MIXED_STREAM",
         "TOOL_MULTIPLE_CALLS",
         "TOOL_NOT_GRANTED",
+        "TOOL_NOT_APPROVED",
+        "TOOL_PERMISSION_DENIED",
         "TOOL_PROVIDER_PROTOCOL",
         "TOOL_RESULT_INVALID",
         "TOOL_TIMEOUT",
@@ -104,6 +109,13 @@ class MemorySearchContext:
     """Per-run callback context used by the memory.search handler."""
 
     search: Callable[[str], Awaitable[object]]
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderCreateContext:
+    """Proposal-only callback; approval owns all reminder side effects."""
+
+    propose: Callable[[str, datetime, UUID], Awaitable[object]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +234,16 @@ class ToolPolicyEvaluator:
             return ToolPolicyDecision(False, "policy", "TOOL_UNKNOWN")
         if (descriptor.id, descriptor.version) not in _grants(policy):
             return ToolPolicyDecision(False, "policy", "TOOL_NOT_GRANTED")
+        scopes = getattr(policy, "permission_scopes", frozenset())
+        if not isinstance(scopes, (set, frozenset, tuple, list)):
+            scopes = ()
+        # Legacy policies predate explicit scope snapshots.  Preserve their
+        # read-only memory grant while requiring an explicit reminders:write
+        # scope for every confirmation-backed mutation.
+        if descriptor.permission_scope == "reminders:write" and "reminders:write" not in scopes:
+            return ToolPolicyDecision(False, "policy", "TOOL_PERMISSION_DENIED")
+        if descriptor.permission_scope != "reminders:write" and scopes and descriptor.permission_scope not in scopes:
+            return ToolPolicyDecision(False, "policy", "TOOL_PERMISSION_DENIED")
         limit = getattr(policy, "max_calls_per_run", 1)
         if type(limit) is not int or calls_used >= limit:
             return ToolPolicyDecision(False, "budget", "TOOL_BUDGET_EXHAUSTED")
@@ -229,7 +251,7 @@ class ToolPolicyEvaluator:
 
 
 def validate_tool_arguments(descriptor: ToolDescriptor, arguments: object) -> dict[str, object]:
-    """Validate the deliberately tiny v1 memory.search input schema."""
+    """Validate typed provider arguments before any domain callback."""
 
     value: object = arguments
     if isinstance(value, str):
@@ -239,18 +261,46 @@ def validate_tool_arguments(descriptor: ToolDescriptor, arguments: object) -> di
             raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID") from exc
     if not isinstance(value, Mapping):
         raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
-    if set(value) != {"query"} or not isinstance(value.get("query"), str):
-        raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
-    query = value["query"].strip()
-    if not 1 <= len(query) <= 200:
-        raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
-    return {"query": query}
+    if descriptor.id == MEMORY_SEARCH_TOOL_ID:
+        if set(value) != {"query"} or not isinstance(value.get("query"), str):
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        query = value["query"].strip()
+        if not 1 <= len(query) <= 200:
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        return {"query": query}
+    if descriptor.id == REMINDER_CREATE_TOOL_ID:
+        if set(value) != {"content", "dueAt"} or not isinstance(value.get("content"), str):
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        content = value["content"].strip()
+        if not 1 <= len(content) <= 2000 or not isinstance(value.get("dueAt"), str):
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        try:
+            due_at = datetime.fromisoformat(value["dueAt"].replace("Z", "+00:00"))
+            if due_at.tzinfo is None or due_at.utcoffset() is None:
+                raise ValueError
+            due_at = due_at.astimezone(UTC)
+            if due_at <= datetime.now(UTC):
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID") from exc
+        return {"content": content, "dueAt": due_at.isoformat().replace("+00:00", "Z")}
+    raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
 
 
 def validate_tool_result(descriptor: ToolDescriptor, result: object) -> dict[str, object]:
     """Validate the bounded, typed result contract before completion is emitted."""
 
     if descriptor.id != MEMORY_SEARCH_TOOL_ID or descriptor.version != MEMORY_SEARCH_TOOL_VERSION:
+        if descriptor.id == REMINDER_CREATE_TOOL_ID and descriptor.version == REMINDER_CREATE_TOOL_VERSION:
+            if not isinstance(result, Mapping) or set(result) != {"reminderId", "status", "dueAt"}:
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+            if not all(isinstance(result.get(key), str) and result.get(key) for key in result):
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+            try:
+                UUID(str(result["reminderId"]))
+                datetime.fromisoformat(str(result["dueAt"]).replace("Z", "+00:00"))
+            except (TypeError, ValueError) as exc:
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
         if not isinstance(result, Mapping):
             raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
         return dict(result)
@@ -303,6 +353,24 @@ class ToolExecutor:
                 "denied",
                 error_class=decision.error_class,
                 error_code=decision.error_code,
+            )
+        if descriptor.confirmation == "always":
+            try:
+                validate_tool_arguments(descriptor, call.arguments)
+            except ToolExecutionError as exc:
+                return ToolExecutionResult(
+                    call.call_id,
+                    descriptor.id,
+                    descriptor.version,
+                    "failed",
+                    error_class="validation",
+                    error_code=exc.error_code,
+                )
+            return ToolExecutionResult(
+                call.call_id,
+                descriptor.id,
+                descriptor.version,
+                "awaiting_confirmation",
             )
         try:
             arguments = validate_tool_arguments(descriptor, call.arguments)
@@ -382,6 +450,19 @@ def _memory_handler(arguments: Mapping[str, object], context: object) -> Awaitab
     return search()
 
 
+def _reminder_handler(arguments: Mapping[str, object], context: object) -> Awaitable[object]:
+    if not isinstance(context, ReminderCreateContext):
+        async def unavailable() -> Mapping[str, object]:
+            raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+        return unavailable()
+
+    async def propose() -> object:
+        due_at = datetime.fromisoformat(str(arguments["dueAt"]).replace("Z", "+00:00"))
+        return await context.propose(str(arguments["content"]), due_at, uuid4())
+
+    return propose()
+
+
 _MEMORY_INPUT_SCHEMA: Mapping[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -412,6 +493,27 @@ _MEMORY_RESULT_SCHEMA: Mapping[str, object] = {
         "truncated": {"type": "boolean"},
     },
 }
+_REMINDER_INPUT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["content", "dueAt"],
+    "properties": {
+        "content": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "dueAt": {"type": "string", "format": "date-time"},
+    },
+}
+_REMINDER_RESULT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["reminderId", "status", "dueAt"],
+    "properties": {
+        "reminderId": {"type": "string", "format": "uuid"},
+        "status": {"type": "string"},
+        "dueAt": {"type": "string", "format": "date-time"},
+    },
+}
 
 
 def default_tool_registry() -> ToolRegistry:
@@ -433,6 +535,23 @@ def default_tool_registry() -> ToolRegistry:
                 input_schema=_MEMORY_INPUT_SCHEMA,
                 result_schema=_MEMORY_RESULT_SCHEMA,
                 handler=_memory_handler,
+            ),
+            ToolDescriptor(
+                id=REMINDER_CREATE_TOOL_ID,
+                version=REMINDER_CREATE_TOOL_VERSION,
+                display_name="Create reminder",
+                description="Create an owner-scoped one-shot reminder after confirmation.",
+                classification="mutation",
+                permission_scope="reminders:write",
+                confirmation="always",
+                timeout_ms=10_000,
+                retry_limit=0,
+                idempotency="idempotent",
+                sensitivity="private",
+                observable_component="aura.runtime.tool_execution",
+                input_schema=_REMINDER_INPUT_SCHEMA,
+                result_schema=_REMINDER_RESULT_SCHEMA,
+                handler=_reminder_handler,
             ),
         )
     )

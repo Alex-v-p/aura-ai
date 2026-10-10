@@ -1,11 +1,14 @@
 """API composition state."""
 
+# ruff: noqa: E501
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from uuid import UUID
 
 from aura_core.bootstrap import memory_uow
+from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
@@ -22,6 +25,10 @@ from aura_core.domains.automation.reminders.public import (
     ReminderRepository,
 )
 from aura_core.domains.execution.runs.public import RunCoordinator
+from aura_core.domains.governance.approvals.public import (
+    ApprovalApplicationService,
+    ApprovalRepository,
+)
 from aura_core.domains.governance.identity.application import LoginConfiguration, LoginService
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
 from aura_core.domains.interaction.agents.public import (
@@ -49,6 +56,8 @@ from aura_core.platform.auth import (
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.oidc import OidcClient
 from aura_core.platform.outbox import (
+    APPROVAL_EVENT_TOPIC,
+    RUN_RESUME_TOPIC,
     InMemoryOutbox,
     OutboxCommand,
     TransactionalOutboxTransport,
@@ -91,6 +100,19 @@ class AppState:
         if memory_service is not None:
             memory_service.provider = value
 
+    async def resume_approval(self, approval: object) -> object:
+        """Queue a waiting run after one durable approval decision."""
+
+        run_id = getattr(approval, "run_id", None)
+        approval_id = getattr(approval, "id", None)
+        if not isinstance(run_id, UUID) or not isinstance(approval_id, UUID):
+            raise ValueError("approval identifiers are required")
+        status = getattr(getattr(approval, "status", None), "value", getattr(approval, "status", None))
+        approved = status == "approved"
+        run = await self.store.resume_waiting_run(run_id, approval_id, approved=approved)
+        await self.coordinator.enqueue(run)
+        return run
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -132,6 +154,8 @@ class AppState:
         self.reminder_service: ReminderApplicationService
         self.notification_repository: NotificationRepository
         self.notification_service: NotificationApplicationService
+        self.approval_repository: ApprovalRepository
+        self.approval_service: ApprovalApplicationService
         self.memory_worker: object | None = None
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
@@ -168,6 +192,10 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
+            self.approval_repository = approval_repository(None, testing=True, metrics=self.metrics)
+            self.approval_service = approval_service(
+                self.approval_repository,
+            )
             async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
                 return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
 
@@ -224,7 +252,13 @@ class AppState:
             )
             self.nats = NatsOutbox(
                 self.settings.nats_url,
-                additional_subjects=(memory_topic, REMINDER_TOPIC, NOTIFICATION_TOPIC),
+                additional_subjects=(
+                    memory_topic,
+                    REMINDER_TOPIC,
+                    NOTIFICATION_TOPIC,
+                    APPROVAL_EVENT_TOPIC,
+                    RUN_RESUME_TOPIC,
+                ),
             )
             self.outbox = TransactionalOutboxTransport()
             self.publisher = PersistentEventPublisher(self.sql_store.append_event)
@@ -251,6 +285,8 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
+            self.approval_repository = approval_repository(self.sessions_factory, metrics=self.metrics, execution_port=self.store)
+            self.approval_service = approval_service(self.approval_repository, execution_port=self.store)
             cast(Any, self.memory_repository).set_run_recall_metadata_loader(
                 self.sql_store.get_run_memory_recall_metadata
             )
@@ -332,6 +368,8 @@ class AppState:
             timeout_seconds=self.settings.ollama_run_timeout_seconds,
             context_token_budget=self.settings.context_token_budget,
             tool_registry=self.tool_registry,
+            approval_service=getattr(self, "approval_service", None),
+            reminder_service=self.reminder_service,
         )
 
     async def startup(self) -> None:
@@ -353,6 +391,20 @@ class AppState:
                     notification_subscribe,
                 )
                 await subscribe(self._ingest_notification_wakeup)
+            approval_subscribe = getattr(self.nats, "subscribe_approval_events", None)
+            if callable(approval_subscribe):
+                subscribe = cast(
+                    Callable[[Callable[[UUID], Awaitable[None]]], Awaitable[object]],
+                    approval_subscribe,
+                )
+                await subscribe(self._ingest_approval_wakeup)
+            resumption_subscribe = getattr(self.nats, "subscribe_resumption_events", None)
+            if callable(resumption_subscribe):
+                subscribe = cast(
+                    Callable[[Callable[[UUID], Awaitable[None]]], Awaitable[object]],
+                    resumption_subscribe,
+                )
+                await subscribe(self._ingest_resumption_wakeup)
             self.dispatcher_task = asyncio.create_task(self._dispatch_outbox())
         except Exception:
             self.startup_errors["nats"] = "transport unavailable"
@@ -389,12 +441,17 @@ class AppState:
                 commands = await self.sql_store.pending_commands()
                 for command in commands:
                     is_reminder = command.aggregate_type == "automation.reminder"
+                    is_approval = command.aggregate_type == "governance.approval"
+                    is_resumption = command.topic == RUN_RESUME_TOPIC
+                    is_approval_command = is_approval or is_resumption
                     # Run commands retain their established ownership. Generic
                     # reminder commands belong to the reminder observable
                     # component and never acquire fabricated run identities.
                     component = (
                         "aura.automation.reminder_management"
                         if is_reminder
+                        else "aura.governance.approval_workflow"
+                        if is_approval_command
                         else "aura.execution.run_coordinator"
                     )
                     active_component = component
@@ -427,20 +484,61 @@ class AppState:
                     )
                     if command_run_id is not None:
                         metadata["run_id"] = str(command_run_id)
+                    elif trace_identifiers.get("run_id") is not None:
+                        metadata["run_id"] = trace_identifiers["run_id"]
                     if command_conversation_id is not None:
                         metadata["conversation_id"] = str(command_conversation_id)
+                    elif trace_identifiers.get("conversation_id") is not None:
+                        metadata["conversation_id"] = trace_identifiers["conversation_id"]
                     trace_metadata = dict(trace_identifiers)
                     trace_metadata["causation_id"] = metadata["causation_id"]
+                    # These are passed explicitly to record_span below.  Do
+                    # not expand them twice for generic approval aggregates,
+                    # whose run/conversation identifiers live in metadata.
+                    span_trace_metadata = {
+                        key: value
+                        for key, value in trace_metadata.items()
+                        if key
+                        not in {
+                            "trace_id",
+                            "command_id",
+                            "correlation_id",
+                            "causation_id",
+                            "run_id",
+                            "conversation_id",
+                        }
+                    }
                     dispatch_timer = Stopwatch()
                     dispatch_span_id = new_span_id()
                     try:
                         duplicate = await self.nats.publish(command)
                         wakeup_id = command.identifier("eventId")
                         publish_wakeup = getattr(self.nats, "publish_notification_event", None)
-                        if wakeup_id is not None and callable(publish_wakeup):
+                        if (
+                            is_reminder
+                            and wakeup_id is not None
+                            and callable(publish_wakeup)
+                        ):
                             publish = cast(Callable[[UUID], Awaitable[None]], publish_wakeup)
                             await publish(UUID(wakeup_id))
+                        if is_approval_command:
+                            self.metrics.increment(
+                                component,
+                                "approval_outbox_publish_outcome",
+                                outcome="duplicate" if duplicate else "ok",
+                                dependency="nats_jetstream",
+                                **metadata,
+                            )
                     except Exception:
+                        if is_approval_command:
+                            self.metrics.increment(
+                                component,
+                                "approval_outbox_publish_outcome",
+                                outcome="error",
+                                error_class="delivery",
+                                dependency="nats_jetstream",
+                                **metadata,
+                            )
                         self.metrics.record_span(
                             component,
                             "outbox.dispatch",
@@ -455,7 +553,8 @@ class AppState:
                             conversation_id=metadata.get("conversation_id"),
                             command_id=metadata["command_id"],
                             correlation_id=metadata["correlation_id"],
-                            **trace_metadata,
+                            causation_id=metadata["causation_id"],
+                            **span_trace_metadata,
                         )
                         raise
                     self.metrics.record_span(
@@ -471,23 +570,35 @@ class AppState:
                         conversation_id=metadata.get("conversation_id"),
                         command_id=metadata["command_id"],
                         correlation_id=metadata["correlation_id"],
-                        **trace_metadata,
+                        causation_id=metadata["causation_id"],
+                        **span_trace_metadata,
                     )
                     persistence_timer = Stopwatch()
                     persistence_span_id = new_span_id()
                     persistence_component = (
                         component
-                        if is_reminder
+                        if is_reminder or is_approval_command
                         else "aura.interaction.conversation_persistence"
                     )
                     persistence_operation = (
-                        "outbox.persist" if is_reminder else "conversation.persist"
+                        "outbox.persist"
+                        if is_reminder or is_approval_command
+                        else "conversation.persist"
                     )
                     try:
                         await self.sql_store.mark_published(command.id)
                     except Exception:
                         if is_reminder:
                             reminder_persistence_failure = True
+                        if is_approval_command:
+                            self.metrics.increment(
+                                persistence_component,
+                                "approval_outbox_persistence_outcome",
+                                outcome="error",
+                                error_class="persistence",
+                                dependency="postgresql",
+                                **metadata,
+                            )
                         self.metrics.record_span(
                             persistence_component,
                             persistence_operation,
@@ -502,9 +613,18 @@ class AppState:
                             conversation_id=metadata.get("conversation_id"),
                             command_id=metadata["command_id"],
                             correlation_id=metadata["correlation_id"],
-                            **trace_metadata,
+                            causation_id=metadata["causation_id"],
+                            **span_trace_metadata,
                         )
                         raise
+                    if is_approval_command:
+                        self.metrics.increment(
+                            persistence_component,
+                            "approval_outbox_persistence_outcome",
+                            outcome="ok",
+                            dependency="postgresql",
+                            **metadata,
+                        )
                     self.metrics.record_span(
                         persistence_component,
                         persistence_operation,
@@ -518,14 +638,18 @@ class AppState:
                         conversation_id=metadata.get("conversation_id"),
                         command_id=metadata["command_id"],
                         correlation_id=metadata["correlation_id"],
-                        **trace_metadata,
+                        causation_id=metadata["causation_id"],
+                        **span_trace_metadata,
                     )
-                    self.metrics.increment(
-                        component,
-                        "reminder_outbox_dispatched" if is_reminder else "outbox_dispatched",
-                        **metadata,
-                    )
-                    if duplicate:
+                    if not is_approval_command:
+                        self.metrics.increment(
+                            component,
+                            "reminder_outbox_dispatched"
+                            if is_reminder
+                            else "outbox_dispatched",
+                            **metadata,
+                        )
+                    if duplicate and not is_approval_command:
                         self.metrics.increment(
                             component,
                             "reminder_outbox_duplicates" if is_reminder else "outbox_duplicates",
@@ -582,6 +706,38 @@ class AppState:
         if callable(wake):
             notify = cast(Callable[[UUID], Awaitable[None]], wake)
             await notify(event_id)
+
+    async def _ingest_approval_wakeup(self, event_id: UUID) -> None:
+        """Wake approval SSE consumers; approval PostgreSQL replay is authoritative."""
+
+        self.metrics.record_span(
+            "aura.governance.approval_workflow",
+            "approval.sse.replay",
+            0.0,
+            trace_id=event_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=None,
+            dependency="nats_jetstream",
+            outcome="ok",
+            event_id=str(event_id),
+        )
+        await self.approval_repository.notify_wakeup(event_id)
+
+    async def _ingest_resumption_wakeup(self, event_id: UUID) -> None:
+        """Forward durable run-resumption wakeups without carrying run data."""
+
+        self.metrics.record_span(
+            "aura.governance.approval_workflow",
+            "approval.resume",
+            0.0,
+            trace_id=event_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=None,
+            dependency="nats_jetstream",
+            outcome="ok",
+            event_id=str(event_id),
+        )
+        await self.approval_repository.notify_resume_wakeup(event_id)
 
     async def models(self) -> tuple[list[ModelDescriptor], str | None]:
         try:

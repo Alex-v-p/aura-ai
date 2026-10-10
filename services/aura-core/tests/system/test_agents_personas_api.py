@@ -108,7 +108,7 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         catalog = await client.get("/api/v1/tools")
         assert catalog.status_code == 200
         tools = catalog.json()["items"]
-        assert [item["id"] for item in tools] == ["memory.search"]
+        assert [item["id"] for item in tools] == ["memory.search", "reminder.create"]
         assert tools[0]["version"] == 1
         assert "handler" not in tools[0]
         assert "schema" not in tools[0]
@@ -118,8 +118,9 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         aura_policies = await client.get(f"/api/v1/agents/{aura['id']}/tool-policies")
         assert aura_policies.status_code == 200
         aura_policy = aura_policies.json()
-        assert aura_policy["items"][0]["grants"] == [
-            {"toolId": "memory.search", "toolVersion": 1}
+        assert aura_policy["items"][-1]["grants"] == [
+            {"toolId": "memory.search", "toolVersion": 1},
+            {"toolId": "reminder.create", "toolVersion": 1},
         ]
         assert aura_policy["items"][0]["maxCallsPerRun"] == 1
 

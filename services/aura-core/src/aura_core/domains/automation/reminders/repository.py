@@ -116,6 +116,15 @@ class MemoryReminderRepository:
                 outcome="conflict",
             )
 
+    def _idempotency_outcome(self, outcome: str) -> None:
+        if self.metrics is not None:
+            self.metrics.increment(
+                REMINDER_COMPONENT,
+                "reminder_create_idempotency_outcome",
+                outcome=outcome,
+                dependency="reminder_store",
+            )
+
     def _time(self) -> datetime:
         value = self._clock()
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -141,21 +150,31 @@ class MemoryReminderRepository:
 
     async def create(self, issuer: str, subject: str, *, content: str, due_at: datetime, idempotency_key: str) -> Reminder:
         issuer, subject = _owner(issuer, subject)
-        normalized_content = normalize_content(content)
-        due = canonical_due_at(due_at)
-        async with self._lock:
-            fingerprint = command_fingerprint("create", None, content=normalized_content, dueAt=due.isoformat())
-            existing = self._idempotency.get((issuer, subject, idempotency_key))
-            if existing:
-                if existing[0] != fingerprint:
-                    self._conflict("reminder_idempotency_conflict_count")
-                    raise ReminderIdempotencyConflict("idempotency key was already used")
-                return existing[1]
-            due = ensure_due_at_future(due, now=self._time())
-            now = self._time()
-            item = Reminder(uuid4(), issuer, subject, normalized_content, due, ReminderStatus.SCHEDULED, 1, now, now)
-            self._items[item.id] = item
-            return self._record(issuer, subject, idempotency_key, fingerprint, item, "created")
+        try:
+            normalized_content = normalize_content(content)
+            due = canonical_due_at(due_at)
+            async with self._lock:
+                fingerprint = command_fingerprint("create", None, content=normalized_content, dueAt=due.isoformat())
+                existing = self._idempotency.get((issuer, subject, idempotency_key))
+                if existing:
+                    if existing[0] != fingerprint:
+                        self._conflict("reminder_idempotency_conflict_count")
+                        self._idempotency_outcome("conflict")
+                        raise ReminderIdempotencyConflict("idempotency key was already used")
+                    self._idempotency_outcome("duplicate")
+                    return existing[1]
+                due = ensure_due_at_future(due, now=self._time())
+                now = self._time()
+                item = Reminder(uuid4(), issuer, subject, normalized_content, due, ReminderStatus.SCHEDULED, 1, now, now)
+                self._items[item.id] = item
+                result = self._record(issuer, subject, idempotency_key, fingerprint, item, "created")
+                self._idempotency_outcome("created")
+                return result
+        except ReminderIdempotencyConflict:
+            raise
+        except Exception:
+            self._idempotency_outcome("failed")
+            raise
 
     async def get(self, issuer: str, subject: str, reminder_id: UUID) -> Reminder:
         issuer, subject = _owner(issuer, subject)
@@ -265,6 +284,15 @@ class SqlReminderRepository:
                 outcome="conflict",
             )
 
+    def _idempotency_outcome(self, outcome: str) -> None:
+        if self.metrics is not None:
+            self.metrics.increment(
+                REMINDER_COMPONENT,
+                "reminder_create_idempotency_outcome",
+                outcome=outcome,
+                dependency="reminder_store",
+            )
+
     def _time(self) -> datetime:
         value = self._clock()
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -322,8 +350,14 @@ class SqlReminderRepository:
             if existing is not None:
                 if existing.fingerprint != fingerprint:
                     self._conflict("reminder_idempotency_conflict_count")
+                    self._idempotency_outcome("conflict")
                     raise ReminderIdempotencyConflict("idempotency key was already used")
-                return from_payload(existing.response)
+                self._idempotency_outcome("duplicate")
+                # The stored response is the public/API projection and
+                # intentionally omits owner identity. Rehydrate from the
+                # stored response and restore only the authenticated owner;
+                # this preserves exact replay even after later transitions.
+                return from_payload(existing.response, issuer=issuer, subject=subject)
             due = ensure_due_at_future(due, now=self._time())
             now = self._time()
             row = ReminderRow(id=uuid4(), principal_issuer=issuer, principal_subject=subject, content=content, due_at=due, status=ReminderStatus.SCHEDULED.value, version=1, created_at=now, updated_at=now)
@@ -332,6 +366,7 @@ class SqlReminderRepository:
             await self._stage(session, item, "created", issuer, subject)
             response = as_payload(item)
             session.add(ReminderIdempotencyRow(principal_issuer=issuer, principal_subject=subject, idempotency_key=idempotency_key, fingerprint=fingerprint, reminder_id=item.id, response=response, created_at=now))
+            self._idempotency_outcome("created")
             return item
 
     async def get(self, issuer: str, subject: str, reminder_id: UUID) -> Reminder:
@@ -402,6 +437,8 @@ class SqlReminderRepository:
                 {"status": item.status.value, "version": item.version},
             )
         except Exception:
+            if operation == "created":
+                self._idempotency_outcome("failed")
             if self.metrics is not None:
                 self.metrics.record_span(
                     REMINDER_COMPONENT,
@@ -458,7 +495,7 @@ class SqlReminderRepository:
                 if existing.fingerprint != fingerprint:
                     self._conflict("reminder_idempotency_conflict_count")
                     raise ReminderIdempotencyConflict("idempotency key was already used")
-                return from_payload(existing.response)
+                return from_payload(existing.response, issuer=issuer, subject=subject)
             row = (await session.execute(select(ReminderRow).where(ReminderRow.id == reminder_id, ReminderRow.principal_issuer == issuer, ReminderRow.principal_subject == subject).with_for_update())).scalar_one_or_none()
             if row is None:
                 raise ReminderNotFound("reminder not found")

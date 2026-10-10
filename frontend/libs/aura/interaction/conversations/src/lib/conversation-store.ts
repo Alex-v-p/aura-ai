@@ -9,7 +9,7 @@ import { AuraConversationApi, type ConversationApi, type ConversationApiError, t
 const MEMORY_ACTIVITY_RETRY_DELAYS_MS = [250, 1_000, 3_000, 10_000, 30_000, 60_000, 120_000, 120_000] as const;
 
 export type TurnRole = 'user' | 'assistant';
-export type RunState = 'idle' | 'working' | 'interrupted' | 'error';
+export type RunState = 'idle' | 'working' | 'waiting' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
 export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; }
@@ -68,7 +68,7 @@ export class ConversationStore {
   readonly selectedModelId = computed(() => this.selected().modelId);
   readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
   readonly selectedPersona = computed(() => this.selected().persona);
-  readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && !this.selected().archivedAt && this.modelFor(this.selectedId()) && this.runState() !== 'working' && this.canRunWithSelectedAgent(this.selectedId())));
+  readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && !this.selected().archivedAt && this.modelFor(this.selectedId()) && !['working', 'waiting'].includes(this.runState()) && this.canRunWithSelectedAgent(this.selectedId())));
   /** Every agentless draft starts unresolved. The shell must hydrate the
    * built-in agent's current revision before a first send can be accepted. */
   readonly defaultDraftAgentResolution = signal<'resolved' | 'pending' | 'failed'>('pending');
@@ -602,7 +602,7 @@ export class ConversationStore {
 
   private async createPersisted(draftId: string, text: string): Promise<void> {
     try {
-      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
+      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId, clientTimeZone); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
       this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
@@ -618,7 +618,7 @@ export class ConversationStore {
     } catch (error: unknown) { this.rejectSubmission(draftId, error); }
   }
 
-  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key()), submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
+  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone), submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
 
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
@@ -946,7 +946,7 @@ export class ConversationStore {
   }
   private modelFor(id: string): string { return this.find(id)?.modelId || this.defaultModelId(); }
   private defaultModelId(): string { const configured = this.modelCatalogDefaultId(); const configuredModel = this.models().find((model) => model.id === configured); return configuredModel?.selectable ? configuredModel.id : ''; }
-  private statusToState(status: Run['status'] | undefined): RunState { return status === 'queued' || status === 'running' || status === 'cancel_requested' ? 'working' : status === 'failed' ? 'error' : status === 'canceled' || status === 'interrupted' ? 'interrupted' : 'idle'; }
+  private statusToState(status: Run['status'] | undefined): RunState { return status === 'queued' || status === 'running' || status === 'cancel_requested' ? 'working' : status === 'waiting_for_confirmation' ? 'waiting' : status === 'failed' ? 'error' : status === 'canceled' || status === 'interrupted' ? 'interrupted' : 'idle'; }
   private isRetryable(status: Run['status']): boolean { return status === 'canceled' || status === 'failed' || status === 'interrupted'; }
   private isTerminal(status: Run['status']): boolean { return status === 'completed' || this.isRetryable(status); }
   private key(): string { return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `aura-${Date.now()}-${Math.random().toString(36).slice(2)}`; }

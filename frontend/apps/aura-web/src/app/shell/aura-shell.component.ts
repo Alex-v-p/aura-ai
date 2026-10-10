@@ -4,6 +4,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, EventEmitter, HostListe
 import { AdaptiveLayoutComponent } from '@aura/shared/layout';
 import { ThemePreference, ThemeSelectComponent } from '@aura/shared/ui';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { ApprovalStore } from '@aura/aura/governance/approvals';
 import { NotificationStore } from '@aura/aura/automation/notifications';
 import { normalizeActivityBoundary } from './shell-conversation-filters';
 
@@ -21,6 +22,7 @@ export type ShellConversationAction = { readonly id: string; readonly action: 'r
 })
 export class AuraShellComponent implements OnDestroy {
   readonly notifications = inject(NotificationStore);
+  readonly approvals = inject(ApprovalStore);
   @Input() conversations: ReadonlyArray<ShellConversationSummary> = [];
   @Input() agentOptions: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
   @Input() modelOptions: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
@@ -82,6 +84,7 @@ export class AuraShellComponent implements OnDestroy {
 
   constructor() {
     void this.notifications.start();
+    void this.approvals.start();
     this.viewportQuery?.addEventListener('change', this.viewportListener);
     this.wideDesktopQuery?.addEventListener('change', this.viewportListener);
     this.reducedMotionQuery?.addEventListener('change', this.viewportListener);
@@ -89,6 +92,7 @@ export class AuraShellComponent implements OnDestroy {
 
   ngOnDestroy(): void {
     this.notifications.stop();
+    this.approvals.stop();
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.viewportQuery?.removeEventListener('change', this.viewportListener);
     this.wideDesktopQuery?.removeEventListener('change', this.viewportListener);

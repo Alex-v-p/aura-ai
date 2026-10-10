@@ -13,7 +13,6 @@ from uuid import uuid4
 import pytest
 from aura_core.domains.execution.runs.public import RunCoordinator, RunStatus
 from aura_core.domains.interaction.agents.public import (
-    GENERAL_REVISION_ID,
     AgentCatalog,
     AgentMemoryRepository,
     AgentRevision,
@@ -74,7 +73,8 @@ def test_seeded_configuration_is_deterministic_and_revisioned() -> None:
     second_persona = second_personas.list_personas()[0]
 
     assert first_agent.display_name == second_agent.display_name == "Aura"
-    assert first_agent.current_revision.revision == second_agent.current_revision.revision == 1
+    assert first_agent.current_revision.revision == second_agent.current_revision.revision == 2
+    assert first_agent.revisions[0].revision == second_agent.revisions[0].revision == 1
     assert first_agent.current_revision_id == second_agent.current_revision_id
     assert first_persona.display_name == second_persona.display_name == "Neutral"
     assert first_persona.current_revision.revision == second_persona.current_revision.revision == 1
@@ -99,13 +99,16 @@ def test_built_in_aura_promotes_personal_memory_but_custom_agents_default_off() 
     ].allow_shared_user_promotion
 
 
-def test_built_in_aura_has_explicit_memory_search_and_custom_agents_are_deny_by_default() -> None:
+def test_built_in_aura_has_exact_memory_and_reminder_grants_and_custom_agents_deny() -> None:
     catalog = AgentCatalog()
     aura = catalog.list_agents()[0]
     aura_policy = catalog.get_tool_policy(aura.current_revision.tool_policy_revision_id)
-    assert aura_policy.grants == (ToolGrant("memory.search", 1),)
+    assert set(aura_policy.grants) == {
+        ToolGrant("memory.search", 1),
+        ToolGrant("reminder.create", 1),
+    }
     assert aura_policy.max_calls_per_run == 1
-    assert aura_policy.timeout_ms == 30_000
+    assert aura_policy.timeout_ms == 10_000
     assert aura_policy.retry_limit == 0
 
     custom = catalog.create_agent(
@@ -119,6 +122,29 @@ def test_built_in_aura_has_explicit_memory_search_and_custom_agents_are_deny_by_
     assert custom_policy.max_calls_per_run == 0
 
 
+def test_existing_agent_revisions_keep_their_pinned_policy_when_aura_successor_is_seeded() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    original_revision = aura.current_revision
+    original_policy = catalog.get_tool_policy(original_revision.tool_policy_revision_id)
+    successor = catalog.create_tool_policy(
+        aura.id,
+        (
+            ToolGrant("memory.search", 1),
+            ToolGrant("reminder.create", 1),
+        ),
+        expected_revision=original_policy.revision,
+    )
+    revised = catalog.attach_tool_policy(aura.id, successor.id, aura.version)
+    assert revised.current_revision_id != original_revision.id
+    assert any(
+        item.id == original_revision.id
+        and item.tool_policy_revision_id == original_revision.tool_policy_revision_id
+        for item in revised.revisions
+    )
+    assert revised.current_revision.tool_policy_revision_id == successor.id
+
+
 def test_tool_policy_is_immutable_versioned_and_agent_owned() -> None:
     catalog = AgentCatalog()
     aura = catalog.list_agents()[0]
@@ -127,18 +153,22 @@ def test_tool_policy_is_immutable_versioned_and_agent_owned() -> None:
     policy = catalog.create_tool_policy(
         aura.id,
         (ToolGrant("memory.search", 1),),
-        expected_revision=1,
+        expected_revision=2,
         idempotency_key="tool-policy-r2",
     )
-    assert policy.revision == 2
-    assert catalog.get_tool_policy(original.tool_policy_revision_id).revision == 1
+    assert policy.revision == 3
+    assert catalog.get_tool_policy(original.tool_policy_revision_id).revision == 2
 
     updated = catalog.attach_tool_policy(
         aura.id, policy.id, aura.version, key="tool-policy-attach-r2"
     )
     assert updated.version == aura.version + 1
     assert updated.current_revision.tool_policy_revision_id == policy.id
-    assert updated.revisions[0].tool_policy_revision_id == original.tool_policy_revision_id
+    assert any(
+        item.id == original.id
+        and item.tool_policy_revision_id == original.tool_policy_revision_id
+        for item in updated.revisions
+    )
 
 
 def test_tool_policy_rejects_unknown_grants_and_stale_revision() -> None:
@@ -179,8 +209,8 @@ def test_revisions_are_sequenced_immutably_and_require_expected_version() -> Non
         persona_revision.id,
     )
 
-    assert original.revision == 1
-    assert created.revision == 2
+    assert original.revision == 2
+    assert created.revision == 3
     assert original.instructions != created.instructions
     assert profile.current_revision_id == created.id
     with pytest.raises(ConfigurationVersionConflict):
@@ -470,7 +500,7 @@ async def test_retry_is_pinned_to_original_revision_and_owner_isolation_holds() 
         original_run.id, "owner", str(uuid4()), "https://issuer"
     )
     assert retry_conversation.id == conversation.id
-    assert retry.agent_revision_id == original_run.agent_revision_id == GENERAL_REVISION_ID
+    assert retry.agent_revision_id == original_run.agent_revision_id
     assert retry.memory_policy_revision_id == original_run.memory_policy_revision_id
 
     partial = await store.append_assistant(retry.id, "partial", MessageState.PARTIAL)
@@ -528,4 +558,4 @@ async def test_queued_work_keeps_its_pinned_revision_after_agent_is_disabled() -
     await store.append_assistant(queued.id, "completed")
     _, finished, _ = await store.finish_run(queued.id, RunStatus.COMPLETED)
     assert finished.status is RunStatus.COMPLETED
-    assert finished.agent_revision_id == GENERAL_REVISION_ID
+    assert finished.agent_revision_id == queued.agent_revision_id

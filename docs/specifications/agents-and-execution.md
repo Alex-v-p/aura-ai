@@ -18,11 +18,39 @@ The Python runtime uses FastAPI/Pydantic at transport and validation edges and s
 
 ### Governed tool execution v1
 
-Aura implements one bounded native-tool cycle behind provider-neutral runtime contracts. An immutable agent revision pins an immutable tool-policy revision, and run admission snapshots that policy identifier, the Aura-enforced call limit, and usage. A policy grants an exact stable tool identifier and integer version; absence of that grant denies execution. The built-in Aura profile is seeded with `memory.search@1`, while custom profiles begin with a deny policy. Policy creation and attachment are separate owner-scoped, idempotent, optimistic-concurrency commands so historical agent revisions retain their original behavior.
+Aura implements one bounded native-tool cycle behind provider-neutral runtime contracts. An immutable agent revision pins an immutable tool-policy revision, and run admission snapshots that policy identifier, the Aura-enforced call limit, and usage. A policy grants an exact stable tool identifier and integer version; absence of that grant denies execution. The built-in Aura profile's successor revision grants exactly `memory.search@1` and `reminder.create@1`, while custom profiles remain deny-by-default. Policy creation and attachment are separate owner-scoped, idempotent, optimistic-concurrency commands so historical agent revisions retain their original behavior.
 
 A run with a grant may make at most one tool call. Aura validates the requested identity, version, arguments, permission, budget, and deadline before invoking application behavior. A successful call is followed by one tools-disabled synthesis request. Denied, malformed, over-budget, timed-out, provider-protocol, and execution failures invoke no prohibited behavior and may continue with a content-free tools-disabled synthesis. Models without native tool support continue on the existing text-only path with a visible capability outcome. Native Ollama request and response shapes remain adapter-private and never become Aura API, event, domain, or generated-client contracts.
 
 Tool lifecycle is durable and ordered through `tool.status` run events. These events contain only an Aura-generated call identifier, stable tool identity and version, lifecycle status, bounded error classification/code, and optional result count. They never contain arguments, queries, results, memory text, prompts, responses, credentials, or hidden reasoning.
+
+### Approval-backed reminder mutation
+
+`reminder.create@1` is a typed, idempotent mutation requiring the exact pinned
+`reminders:write` grant and unconditional owner confirmation. Aura validates and
+normalizes its content and offset-aware due instant before creating an
+automation-owned proposal. The proposal keeps private payload in Core's
+PostgreSQL domain; the governance approval references proposal, run,
+conversation, tool, and owner identifiers without duplicating content.
+
+When confirmation is required, the proposal and approval commit before the
+worker lease is released. The run enters `waiting_for_confirmation` and its
+tool lifecycle enters `awaiting_confirmation`; no reminder exists. PostgreSQL
+is authoritative for pending decisions and replay cursors. Approve, reject,
+expiry, and cancellation each lock the approval and use expected versions and
+idempotency so exactly one decision wins. Approval queues a durable resume
+signal; the resumed worker re-reads the decision, invokes the shared reminder
+use case at most once with approval-derived idempotency, and performs one
+tools-disabled synthesis step. Denial, expiry, or cancellation resumes with a
+typed denied result and creates no reminder.
+
+Approval SSE and transactional-outbox/NATS wakeups carry only bounded
+identifiers, statuses, versions, and timestamps. Clients fetch authorized
+details separately, so reconnect, duplicate wakeups, and offline catch-up
+cannot disclose proposal content or cause a second side effect. The optional
+browser IANA timezone is pinned to a new run; prompt compilation derives local
+date/time from the server clock. Legacy runs remain valid and ambiguous times
+must be clarified with an explicit offset rather than guessed.
 
 ## Execution rules
 

@@ -1,6 +1,6 @@
 component:
   id: aura.automation.reminder_management
-  version: 1.0.0
+  version: 1.1.0
   owner: automation.reminders
   category: persistence
 input:
@@ -22,6 +22,7 @@ metrics:
   - reminder_outbox_duplicates
   - reminder_version_conflict_count
   - reminder_idempotency_conflict_count
+  - reminder_create_idempotency_outcome
 metric_semantics:
   reminder_command_duration_ms: Owner-scoped reminder command duration.
   reminder_command_outcome: Metadata-only lifecycle command outcome.
@@ -32,6 +33,7 @@ evaluators:
   - reminder_lifecycle_correctness
   - reminder_owner_authorization
   - reminder_time_normalization
+  - reminder_creation_exactly_once
 cardinality:
   metric_attributes: [operation, outcome, error_class, dependency, status]
   trace_only: [trace_id, span_id, parent_span_id, reminder_id, aggregate_id, aggregate_type, event_type, event_status, event_version, command_id, correlation_id, causation_id]

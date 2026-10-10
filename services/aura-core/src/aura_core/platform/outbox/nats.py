@@ -12,14 +12,20 @@ from nats.errors import TimeoutError as NatsTimeoutError
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import MetricsPort, NullMetrics
 from aura_core.platform.outbox.service import (
+    APPROVAL_EVENT_TOPIC,
     RUN_COMMAND_TOPIC,
+    RUN_RESUME_TOPIC,
     OutboxCommand,
     identifier_trace_metadata,
 )
 
 EventHandler = Callable[[UUID, UUID], Awaitable[None]]
 NotificationEventHandler = Callable[[UUID], Awaitable[None]]
+ApprovalEventHandler = Callable[[UUID], Awaitable[None]]
+ResumptionEventHandler = Callable[[UUID], Awaitable[None]]
 NOTIFICATION_EVENT_SUBJECT = "aura.notifications.events.v1"
+APPROVAL_EVENT_SUBJECT = "aura.approvals.events.v1"
+RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
 
 
 class NatsOutbox:
@@ -36,6 +42,8 @@ class NatsOutbox:
         self._jetstream: Any = None
         self._event_subscription: Any = None
         self._notification_subscription: Any = None
+        self._approval_subscription: Any = None
+        self._resumption_subscription: Any = None
         self._readiness_detail: str | None = "not connected"
 
     @property
@@ -113,6 +121,23 @@ class NatsOutbox:
             except ValueError:
                 persisted_event_id = command.id
             await self.publish_notification_event(persisted_event_id)
+        if (
+            command.aggregate_type == "governance.approval"
+            and command.topic == APPROVAL_EVENT_TOPIC
+        ):
+            wake_id = command.identifier("eventId") or command.id
+            try:
+                persisted_event_id = UUID(str(wake_id))
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_approval_event(persisted_event_id)
+        if command.topic == RUN_RESUME_TOPIC:
+            wake_id = command.identifier("eventId") or command.id
+            try:
+                persisted_event_id = UUID(str(wake_id))
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_resumption_event(persisted_event_id)
         return duplicate
 
     async def publish_event(self, event: RunEvent) -> None:
@@ -190,6 +215,72 @@ class NatsOutbox:
         )
         return self._notification_subscription
 
+    async def publish_approval_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral identifier-only approval wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("approval wakeup requires an event identifier")
+        await self._connection.publish(
+            APPROVAL_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
+        )
+
+    async def publish_resumption_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral identifier-only waiting-run wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("resumption wakeup requires an event identifier")
+        await self._connection.publish(
+            RESUMPTION_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
+        )
+
+    async def subscribe_approval_events(self, handler: ApprovalEventHandler) -> Any:
+        """Subscribe to approval wakeups after PostgreSQL replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._approval_subscription = await self._connection.subscribe(
+            APPROVAL_EVENT_SUBJECT, cb=callback
+        )
+        return self._approval_subscription
+
+    async def subscribe_resumption_events(self, handler: ResumptionEventHandler) -> Any:
+        """Subscribe to waiting-run wakeups after durable replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._resumption_subscription = await self._connection.subscribe(
+            RESUMPTION_EVENT_SUBJECT, cb=callback
+        )
+        return self._resumption_subscription
+
     async def close(self) -> None:
         if self._connection is not None:
             await self._connection.drain()
@@ -197,6 +288,8 @@ class NatsOutbox:
             self._jetstream = None
             self._event_subscription = None
             self._notification_subscription = None
+            self._approval_subscription = None
+            self._resumption_subscription = None
             self._readiness_detail = "not connected"
 
 
@@ -317,39 +410,18 @@ class NatsRunConsumer:
         self.metrics.increment(
             self.component,
             "consumer_received",
-            trace_id=(command.correlation_id or _require_run_id(command)).hex,
-            run_id=str(command.run_id),
-            conversation_id=str(command.conversation_id),
-            command_id=str(command.id),
-            correlation_id=str(command.correlation_id or command.run_id),
-            causation_id=str(command.causation_id or command.run_id),
-            delivery_count=str(delivery_count),
-            **_optional_command_metadata(command),
+            **_command_metric_metadata(command, delivery_count),
         )
         if delivery_count > 1:
             self.metrics.increment(
                 self.component,
                 "consumer_redelivered",
-                trace_id=(command.correlation_id or _require_run_id(command)).hex,
-                run_id=str(command.run_id),
-                conversation_id=str(command.conversation_id),
-                command_id=str(command.id),
-                correlation_id=str(command.correlation_id or command.run_id),
-                causation_id=str(command.causation_id or command.run_id),
-                delivery_count=str(delivery_count),
-                **_optional_command_metadata(command),
+                **_command_metric_metadata(command, delivery_count),
             )
             self.metrics.increment(
                 self.component,
                 "outbox_duplicates",
-                trace_id=(command.correlation_id or _require_run_id(command)).hex,
-                run_id=str(command.run_id),
-                conversation_id=str(command.conversation_id),
-                command_id=str(command.id),
-                correlation_id=str(command.correlation_id or command.run_id),
-                causation_id=str(command.causation_id or command.run_id),
-                delivery_count=str(delivery_count),
-                **_optional_command_metadata(command),
+                **_command_metric_metadata(command, delivery_count),
             )
         return command
 
@@ -367,11 +439,7 @@ class NatsRunConsumer:
                 await message.ack()
             except Exception:
                 metadata = (
-                    {
-                        "trace_id": (command.correlation_id or _require_run_id(command)).hex,
-                        "run_id": str(command.run_id),
-                        "conversation_id": str(command.conversation_id),
-                    }
+                    _command_metric_metadata(command, self._pending_delivery_count)
                     if command is not None
                     else {}
                 )
@@ -386,14 +454,7 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_acknowledged",
-                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
             self._pending_message = None
             self._pending_command = None
@@ -428,15 +489,8 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_nacked",
-                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
                     error_class=error_class,
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
         finally:
             self._clear_pending()
@@ -457,15 +511,8 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_rejected",
-                    trace_id=(command.correlation_id or _require_run_id(command)).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
                     error_class=error_class,
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
         finally:
             self._clear_pending()
@@ -486,7 +533,13 @@ class NatsRunConsumer:
 
 
 class NatsIdentifierConsumer(NatsRunConsumer):
-    """Durable pull consumer for a caller-owned identifier-only command."""
+    """Durable pull consumer for generic identifier-only commands.
+
+    Unlike :class:`NatsRunConsumer`, this path parses the versioned envelope
+    through ``OutboxCommand.from_record``. It accepts both legacy identifier
+    commands (memory) and generic aggregate commands (governance/resumption),
+    without coupling a worker to an adapter-specific payload shape.
+    """
 
     def __init__(
         self,
@@ -505,6 +558,52 @@ class NatsIdentifierConsumer(NatsRunConsumer):
             component=component,
             strict_schema=True,
         )
+
+    async def receive(self) -> OutboxCommand | None:
+        if self._subscription is None:
+            raise RuntimeError("NATS consumer is not connected")
+        try:
+            message = (await self._subscription.fetch(1, timeout=30))[0]
+        except NatsTimeoutError:
+            return None
+        self._pending_message = message
+        metadata = getattr(message, "metadata", None)
+        delivery_count = int(getattr(metadata, "num_delivered", 1) or 1)
+        self._pending_delivery_count = delivery_count
+        try:
+            raw_payload = json.loads(message.data)
+            if not isinstance(raw_payload, dict):
+                raise ValueError("command payload must be an object")
+            payload = cast(dict[str, object], raw_payload)
+            command_id = UUID(str(payload["commandId"]))
+            created_at = datetime.fromisoformat(str(payload["createdAt"]))
+            command = OutboxCommand.from_record(
+                command_id,
+                self.subject,
+                payload,
+                created_at,
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            self.metrics.increment(self.component, "errors", error_class="delivery")
+            raise ValueError("invalid generic command metadata") from None
+        self._pending_command = command
+        self.metrics.increment(
+            self.component,
+            "consumer_received",
+            **_command_metric_metadata(command, delivery_count),
+        )
+        if delivery_count > 1:
+            self.metrics.increment(
+                self.component,
+                "consumer_redelivered",
+                **_command_metric_metadata(command, delivery_count),
+            )
+            self.metrics.increment(
+                self.component,
+                "outbox_duplicates",
+                **_command_metric_metadata(command, delivery_count),
+            )
+        return command
 
 
 def _stream_subjects(info: Any) -> tuple[str, ...]:
@@ -534,9 +633,23 @@ def _optional_command_metadata(command: OutboxCommand) -> dict[str, str]:
     return identifier_trace_metadata(command)
 
 
-def _require_run_id(command: OutboxCommand) -> UUID:
-    """Return the run identity guaranteed by the run consumer subject."""
+def _command_metric_metadata(
+    command: OutboxCommand,
+    delivery_count: int,
+) -> dict[str, str]:
+    """Build bounded command trace metadata for both legacy and generic envelopes."""
 
-    if command.run_id is None or command.conversation_id is None:
-        raise ValueError("run consumer received a non-run outbox command")
-    return command.run_id
+    identity = command.run_id or command.aggregate_id or command.id
+    result = {
+        "trace_id": (command.correlation_id or identity).hex,
+        "command_id": str(command.id),
+        "correlation_id": str(command.correlation_id or identity),
+        "causation_id": str(command.causation_id or identity),
+        "delivery_count": str(delivery_count),
+        **_optional_command_metadata(command),
+    }
+    if command.run_id is not None:
+        result["run_id"] = str(command.run_id)
+    if command.conversation_id is not None:
+        result["conversation_id"] = str(command.conversation_id)
+    return result

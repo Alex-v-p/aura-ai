@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.prompt_compilation
-  version: 1.1.0
+  version: 1.2.0
   owner: runtime.prompting
   category: compilation
 input:
@@ -18,15 +18,19 @@ metrics:
   - prompt_compile_duration_ms
   - prompt_component_count
   - compiled_prompt_size
+  - client_timezone_validation_outcome
 metric_semantics:
   prompt_compile_duration_ms: Monotonic prompt compilation duration.
   prompt_component_count: Number of ordered immutable components compiled.
   compiled_prompt_size: Rendered prompt size measured without exporting prompt content.
+  client_timezone_validation_outcome: Bounded validation result for an optional pinned IANA timezone (valid, invalid, or omitted).
 capture_policy: metadata_only
+evaluators:
+  - timezone_interpretation_and_clarification
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
   trace_only: [trace_id, span_id, parent_span_id, agent_revision_id, persona_revision_id, prompt_bundle_revision_id, prompt_hash, prompt_component_count, compiled_prompt_size]
-  prohibited: [rendered_prompt, instructions, response_content, prompt, response, payload, endpoint, token, credential]
+  prohibited: [rendered_prompt, instructions, response_content, client_timezone, local_date, local_time, prompt, response, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded
   overflow: drop_oldest_and_count

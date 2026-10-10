@@ -91,9 +91,19 @@ _MEMORY_ACTIVITY_STATUSES = frozenset({"queued", "completed", "failed"})
 _MEMORY_ACTIVITY_RECONCILIATION = frozenset({"pending", "authoritative"})
 
 _TOOL_STATUS_FIELDS = frozenset(
-    {"callId", "toolId", "toolVersion", "status", "errorClass", "errorCode", "resultCount"}
+    {
+        "callId",
+        "toolId",
+        "toolVersion",
+        "status",
+        "errorClass",
+        "errorCode",
+        "resultCount",
+    }
 )
-_TOOL_STATUS_VALUES = frozenset({"pending", "executing", "completed", "denied", "failed"})
+_TOOL_STATUS_VALUES = frozenset(
+    {"pending", "awaiting_confirmation", "executing", "completed", "denied", "failed"}
+)
 _TOOL_ERROR_CLASSES = frozenset(
     {
         "capability",
@@ -123,6 +133,8 @@ _TOOL_ERROR_CODES = frozenset(
         "TOOL_TIMEOUT",
         "TOOL_UNKNOWN",
         "TOOL_NOT_GRANTED",
+        "TOOL_NOT_APPROVED",
+        "TOOL_PERMISSION_DENIED",
     }
 )
 _TOOL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")

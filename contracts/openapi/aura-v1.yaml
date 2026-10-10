@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.8.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
+    "version": "1.9.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -18,6 +18,7 @@
     { "name": "Memories" },
     { "name": "Reminders" },
     { "name": "Notifications" },
+    { "name": "Approvals" },
     { "name": "Health" }
   ],
   "paths": {
@@ -840,6 +841,89 @@
         }
       }
     },
+    "/api/v1/approvals": {
+      "get": {
+        "operationId": "listApprovals",
+        "tags": ["Approvals"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ApprovalStatus" }, "description": "Optional durable decision-state filter. Omission returns approvals in every state." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped approval summaries ordered by updatedAt descending with approval ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }],
+      "get": {
+        "operationId": "getApproval",
+        "tags": ["Approvals"],
+        "responses": {
+          "200": { "description": "Owner-authorized approval detail including the private reminder proposal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}/approve": {
+      "post": {
+        "operationId": "approveApproval",
+        "tags": ["Approvals"],
+        "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDecisionRequest" } } } },
+        "responses": {
+          "200": { "description": "Pending approval durably approved and its waiting run queued for resumption", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Approval" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}/reject": {
+      "post": {
+        "operationId": "rejectApproval",
+        "tags": ["Approvals"],
+        "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDecisionRequest" } } } },
+        "responses": {
+          "200": { "description": "Pending approval durably rejected and its waiting run queued for denied synthesis", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Approval" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/stream": {
+      "get": {
+        "operationId": "streamApprovals",
+        "tags": ["Approvals"],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed owner-authorized persisted approval event. Replay resumes strictly after this event." }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped persisted approval replay followed by live metadata-only events and heartbeats", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/ApprovalStreamEvent" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Last-Event-ID is not an owner-authorized persisted approval event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from the approval list before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/notifications": {
       "get": {
         "operationId": "listNotifications",
@@ -941,6 +1025,7 @@
       "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -1724,7 +1809,8 @@
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "agentRevisionId": { "type": "string", "format": "uuid" },
-          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." }
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
         }
       },
       "UpdateConversationRequest": {
@@ -1764,7 +1850,8 @@
         "required": ["message", "conversationVersion"],
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
-          "conversationVersion": { "type": "integer", "minimum": 1 }
+          "conversationVersion": { "type": "integer", "minimum": 1 },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
         }
       },
       "ConversationPage": {
@@ -1884,6 +1971,10 @@
           "toolPolicyRevisionId": { "type": "string", "format": "uuid", "description": "Pinned immutable tool policy. Optional only for backward compatibility with pre-1.6 producers." },
           "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Pinned Aura-enforced tool-call budget. Optional only for backward compatibility with pre-1.6 producers." },
           "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Calls admitted for execution. Optional only for backward compatibility with pre-1.6 producers." },
+          "clientTimeZone": { "oneOf": [{ "$ref": "#/components/schemas/ClientTimeZone" }, { "type": "null" }], "description": "Validated IANA timezone immutably pinned at run admission. Optional for backward compatibility with pre-1.9 producers." },
+          "approvalId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
+          "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
+          "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -1896,7 +1987,9 @@
           "error": { "oneOf": [{ "$ref": "#/components/schemas/RunError" }, { "type": "null" }] }
         }
       },
-      "RunStatus": { "type": "string", "enum": ["queued", "running", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+      "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+      "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier. Producers validate membership in the deployed IANA timezone database." },
+      "RunToolLifecycleStatus": { "type": "string", "enum": ["awaiting_confirmation", "approved", "denied", "executing", "completed", "failed"] },
       "ConversationArchiveState": { "type": "string", "enum": ["active", "archived", "all"] },
       "RunError": {
         "type": "object", "additionalProperties": false,
@@ -1926,6 +2019,7 @@
           { "$ref": "#/components/schemas/RunErrorEvent" },
           { "$ref": "#/components/schemas/MemoryActivityEvent" },
           { "$ref": "#/components/schemas/ToolStatusEvent" },
+          { "$ref": "#/components/schemas/ApprovalStatusEvent" },
           { "$ref": "#/components/schemas/HeartbeatEvent" }
         ],
         "discriminator": { "propertyName": "eventType" }
@@ -1964,6 +2058,9 @@
       "ToolStatusEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "tool.status" }, "data": { "$ref": "#/components/schemas/ToolStatusData" } } }]
       },
+      "ApprovalStatusEvent": {
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "approval.status" }, "data": { "$ref": "#/components/schemas/ApprovalStatusData" } } }]
+      },
       "HeartbeatEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "heartbeat" }, "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "type": "string", "format": "date-time" } } } } }]
       },
@@ -1987,7 +2084,7 @@
         "required": ["message"],
         "properties": { "message": { "$ref": "#/components/schemas/Message" } }
       },
-      "ToolStatus": { "type": "string", "enum": ["pending", "executing", "completed", "denied", "failed"] },
+      "ToolStatus": { "type": "string", "enum": ["pending", "awaiting_confirmation", "executing", "completed", "denied", "failed"] },
       "ToolStatusData": {
         "type": "object", "additionalProperties": false,
         "description": "Metadata-only tool lifecycle state. Tool arguments, queries, results, memory content, prompts, responses, credentials, and hidden reasoning are prohibited.",
@@ -2000,6 +2097,20 @@
           "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
           "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
           "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+        }
+      },
+      "ApprovalStatusData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only approval lifecycle state. Proposal content, requested due time, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "required": ["approvalId", "proposalId", "runId", "conversationId", "status", "executionStatus", "version"],
+        "properties": {
+          "approvalId": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 }
         }
       },
       "ReminderStatus": { "type": "string", "enum": ["scheduled", "fired", "completed", "canceled"] },
@@ -2040,6 +2151,94 @@
         "type": "object", "additionalProperties": false,
         "required": ["expectedVersion"],
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "ApprovalStatus": { "type": "string", "enum": ["pending", "approved", "rejected", "expired", "canceled"] },
+      "ApprovalExecutionStatus": { "type": "string", "enum": ["not_started", "queued", "executing", "completed", "failed", "denied"] },
+      "Approval": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable approval metadata. Proposal content and requested due time are available only from ApprovalDetail.",
+        "required": ["id", "proposalId", "runId", "conversationId", "toolCallId", "toolId", "toolVersion", "status", "executionStatus", "version", "expiresAt", "createdAt", "updatedAt", "decidedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "toolCallId": { "type": "string", "format": "uuid" },
+          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolVersion": { "type": "integer", "const": 1 },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderProposalDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private automation-owned proposal returned only after owner authorization.",
+        "required": ["id", "content", "dueAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "Validated requested instant normalized to UTC." }
+        }
+      },
+      "ApprovalDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Approval" },
+          { "type": "object", "required": ["proposal"], "properties": { "proposal": { "$ref": "#/components/schemas/ReminderProposalDetail" } } }
+        ]
+      },
+      "ApprovalPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Approval" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "ApprovalDecisionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "ApprovalStreamEvent": {
+        "description": "Metadata-only approval stream envelope. Proposal content, requested due time, owner identity, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ApprovalEvent" },
+          { "$ref": "#/components/schemas/ApprovalHeartbeatEvent" }
+        ],
+        "discriminator": { "propertyName": "eventType" }
+      },
+      "ApprovalEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "approvalId", "proposalId", "runId", "conversationId", "toolId", "toolVersion", "status", "executionStatus", "version", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["approval.pending", "approval.approved", "approval.rejected", "approval.expired", "approval.canceled"] },
+          "approvalId": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolVersion": { "type": "integer", "const": 1 },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApprovalHeartbeatEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventType", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventType": { "type": "string", "const": "heartbeat" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
       },
       "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
       "Notification": {

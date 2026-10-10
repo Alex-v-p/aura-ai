@@ -29,6 +29,7 @@ from aura_core.domains.interaction.agents.public import (
     GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
+    GENERAL_SUCCESSOR_TOOL_POLICY_ID,
     GENERAL_TOOL_POLICY_ID,
     NAMESPACE,
     NEUTRAL_PERSONA_REVISION_ID,
@@ -112,6 +113,7 @@ def _tool_policy_owner_matches(row: ToolPolicyRevisionRow, issuer: str, subject:
         (row.principal_issuer, row.principal_subject) == ("", "")
         and (
             row.id == GENERAL_TOOL_POLICY_ID
+            or row.id == GENERAL_SUCCESSOR_TOOL_POLICY_ID
             or row.id == uuid5(NAMESPACE, f"agent-tool-policy:{row.agent_profile_id}:1")
         )
     )
@@ -241,8 +243,9 @@ class SqlAgentStore:
                 ),
                 max_calls_per_run=item.max_calls_per_run,
                 timeout_ms=item.timeout_ms,
-                retry_limit=item.retry_limit,
-                created_at=item.created_at or datetime.now(UTC),
+            retry_limit=item.retry_limit,
+            permission_scopes=frozenset(item.permission_scopes or ()),
+            created_at=item.created_at or datetime.now(UTC),
             )
             for item in tool_policies
         }
@@ -842,6 +845,7 @@ class SqlAgentStore:
             max_calls_per_run=row.max_calls_per_run,
             timeout_ms=row.timeout_ms,
             retry_limit=row.retry_limit,
+            permission_scopes=frozenset(row.permission_scopes or ()),
             created_at=row.created_at or datetime.now(UTC),
         )
 
@@ -850,7 +854,10 @@ class SqlAgentStore:
     ) -> ToolPolicy:
         if not issuer or not subject:
             raise ConfigurationNotFound("tool policy owner is required")
-        if any(item != ToolGrant("memory.search", 1) for item in policy.grants):
+        if any(
+            item not in {ToolGrant("memory.search", 1), ToolGrant("reminder.create", 1)}
+            for item in policy.grants
+        ):
             raise ValueError("unknown tool grant")
         fingerprint = self._fingerprint(
             "tool-policy",
@@ -892,6 +899,7 @@ class SqlAgentStore:
                 max_calls_per_run=1 if policy.grants else 0,
                 timeout_ms=30_000,
                 retry_limit=0,
+                permission_scopes=policy.permission_scopes,
             )
             session.add(row)
             for grant in policy.grants:

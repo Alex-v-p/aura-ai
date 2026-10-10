@@ -9,6 +9,7 @@
 import asyncio
 import secrets
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import cast
 from uuid import UUID, uuid4
@@ -49,6 +50,7 @@ from aura_core.runtime.models.ports import (
 )
 from aura_core.runtime.tools import (
     MEMORY_SEARCH_TOOL_ID,
+    REMINDER_CREATE_TOOL_ID,
     MemorySearchContext,
     ToolCall,
     ToolExecutionError,
@@ -56,6 +58,7 @@ from aura_core.runtime.tools import (
     ToolExecutor,
     ToolRegistry,
     default_tool_registry,
+    validate_tool_arguments,
 )
 
 
@@ -89,6 +92,8 @@ class RunCoordinator:
         context_token_budget: int = 8192,
         title_timeout_seconds: float = 10.0,
         tool_registry: object | None = None,
+        approval_service: object | None = None,
+        reminder_service: object | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -103,6 +108,8 @@ class RunCoordinator:
         self.tool_registry: ToolRegistry = (
             tool_registry if isinstance(tool_registry, ToolRegistry) else default_tool_registry()
         )
+        self.approval_service = approval_service
+        self.reminder_service = reminder_service
         # Keep in-flight metadata long enough for an outer run timeout to
         # publish the terminal tool status and execution telemetry.
         self._active_tool_attempts: dict[UUID, dict[str, object]] = {}
@@ -127,6 +134,29 @@ class RunCoordinator:
         ]
 
     async def cancel(self, run_id: UUID, subject: str, issuer: str, idempotency_key: str) -> Run:
+        if self.approval_service is not None:
+            _conversation, current = await self.store.find_run_any(run_id)
+            if current.status is RunStatus.WAITING_FOR_CONFIRMATION and current.approval_id is not None:
+                cancel_waiting = getattr(self.approval_service, "cancel_waiting_run", None)
+                getter = getattr(self.approval_service, "get", None)
+                if not callable(cancel_waiting) or not callable(getter):
+                    raise RunExecutionFailure("approval cancellation unavailable")
+                detail = await getter(issuer, subject, current.approval_id)
+                approval = getattr(detail, "approval", detail)
+                expected_version = int(getattr(approval, "version", 1))
+                result = await cancel_waiting(
+                    issuer,
+                    subject,
+                    run_id,
+                    current.approval_id,
+                    expected_version=expected_version,
+                    idempotency_key=idempotency_key,
+                )
+                canceled_run = getattr(result, "run", None)
+                if isinstance(canceled_run, Run):
+                    return canceled_run
+                _conversation, canceled_run = await self.store.find_run_any(run_id)
+                return canceled_run
         run = await self.store.request_cancel(run_id, subject, idempotency_key, issuer)
         return run
 
@@ -209,6 +239,22 @@ class RunCoordinator:
         attempt_id = run.attempt_id
         if attempt_id is None:
             raise RuntimeError("acquired run is missing its attempt identifier")
+        if run.approval_id is not None and run.tool_lifecycle_status in {
+            "approved",
+            "denied",
+            "executing",
+        }:
+            try:
+                await self._execute_resumed_tool(
+                    conversation, run, attempt_id, provider, started, worker_span_id
+                )
+            except RunClaimLost:
+                return
+            except Exception as exc:
+                await self._settle_resumed_failure(
+                    conversation, run, attempt_id, exc, started, worker_span_id
+                )
+            return
         self.metrics.increment(
             "aura.execution.run_coordinator",
             "run_started",
@@ -650,6 +696,325 @@ class RunCoordinator:
                 )
         return True
 
+    async def _execute_resumed_tool(
+        self,
+        conversation: Conversation,
+        run: Run,
+        attempt_id: UUID,
+        provider: ChatCompletionPort,
+        started: float,
+        worker_span_id: str,
+    ) -> None:
+        """Execute one approved/denied proposal, then synthesize with tools off."""
+
+        detail = None
+        if self.approval_service is not None and run.approval_id is not None:
+            getter = getattr(self.approval_service, "get", None)
+            if callable(getter):
+                detail = await getter(
+                    conversation.principal_issuer,
+                    conversation.principal_subject,
+                    run.approval_id,
+                )
+        if detail is None and run.tool_lifecycle_status == "approved":
+            raise RunExecutionFailure("persistence")
+        approval = getattr(detail, "approval", None)
+        proposal = getattr(detail, "proposal", None)
+        call_id = run.pending_tool_call_id or UUID(int=0)
+        approval_status = getattr(approval, "status", "approved")
+        approval_status = getattr(approval_status, "value", approval_status)
+        execution_status = getattr(approval, "execution_status", "not_started")
+        execution_status = getattr(execution_status, "value", execution_status)
+        approved = (
+            run.tool_lifecycle_status in {"approved", "executing"}
+            and approval_status == "approved"
+        )
+        self.metrics.increment(
+            "aura.governance.approval_workflow",
+            "approval_resume_outcome",
+            outcome="approved" if approved else "denied",
+            **self._metadata(run),
+        )
+        self.metrics.increment(
+            "aura.runtime.tool_execution",
+            "reminder_create_tool_outcome",
+            outcome="approved" if approved else "denied",
+            **self._metadata(run),
+        )
+        self._tool_span(
+            "aura.runtime.tool_execution",
+            "tool.execute",
+            0.0,
+            run,
+            secrets.token_hex(8),
+            worker_span_id,
+            "approved" if approved else "denied",
+            None,
+            tool_call_id=call_id,
+            approval_id=run.approval_id,
+            dependency="reminder_store",
+        )
+        if approved and proposal is None:
+            raise RunExecutionFailure("persistence")
+        if approved and self.reminder_service is None:
+            raise RunExecutionFailure("persistence")
+        if approved and proposal is not None and self.reminder_service is not None:
+            run.tool_lifecycle_status = "executing"
+            if execution_status in {"not_started", "queued"}:
+                await self._update_approval_execution(run.approval_id, "executing")
+            saver = getattr(self.store, "save_run", None)
+            if callable(saver):
+                result = saver(run)
+                if asyncio.iscoroutine(result):
+                    await result
+            await self._publish_tool_status(
+                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "executing"
+            )
+            creator = getattr(self.reminder_service, "create", None)
+            if not callable(creator):
+                raise RunExecutionFailure("persistence")
+            reminder = await creator(
+                conversation.principal_issuer,
+                conversation.principal_subject,
+                content=proposal.content,
+                due_at=proposal.due_at,
+                idempotency_key=f"approval:{run.approval_id}",
+            )
+            result_value = {
+                "reminderId": str(reminder.id),
+                "status": reminder.status.value,
+                "dueAt": reminder.due_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            evidence = _render_tool_evidence(result_value)
+        else:
+            await self._publish_tool_status(
+                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "denied",
+                error_class="policy", error_code="TOOL_NOT_APPROVED",
+            )
+            if execution_status != "denied":
+                await self._update_approval_execution(run.approval_id, "denied")
+            self.metrics.increment(
+                "aura.runtime.tool_execution",
+                "reminder_create_tool_outcome",
+                outcome="denied",
+                **self._metadata(run),
+            )
+            self._tool_span(
+                "aura.runtime.tool_execution",
+                "tool.execute",
+                0.0,
+                run,
+                secrets.token_hex(8),
+                worker_span_id,
+                "denied",
+                "policy",
+                tool_call_id=call_id,
+                approval_id=run.approval_id,
+                dependency="reminder_store",
+            )
+            evidence = "[The reminder request was denied or expired; no reminder was created.]"
+        context = await self.store.context(
+            conversation.id,
+            conversation.principal_subject,
+            conversation.principal_issuer,
+            self.context_token_budget,
+            run.agent_revision_id,
+            run.id.hex,
+            run.persona_revision_id,
+            worker_span_id,
+        )
+        synthesis = _bounded_synthesis_messages(
+            self._provider_messages(context), evidence, self.context_token_budget, 0.2
+        )
+        output_characters = [0]
+        if not await self._consume_synthesis(
+            conversation, run, attempt_id, provider, synthesis, output_characters, started, worker_span_id
+        ):
+            return
+        conversation, finished, assistant = await self.store.finish_run(
+            run.id, RunStatus.COMPLETED, attempt_id=attempt_id
+        )
+        if assistant is not None:
+            await self._publish(
+                new_event(
+                    "assistant.snapshot", run.id, conversation.id, await self._next_sequence(run.id),
+                    {"message": message_payload(assistant)},
+                )
+            )
+        await self._status(conversation.id, finished)
+        self._terminal(finished, started)
+        if approved:
+            # Keep governance execution in ``executing`` until both the
+            # tools-disabled synthesis and run completion are durable. A
+            # synthesis failure therefore settles through the normal failed
+            # path instead of attempting COMPLETED -> FAILED.
+            await self._publish_tool_status(
+                conversation, finished, call_id, REMINDER_CREATE_TOOL_ID, 1, "completed"
+            )
+            if execution_status != "completed":
+                await self._update_approval_execution(run.approval_id, "completed")
+            self.metrics.increment(
+                "aura.runtime.tool_execution",
+                "reminder_create_tool_outcome",
+                outcome="completed",
+                **self._metadata(finished),
+            )
+            self._tool_span(
+                "aura.runtime.tool_execution",
+                "tool.execute",
+                0.0,
+                finished,
+                secrets.token_hex(8),
+                worker_span_id,
+                "completed",
+                None,
+                tool_call_id=call_id,
+                approval_id=finished.approval_id,
+                dependency="reminder_store",
+            )
+
+    async def _settle_resumed_failure(
+        self,
+        conversation: Conversation,
+        run: Run,
+        attempt_id: UUID,
+        error: Exception,
+        started: float,
+        worker_span_id: str,
+    ) -> None:
+        """Apply the same terminal failure settlement as ordinary runs."""
+
+        del error
+        await self._update_approval_execution(run.approval_id, "failed")
+        self.metrics.increment(
+            "aura.governance.approval_workflow",
+            "approval_resume_outcome",
+            outcome="failed",
+            **self._metadata(run),
+        )
+        self.metrics.increment(
+            "aura.runtime.tool_execution",
+            "reminder_create_tool_outcome",
+            outcome="failed",
+            **self._metadata(run),
+        )
+        self._tool_span(
+            "aura.runtime.tool_execution",
+            "tool.execute",
+            0.0,
+            run,
+            secrets.token_hex(8),
+            worker_span_id,
+            "failed",
+            "execution",
+            tool_call_id=run.pending_tool_call_id,
+            approval_id=run.approval_id,
+            dependency="reminder_store",
+        )
+        try:
+            await self._publish_tool_status(
+                conversation,
+                run,
+                run.pending_tool_call_id or UUID(int=0),
+                REMINDER_CREATE_TOOL_ID,
+                1,
+                "failed",
+                error_class="execution",
+                error_code="TOOL_EXECUTION_FAILED",
+            )
+            finished_conversation, finished, assistant = await self.store.finish_run(
+                run.id,
+                RunStatus.FAILED,
+                RunError("TOOL_EXECUTION_FAILED", "The approved reminder could not be created.", True, run.id.hex),
+                attempt_id=attempt_id,
+            )
+        except RunClaimLost:
+            return
+        if assistant is not None:
+            await self._publish(
+                new_event(
+                    "assistant.snapshot",
+                    run.id,
+                    finished_conversation.id,
+                    await self._next_sequence(run.id),
+                    {"message": message_payload(assistant)},
+                )
+            )
+        await self._status(finished_conversation.id, finished)
+        self._terminal(finished, started)
+
+    async def _update_approval_execution(self, approval_id: UUID | None, status: str) -> None:
+        """Use an optional governance execution-status seam without coupling domains."""
+
+        if approval_id is None or self.approval_service is None:
+            return
+        updater = getattr(self.approval_service, "set_execution_status", None)
+        if not callable(updater):
+            return
+        value = updater(approval_id, status)
+        if asyncio.iscoroutine(value):
+            await value
+
+    async def reconcile_approval_completion(
+        self, run_id: UUID, approval_id: UUID
+    ) -> bool:
+        """Reconcile a completed run whose approval update was interrupted."""
+
+        if self.approval_service is None:
+            return False
+        conversation, run = await self.store.find_run_any(run_id)
+        if run.status is not RunStatus.COMPLETED or run.approval_id != approval_id:
+            return False
+        detail = await self.approval_service.get(
+            conversation.principal_issuer,
+            conversation.principal_subject,
+            approval_id,
+        )
+        approval = getattr(detail, "approval", detail)
+        approval_status = getattr(getattr(approval, "status", None), "value", None)
+        execution_status = getattr(
+            getattr(approval, "execution_status", None), "value", None
+        )
+        if approval_status != "approved":
+            return False
+        if execution_status == "completed":
+            return True
+        if execution_status != "executing":
+            return False
+        call_id = run.pending_tool_call_id or UUID(int=0)
+        history = await self.publisher.history(run.id)
+        already_published = any(
+            event.event_type == "tool.status"
+            and str(event.data.get("callId")) == str(call_id)
+            and event.data.get("status") == "completed"
+            for event in history
+        )
+        if not already_published:
+            await self._publish_tool_status(
+                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "completed"
+            )
+        await self._update_approval_execution(approval_id, "completed")
+        self.metrics.increment(
+            "aura.runtime.tool_execution",
+            "reminder_create_tool_outcome",
+            outcome="completed",
+            **self._metadata(run),
+        )
+        self._tool_span(
+            "aura.runtime.tool_execution",
+            "tool.execute",
+            0.0,
+            run,
+            secrets.token_hex(8),
+            None,
+            "completed",
+            None,
+            tool_call_id=call_id,
+            approval_id=approval_id,
+            dependency="reminder_store",
+        )
+        return True
+
     async def _provider_supports_tools(self, provider: object, model_id: str) -> bool:
         listed = getattr(provider, "list_models", None)
         if not callable(listed):
@@ -825,6 +1190,13 @@ class RunCoordinator:
             self.metrics.increment(
                 "aura.runtime.tool_selection", "tool_selection_outcome", outcome="selected", **self._metadata(run)
             )
+            if call.name == REMINDER_CREATE_TOOL_ID:
+                self.metrics.increment(
+                    "aura.runtime.tool_selection",
+                    "reminder_create_tool_outcome",
+                    outcome="selected",
+                    **self._metadata(run),
+                )
             selection_recorded = True
             self._tool_span(
                 "aura.runtime.tool_selection",
@@ -835,6 +1207,7 @@ class RunCoordinator:
                 worker_span_id,
                 "selected",
                 None,
+                tool_call_id=call.call_id,
             )
             executor = ToolExecutor(self.tool_registry)
             policy_started = perf_counter()
@@ -891,6 +1264,73 @@ class RunCoordinator:
                     started,
                     worker_span_id,
                 )
+            descriptor = self.tool_registry.get(call.name, 1)
+            if descriptor is not None and descriptor.confirmation == "always":
+                # Mutation tools never execute in the model attempt.  Their
+                # validated private arguments are handed to automation and
+                # governance, then this lease is released for durable resume.
+                if self.approval_service is None:
+                    raise RunExecutionFailure("persistence")
+                try:
+                    arguments = validate_tool_arguments(descriptor, call.arguments)
+                    due_at = datetime.fromisoformat(str(arguments["dueAt"]).replace("Z", "+00:00"))
+                    run.tool_calls_used = await self._claim_tool_call(run, attempt_id)
+                    creator = getattr(self.approval_service, "create_pending", None)
+                    if not callable(creator):
+                        raise RunExecutionFailure("persistence")
+                    detail = await creator(
+                        conversation.principal_issuer,
+                        conversation.principal_subject,
+                        content=str(arguments["content"]),
+                        due_at=due_at,
+                        run_id=run.id,
+                        conversation_id=conversation.id,
+                        tool_call_id=call.call_id,
+                        attempt_id=attempt_id,
+                    )
+                    approval = getattr(detail, "approval", None)
+                    approval_id = getattr(approval, "id", None)
+                    if not isinstance(approval_id, UUID):
+                        raise RunExecutionFailure("persistence")
+                    # The composed SQL approval UoW performs this transition
+                    # in the proposal/approval/run transaction.  Keep the
+                    # direct in-memory repository seam compatible for tests
+                    # and local composition that has no execution port.
+                    waiter = getattr(self.store, "wait_for_confirmation", None)
+                    if callable(waiter):
+                        try:
+                            await waiter(run.id, attempt_id, approval_id, call.call_id)
+                        except RunClaimLost:
+                            _, current = await self.store.find_run_any(run.id)
+                            if current.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                                raise
+                    self.metrics.increment(
+                        "aura.runtime.tool_selection",
+                        "reminder_create_tool_outcome",
+                        outcome="awaiting_confirmation",
+                        **self._metadata(run),
+                    )
+                    self._tool_span(
+                        "aura.runtime.tool_execution",
+                        "tool.execute",
+                        0.0,
+                        run,
+                        secrets.token_hex(8),
+                        selection_span_id,
+                        "awaiting_confirmation",
+                        None,
+                        tool_call_id=call.call_id,
+                        dependency="reminder_store",
+                    )
+                    await self._publish_tool_status(
+                        conversation, run, call.call_id, descriptor.id, descriptor.version,
+                        "awaiting_confirmation",
+                    )
+                    return False
+                except RunExecutionFailure:
+                    raise
+                except Exception as exc:
+                    raise RunExecutionFailure("persistence") from exc
             run.tool_calls_used = await self._claim_tool_call(run, attempt_id)
             await self._publish_tool_status(conversation, run, call.call_id, call.name, 1, "pending")
             await self._publish_tool_status(conversation, run, call.call_id, call.name, 1, "executing")
@@ -1065,7 +1505,23 @@ class RunCoordinator:
         parent_span_id: str | None,
         outcome: str,
         error_class: str | None,
+        *,
+        tool_call_id: UUID | None = None,
+        approval_id: UUID | None = None,
+        dependency: str | None = None,
     ) -> None:
+        trace: dict[str, str] = {
+            "provider": run.provider,
+            "run_id": str(run.id),
+            "conversation_id": str(run.conversation_id),
+        }
+        if tool_call_id is not None:
+            trace["tool_call_id"] = str(tool_call_id)
+        if approval_id is not None:
+            trace["approval_id"] = str(approval_id)
+        if run.tool_policy_revision_id:
+            trace["tool_policy_revision_id"] = str(run.tool_policy_revision_id)
+            trace["policy_revision_id"] = str(run.tool_policy_revision_id)
         self.metrics.record_span(
             component,
             operation,
@@ -1073,20 +1529,10 @@ class RunCoordinator:
             trace_id=run.id.hex,
             span_id=span_id,
             parent_span_id=parent_span_id,
-            dependency="model_provider" if component.endswith("tool_selection") else "memory_store" if component.endswith("tool_execution") else "conversation_store",
+            dependency=dependency or ("model_provider" if component.endswith("tool_selection") else "memory_store" if component.endswith("tool_execution") else "conversation_store"),
             outcome=outcome,
             error_class=error_class,
-            provider=run.provider,
-            run_id=str(run.id),
-            conversation_id=str(run.conversation_id),
-            **(
-                {
-                    "tool_policy_revision_id": str(run.tool_policy_revision_id),
-                    "policy_revision_id": str(run.tool_policy_revision_id),
-                }
-                if run.tool_policy_revision_id
-                else {}
-            ),
+            **trace,
         )
 
     async def _consume_synthesis(
@@ -1599,6 +2045,10 @@ class RunCoordinator:
         if run.tool_policy_revision_id is not None:
             metadata["tool_policy_revision_id"] = str(run.tool_policy_revision_id)
             metadata["policy_revision_id"] = str(run.tool_policy_revision_id)
+        if run.approval_id is not None:
+            metadata["approval_id"] = str(run.approval_id)
+        if run.pending_tool_call_id is not None:
+            metadata["tool_call_id"] = str(run.pending_tool_call_id)
         return metadata
 
     def _error(self, run: Run, error_class: str) -> None:
@@ -1646,6 +2096,10 @@ def run_payload(run: Run) -> dict[str, object]:
         else None,
         "toolCallLimit": run.tool_call_limit,
         "toolCallsUsed": run.tool_calls_used,
+        "toolLifecycleStatus": run.tool_lifecycle_status,
+        "approvalId": str(run.approval_id) if run.approval_id else None,
+        "pendingToolCallId": str(run.pending_tool_call_id) if run.pending_tool_call_id else None,
+        "clientTimeZone": run.client_time_zone,
         "provider": run.provider,
         "modelId": run.model_id,
         "retryOfRunId": str(run.retry_of_run_id) if run.retry_of_run_id else None,
@@ -1713,6 +2167,11 @@ def _render_tool_evidence(result: object | None) -> str:
     """Render bounded results as explicitly untrusted synthesis evidence."""
 
     if isinstance(result, Mapping):
+        if {"reminderId", "status", "dueAt"}.issubset(result):
+            return (
+                "[Untrusted reminder.create result: reminderId="
+                f"{result['reminderId']}; status={result['status']}; dueAt={result['dueAt']}]"
+            )
         raw_items = result.get("items", ())
     else:
         raw_items = result

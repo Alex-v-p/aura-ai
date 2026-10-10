@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 from aura_core.domains.execution.runs.events import new_event
 from aura_core.domains.interaction.agents.public import (
+    GENERAL_TOOL_POLICY_ID,
     AgentCatalog,
     ConfigurationIdempotencyConflict,
     ConfigurationNotFound,
@@ -59,7 +60,7 @@ def _events() -> dict[str, Any]:
 def test_memory_search_policy_is_bounded_and_read_only() -> None:
     catalog = AgentCatalog()
     aura = catalog.list_agents()[0]
-    policy = catalog.get_tool_policy(aura.current_revision.tool_policy_revision_id)
+    policy = catalog.get_tool_policy(GENERAL_TOOL_POLICY_ID)
 
     assert policy.grants == (ToolGrant("memory.search", 1),)
     assert policy.max_calls_per_run == 1
@@ -72,6 +73,38 @@ def test_memory_search_policy_is_bounded_and_read_only() -> None:
         ToolPolicy(uuid4(), aura.id, 1, grants=policy.grants, max_calls_per_run=0)
     with pytest.raises(ValueError):
         ToolPolicy(uuid4(), aura.id, 1, retry_limit=1)
+
+
+def test_reminder_create_descriptor_is_exactly_versioned_and_unconditionally_confirmed() -> None:
+    descriptor = default_tool_registry().get("reminder.create", 1)
+    assert descriptor is not None
+    assert descriptor.classification == "mutation"
+    assert descriptor.permission_scope == "reminders:write"
+    assert descriptor.confirmation == "always"
+    assert descriptor.retry_limit == 0
+    assert descriptor.idempotency == "idempotent"
+    assert descriptor.sensitivity == "private"
+    assert descriptor.input_schema["required"] == ["content", "dueAt"]
+    assert descriptor.input_schema["additionalProperties"] is False
+    result_properties = cast(dict[str, object], descriptor.result_schema["properties"])
+    assert {"reminderId", "status", "dueAt"} <= set(result_properties)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"content": "" , "dueAt": "2027-01-01T00:00:00+00:00"},
+        {"content": "set", "dueAt": "2027-01-01T00:00:00"},
+        {"content": "set", "dueAt": "yesterday"},
+        {"content": "set", "dueAt": "2027-01-01T00:00:00+00:00", "extra": True},
+    ],
+)
+def test_reminder_create_arguments_are_rejected_before_side_effects(arguments: object) -> None:
+    descriptor = default_tool_registry().get("reminder.create", 1)
+    assert descriptor is not None
+    with pytest.raises(ToolExecutionError, match="TOOL_ARGUMENTS_INVALID"):
+        validate_tool_arguments(descriptor, arguments)
 
 
 def test_registry_rejects_duplicate_descriptor_and_exposes_safe_summary() -> None:
@@ -233,19 +266,19 @@ def test_policy_creation_idempotency_and_expected_revision_are_deterministic() -
     grant = (ToolGrant("memory.search", 1),)
 
     first = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=1, idempotency_key="same-request"
+        aura.id, grant, expected_revision=2, idempotency_key="same-request"
     )
     replay = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=1, idempotency_key="same-request"
+        aura.id, grant, expected_revision=2, idempotency_key="same-request"
     )
     assert replay is first
 
     with pytest.raises(ConfigurationIdempotencyConflict):
         catalog.create_tool_policy(
-            aura.id, (), expected_revision=1, idempotency_key="same-request"
+            aura.id, (), expected_revision=2, idempotency_key="same-request"
         )
     with pytest.raises(ConfigurationVersionConflict):
-        catalog.create_tool_policy(aura.id, grant, expected_revision=1)
+        catalog.create_tool_policy(aura.id, grant, expected_revision=2)
 
 
 def test_policy_is_owner_scoped_and_attach_requires_new_agent_revision() -> None:
@@ -305,6 +338,7 @@ def test_tool_status_contract_is_metadata_only_and_replayable() -> None:
     } & set(status["properties"])
     assert schema["$defs"]["ToolStatus"]["enum"] == [
         "pending",
+        "awaiting_confirmation",
         "executing",
         "completed",
         "denied",

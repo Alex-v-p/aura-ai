@@ -47,6 +47,10 @@ class SqlRunRepository:
             tool_calls_used=row.tool_calls_used,
             tool_timeout_ms=row.tool_timeout_ms,
             tool_retry_limit=row.tool_retry_limit,
+            client_time_zone=row.client_time_zone,
+            approval_id=row.approval_id,
+            pending_tool_call_id=row.pending_tool_call_id,
+            tool_lifecycle_status=row.tool_lifecycle_status,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -145,6 +149,10 @@ class SqlRunRepository:
                 tool_calls_used=run.tool_calls_used,
                 tool_timeout_ms=run.tool_timeout_ms,
                 tool_retry_limit=run.tool_retry_limit,
+                client_time_zone=run.client_time_zone,
+                approval_id=run.approval_id,
+                pending_tool_call_id=run.pending_tool_call_id,
+                tool_lifecycle_status=run.tool_lifecycle_status,
                 provider=run.provider,
                 model_id=run.model_id,
                 retry_of_run_id=run.retry_of_run_id,
@@ -179,6 +187,10 @@ class SqlRunRepository:
         row.tool_calls_used = run.tool_calls_used
         row.tool_timeout_ms = run.tool_timeout_ms
         row.tool_retry_limit = run.tool_retry_limit
+        row.client_time_zone = run.client_time_zone
+        row.approval_id = run.approval_id
+        row.pending_tool_call_id = run.pending_tool_call_id
+        row.tool_lifecycle_status = run.tool_lifecycle_status
 
     async def increment_tool_calls(
         self, session: AsyncSession, run_id: UUID, attempt_id: UUID

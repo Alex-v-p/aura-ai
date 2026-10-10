@@ -76,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.8.0"
+    assert contract["info"]["version"] == "1.9.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +238,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.8.0"
+    assert contract["info"]["version"] == "1.9.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -304,11 +304,71 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     )
 
 
+def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.9.0"
+    paths = cast(dict[str, dict[str, Any]], contract["paths"])
+    expected_paths = {
+        "/api/v1/approvals",
+        "/api/v1/approvals/{approval_id}",
+        "/api/v1/approvals/{approval_id}/approve",
+        "/api/v1/approvals/{approval_id}/reject",
+        "/api/v1/approvals/stream",
+    }
+    assert expected_paths <= paths.keys()
+
+    for path, method in (
+        ("/api/v1/approvals/{approval_id}/approve", "post"),
+        ("/api/v1/approvals/{approval_id}/reject", "post"),
+    ):
+        refs = {
+            cast(str, parameter["$ref"])
+            for parameter in cast(list[dict[str, Any]], paths[path][method]["parameters"])
+            if "$ref" in parameter
+        }
+        assert {
+            "#/components/parameters/CsrfToken",
+            "#/components/parameters/IdempotencyKey",
+        } <= refs
+
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    assert schemas["ApprovalStatus"]["enum"] == [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "canceled",
+    ]
+    approval = schemas["Approval"]
+    assert {"id", "proposalId", "runId", "status", "version", "expiresAt"} <= set(
+        approval["required"]
+    )
+    stream = paths["/api/v1/approvals/stream"]["get"]
+    assert stream["operationId"] == "streamApprovals"
+    event = schemas.get("ApprovalEvent") or schemas["ApprovalLifecycleEvent"]
+    event_properties = event.get("properties", {})
+    assert not {
+        "content",
+        "dueAt",
+        "arguments",
+        "prompt",
+        "response",
+    } & set(event_properties)
+
+    generated_client = (
+        ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
+    ).read_text()
+    assert "listApprovals" in generated_client
+    assert "streamApprovals" in generated_client
+
+
 def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.8.0"
+    assert contract["info"]["version"] == "1.9.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
@@ -344,6 +404,7 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "run.error",
         "memory.activity",
         "tool.status",
+        "approval.status",
         "heartbeat",
     }
     assert schema["$defs"]["AssistantDeltaEvent"]["allOf"][1]["properties"]["data"]["required"] == [

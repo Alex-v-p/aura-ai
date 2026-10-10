@@ -6,6 +6,7 @@ import { ConversationPanelComponent, ConversationStore, type ConversationApi, ty
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, Message, Model, ModelCatalog, Run, Session } from '@aura/aura-api-client';
 import { AGENT_API, AgentStore, InMemoryAgentApi } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
+import { ApprovalStore } from '@aura/aura/governance/approvals';
 
 type FixtureState = 'empty' | 'loading' | 'working' | 'tool-activity' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
 
@@ -90,6 +91,10 @@ function fixtureStore(state: FixtureState): ConversationStore {
   return store;
 }
 
+function fixtureApprovals(): ApprovalStore {
+  return { start: async () => undefined, stop: () => undefined, forConversation: () => [], saving: signal(false), pendingCount: signal(0), connectionState: signal('live') } as unknown as ApprovalStore;
+}
+
 const meta: Meta<ConversationPanelComponent> = {
   title: 'Aura/Conversation panel',
   component: ConversationPanelComponent,
@@ -102,7 +107,7 @@ export default meta;
 
 type Story = StoryObj<ConversationPanelComponent>;
 
-const story = (state: FixtureState): Story => ({ decorators: [applicationConfig({ providers: [{ provide: ConversationStore, useValue: fixtureStore(state) }, { provide: AGENT_API, useFactory: () => new InMemoryAgentApi() }, { provide: AgentStore, useClass: AgentStore }, { provide: PersonaStore, useValue: { activePersonas: signal([]) } }, provideRouter([])] })] });
+const story = (state: FixtureState): Story => ({ decorators: [applicationConfig({ providers: [{ provide: ConversationStore, useValue: fixtureStore(state) }, { provide: ApprovalStore, useValue: fixtureApprovals() }, { provide: AGENT_API, useFactory: () => new InMemoryAgentApi() }, { provide: AgentStore, useClass: AgentStore }, { provide: PersonaStore, useValue: { activePersonas: signal([]) } }, provideRouter([])] })] });
 
 export const Empty: Story = { ...story('empty'), name: 'Empty' };
 export const Loading: Story = { ...story('loading'), name: 'Loading' };

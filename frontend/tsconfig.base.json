@@ -26,6 +26,7 @@
       "@aura/aura/knowledge/memory": ["libs/aura/knowledge/memory/src/index.ts"],
       "@aura/aura/automation/reminders": ["libs/aura/automation/reminders/src/index.ts"],
       "@aura/aura/automation/notifications": ["libs/aura/automation/notifications/src/index.ts"],
+      "@aura/aura/governance/approvals": ["libs/aura/governance/approvals/src/index.ts"],
       "@aura/aura-api-client": ["libs/platform/aura-api-client/src/index.ts"]
     }
   }

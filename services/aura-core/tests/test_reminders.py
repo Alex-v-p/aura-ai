@@ -30,6 +30,7 @@ from aura_core.domains.automation.reminders.public import (
     ReminderView,
     as_payload,
     event_command_id,
+    from_payload,
     normalize_content,
     normalize_due_at,
 )
@@ -80,6 +81,16 @@ def test_content_and_due_time_require_public_invariants() -> None:
         normalize_due_at(datetime(2026, 2, 1, 9, 0), now=NOW)
     with pytest.raises(ReminderValidationError, match="future"):
         normalize_due_at(NOW, now=NOW)
+
+
+@pytest.mark.asyncio
+async def test_idempotency_projection_rehydrates_authenticated_owner() -> None:
+    reminder = await _create(_repo(), key="owner-replay")
+    projection = as_payload(reminder)
+    replay = from_payload(projection, issuer=OWNER_ISSUER, subject=OWNER)
+
+    assert replay == reminder
+    assert "issuer" not in projection and "subject" not in projection
 
 
 def test_offset_and_dst_equivalent_instants_are_normalized_to_the_same_utc_value() -> None:
@@ -478,7 +489,7 @@ async def test_postgresql_concurrent_idempotency_reuse_is_exact_or_conflicting()
     current = [NOW]
     repository = SqlReminderRepository(sessions, clock=lambda: current[0])
     subject = f"concurrency-{uuid4()}"
-    due = datetime(2026, 2, 1, 9, tzinfo=UTC)
+    due = datetime(2026, 2, 3, 9, tzinfo=UTC)
     try:
 
         async def create_same() -> object:
