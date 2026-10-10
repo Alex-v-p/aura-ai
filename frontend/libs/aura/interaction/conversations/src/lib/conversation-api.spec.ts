@@ -8,6 +8,7 @@ const conversationId = '00000000-0000-0000-0000-000000000002';
 function event(eventType: RunEvent['eventType'], eventId: string): RunEvent {
   const base = { schemaVersion: 1 as const, eventId, sequence: 1, eventType, runId, conversationId, occurredAt: new Date().toISOString() };
   if (eventType === 'heartbeat') return { ...base, eventType, data: { serverTime: new Date().toISOString() } };
+  if (eventType === 'model.thinking.delta') return { ...base, eventType, data: { offset: 0, text: 'private reasoning' } };
   return { ...base, eventType: 'assistant.delta', data: { messageId: '00000000-0000-0000-0000-000000000003', offset: 0, text: 'hello' } };
 }
 
@@ -27,6 +28,7 @@ describe('AuraConversationApi SSE transport', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response([
         `id: persisted-1\nevent: assistant.delta\ndata: ${JSON.stringify(event('assistant.delta', 'json-1'))}\n\n`,
+        `id: transient-thinking\nevent: model.thinking.delta\ndata: ${JSON.stringify(event('model.thinking.delta', 'thinking-1'))}\n\n`,
         `event: heartbeat\ndata: ${JSON.stringify(event('heartbeat', 'heartbeat-json-id'))}\n\n`,
       ].join('')))
       .mockResolvedValueOnce(response(`id: persisted-2\nevent: assistant.delta\ndata: ${JSON.stringify(event('assistant.delta', 'json-2'))}\n\n`));
@@ -45,6 +47,7 @@ describe('AuraConversationApi SSE transport', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ headers: { Accept: 'text/event-stream', 'Last-Event-ID': 'persisted-1' } });
     expect(received.map((item) => [item.event.eventType, item.cursor])).toEqual([
       ['assistant.delta', 'persisted-1'],
+      ['model.thinking.delta', undefined],
       ['heartbeat', undefined],
       ['assistant.delta', 'persisted-2'],
     ]);

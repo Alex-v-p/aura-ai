@@ -240,7 +240,11 @@ async function readEventStream(url: string, headers: Record<string, string> | un
         // The SSE id is the only authoritative reconnect cursor.  Heartbeats
         // are intentionally emitted without an id by Core and must not inherit
         // or manufacture one from their JSON eventId field.
-        onEvent(event, event.eventType === 'heartbeat' ? undefined : cursor);
+        // Thinking is intentionally ephemeral.  Even if a proxy accidentally
+        // includes an SSE id, never let it advance the durable replay cursor:
+        // reconnects must resume from the last persisted event and must not
+        // fabricate a thinking replay.
+        onEvent(event, event.eventType === 'heartbeat' || event.eventType === 'model.thinking.delta' ? undefined : cursor);
       } catch { onError({ message: 'Aura sent an unreadable live update.', retryable: true }); }
       data = '';
       cursor = undefined;

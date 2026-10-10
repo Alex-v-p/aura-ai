@@ -30,16 +30,16 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.runtime.tool_selection": "1.1.0",
+    "aura.runtime.tool_selection": "1.2.0",
     "aura.runtime.policy_evaluation": "1.1.0",
     "aura.runtime.tool_execution": "1.1.0",
     "aura.interaction.agent_configuration": "1.1.0",
-    "aura.execution.run_coordinator": "1.6.0",
+    "aura.execution.run_coordinator": "1.7.0",
     "aura.interaction.conversation_persistence": "1.6.0",
-    "aura.runtime.model_inference": "1.4.0",
+    "aura.runtime.model_inference": "1.5.0",
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.2.0",
-    "aura.runtime.stream_delivery": "1.3.0",
+    "aura.runtime.stream_delivery": "1.4.0",
     "aura.knowledge.memory_persistence": "1.0.0",
     "aura.knowledge.memory_extraction": "1.2.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
@@ -150,6 +150,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "sse_connections",
             "sse_reconnects",
             "stream_delivery_duration_ms",
+            "thinking_stream_outcome",
         }
     ),
     "aura.knowledge.memory_persistence": frozenset(
@@ -313,6 +314,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "sse.connect",
             "sse.deliver",
             "sse.reconnect",
+            "thinking.publish",
         }
     ),
     "aura.knowledge.memory_persistence": frozenset(
@@ -632,6 +634,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "structured_inference",
             "embedding_provider",
             "query_embedding",
+            "nats_transient",
             "memory_worker",
             "reminder_store",
             "approval_store",
@@ -684,7 +687,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "expired", "unknown",
             "policy_off", "selected", "allowed", "completed", "failed", "rejected",
             "personal", "explicit_request", "none", "text", "tool_call", "allow", "deny",
-            "invalid", "valid", "capability",
+            "invalid", "valid", "capability", "budget_exceeded", "unavailable",
+            "publisher_error", "published", "delivered", "out_of_order",
+            "over_budget", "no_subscriber", "queue_full", "malformed_envelope",
+            "delivery", "transport_error", "transport_published", "offset_unavailable",
             "created", "pending", "approved", "resumed", "opened", "closed", "omitted",
             "awaiting_confirmation", "waiting_for_confirmation", "executing",
         }

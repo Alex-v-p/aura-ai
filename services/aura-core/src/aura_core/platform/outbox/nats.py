@@ -18,14 +18,19 @@ from aura_core.platform.outbox.service import (
     OutboxCommand,
     identifier_trace_metadata,
 )
+from aura_core.platform.telemetry import Stopwatch, new_span_id
 
 EventHandler = Callable[[UUID, UUID], Awaitable[None]]
 NotificationEventHandler = Callable[[UUID], Awaitable[None]]
 ApprovalEventHandler = Callable[[UUID], Awaitable[None]]
 ResumptionEventHandler = Callable[[UUID], Awaitable[None]]
+ThinkingEventHandler = Callable[[UUID, UUID, int, str], Awaitable[None]]
 NOTIFICATION_EVENT_SUBJECT = "aura.notifications.events.v1"
 APPROVAL_EVENT_SUBJECT = "aura.approvals.events.v1"
 RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
+# Deliberately plain Core NATS: this subject is live-only and must never be
+# included in a JetStream stream or transactional outbox command.
+THINKING_EVENT_SUBJECT = "aura.runs.thinking.v1"
 
 
 class NatsOutbox:
@@ -34,16 +39,19 @@ class NatsOutbox:
         connection_url: str,
         subject: str = RUN_COMMAND_TOPIC,
         additional_subjects: tuple[str, ...] = (),
+        metrics: MetricsPort | None = None,
     ) -> None:
         self.connection_url = connection_url
         self.subject = subject
         self.additional_subjects = additional_subjects
+        self.metrics = metrics or NullMetrics()
         self._connection: Any = None
         self._jetstream: Any = None
         self._event_subscription: Any = None
         self._notification_subscription: Any = None
         self._approval_subscription: Any = None
         self._resumption_subscription: Any = None
+        self._thinking_subscription: Any = None
         self._readiness_detail: str | None = "not connected"
 
     @property
@@ -54,6 +62,7 @@ class NatsOutbox:
         nats_module: Any = nats
         self._connection = await nats_module.connect(self.connection_url)
         self._jetstream = self._connection.jetstream()
+        await _assert_thinking_subject_unretained(self._jetstream)
         await _ensure_command_stream(self._jetstream, (self.subject, *self.additional_subjects))
         # Stream creation is idempotent but can be rejected for reasons other
         # than an existing stream.  Account info proves JetStream is actually
@@ -75,6 +84,7 @@ class NatsOutbox:
             self._readiness_detail = "connection closed"
             return False, self._readiness_detail
         try:
+            await _assert_thinking_subject_unretained(self._jetstream)
             await self._jetstream.account_info()
             info = await self._jetstream.stream_info("AURA_RUNS")
             subjects = _stream_subjects(info)
@@ -241,6 +251,143 @@ class NatsOutbox:
             json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
         )
 
+    async def publish_thinking_delta(
+        self,
+        *,
+        run_id: UUID,
+        conversation_id: UUID,
+        offset: int,
+        text: str,
+        parent_span_id: str | None = None,
+    ) -> None:
+        """Publish a bounded live-only thinking envelope over plain NATS."""
+
+        timer = Stopwatch()
+        if (
+            not isinstance(cast(object, run_id), UUID)
+            or not isinstance(cast(object, conversation_id), UUID)
+            or type(offset) is not int
+            or offset < 0
+            or not isinstance(cast(object, text), str)
+            or not text
+            or len(text) > 4096
+        ):
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="invalid",
+            )
+            raise ValueError("invalid thinking delta")
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        try:
+            await _assert_thinking_subject_unretained(self._jetstream)
+            await self._connection.publish(
+                THINKING_EVENT_SUBJECT,
+                json.dumps(
+                    {
+                        "runId": str(run_id),
+                        "conversationId": str(conversation_id),
+                        "offset": offset,
+                        "text": text,
+                    },
+                    separators=(",", ":"),
+                ).encode(),
+            )
+        except Exception:
+            self.metrics.record_span(
+                "aura.runtime.stream_delivery",
+                "thinking.publish",
+                timer.elapsed_ms(),
+                trace_id=run_id.hex,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="nats_transient",
+                outcome="error",
+                error_class="delivery",
+                run_id=str(run_id),
+                conversation_id=str(conversation_id),
+            )
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="transport_error",
+                dependency="nats_transient",
+                run_id=str(run_id),
+                conversation_id=str(conversation_id),
+            )
+            raise
+        self.metrics.record_span(
+            "aura.runtime.stream_delivery",
+            "thinking.publish",
+            timer.elapsed_ms(),
+            trace_id=run_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=parent_span_id,
+            dependency="nats_transient",
+            outcome="ok",
+            run_id=str(run_id),
+            conversation_id=str(conversation_id),
+        )
+        self.metrics.increment(
+            "aura.runtime.stream_delivery",
+            "thinking_stream_outcome",
+            outcome="transport_published",
+            dependency="nats_transient",
+            run_id=str(run_id),
+            conversation_id=str(conversation_id),
+        )
+
+    async def subscribe_thinking_events(self, handler: ThinkingEventHandler) -> Any:
+        """Receive only strict, bounded transient thinking envelopes."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        await _assert_thinking_subject_unretained(self._jetstream)
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"runId", "conversationId", "offset", "text"}:
+                    raise ValueError("unexpected thinking envelope fields")
+                run_id = UUID(str(payload["runId"]))
+                conversation_id = UUID(str(payload["conversationId"]))
+                offset = payload["offset"]
+                text = payload["text"]
+                if (
+                    type(offset) is not int
+                    or offset < 0
+                    or not isinstance(text, str)
+                    or not text
+                    or len(text) > 4096
+                ):
+                    raise ValueError("invalid thinking envelope")
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                self.metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="malformed_envelope",
+                    dependency="nats_transient",
+                    error_class="validation",
+                )
+                return
+            try:
+                await handler(run_id, conversation_id, offset, text)
+            except Exception:
+                self.metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="delivery",
+                    dependency="nats_transient",
+                    error_class="delivery",
+                )
+                return
+
+        self._thinking_subscription = await self._connection.subscribe(
+            THINKING_EVENT_SUBJECT, cb=callback
+        )
+        return self._thinking_subscription
+
     async def subscribe_approval_events(self, handler: ApprovalEventHandler) -> Any:
         """Subscribe to approval wakeups after PostgreSQL replay."""
 
@@ -290,6 +437,7 @@ class NatsOutbox:
             self._notification_subscription = None
             self._approval_subscription = None
             self._resumption_subscription = None
+            self._thinking_subscription = None
             self._readiness_detail = "not connected"
 
 
@@ -611,6 +759,80 @@ def _stream_subjects(info: Any) -> tuple[str, ...]:
     if not isinstance(raw, (list, tuple)):
         return ()
     return tuple(str(value) for value in cast(list[Any] | tuple[Any, ...], raw))
+
+
+async def _configured_stream_subjects(jetstream: Any) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Enumerate every configured JetStream subject without assuming one API shape."""
+
+    stream_infos: Any = getattr(jetstream, "streams_info", None)
+    if callable(stream_infos):
+        result: Any = stream_infos()
+        if hasattr(result, "__aiter__"):
+            entries: list[tuple[str, tuple[str, ...]]] = []
+            async for info in result:
+                config = getattr(info, "config", None)
+                name = str(getattr(config, "name", ""))
+                entries.append((name, _stream_subjects(info)))
+            return tuple(entries)
+        if hasattr(result, "__await__"):
+            result = await result
+        infos: tuple[Any, ...] = (
+            tuple(cast(list[Any] | tuple[Any, ...], result))
+            if isinstance(result, (list, tuple))
+            else (result,)
+        )
+        return tuple(
+            (
+                str(getattr(getattr(info, "config", None), "name", "")),
+                _stream_subjects(info),
+            )
+            for info in infos
+        )
+    stream_names: Any = getattr(jetstream, "stream_names", None)
+    if not callable(stream_names):
+        raise RuntimeError("JetStream stream enumeration unavailable")
+    result: Any = stream_names()
+    if hasattr(result, "__aiter__"):
+        names = [str(name) async for name in result]
+    else:
+        resolved = await result if hasattr(result, "__await__") else result
+        names = [str(name) for name in resolved]
+    entries = []
+    for name in names:
+        info = await jetstream.stream_info(name)
+        entries.append((name, _stream_subjects(info)))
+    return tuple(entries)
+
+
+def _nats_subject_matches(pattern: str, concrete: str) -> bool:
+    """Return whether a NATS wildcard pattern can capture one concrete subject."""
+
+    pattern_tokens = pattern.split(".")
+    concrete_tokens = concrete.split(".")
+    index = 0
+    for token in pattern_tokens:
+        if token == ">":
+            return index < len(concrete_tokens) and token == pattern_tokens[-1]
+        if index >= len(concrete_tokens) or (token != "*" and token != concrete_tokens[index]):
+            return False
+        index += 1
+    return index == len(concrete_tokens)
+
+
+async def _assert_thinking_subject_unretained(jetstream: Any) -> None:
+    """Fail closed if any JetStream stream could retain the live-only subject."""
+
+    if jetstream is None:
+        raise RuntimeError("JetStream is not connected")
+    configured = await _configured_stream_subjects(jetstream)
+    overlaps = [
+        f"{name}:{subject}"
+        for name, subjects in configured
+        for subject in subjects
+        if _nats_subject_matches(subject, THINKING_EVENT_SUBJECT)
+    ]
+    if overlaps:
+        raise RuntimeError("live thinking subject overlaps configured JetStream retention")
 
 
 async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> None:

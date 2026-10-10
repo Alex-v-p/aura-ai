@@ -27,6 +27,7 @@ from aura_core.runtime.models.ports import (
     ProviderTraceContext,
     StructuredInferenceRequest,
     ModelStreamCompleted,
+    ModelThinkingDelta,
     ModelTextDelta,
     ModelToolCall,
 )
@@ -48,6 +49,7 @@ INVENTORY_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 EMBEDDING_RESPONSE_MAX_BYTES = 512 * 1024
 MAX_EMBEDDING_DIMENSION = 16_384
 EMBEDDING_DIMENSION_PROBE_INPUT = "aura embedding dimension probe"
+THINKING_DELTA_MAX_CHARS = 4096
 
 
 class OllamaUnavailable(RuntimeError):
@@ -59,6 +61,15 @@ class _InventoryFailure(Exception):
 
     def __init__(self, error_class: str) -> None:
         self.error_class = error_class
+
+
+def _bounded_thinking_chunks(value: str) -> tuple[str, ...]:
+    """Split native reasoning frames into transport-safe fixed-size chunks."""
+
+    return tuple(
+        value[offset : offset + THINKING_DELTA_MAX_CHARS]
+        for offset in range(0, len(value), THINKING_DELTA_MAX_CHARS)
+    )
 
 
 class OllamaAdapter:
@@ -590,12 +601,56 @@ class OllamaAdapter:
         except httpx.HTTPError as exc:
             raise OllamaUnavailable("model inference unavailable") from exc
 
+    async def stream_chat_events(
+        self, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[ModelTextDelta | ModelThinkingDelta | ModelStreamCompleted]:
+        """Stream visible and thinking frames without exposing Ollama JSON.
+
+        ``stream_chat`` remains the compatibility text-only port.  Execution
+        uses this additive typed method when available so Ollama's native
+        ``message.thinking`` field can be delivered through the ephemeral
+        reasoning seam without ever becoming assistant content.
+        """
+
+        body = {
+            "model": model_id,
+            "messages": [
+                {"role": message.role, "content": message.content} for message in messages
+            ],
+            "stream": True,
+            "think": True,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                async with client.stream("POST", "/api/chat", json=body) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            payload = cast(dict[str, Any], json.loads(line))
+                        except json.JSONDecodeError as exc:
+                            raise OllamaUnavailable("provider returned malformed stream") from exc
+                        message = payload.get("message")
+                        if isinstance(message, dict):
+                            thinking = message.get("thinking")
+                            if isinstance(thinking, str) and thinking:
+                                for chunk in _bounded_thinking_chunks(thinking):
+                                    yield ModelThinkingDelta(chunk)
+                            content = message.get("content")
+                            if isinstance(content, str) and content:
+                                yield ModelTextDelta(content)
+                        if payload.get("done") is True:
+                            yield ModelStreamCompleted()
+        except httpx.HTTPError as exc:
+            raise OllamaUnavailable("model inference unavailable") from exc
+
     async def stream_chat_with_tools(
         self,
         model_id: str,
         messages: Sequence[ChatMessage],
         tools: Sequence[Mapping[str, object]],
-    ) -> AsyncIterator[ModelTextDelta | ModelToolCall | ModelStreamCompleted]:
+    ) -> AsyncIterator[ModelTextDelta | ModelThinkingDelta | ModelToolCall | ModelStreamCompleted]:
         """Normalize Ollama's native tool-call stream to the Core port."""
 
         body = {
@@ -605,6 +660,7 @@ class OllamaAdapter:
             ],
             "tools": list(tools),
             "stream": True,
+            "think": True,
         }
         try:
             async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
@@ -620,6 +676,10 @@ class OllamaAdapter:
                         message = payload.get("message")
                         if not isinstance(message, dict):
                             continue
+                        thinking = message.get("thinking")
+                        if isinstance(thinking, str) and thinking:
+                            for chunk in _bounded_thinking_chunks(thinking):
+                                yield ModelThinkingDelta(chunk)
                         content = message.get("content")
                         if isinstance(content, str) and content:
                             yield ModelTextDelta(content)

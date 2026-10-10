@@ -50,6 +50,9 @@ h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); letter-spacing: -.045em; line-heig
 .memory-activity-row a { color: var(--accent); font-weight: 700; }
 .turn-avatar { align-items: center; background: var(--accent-soft); border-radius: .45rem; color: var(--text); display: inline-flex; font-size: .67rem; height: 1.55rem; justify-content: center; width: 1.55rem; }
 .turn p { line-height: 1.65; margin: 0; white-space: pre-wrap; }
+.model-thinking { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .75rem; color: var(--text-muted); margin: .25rem 0 0; padding: .65rem .8rem; }
+.model-thinking summary { color: var(--text); cursor: pointer; font-size: .78rem; font-weight: 700; }
+.model-thinking pre { font: inherit; line-height: 1.55; margin: .65rem 0 0; max-height: 18rem; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .working { align-items: center; color: var(--text-muted); display: flex; font-size: .85rem; gap: .6rem; padding: .3rem 0; }
 .pulse { background: var(--accent); border-radius: 99px; height: .55rem; position: relative; width: .55rem; }
 .pulse::after { animation: pulse 1.4s ease-out infinite; border: 1px solid var(--accent); border-radius: inherit; content: ''; inset: -.35rem; opacity: .5; position: absolute; }

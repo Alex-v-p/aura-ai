@@ -766,6 +766,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     event_transport = NatsOutbox(
         config.nats_url,
         additional_subjects=(memory_topic, APPROVAL_EVENT_TOPIC, RUN_RESUME_TOPIC),
+        metrics=metrics,
     )
     memory_processor: MemoryJobProcessor | None = None
     try:
@@ -801,7 +802,11 @@ async def run_forever(settings: Settings | None = None) -> None:
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
         coordinator = RunCoordinator(
             store,
-            PersistentEventPublisher(store.append_event, event_transport.publish_event),
+            PersistentEventPublisher(
+                store.append_event,
+                event_transport.publish_event,
+                metrics=metrics,
+            ),
             TransactionalOutboxTransport(),
             metrics,
             lease_seconds=config.ollama_run_timeout_seconds + 30.0,
@@ -810,6 +815,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             tool_registry=default_tool_registry(),
             approval_service=approval_service_instance,
             reminder_service=reminder_service_instance,
+            thinking_publisher=event_transport,
         )
         # Approval/resumption wakeups are identifier-only; the worker always
         # reloads owner-authorized state through the governance public port.

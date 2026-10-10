@@ -30,6 +30,32 @@ export function visibleMemoryActivities(items: ReadonlyArray<MemoryActivity>): R
 export function appendToolStatusActivity(existing: ReadonlyArray<ToolStatusData>, next: ToolStatusData): ReadonlyArray<ToolStatusData> {
   return [...existing, { ...next }];
 }
+const MAX_THINKING_DELTA_LENGTH = 4_096;
+const MAX_THINKING_LENGTH = 65_536;
+const thinkingLength = (text: string): number => Array.from(text).length;
+
+/** Ephemeral, owner-local model reasoning. It is never part of a transcript turn. */
+export interface ModelThinkingState {
+  readonly runId: string;
+  readonly text: string;
+  readonly nextOffset: number;
+}
+
+/**
+ * Reconcile one transient thinking frame without making the browser a
+ * best-effort text merger. A frame is accepted only when it starts exactly at
+ * the next expected offset and remains within both protocol bounds.
+ */
+export function reconcileModelThinkingDelta(existing: ModelThinkingState | null, runId: string, offset: unknown, text: unknown): ModelThinkingState | null {
+  if (!runId || !Number.isInteger(offset) || (offset as number) < 0 || typeof text !== 'string' || text.length === 0 || thinkingLength(text) > MAX_THINKING_DELTA_LENGTH) return null;
+  const base = existing ?? { runId, text: '', nextOffset: 0 };
+  if (base.runId !== runId) return null;
+  const numericOffset = offset as number;
+  const chunkLength = thinkingLength(text);
+  if (numericOffset !== base.nextOffset || thinkingLength(base.text) + chunkLength > MAX_THINKING_LENGTH) return null;
+  return { runId, text: `${base.text}${text}`, nextOffset: numericOffset + chunkLength };
+}
+
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
@@ -93,8 +119,15 @@ export class ConversationStore {
   readonly memoryPopupRecords = signal<Readonly<Record<string, MemoryPopupRecord | null>>>({});
   readonly memoryPopupLoading = signal<Readonly<Record<string, boolean>>>({});
   readonly memoryPopupErrors = signal<Readonly<Record<string, string | null>>>({});
+  /** Thinking is keyed by run and held only in this live browser session. */
+  readonly modelThinking = signal<Readonly<Record<string, ModelThinkingState>>>({});
 
   toolActivitiesForRun(runId: string): ReadonlyArray<ToolStatusData> { return this.find(this.selectedId())?.toolActivities?.[runId] ?? []; }
+  thinkingForRun(runId: string): ModelThinkingState | null { return this.modelThinking()[runId] ?? null; }
+  thinkingIsOpen(runId: string): boolean {
+    const conversation = this.selected();
+    return Boolean(conversation.currentRun?.id === runId && this.runState() === 'working' && this.thinkingForRun(runId)?.text);
+  }
 
   private readonly subscriptions = new Map<string, RunEventSubscription>();
   /** Historical replay is kept separate from live subscriptions so a detail
@@ -105,6 +138,7 @@ export class ConversationStore {
   private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly memoryActivityRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly memoryActivityRetryAttempts = new Map<string, number>();
+  private readonly thinkingRunConversations = new Map<string, string>();
   private readonly pendingSubmissions = new Map<string, { readonly draft: string; readonly pendingTurnId: string }>();
   private draftCounter = 0;
   private conversationListWarning = false;
@@ -555,6 +589,7 @@ export class ConversationStore {
     }
     if (!this.modelFor(id)) { this.setNotice(id, 'Choose an available model before sending.'); return false; }
     if (!this.canRunWithSelectedAgent(id)) { this.setNotice(id, this.selected().agent ? 'This agent is disabled. Select an active replacement before sending.' : 'Select an active agent before sending.'); return false; }
+    this.clearThinkingForConversation(id);
     const pendingTurnId = `pending-user-${Date.now()}`;
     this.appendTurn(id, { id: pendingTurnId, role: 'user', text });
     this.pendingSubmissions.set(id, { draft, pendingTurnId });
@@ -586,6 +621,7 @@ export class ConversationStore {
     if (conversation.archivedAt) { this.setNotice(conversation.id, 'Restore this archived conversation before retrying a run.'); return; }
     if (!run || !['error', 'interrupted', 'canceled', 'failed'].includes(run.status)) { this.setNotice(conversation.id, null); return; }
     if (!this.canRunWithSelectedAgent(conversation.id)) { this.setNotice(conversation.id, conversation.agent ? 'This agent is disabled. Select an active replacement before retrying.' : 'Select an active agent before retrying.'); return; }
+    this.clearThinkingForConversation(conversation.id);
     this.setRunState(conversation.id, 'working'); this.setNotice(conversation.id, null);
     void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => this.acceptRun(conversation.id, accepted)).catch((error: unknown) => this.handleError(conversation.id, error));
   }
@@ -593,6 +629,7 @@ export class ConversationStore {
   retryRunById(conversationId: string, runId: string): void {
     const conversation = this.find(conversationId); const run = conversation?.runs.find((item) => item.id === runId);
     if (!conversation || !run || conversation.archivedAt || !this.isRetryable(run.status) || !this.canRunWithSelectedAgent(conversationId)) return;
+    this.clearThinkingForConversation(conversationId);
     this.setRunState(conversationId, 'working');
     void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => this.acceptRun(conversationId, accepted)).catch((error: unknown) => this.handleError(conversationId, error));
   }
@@ -622,6 +659,7 @@ export class ConversationStore {
 
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
+    this.clearThinkingForConversation(id);
     const turns = existing.turns.map((turn) => !pendingTurnId || turn.id === pendingTurnId ? (turn.id.startsWith('pending-user-') ? this.fromMessage(accepted.userMessage) : turn) : turn);
     const acceptedConversation = this.fromSummary(accepted.conversation);
     // Core may still report the pending placeholder while title settlement is
@@ -684,10 +722,11 @@ export class ConversationStore {
   private applyEvent(event: RunEvent, cursor?: string): void {
     // Only the SSE `id` field identifies a persisted event.  Core heartbeats
     // are intentionally not persisted and do not carry a cursor.
-    if (cursor && event.eventType !== 'heartbeat') this.lastEventIds.set(event.runId, cursor);
+    if (cursor && event.eventType !== 'heartbeat' && event.eventType !== 'model.thinking.delta') this.lastEventIds.set(event.runId, cursor);
     if (event.eventType === 'run.snapshot') { this.replaceRun(event.conversationId, event.data.run); if (event.data.assistantMessage) this.upsertTurn(event.conversationId, this.fromMessage(event.data.assistantMessage)); }
     else if (event.eventType === 'run.status') { this.setRunState(event.conversationId, this.statusToState(event.data.status)); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: event.data.status, startedAt: event.data.startedAt, finishedAt: event.data.finishedAt } : run); if (this.isTerminal(event.data.status)) { this.clearReconnect(event.runId); void this.refresh(event.conversationId); } }
     else if (event.eventType === 'assistant.delta') this.appendAssistantDelta(event.conversationId, event.data.messageId, event.data.offset, event.data.text, event.runId);
+    else if (event.eventType === 'model.thinking.delta') this.applyThinkingDelta(event.conversationId, event.runId, event.data.offset, event.data.text);
     else if (event.eventType === 'assistant.snapshot') this.upsertTurn(event.conversationId, this.fromMessage(event.data.message));
     else if (event.eventType === 'memory.activity') this.applyMemoryActivity(event.conversationId, event.runId, event.data);
     else if (event.eventType === 'tool.status') this.applyToolStatus(event.conversationId, event.runId, event.data, event.eventId, cursor);
@@ -794,6 +833,18 @@ export class ConversationStore {
     const activities = appendToolStatusActivity(existing, activity);
     this.replaceConversation({ ...conversation, toolActivities: { ...(conversation.toolActivities ?? {}), [runId]: activities }, toolActivityEventIds: { ...(conversation.toolActivityEventIds ?? {}), [runId]: eventId ? [...eventIds, eventId] : eventIds }, ...(cursor ? { toolActivityCursors: { ...(conversation.toolActivityCursors ?? {}), [runId]: cursor } } : {}) });
   }
+  private applyThinkingDelta(conversationId: string, runId: string, offset: unknown, text: unknown): void {
+    const conversation = this.find(conversationId);
+    // A thinking frame is accepted only for the currently active run. This
+    // rejects stale reconnects and cross-conversation/run delivery before it
+    // can reach the UI.
+    if (!conversation?.currentRun || conversation.currentRun.id !== runId || this.isTerminal(conversation.currentRun.status)) return;
+    const existing = this.modelThinking()[runId] ?? { runId, text: '', nextOffset: 0 };
+    const next = reconcileModelThinkingDelta(existing, runId, offset, text);
+    if (!next) return;
+    this.thinkingRunConversations.set(runId, conversationId);
+    this.modelThinking.update((items) => ({ ...items, [runId]: next }));
+  }
   private applyMemorySnapshot(snapshot: RunMemoryActivitySnapshot): void {
     const conversation = this.conversations().find((item) => item.runs.some((run) => run.id === snapshot.runId) || item.currentRun?.id === snapshot.runId);
     if (!conversation) return;
@@ -866,6 +917,12 @@ export class ConversationStore {
   private setRunState(id: string, state: RunState): void { this.runStates.update((states) => ({ ...states, [id]: state })); }
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
   private setMemoryActivityNotice(id: string, notice: string | null): void { this.memoryActivityNotices.update((notices) => ({ ...notices, [id]: notice })); }
+  private clearThinkingForConversation(conversationId: string): void {
+    const current = this.modelThinking();
+    const next = Object.fromEntries(Object.entries(current).filter(([runId]) => this.thinkingRunConversations.get(runId) !== conversationId));
+    for (const runId of this.thinkingRunConversations.keys()) if (this.thinkingRunConversations.get(runId) === conversationId) this.thinkingRunConversations.delete(runId);
+    if (Object.keys(next).length !== Object.keys(current).length) this.modelThinking.set(next);
+  }
   private isPendingMemoryActivity(activity: MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
   private isAuthoritativeMemoryExtraction(activity: MemoryActivity): boolean { return activity.action !== 'recalled' && activity.reconciliationStatus === 'authoritative'; }
   private clearMemoryPopupError(activityId: string): void {

@@ -562,12 +562,26 @@ async def stream_run_events(
                     conversation_id=str(conversation.id),
                 )
                 raise
-            cursor = "" if event.event_type == "heartbeat" else f"id: {event.event_id}\n"
+            transient_thinking = event.event_type == "model.thinking.delta"
+            cursor = (
+                ""
+                if event.event_type in {"heartbeat", "model.thinking.delta"}
+                else f"id: {event.event_id}\n"
+            )
             state(request).metrics.increment(
                 "aura.runtime.stream_delivery",
                 "events_delivered",
                 **stream_metadata,
             )
+            if transient_thinking:
+                # Reasoning text is intentionally excluded from metrics and
+                # logs; only the bounded lifecycle outcome is observable.
+                state(request).metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="delivered",
+                    **stream_metadata,
+                )
             if event.event_type == "memory.activity":
                 activity_status = event.data.get("status")
                 activity_status = (

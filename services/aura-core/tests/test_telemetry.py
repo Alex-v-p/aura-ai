@@ -1,16 +1,23 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
+import yaml
 from aura_core.domains.execution.runs.public import (
     ChatMessage,
     RunClaimLost,
     RunCoordinator,
+)
+from aura_core.domains.governance.approvals.public import (
+    Approval,
+    ApprovalExecutionStatus,
+    ApprovalStatus,
 )
 from aura_core.domains.interaction.conversations.public import (
     ConversationStore,
@@ -20,7 +27,11 @@ from aura_core.domains.interaction.conversations.public import (
     Message as ConversationMessage,
 )
 from aura_core.entrypoints.api.state import AppState
-from aura_core.entrypoints.worker.app import make_worker_telemetry, run_once
+from aura_core.entrypoints.worker.app import (  # type: ignore[reportPrivateUsage]
+    _resume_approval,  # pyright: ignore[reportPrivateUsage]
+    make_worker_telemetry,
+    run_once,
+)
 from aura_core.platform.auth import Settings
 from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
 from aura_core.platform.outbox.nats import NatsOutbox, NatsRunConsumer
@@ -286,7 +297,7 @@ def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> 
     assert all("arguments" not in dict(item.trace_attributes) for item in measurements)
     assert all("result" not in dict(item.trace_attributes) for item in measurements)
     assert metrics.stats().rejected >= 3
-    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.1.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.2.0"
     assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.1.0"
     assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.1.0"
 
@@ -726,7 +737,101 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
 
 
 def test_title_inference_component_version_remains_explicit() -> None:
-    assert COMPONENT_VERSIONS["aura.runtime.model_inference"] == "1.4.0"
+    assert COMPONENT_VERSIONS["aura.runtime.model_inference"] == "1.5.0"
+
+
+def test_component_manifest_versions_match_runtime_catalogue() -> None:
+    manifest_dir = Path(__file__).parents[1] / "resources" / "component-manifests"
+    manifest_versions: dict[str, str] = {}
+    for path in sorted(manifest_dir.glob("*.yaml")):
+        document = cast(dict[str, Any], yaml.safe_load(path.read_text()))
+        component = cast(dict[str, Any], document["component"])
+        manifest_versions[str(component["id"])] = str(component["version"])
+    assert manifest_versions == dict(COMPONENT_VERSIONS)
+
+
+@pytest.mark.asyncio
+async def test_thinking_transport_telemetry_excludes_text_and_owner_identity() -> None:
+    metrics = MetadataMetrics()
+    publisher = EventPublisher(metrics=metrics)
+    run_id, conversation_id = uuid4(), uuid4()
+    await publisher.publish_thinking_delta(
+        run_id=run_id,
+        conversation_id=conversation_id,
+        offset=0,
+        text="private reasoning text",
+    )
+    stream = publisher.stream(run_id)
+    async def next_event() -> object:
+        return await stream.__anext__()
+
+    pending = asyncio.create_task(next_event())
+    await asyncio.sleep(0)
+    await publisher.publish_thinking_delta(
+        run_id=run_id,
+        conversation_id=conversation_id,
+        offset=0,
+        text="private reasoning text",
+    )
+    await asyncio.wait_for(pending, timeout=0.2)
+    close = getattr(stream, "aclose", None)
+    if callable(close):
+        await cast(Callable[[], Awaitable[None]], close)()
+    rendered = repr(metrics.snapshot())
+    assert "private reasoning text" not in rendered
+    assert "owner-subject" not in rendered
+    assert any(
+        item.metric == "thinking_stream_outcome"
+        and dict(item.dimensions).get("outcome") == "no_subscriber"
+        for item in metrics.snapshot()
+    )
+
+
+@pytest.mark.asyncio
+async def test_approval_resumption_telemetry_is_retained_and_content_free() -> None:
+    metrics = MetadataMetrics()
+    approval_id, run_id, conversation_id = uuid4(), uuid4(), uuid4()
+    now = datetime.now(UTC)
+    approval = Approval(
+        id=approval_id,
+        issuer="owner-subject",
+        subject="owner-subject",
+        proposal_id=uuid4(),
+        run_id=run_id,
+        conversation_id=conversation_id,
+        tool_call_id=uuid4(),
+        tool_id="reminder.create",
+        tool_version=1,
+        status=ApprovalStatus.PENDING,
+        execution_status=ApprovalExecutionStatus.NOT_STARTED,
+        version=1,
+        created_at=now,
+        updated_at=now,
+        expires_at=now,
+    )
+
+    await _resume_approval(  # pyright: ignore[reportPrivateUsage]
+        approval,
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        cast(Any, None),
+        metrics,
+        event_id=uuid4(),
+    )
+
+    records = metrics.snapshot()
+    assert len(records) == 1
+    record = records[0]
+    assert record.component_id == "aura.governance.approval_workflow"
+    assert record.metric == "approval_resume_duration_ms"
+    assert dict(record.dimensions) == {
+        "dependency": "postgresql",
+        "outcome": "ignored",
+    }
+    rendered = repr(records)
+    assert "owner-subject" not in rendered
+    assert "private reminder content" not in rendered
 
 
 def test_memory_retrieval_telemetry_is_bounded_and_metadata_only() -> None:
@@ -973,6 +1078,9 @@ async def test_nats_readiness_recovers_after_stream_subject_is_restored() -> Non
     class JetStream:
         async def account_info(self) -> object:
             return object()
+
+        async def streams_info(self) -> list[Info]:
+            return [Info()]
 
         async def stream_info(self, name: str) -> Info:
             assert name == "AURA_RUNS"

@@ -8,7 +8,7 @@ import { AGENT_API, AgentStore, InMemoryAgentApi } from '@aura/aura/interaction/
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import { ApprovalStore } from '@aura/aura/governance/approvals';
 
-type FixtureState = 'empty' | 'loading' | 'working' | 'tool-activity' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
+type FixtureState = 'empty' | 'loading' | 'working' | 'thinking' | 'tool-activity' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
 
 const turns: Record<'completed', ReadonlyArray<ConversationTurn>> = {
   completed: [
@@ -23,14 +23,14 @@ const fixtureAgent = { profileId: 'fixture-agent', revisionId: 'fixture-agent-r1
 const now = '2026-10-06T12:00:00.000Z';
 
 function fixtureRun(state: FixtureState): Run | null {
-  if (!['working', 'tool-activity', 'interrupted', 'recoverable-error', 'run-inspector'].includes(state)) return null;
-  const status = state === 'working' || state === 'tool-activity' ? 'running' : state === 'interrupted' ? 'interrupted' : 'failed';
+  if (!['working', 'thinking', 'tool-activity', 'interrupted', 'recoverable-error', 'run-inspector'].includes(state)) return null;
+  const status = state === 'working' || state === 'thinking' || state === 'tool-activity' ? 'running' : state === 'interrupted' ? 'interrupted' : 'failed';
   return { id: 'fixture-run', conversationId: 'fixture', userMessageId: 'fixture-user', assistantMessageId: null, status, agentRevisionId: fixtureAgent.revisionId, modelPolicyRevisionId: 'fixture-policy', provider: 'fake', modelId: fixtureModel.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: status === 'running' ? null : '2026-10-06T12:00:01.000Z', error: status === 'failed' ? { code: 'PROVIDER_ERROR', message: 'Private provider payload', retryable: true, traceId: '0123456789abcdef0123456789abcdef' } : null };
 }
 
 function fixtureSummary(state: FixtureState): ConversationSummary {
   const run = fixtureRun(state);
-  return { id: 'fixture', title: state === 'archived' ? 'Archived fixture conversation' : 'Fixture conversation', agentProfileId: fixtureAgent.profileId, agentRevisionId: fixtureAgent.revisionId, agent: fixtureAgent, modelId: fixtureModel.id, version: 1, createdAt: now, updatedAt: now, archivedAt: state === 'archived' ? now : null, currentRun: state === 'working' || state === 'tool-activity' ? run : null };
+  return { id: 'fixture', title: state === 'archived' ? 'Archived fixture conversation' : 'Fixture conversation', agentProfileId: fixtureAgent.profileId, agentRevisionId: fixtureAgent.revisionId, agent: fixtureAgent, modelId: fixtureModel.id, version: 1, createdAt: now, updatedAt: now, archivedAt: state === 'archived' ? now : null, currentRun: state === 'working' || state === 'thinking' || state === 'tool-activity' ? run : null };
 }
 
 function fixtureMessages(state: FixtureState): ReadonlyArray<Message> {
@@ -68,6 +68,9 @@ function fixtureApi(state: FixtureState): ConversationApi {
     },
     retryRun: async () => acceptedRun('fixture', 'Retry fixture', fixtureModel.id),
     streamRunEvents: (_runId, _lastEventId, onEvent) => {
+      if (state === 'thinking') queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'thinking-delta', sequence: 1, eventType: 'model.thinking.delta', runId: 'fixture-run', conversationId: 'fixture', occurredAt: now, data: { offset: 0, text: '<private model notes>\nReasoning remains inert text.' } });
+      });
       if (state === 'tool-activity') queueMicrotask(() => {
         onEvent({ schemaVersion: 1, eventId: 'tool-completed', sequence: 1, eventType: 'tool.status', runId: 'fixture-run', conversationId: 'fixture', occurredAt: now, data: { callId: 'fixture-call', toolId: 'memory.search', toolVersion: 1, status: 'completed', resultCount: 2 } });
       });
@@ -98,7 +101,7 @@ function fixtureApprovals(): ApprovalStore {
 const meta: Meta<ConversationPanelComponent> = {
   title: 'Aura/Conversation panel',
   component: ConversationPanelComponent,
-  // The browser matrix owns deterministic automated axe coverage for these six
+  // The browser matrix owns deterministic automated axe coverage for these
   // fixture states. Keep the addon available for manual inspection without
   // racing its scan against the component-scoped Playwright scan.
   parameters: { layout: 'fullscreen', a11y: { manual: true } },
@@ -112,6 +115,7 @@ const story = (state: FixtureState): Story => ({ decorators: [applicationConfig(
 export const Empty: Story = { ...story('empty'), name: 'Empty' };
 export const Loading: Story = { ...story('loading'), name: 'Loading' };
 export const Working: Story = { ...story('working'), name: 'Working' };
+export const Thinking: Story = { ...story('thinking'), name: 'Thinking model' };
 export const ToolActivity: Story = { ...story('tool-activity'), name: 'Tool activity' };
 export const Interrupted: Story = { ...story('interrupted'), name: 'Interrupted' };
 export const RecoverableError: Story = { ...story('recoverable-error'), name: 'Recoverable error' };

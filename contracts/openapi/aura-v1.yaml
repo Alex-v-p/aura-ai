@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.9.0",
+    "version": "1.10.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -372,11 +372,11 @@
         "tags": ["Runs"],
         "parameters": [
           { "$ref": "#/components/parameters/RunId" },
-          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed event identifier when reconnecting." }
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed persisted event identifier when reconnecting. Live-only model.thinking.delta events omit the SSE id field and never advance this cursor." }
         ],
         "responses": {
           "200": {
-            "description": "A persisted snapshot followed by ordered live run events. SSE id fields equal eventId and event names equal eventType.",
+            "description": "A persisted snapshot followed by ordered live run events. Durable event SSE id fields equal eventId and event names equal eventType. Private model.thinking.delta reasoning is live-only: its payload keeps eventId for envelope compatibility, but its SSE id field is omitted and it is never persisted, replayed, or included in transcript content.",
             "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } },
             "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/RunEvent" } } }
           },
@@ -2015,6 +2015,7 @@
           { "$ref": "#/components/schemas/RunSnapshotEvent" },
           { "$ref": "#/components/schemas/RunStatusEvent" },
           { "$ref": "#/components/schemas/AssistantDeltaEvent" },
+          { "$ref": "#/components/schemas/ModelThinkingDeltaEvent" },
           { "$ref": "#/components/schemas/AssistantSnapshotEvent" },
           { "$ref": "#/components/schemas/RunErrorEvent" },
           { "$ref": "#/components/schemas/MemoryActivityEvent" },
@@ -2045,6 +2046,10 @@
       },
       "AssistantDeltaEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "assistant.delta" }, "data": { "$ref": "#/components/schemas/AssistantDeltaData" } } }]
+      },
+      "ModelThinkingDeltaEvent": {
+        "description": "This live-only event carries private transient model reasoning solely to an active owner-authorized stream. It is never persisted, replayed, included in transcript content, audit, outbox, telemetry, or retained transport. Its eventId is payload-only: producers omit the SSE id field, and consumers must not advance a Last-Event-ID cursor for it.",
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "model.thinking.delta" }, "data": { "$ref": "#/components/schemas/ModelThinkingDeltaData" } } }]
       },
       "AssistantSnapshotEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "assistant.snapshot" }, "data": { "$ref": "#/components/schemas/AssistantSnapshotData" } } }]
@@ -2078,6 +2083,12 @@
         "type": "object", "additionalProperties": false,
         "required": ["messageId", "offset", "text"],
         "properties": { "messageId": { "type": "string", "format": "uuid" }, "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1 } }
+      },
+      "ModelThinkingDeltaData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Strict provider-neutral live reasoning delta. Text is private transient reasoning and is never persisted or treated as assistant transcript content.",
+        "required": ["offset", "text"],
+        "properties": { "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1, "maxLength": 4096 } }
       },
       "AssistantSnapshotData": {
         "type": "object", "additionalProperties": false,

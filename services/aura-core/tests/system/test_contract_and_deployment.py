@@ -76,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.9.0"
+    assert contract["info"]["version"] == "1.10.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +238,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.9.0"
+    assert contract["info"]["version"] == "1.10.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -308,7 +308,7 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.9.0"
+    assert contract["info"]["version"] == "1.10.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected_paths = {
         "/api/v1/approvals",
@@ -368,7 +368,7 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.9.0"
+    assert contract["info"]["version"] == "1.10.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
@@ -400,6 +400,7 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "run.snapshot",
         "run.status",
         "assistant.delta",
+        "model.thinking.delta",
         "assistant.snapshot",
         "run.error",
         "memory.activity",
@@ -412,6 +413,21 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "offset",
         "text",
     ]
+    thinking = schema["$defs"]["ModelThinkingDeltaEvent"]
+    thinking_data = thinking["allOf"][1]["properties"]["data"]
+    assert thinking_data == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["offset", "text"],
+        "properties": {
+            "offset": {"type": "integer", "minimum": 0},
+            "text": {"type": "string", "minLength": 1, "maxLength": 4096},
+        },
+    }
+    assert "live-only" in thinking["description"]
+    assert "omit the SSE id field" in thinking["description"]
+    assert "never persisted" in thinking["description"]
+    assert "transcript content" in thinking["description"]
     assert schema["$defs"]["RunSnapshotEvent"]["allOf"][1]["properties"]["data"]["required"] == [
         "run",
         "assistantMessage",

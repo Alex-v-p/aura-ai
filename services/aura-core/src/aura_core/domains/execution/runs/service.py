@@ -8,9 +8,9 @@
 
 import asyncio
 import secrets
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -46,7 +46,9 @@ from aura_core.domains.interaction.conversations.public import (
 from aura_core.runtime.models.ports import (
     ModelStreamCompleted,
     ModelTextDelta,
+    ModelThinkingDelta,
     ModelToolCall,
+    ThinkingDeltaPublisher,
 )
 from aura_core.runtime.tools import (
     MEMORY_SEARCH_TOOL_ID,
@@ -78,6 +80,11 @@ class TitleSettlementRetry(RuntimeError):
     """
 
 
+THINKING_DELTA_MAX_CHARS = 4096
+THINKING_RUN_MAX_CHARS = 65_536
+THINKING_STATE_TTL_SECONDS = 3600.0
+
+
 class RunCoordinator:
     def __init__(
         self,
@@ -94,6 +101,7 @@ class RunCoordinator:
         tool_registry: object | None = None,
         approval_service: object | None = None,
         reminder_service: object | None = None,
+        thinking_publisher: ThinkingDeltaPublisher | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -110,6 +118,9 @@ class RunCoordinator:
         )
         self.approval_service = approval_service
         self.reminder_service = reminder_service
+        self.thinking_publisher = thinking_publisher
+        self._thinking_offsets: dict[UUID, int] = {}
+        self._thinking_offset_expiry: dict[UUID, float] = {}
         # Keep in-flight metadata long enough for an outer run timeout to
         # publish the terminal tool status and execution telemetry.
         self._active_tool_attempts: dict[UUID, dict[str, object]] = {}
@@ -132,6 +143,134 @@ class RunCoordinator:
             ChatMessage("user" if role == "memory" else role, content)
             for role, content in context
         ]
+
+    @staticmethod
+    def _stream_chat(
+        provider: ChatCompletionPort, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[object]:
+        """Prefer the additive typed stream while retaining legacy providers."""
+
+        typed = getattr(provider, "stream_chat_events", None)
+        if callable(typed):
+            return cast(AsyncIterator[object], typed(model_id, messages))
+        return cast(AsyncIterator[object], provider.stream_chat(model_id, messages))
+
+    async def _publish_thinking_delta(
+        self,
+        run: Run,
+        conversation: Conversation,
+        delta: ModelThinkingDelta,
+        parent_span_id: str,
+    ) -> None:
+        """Forward one bounded live-only delta; never fail the answer stream."""
+
+        text = delta.text
+        if not text or len(text) > THINKING_DELTA_MAX_CHARS:
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="invalid",
+                **self._metadata(run),
+            )
+            return
+        self._prune_thinking_offsets()
+        offset = self._thinking_offsets.get(run.id)
+        if offset is None:
+            # A resumed approval may arrive on a different worker.  Since the
+            # thinking stream is intentionally ephemeral, never restart it at
+            # zero and risk producing duplicate or out-of-order offsets.
+            lifecycle = run.tool_lifecycle_status
+            if lifecycle in {"approved", "denied", "executing"}:
+                self.metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="offset_unavailable",
+                    **self._metadata(run),
+                )
+                return
+            offset = 0
+            self._thinking_offsets[run.id] = offset
+            self._thinking_offset_expiry[run.id] = monotonic() + THINKING_STATE_TTL_SECONDS
+        if offset + len(text) > THINKING_RUN_MAX_CHARS:
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="budget_exceeded",
+                **self._metadata(run),
+            )
+            return
+        publisher = self.thinking_publisher
+        if publisher is None:
+            self._thinking_offsets[run.id] = offset + len(text)
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="unavailable",
+                **self._metadata(run),
+            )
+            return
+        try:
+            await publisher.publish_thinking_delta(
+                run_id=run.id,
+                conversation_id=conversation.id,
+                offset=offset,
+                text=text,
+                parent_span_id=parent_span_id,
+            )
+        except Exception:
+            # Thinking is an optional live side channel.  A transient sink
+            # failure must never turn a healthy model answer into a failed run.
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="publisher_error",
+                **self._metadata(run),
+            )
+            return
+        self._thinking_offsets[run.id] = offset + len(text)
+        self.metrics.increment(
+            "aura.runtime.stream_delivery",
+            "thinking_stream_outcome",
+            outcome="published",
+            **self._metadata(run),
+        )
+
+    def _begin_thinking_stream(self, run: Run) -> None:
+        self._prune_thinking_offsets()
+        if run.id not in self._thinking_offsets:
+            self._thinking_offsets[run.id] = 0
+            self._thinking_offset_expiry[run.id] = monotonic() + THINKING_STATE_TTL_SECONDS
+
+    def _clear_thinking_stream(self, run_id: UUID) -> None:
+        self._thinking_offsets.pop(run_id, None)
+        self._thinking_offset_expiry.pop(run_id, None)
+
+    def _prune_thinking_offsets(self) -> None:
+        now = monotonic()
+        expired = [
+            run_id
+            for run_id, expiry in self._thinking_offset_expiry.items()
+            if expiry <= now
+        ]
+        for run_id in expired:
+            self._clear_thinking_stream(run_id)
+
+    def _observe_first_provider_event(self, run: Run, started: float) -> None:
+        """Record one local first-event latency for a provider invocation.
+
+        Thinking, visible text, tool calls, and completion all qualify as a
+        provider event.  The run/parent metadata keeps this measurement
+        correlated without capturing provider payloads.
+        """
+
+        self.metrics.observe(
+            "aura.runtime.model_inference",
+            "time_to_first_token_ms",
+            (perf_counter() - started) * 1000,
+            provider=run.provider,
+            model_id=run.model_id,
+            **self._metadata(run),
+        )
 
     async def cancel(self, run_id: UUID, subject: str, issuer: str, idempotency_key: str) -> Run:
         if self.approval_service is not None:
@@ -249,11 +388,18 @@ class RunCoordinator:
                     conversation, run, attempt_id, provider, started, worker_span_id
                 )
             except RunClaimLost:
+                self._clear_thinking_stream(run.id)
                 return
             except Exception as exc:
                 await self._settle_resumed_failure(
                     conversation, run, attempt_id, exc, started, worker_span_id
                 )
+            finally:
+                # Resumption does not pass through the ordinary execution
+                # finally block.  Clear terminal state explicitly, while a
+                # still-waiting run remains eligible for same-worker resume.
+                if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                    self._clear_thinking_stream(run.id)
             return
         self.metrics.increment(
             "aura.execution.run_coordinator",
@@ -439,6 +585,21 @@ class RunCoordinator:
             await self._status(conversation.id, run)
         finally:
             self._active_tool_attempts.pop(run.id, None)
+            authoritative_status = run.status
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                # SQL repositories return a fresh Run from the confirmation
+                # transition; the caller-local claim may still say RUNNING.
+                # Reload before deciding whether ephemeral thinking state is
+                # safe to retain for approval resumption.
+                try:
+                    _, authoritative_run = await self.store.find_run_any(run.id)
+                    authoritative_status = authoritative_run.status
+                except Exception:
+                    # Failing closed avoids retaining unbounded stale state
+                    # when the authoritative status cannot be read.
+                    authoritative_status = run.status
+            if authoritative_status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                self._clear_thinking_stream(run.id)
             self.metrics.observe(
                 "aura.runtime.model_inference",
                 "output_tokens",
@@ -459,6 +620,7 @@ class RunCoordinator:
         output_characters: list[int],
         worker_span_id: str,
     ) -> bool:
+        self._begin_thinking_stream(run)
         try:
             context = await self.store.context(
                 conversation.id,
@@ -573,9 +735,9 @@ class RunCoordinator:
         inference_span_id = secrets.token_hex(8)
         inference_outcome = "error"
         inference_error_class: str | None = "provider"
-        first_token = True
-        stream = aiter(provider.stream_chat(run.model_id, messages))
-        next_chunk: asyncio.Future[str] | None = None
+        first_event = True
+        stream = aiter(self._stream_chat(provider, run.model_id, messages))
+        next_chunk: asyncio.Future[object] | None = None
         stop_waiter: asyncio.Task[bool] | None = None
         try:
             while True:
@@ -601,21 +763,29 @@ class RunCoordinator:
                 stop_waiter.cancel()
                 await asyncio.gather(stop_waiter, return_exceptions=True)
                 try:
-                    chunk = next_chunk.result()
+                    event = next_chunk.result()
                 except StopAsyncIteration:
                     break
                 except Exception as exc:
                     raise RunExecutionFailure("provider") from exc
-                if first_token:
-                    self.metrics.observe(
-                        "aura.runtime.model_inference",
-                        "time_to_first_token_ms",
-                        (perf_counter() - started) * 1000,
-                        provider=run.provider,
-                        model_id=run.model_id,
-                        **self._metadata(run),
+                if first_event:
+                    self._observe_first_provider_event(run, started)
+                    first_event = False
+                if isinstance(event, ModelThinkingDelta):
+                    await self._publish_thinking_delta(
+                        run, conversation, event, inference_span_id
                     )
-                    first_token = False
+                    continue
+                if isinstance(event, ModelStreamCompleted):
+                    break
+                if isinstance(event, ModelTextDelta):
+                    chunk = event.text
+                elif isinstance(event, str):
+                    # Compatibility providers expose the original text-only
+                    # stream instead of the additive typed stream.
+                    chunk = event
+                else:
+                    raise RunExecutionFailure("provider")
                 output_characters[0] += len(chunk)
                 try:
                     current = await self.store.find_run_any(run.id)
@@ -1095,21 +1265,43 @@ class RunCoordinator:
         protocol_failure: tuple[UUID, str, str] | None = None
         selection_span_id = secrets.token_hex(8)
         selection_recorded = False
+        first_event = True
+        next_event: asyncio.Task[object] | None = None
+        stop_waiter: asyncio.Task[bool] | None = None
         try:
             while True:
-                try:
-                    event = await asyncio.wait_for(anext(stream), timeout=self.cancellation_poll_seconds)
-                except TimeoutError:
-                    if await self._wait_until_attempt_stops(run.id, attempt_id):
+                next_event = asyncio.ensure_future(anext(stream))
+                stop_waiter = asyncio.create_task(
+                    self._wait_until_attempt_stops(run.id, attempt_id)
+                )
+                done, _ = await asyncio.wait(
+                    {next_event, stop_waiter}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if stop_waiter in done:
+                    should_cancel = stop_waiter.result()
+                    next_event.cancel()
+                    await asyncio.gather(next_event, return_exceptions=True)
+                    if should_cancel:
                         await self._finish_cancellation(run, attempt_id, started)
                         return False
-                    continue
+                    raise RunClaimLost
+                stop_waiter.cancel()
+                await asyncio.gather(stop_waiter, return_exceptions=True)
+                try:
+                    event = next_event.result()
                 except StopAsyncIteration:
                     break
+                if first_event:
+                    self._observe_first_provider_event(run, selection_started)
+                    first_event = False
                 if completed:
                     protocol_failure = (uuid4(), "memory.search", "TOOL_LATE_CALL")
                     break
-                if isinstance(event, ModelTextDelta):
+                if isinstance(event, ModelThinkingDelta):
+                    await self._publish_thinking_delta(
+                        run, conversation, event, selection_span_id
+                    )
+                elif isinstance(event, ModelTextDelta):
                     if first_kind is None:
                         first_kind = "text"
                     if first_kind != "text" or call is not None:
@@ -1299,7 +1491,14 @@ class RunCoordinator:
                     waiter = getattr(self.store, "wait_for_confirmation", None)
                     if callable(waiter):
                         try:
-                            await waiter(run.id, attempt_id, approval_id, call.call_id)
+                            waiting_run = await waiter(
+                                run.id, attempt_id, approval_id, call.call_id
+                            )
+                            if (
+                                isinstance(waiting_run, Run)
+                                and waiting_run.status is not RunStatus.WAITING_FOR_CONFIRMATION
+                            ):
+                                raise RunClaimLost
                         except RunClaimLost:
                             _, current = await self.store.find_run_any(run.id)
                             if current.status is not RunStatus.WAITING_FOR_CONFIRMATION:
@@ -1449,6 +1648,14 @@ class RunCoordinator:
                 memory_context_fraction,
             )
         finally:
+            if next_event is not None:
+                if not next_event.done():
+                    next_event.cancel()
+                await asyncio.gather(next_event, return_exceptions=True)
+            if stop_waiter is not None:
+                if not stop_waiter.done():
+                    stop_waiter.cancel()
+                await asyncio.gather(stop_waiter, return_exceptions=True)
             close = getattr(stream, "aclose", None)
             if close is not None:
                 try:
@@ -1544,29 +1751,72 @@ class RunCoordinator:
         synthesis_span_id = secrets.token_hex(8)
         synthesis_outcome = "error"
         synthesis_error: str | None = "provider"
-        stream = aiter(provider.stream_chat(run.model_id, messages))
+        stream = aiter(self._stream_chat(provider, run.model_id, messages))
+        first_event = True
+        next_chunk: asyncio.Task[object] | None = None
+        stop_waiter: asyncio.Task[bool] | None = None
         try:
             while True:
-                try:
-                    chunk = await asyncio.wait_for(anext(stream), timeout=self.cancellation_poll_seconds)
-                except TimeoutError:
-                    if await self._wait_until_attempt_stops(run.id, attempt_id):
+                next_chunk = asyncio.ensure_future(anext(stream))
+                stop_waiter = asyncio.create_task(
+                    self._wait_until_attempt_stops(run.id, attempt_id)
+                )
+                done, _ = await asyncio.wait(
+                    {next_chunk, stop_waiter}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if stop_waiter in done:
+                    should_cancel = stop_waiter.result()
+                    next_chunk.cancel()
+                    await asyncio.gather(next_chunk, return_exceptions=True)
+                    if should_cancel:
                         await self._finish_cancellation(run, attempt_id, perf_counter())
                         return False
-                    continue
+                    raise RunClaimLost
+                stop_waiter.cancel()
+                await asyncio.gather(stop_waiter, return_exceptions=True)
+                try:
+                    event = next_chunk.result()
                 except StopAsyncIteration:
                     synthesis_outcome = "ok"
                     synthesis_error = None
                     return True
+                if first_event:
+                    self._observe_first_provider_event(run, synthesis_started)
+                    first_event = False
+                if isinstance(event, ModelThinkingDelta):
+                    await self._publish_thinking_delta(
+                        run, conversation, event, synthesis_span_id
+                    )
+                    continue
+                if isinstance(event, ModelStreamCompleted):
+                    synthesis_outcome = "ok"
+                    synthesis_error = None
+                    return True
+                if isinstance(event, ModelTextDelta):
+                    chunk = event.text
+                elif isinstance(event, str):
+                    chunk = event
+                else:
+                    raise RunExecutionFailure("provider")
                 await self._append_text_delta(conversation, run, attempt_id, chunk, output_characters)
         except asyncio.CancelledError:
             synthesis_outcome = "canceled"
             synthesis_error = "cancellation"
             raise
+        except (RunClaimLost, RunExecutionFailure):
+            raise
         except Exception as exc:
             synthesis_error = "provider"
             raise RunExecutionFailure("provider") from exc
         finally:
+            if next_chunk is not None:
+                if not next_chunk.done():
+                    next_chunk.cancel()
+                await asyncio.gather(next_chunk, return_exceptions=True)
+            if stop_waiter is not None:
+                if not stop_waiter.done():
+                    stop_waiter.cancel()
+                await asyncio.gather(stop_waiter, return_exceptions=True)
             close = getattr(stream, "aclose", None)
             if close is not None:
                 await close()

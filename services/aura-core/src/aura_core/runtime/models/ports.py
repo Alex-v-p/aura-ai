@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
+from uuid import UUID
 
 from aura_core.domains.execution.runs.ports import ChatMessage
 
@@ -42,6 +43,19 @@ class ModelTextDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelThinkingDelta:
+    """Ephemeral provider-neutral model reasoning delta.
+
+    Thinking is deliberately separate from visible text.  It is never an
+    assistant message, a tool-protocol token, or a title input.  Transport
+    adapters impose the live-only owner authorization and bounded offset
+    rules; providers only normalize their native frame here.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModelToolCall:
     name: str
     arguments: object
@@ -52,7 +66,8 @@ class ModelStreamCompleted:
     pass
 
 
-ModelToolStreamEvent = ModelTextDelta | ModelToolCall | ModelStreamCompleted
+ModelToolStreamEvent = ModelTextDelta | ModelThinkingDelta | ModelToolCall | ModelStreamCompleted
+ModelStreamEvent = ModelTextDelta | ModelThinkingDelta | ModelStreamCompleted
 
 
 class ToolCallingModelPort(Protocol):
@@ -64,6 +79,28 @@ class ToolCallingModelPort(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[Mapping[str, object]],
     ) -> AsyncIterator[ModelToolStreamEvent]: ...
+
+
+class ThinkingModelPort(Protocol):
+    """Optional typed stream for providers that expose private reasoning."""
+
+    def stream_chat_events(
+        self, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[ModelStreamEvent]: ...
+
+
+class ThinkingDeltaPublisher(Protocol):
+    """Optional live-only sink for bounded owner-authorized thinking deltas."""
+
+    async def publish_thinking_delta(
+        self,
+        *,
+        run_id: UUID,
+        conversation_id: UUID,
+        offset: int,
+        text: str,
+        parent_span_id: str | None = None,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: b098755581accbd1c179a216468b284a13f89ce2f37c9c07c3d6cdf81343fb72
+// Contract SHA-256: 2521a572a84db6a6b2e99acf85ad9b5b7bb89e3c94a53a7be9bed9baeeb75b76
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -211,7 +211,7 @@ export type RunError = { readonly "code": string; readonly "message": string; re
 
 export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; };
 
-export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
+export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | ModelThinkingDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
 
 export type RunEventBase = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "sequence": number; readonly "eventType": string; readonly "runId": string; readonly "conversationId": string; readonly "occurredAt": string; };
 
@@ -220,6 +220,8 @@ export type RunSnapshotEvent = RunEventBase & { readonly "eventType": "run.snaps
 export type RunStatusEvent = RunEventBase & { readonly "eventType": "run.status"; readonly "data": RunStatusData; };
 
 export type AssistantDeltaEvent = RunEventBase & { readonly "eventType": "assistant.delta"; readonly "data": AssistantDeltaData; };
+
+export type ModelThinkingDeltaEvent = RunEventBase & { readonly "eventType": "model.thinking.delta"; readonly "data": ModelThinkingDeltaData; };
 
 export type AssistantSnapshotEvent = RunEventBase & { readonly "eventType": "assistant.snapshot"; readonly "data": AssistantSnapshotData; };
 
@@ -238,6 +240,8 @@ export type RunSnapshotData = { readonly "run": Run; readonly "assistantMessage"
 export type RunStatusData = { readonly "status": RunStatus; readonly "startedAt": string | null; readonly "finishedAt": string | null; };
 
 export type AssistantDeltaData = { readonly "messageId": string; readonly "offset": number; readonly "text": string; };
+
+export type ModelThinkingDeltaData = { readonly "offset": number; readonly "text": string; };
 
 export type AssistantSnapshotData = { readonly "message": Message; };
 

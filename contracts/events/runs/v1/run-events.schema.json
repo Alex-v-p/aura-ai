@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aura.local/contracts/events/runs/v1/run-events.schema.json",
   "title": "Aura run event stream v1",
-  "description": "Provider-neutral SSE data payloads. The SSE id field equals eventId and the SSE event field equals eventType.",
+  "description": "Provider-neutral SSE data payloads. For durable events, the SSE id field equals eventId and the SSE event field equals eventType. model.thinking.delta is live-only: its payload eventId remains required for envelope compatibility, but the SSE id field is omitted so it never advances Last-Event-ID and the event is never persisted or replayed.",
   "oneOf": [
     { "$ref": "#/$defs/RunSnapshotEvent" },
     { "$ref": "#/$defs/RunStatusEvent" },
     { "$ref": "#/$defs/AssistantDeltaEvent" },
+    { "$ref": "#/$defs/ModelThinkingDeltaEvent" },
     { "$ref": "#/$defs/AssistantSnapshotEvent" },
     { "$ref": "#/$defs/RunErrorEvent" },
     { "$ref": "#/$defs/MemoryActivityEvent" },
@@ -110,6 +111,16 @@
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
           "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["messageId", "offset", "text"], "properties": { "messageId": { "$ref": "#/$defs/Uuid" }, "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1 } } }
+        } }
+      ]
+    },
+    "ModelThinkingDeltaEvent": {
+      "description": "This live-only event carries private transient model reasoning solely to an active owner-authorized stream. It is never persisted, replayed, included in transcript content, audit, outbox, telemetry, or retained transport. Its eventId is payload-only: producers omit the SSE id field, and consumers must not advance a Last-Event-ID cursor for it.",
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "model.thinking.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["offset", "text"], "properties": { "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1, "maxLength": 4096 } } }
         } }
       ]
     },

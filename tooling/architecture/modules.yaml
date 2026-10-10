@@ -1366,6 +1366,7 @@ modules:
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.platform.outbox.service
+  - aura-core.platform.telemetry
 - id: aura-core.platform.outbox.persistence
   root: services/aura-core/src/aura_core/platform/outbox/persistence.py
   kind: python
@@ -1504,6 +1505,7 @@ modules:
   - aura_core.runtime.streaming.publisher
   dependencies:
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.ports
 - id: aura-core.runtime.streaming.subscriptions
   root: services/aura-core/src/aura_core/runtime/streaming/subscriptions.py
   kind: python

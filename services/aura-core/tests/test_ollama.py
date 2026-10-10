@@ -13,6 +13,8 @@ from aura_core.providers.models.ollama.adapter import OllamaAdapter, OllamaUnava
 from aura_core.runtime.models.ports import (
     ChatMessage,
     ModelStreamCompleted,
+    ModelTextDelta,
+    ModelThinkingDelta,
     ModelToolCall,
     ProviderTraceContext,
     StructuredInferenceRequest,
@@ -188,6 +190,62 @@ async def test_ollama_native_tool_stream_rejects_malformed_tool_call() -> None:
                     "tool-chat", [], []
                 )
             ]
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_typed_stream_normalizes_thinking_for_plain_and_native_calls() -> None:
+    bodies: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat"
+        body = cast(dict[str, object], json.loads(request.content))
+        bodies.append(body)
+        message: dict[str, object] = {
+            "thinking": "x" * 4_100,
+            "content": "visible",
+        }
+        if "tools" in body:
+            message["tool_calls"] = [
+                {"function": {"name": "memory.search", "arguments": {"query": "tea"}}}
+            ]
+        return httpx.Response(
+            200,
+            content=(
+                json.dumps({"message": message})
+                + "\n"
+                + json.dumps({"done": True})
+                + "\n"
+            ).encode(),
+        )
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        plain = [
+            event
+            async for event in adapter.stream_chat_events("chat", [ChatMessage("user", "hello")])
+        ]
+        native = [
+            event
+            async for event in adapter.stream_chat_with_tools("chat", [], [{"type": "function"}])
+        ]
+        assert [type(item) for item in plain] == [
+            ModelThinkingDelta,
+            ModelThinkingDelta,
+            ModelTextDelta,
+            ModelStreamCompleted,
+        ]
+        assert all(
+            isinstance(item, ModelThinkingDelta) and len(item.text) <= 4096
+            for item in plain[:2]
+        )
+        assert isinstance(native[0], ModelThinkingDelta)
+        assert any(isinstance(item, ModelToolCall) for item in native)
+        assert all(body["think"] is True for body in bodies)
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
 

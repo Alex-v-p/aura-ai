@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, reconcileModelThinkingDelta, visibleMemoryActivities } from './conversation-store';
 
 const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
 function hydrateDefaultAgent(store: ConversationStore): void { store.setDefaultDraftAgent(hydratedDefaultAgent); }
@@ -64,6 +64,47 @@ describe('ConversationStore', () => {
     const candidate = { ...placeholder, id: 'candidate', candidateId: 'candidate-1' } as MemoryActivity;
     expect(visibleMemoryActivities([placeholder])).toEqual([]);
     expect(visibleMemoryActivities([placeholder, candidate])).toEqual([candidate]);
+  });
+  it('reconciles only exact-next bounded thinking deltas', () => {
+    let state = reconcileModelThinkingDelta(null, 'run-1', 0, 'first');
+    expect(state).toEqual({ runId: 'run-1', text: 'first', nextOffset: 5 });
+    expect(reconcileModelThinkingDelta(state, 'run-1', 0, 'first')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 4, 'stale')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 7, 'out of order')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-2', 5, 'cross-run')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 5.5, 'malformed')).toBeNull();
+    const inert = reconcileModelThinkingDelta(state, 'run-1', 5, '<script>plain text</script>');
+    expect(inert?.text).toBe('first<script>plain text</script>');
+    expect(inert?.nextOffset).toBe(inert?.text.length);
+    const unicode = reconcileModelThinkingDelta(null, 'run-unicode', 0, '🙂');
+    expect(unicode?.nextOffset).toBe(1);
+    expect(reconcileModelThinkingDelta(unicode, 'run-unicode', 1, '続き')?.text).toBe('🙂続き');
+    expect(reconcileModelThinkingDelta(state, 'run-1', 5, 'x'.repeat(4_097))).toBeNull();
+    state = { runId: 'run-1', text: 'x'.repeat(65_536), nextOffset: 65_536 };
+    expect(reconcileModelThinkingDelta(state, 'run-1', 65_536, 'x')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 65_536, { bad: true })).toBeNull();
+  });
+  it('keeps live thinking separate and collapses it when the run becomes terminal', async () => {
+    const now = new Date().toISOString();
+    const running: Run = { id: 'run-thinking-terminal', conversationId: 'conversation-thinking-terminal', userMessageId: 'user-thinking-terminal', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const detail: ConversationDetail = { ...summary(running.conversationId), currentRun: running, messages: [], recentRuns: [running] };
+    let serverDetail: ConversationDetail = detail;
+    const stream = (_id: string, _last: string | undefined, onEvent: (event: RunEvent, cursor?: string) => void): RunEventSubscription => {
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'thinking-live', sequence: 1, eventType: 'model.thinking.delta', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { offset: 0, text: '<private reasoning>' } });
+        const completed: Run = { ...running, status: 'completed', finishedAt: now };
+        serverDetail = { ...detail, currentRun: null, recentRuns: [completed] };
+        onEvent({ schemaVersion: 1, eventId: 'thinking-terminal', sequence: 2, eventType: 'run.status', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } } as RunEvent, 'thinking-terminal');
+      });
+      return { close: () => undefined };
+    };
+    const api = fakeApi(async () => ({ items: [{ ...summary(running.conversationId), currentRun: running }], nextCursor: null }), [detail], [running], stream, async () => serverDetail);
+    const thinkingStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(thinkingStore.thinkingForRun(running.id)?.text).toBe('<private reasoning>'));
+    expect(thinkingStore.selected().turns).toEqual([]);
+    await vi.waitFor(() => expect(thinkingStore.thinkingIsOpen(running.id)).toBe(false));
+    expect(thinkingStore.thinkingForRun(running.id)?.text).toBe('<private reasoning>');
   });
   let store: ConversationStore;
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); hydrateDefaultAgent(store); });

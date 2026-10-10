@@ -177,7 +177,7 @@ class AppState:
             )
             self.persona_service.audit = self.store.record_auth_audit
             self.agent_service.audit = self.store.record_auth_audit
-            self.publisher = EventPublisher()
+            self.publisher = EventPublisher(metrics=self.metrics)
             self.outbox = InMemoryOutbox()
             self.sessions = SessionService(MemorySessionBackend(), self.settings)
             self.memory_repository = memory_uow.memory_repository(
@@ -259,9 +259,13 @@ class AppState:
                     APPROVAL_EVENT_TOPIC,
                     RUN_RESUME_TOPIC,
                 ),
+                metrics=self.metrics,
             )
             self.outbox = TransactionalOutboxTransport()
-            self.publisher = PersistentEventPublisher(self.sql_store.append_event)
+            self.publisher = PersistentEventPublisher(
+                self.sql_store.append_event,
+                metrics=self.metrics,
+            )
             import redis.asyncio
 
             redis_factory = cast(
@@ -359,6 +363,7 @@ class AppState:
             self.store,
         )
         self.readiness = ReadinessService(probes)
+        thinking_publisher = self.publisher if self.testing else self.nats
         self.coordinator = RunCoordinator(
             self.store,
             self.publisher,
@@ -370,6 +375,7 @@ class AppState:
             tool_registry=self.tool_registry,
             approval_service=getattr(self, "approval_service", None),
             reminder_service=self.reminder_service,
+            thinking_publisher=thinking_publisher,
         )
 
     async def startup(self) -> None:
@@ -384,6 +390,13 @@ class AppState:
             assert self.nats is not None
             await self.nats.connect()
             await self.nats.subscribe_events(self._ingest_event_wakeup)
+            thinking_subscribe = getattr(self.nats, "subscribe_thinking_events", None)
+            if callable(thinking_subscribe):
+                subscribe = cast(
+                    Callable[[Callable[[UUID, UUID, int, str], Awaitable[None]]], Awaitable[object]],
+                    thinking_subscribe,
+                )
+                await subscribe(self._ingest_thinking_wakeup)
             notification_subscribe = getattr(self.nats, "subscribe_notification_events", None)
             if callable(notification_subscribe):
                 subscribe = cast(
@@ -687,6 +700,24 @@ class AppState:
         event = await self.sql_store.event(event_id, run_id)
         if event is not None:
             await self.publisher.ingest_external(event)
+
+    async def _ingest_thinking_wakeup(
+        self, run_id: UUID, conversation_id: UUID, offset: int, text: str
+    ) -> None:
+        """Fan out live thinking only to already-authorized active SSE streams."""
+
+        publish = getattr(self.publisher, "publish_thinking_delta", None)
+        if callable(publish):
+            typed_publish = cast(
+                Callable[..., Awaitable[None]],
+                publish,
+            )
+            await typed_publish(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                offset=offset,
+                text=text,
+            )
 
     async def _ingest_notification_wakeup(self, event_id: UUID) -> None:
         """Wake notification SSE consumers; PostgreSQL remains authoritative."""

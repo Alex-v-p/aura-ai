@@ -18,6 +18,14 @@ describe('conversation configuration select bindings', () => {
     expect(template).toContain('configurationRevisionValue(stagedPersona(), stagedUseAgentDefaultPersona())');
   });
 
+  it('renders live model thinking in a separate inert accessible disclosure', () => {
+    expect(template).toContain('<details class="model-thinking"');
+    expect(template).toContain('<summary>Model thinking</summary>');
+    expect(template).toContain('<pre>{{ thinking.text }}</pre>');
+    expect(template).not.toContain('aura-safe-markdown [content]="thinking.text"');
+    expect(template).not.toContain('[innerHTML]="thinking.text"');
+  });
+
   it('falls back to the visible shell navigation trigger when the saved opener is hidden', () => {
     expect(componentSource).toContain('export function visibleFocusTarget');
     expect(componentSource).toContain("document.querySelector<HTMLButtonElement>('[aria-label=\"Open navigation\"]')");

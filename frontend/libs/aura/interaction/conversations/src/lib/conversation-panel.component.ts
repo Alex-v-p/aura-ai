@@ -118,6 +118,7 @@ export class ConversationPanelComponent {
   approvalLabel(status: ApprovalSummary['status']): string { return this.approvalStore.statusLabel(status); }
   async approveReminder(approval: ApprovalSummary): Promise<void> { await this.approvalStore.approve(approval); }
   async rejectReminder(approval: ApprovalSummary): Promise<void> { await this.approvalStore.reject(approval); }
+  thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
   submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
   retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }

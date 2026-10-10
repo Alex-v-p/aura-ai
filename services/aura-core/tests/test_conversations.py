@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from aura_core.domains.automation.reminders.public import (
 from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
 from aura_core.domains.execution.runs.ports import ChatCompletionPort
 from aura_core.domains.execution.runs.public import (
+    Run,
     RunClaim,
     RunClaimLost,
     RunCoordinator,
@@ -52,6 +54,7 @@ from aura_core.runtime.models.ports import (
     ModelDescriptor,
     ModelStreamCompleted,
     ModelTextDelta,
+    ModelThinkingDelta,
     ModelToolCall,
 )
 from aura_core.runtime.streaming.publisher import EventPublisher
@@ -1680,3 +1683,622 @@ def test_internal_memory_component_is_provider_safe() -> None:
         [("system", "policy"), ("memory", "untrusted evidence"), ("user", "question")]
     )
     assert [message.role for message in messages] == ["system", "user", "user"]
+
+
+class _DelayedNativeSelectionProvider(_NativeToolProvider):
+    async def stream_chat_with_tools(
+        self, model_id: str, messages: object, tools: object
+    ) -> object:
+        del model_id, messages, tools
+        await asyncio.sleep(0.15)
+        yield ModelToolCall("memory.search", {"query": "tea"})
+        yield ModelStreamCompleted()
+
+
+class _DelayedSynthesisProvider(_NativeToolProvider):
+    async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+        del model_id, messages
+        await asyncio.sleep(0.15)
+        self.synthesis_calls += 1
+        yield "delayed answer"
+
+
+@pytest.mark.asyncio
+async def test_delayed_native_selection_preserves_provider_read() -> None:
+    provider = _DelayedNativeSelectionProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Search slowly.", "tool-model", models, str(uuid4())
+    )
+    policy_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert policy_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(policy_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics,
+        cancellation_poll_seconds=0.01,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    _, completed = await store.find_run_any(run.id)
+    assert completed.status is RunStatus.COMPLETED
+    assert provider.synthesis_calls == 1
+    assert len(
+        [
+            item
+            for item in metrics.snapshot()
+            if item.kind == "metric" and item.metric == "time_to_first_token_ms"
+        ]
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_delayed_synthesis_preserves_provider_read() -> None:
+    provider = _DelayedSynthesisProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Synthesize slowly.", "tool-model", models, str(uuid4())
+    )
+    policy_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert policy_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(policy_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics,
+        cancellation_poll_seconds=0.01,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    loaded_view = await store.get(conversation.id, "owner", "https://issuer")
+    loaded = loaded_view.runs[0]
+    assert loaded.status is RunStatus.COMPLETED
+    assistant = next(message for message in loaded_view.messages if message.role == "assistant")
+    assert assistant.content == "delayed answer"
+    assert len(
+        [
+            item
+            for item in metrics.snapshot()
+            if item.kind == "metric" and item.metric == "time_to_first_token_ms"
+        ]
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_thinking_is_published_separately_and_never_persisted_as_answer() -> None:
+    class ThinkingProvider:
+        async def list_models(self) -> tuple[ModelDescriptor, ...]:
+            return (ModelDescriptor("thinking-model", "Thinking", "fake", ("chat",)),)
+
+        async def is_ready(self, model_id: str | None = None) -> bool:
+            return model_id in (None, "thinking-model")
+
+        async def stream_chat_events(self, model_id: str, messages: object) -> object:
+            del model_id, messages
+            yield ModelThinkingDelta("private reasoning")
+            yield ModelTextDelta("visible answer")
+            yield ModelStreamCompleted()
+
+        async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+            del model_id, messages
+            yield "visible answer"
+
+    class ThinkingSink:
+        def __init__(self) -> None:
+            self.deltas: list[tuple[int, str]] = []
+            self.parents: list[str | None] = []
+
+        async def publish_thinking_delta(
+            self,
+            *,
+            run_id: UUID,
+            conversation_id: UUID,
+            offset: int,
+            text: str,
+            parent_span_id: str | None = None,
+        ) -> None:
+            del run_id, conversation_id
+            self.deltas.append((offset, text))
+            self.parents.append(parent_span_id)
+
+    provider = ThinkingProvider()
+    sink = ThinkingSink()
+    metrics = MetadataMetrics()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Explain this.", "thinking-model", models, str(uuid4())
+    )
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics,
+        thinking_publisher=sink,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = await store.get(conversation.id, "owner", "https://issuer")
+    assistant = next(message for message in loaded.messages if message.role == "assistant")
+    assert assistant.content == "visible answer"
+    assert sink.deltas == [(0, "private reasoning")]
+    model_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and item.component_id == "aura.runtime.model_inference"
+        and dict(item.trace_attributes).get("operation") == "model.infer"
+        and "title_input_size" not in dict(item.trace_attributes)
+    ]
+    assert len(model_spans) == 1
+    assert sink.parents == [model_spans[0].span_id]
+
+
+@pytest.mark.asyncio
+async def test_native_selection_and_tools_disabled_synthesis_publish_thinking_separately() -> None:
+    class ThinkingNativeProvider(_NativeToolProvider):
+        async def stream_chat_with_tools(
+            self, model_id: str, messages: object, tools: object
+        ) -> object:
+            del model_id, messages, tools
+            yield ModelThinkingDelta("selection reasoning")
+            yield ModelToolCall("memory.search", {"query": "tea"})
+            yield ModelStreamCompleted()
+
+        async def stream_chat_events(self, model_id: str, messages: object) -> object:
+            del model_id, messages
+            yield ModelThinkingDelta("synthesis reasoning")
+            yield ModelTextDelta("visible answer")
+            yield ModelStreamCompleted()
+
+    class ThinkingSink:
+        def __init__(self) -> None:
+            self.deltas: list[tuple[int, str]] = []
+            self.parents: list[str | None] = []
+
+        async def publish_thinking_delta(
+            self,
+            *,
+            run_id: UUID,
+            conversation_id: UUID,
+            offset: int,
+            text: str,
+            parent_span_id: str | None = None,
+        ) -> None:
+            del run_id, conversation_id
+            self.deltas.append((offset, text))
+            self.parents.append(parent_span_id)
+
+    provider = ThinkingNativeProvider()
+    sink = ThinkingSink()
+    metrics = MetadataMetrics()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Search and explain.", "tool-model", models, str(uuid4())
+    )
+    policy_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert policy_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(policy_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics,
+        thinking_publisher=sink,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = await store.get(conversation.id, "owner", "https://issuer")
+    assistant = next(message for message in loaded.messages if message.role == "assistant")
+    assert assistant.content == "visible answer"
+    assert "reasoning" not in assistant.content
+    assert sink.deltas == [
+        (0, "selection reasoning"),
+        (len("selection reasoning"), "synthesis reasoning"),
+    ]
+    selection_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and item.component_id == "aura.runtime.tool_selection"
+        and dict(item.trace_attributes).get("operation") == "tool.select"
+    ]
+    synthesis_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and item.component_id == "aura.runtime.model_inference"
+        and dict(item.trace_attributes).get("operation") == "model.infer"
+        and "title_input_size" not in dict(item.trace_attributes)
+    ]
+    assert len(selection_spans) == 1
+    assert len(synthesis_spans) == 1
+    assert sink.parents == [selection_spans[0].span_id, synthesis_spans[0].span_id]
+    assert all("selection reasoning" not in repr(item) for item in metrics.snapshot())
+    assert all("synthesis reasoning" not in repr(item) for item in metrics.snapshot())
+    first_event_metrics = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "metric" and item.metric == "time_to_first_token_ms"
+    ]
+    assert len(first_event_metrics) == 2
+    assert not [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "model.thinking.delta"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approval_wait_resume_preserves_thinking_offset_and_clears_after_settlement() -> None:
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+
+    class ApprovalThinkingProvider(_NativeToolProvider):
+        async def stream_chat_with_tools(
+            self, model_id: str, messages: object, tools: object
+        ) -> object:
+            del model_id, messages, tools
+            yield ModelThinkingDelta("before approval")
+            yield ModelToolCall(
+                "reminder.create",
+                {"content": "approval reminder", "dueAt": "2026-10-11T12:00:00Z"},
+            )
+            yield ModelStreamCompleted()
+
+        async def stream_chat_events(self, model_id: str, messages: object) -> object:
+            del model_id, messages
+            yield ModelThinkingDelta("after approval")
+            yield ModelTextDelta("reminder created")
+            yield ModelStreamCompleted()
+
+    class ThinkingSink:
+        def __init__(self) -> None:
+            self.deltas: list[tuple[int, str]] = []
+            self.parents: list[str | None] = []
+
+        async def publish_thinking_delta(
+            self,
+            *,
+            run_id: UUID,
+            conversation_id: UUID,
+            offset: int,
+            text: str,
+            parent_span_id: str | None = None,
+        ) -> None:
+            del run_id, conversation_id
+            self.deltas.append((offset, text))
+            self.parents.append(parent_span_id)
+
+    provider = ApprovalThinkingProvider()
+    sink = ThinkingSink()
+    models = await provider.list_models()
+
+    class NonAliasedConversationStore(ConversationStore):
+        """Model the SQL UoW's separate returned run objects."""
+
+        async def start_run(
+            self, run_id: UUID, *, worker_id: UUID | None = None, lease_seconds: float = 300.0
+        ) -> RunClaim:
+            claim = await super().start_run(
+                run_id, worker_id=worker_id, lease_seconds=lease_seconds
+            )
+            return RunClaim(
+                claim.conversation,
+                replace(claim.run),
+                claim.user_message,
+                claim.acquired,
+            )
+
+        async def wait_for_confirmation(
+            self,
+            run_id: UUID,
+            attempt_id: UUID,
+            approval_id: UUID,
+            tool_call_id: UUID,
+            *,
+            transaction: object | None = None,
+        ) -> Run:
+            waiting = await super().wait_for_confirmation(
+                run_id,
+                attempt_id,
+                approval_id,
+                tool_call_id,
+                transaction=transaction,
+            )
+            return replace(waiting)
+
+    store = NonAliasedConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Create after confirmation", "tool-model", models, str(uuid4())
+    )
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approvals,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+        thinking_publisher=sink,
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    approval_id = waiting.approval_id
+    assert sink.deltas == [(0, "before approval")]
+    assert coordinator._thinking_offsets[run.id] == len("before approval")  # pyright: ignore[reportPrivateUsage]
+
+    pending = await approvals.get("https://issuer", "owner", approval_id)
+    assert pending is not None
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="thinking-approval",
+    )
+    await store.resume_waiting_run(run.id, approval_id, approved=True)
+    await coordinator.execute(run.id, provider)
+
+    _, completed = await store.find_run_any(run.id)
+    assert completed.status is RunStatus.COMPLETED
+    assert sink.deltas == [
+        (0, "before approval"),
+        (len("before approval"), "after approval"),
+    ]
+    assert run.id not in coordinator._thinking_offsets  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["selection", "synthesis"])
+async def test_cancellation_remains_responsive_while_provider_read_is_pending(
+    phase: str,
+) -> None:
+    class BlockingProvider(_NativeToolProvider):
+        def __init__(self) -> None:
+            # Both branches exercise the native protocol.  The synthesis
+            # branch first completes a real memory tool call, then blocks in
+            # the tools-disabled follow-up stream.
+            super().__init__(tool_capable=True)
+            self.entered = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def stream_chat_with_tools(
+            self, model_id: str, messages: object, tools: object
+        ) -> object:
+            del model_id, messages, tools
+            if phase != "selection":
+                yield ModelToolCall("memory.search", {"query": "tea"})
+                yield ModelStreamCompleted()
+                return
+            self.entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                self.closed.set()
+            yield ModelStreamCompleted()
+
+        async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+            del model_id, messages
+            if phase == "selection":
+                yield "unreachable"
+                return
+            self.entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                self.closed.set()
+            yield "unreachable"
+
+    provider = BlockingProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Cancel while waiting.", "tool-model", models, str(uuid4())
+    )
+    policy_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert policy_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(policy_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        cancellation_poll_seconds=0.01,
+    )
+    task = asyncio.create_task(coordinator.execute(run.id, provider))
+    await asyncio.wait_for(provider.entered.wait(), timeout=1)
+
+    await coordinator.cancel(run.id, "owner", "https://issuer", str(uuid4()))
+    await asyncio.wait_for(task, timeout=1)
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.CANCELED
+    assert provider.closed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["selection", "synthesis"])
+async def test_outer_timeout_closes_pending_native_reads_and_classifies_run_timeout(
+    phase: str,
+) -> None:
+    class TimeoutProvider(_NativeToolProvider):
+        def __init__(self) -> None:
+            super().__init__(tool_capable=True)
+            self.entered = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def stream_chat_with_tools(
+            self, model_id: str, messages: object, tools: object
+        ) -> object:
+            del model_id, messages, tools
+            if phase != "selection":
+                yield ModelToolCall("memory.search", {"query": "tea"})
+                yield ModelStreamCompleted()
+                return
+            self.entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                self.closed.set()
+            yield ModelStreamCompleted()
+
+        async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+            del model_id, messages
+            if phase == "selection":
+                yield "unreachable"
+                return
+            self.entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                self.closed.set()
+            yield "unreachable"
+
+    provider = TimeoutProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Timeout the model.", "tool-model", models, str(uuid4())
+    )
+    policy_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert policy_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(policy_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        timeout_seconds=0.01,
+        cancellation_poll_seconds=0.001,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = await store.get(conversation.id, "owner", "https://issuer")
+    assert loaded.runs[0].status is RunStatus.FAILED
+    assert loaded.runs[0].error is not None
+    assert loaded.runs[0].error.code == "RUN_TIMEOUT"
+    assert provider.closed.is_set()
+    assert not [
+        message
+        for message in loaded.messages
+        if message.role == "assistant" and message.content
+    ]
+
+
+@pytest.mark.asyncio
+async def test_lease_loss_stops_pending_synthesis_without_writing_answer() -> None:
+    class BlockingProvider(_NativeToolProvider):
+        def __init__(self) -> None:
+            super().__init__(tool_capable=True)
+            self.entered = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def stream_chat_with_tools(
+            self, model_id: str, messages: object, tools: object
+        ) -> object:
+            del model_id, messages, tools
+            yield ModelToolCall("memory.search", {"query": "tea"})
+            yield ModelStreamCompleted()
+
+        async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+            del model_id, messages
+            self.entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                self.closed.set()
+            yield "unreachable"
+
+    provider = BlockingProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Lose the lease.", "tool-model", models, str(uuid4())
+    )
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        cancellation_poll_seconds=0.01,
+    )
+    task = asyncio.create_task(coordinator.execute(run.id, provider))
+    await asyncio.wait_for(provider.entered.wait(), timeout=1)
+    _, claimed = await store.find_run_any(run.id)
+    assert claimed.attempt_id is not None
+    await store.finish_run(run.id, RunStatus.INTERRUPTED, attempt_id=claimed.attempt_id)
+    await asyncio.wait_for(task, timeout=1)
+
+    loaded = await store.get(conversation.id, "owner", "https://issuer")
+    assert loaded.runs[0].status is RunStatus.INTERRUPTED
+    assert not [
+        message
+        for message in loaded.messages
+        if message.role == "assistant" and message.content
+    ]
+    assert provider.closed.is_set()
