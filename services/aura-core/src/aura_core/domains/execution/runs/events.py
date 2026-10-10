@@ -1,5 +1,6 @@
 """Execution-owned versioned run events used by transports and SSE."""
 
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -20,6 +21,16 @@ class RunEvent:
     occurred_at: datetime
     data: dict[str, Any]
     schema_version: int = 1
+
+    def __getattribute__(self, name: str) -> Any:
+        # Event transports inspect ``event_type`` before fan-out. Validate
+        # tool lifecycle envelopes at that shared access point so freshly
+        # constructed, hydrated, and externally-ingested values all fail
+        # closed without allowing private evidence into the publisher.
+        value = object.__getattribute__(self, name)
+        if name == "event_type" and value == "tool.status":
+            validate_tool_status(object.__getattribute__(self, "data"))
+        return value
 
     def payload(self) -> dict[str, Any]:
         value = asdict(self)
@@ -79,6 +90,43 @@ _MEMORY_ACTIVITY_ACTIONS = frozenset(
 _MEMORY_ACTIVITY_STATUSES = frozenset({"queued", "completed", "failed"})
 _MEMORY_ACTIVITY_RECONCILIATION = frozenset({"pending", "authoritative"})
 
+_TOOL_STATUS_FIELDS = frozenset(
+    {"callId", "toolId", "toolVersion", "status", "errorClass", "errorCode", "resultCount"}
+)
+_TOOL_STATUS_VALUES = frozenset({"pending", "executing", "completed", "denied", "failed"})
+_TOOL_ERROR_CLASSES = frozenset(
+    {
+        "capability",
+        "validation",
+        "policy",
+        "budget",
+        "timeout",
+        "provider_protocol",
+        "execution",
+        "cancellation",
+    }
+)
+_TOOL_ERROR_CODES = frozenset(
+    {
+        "TOOL_ARGUMENTS_INVALID",
+        "TOOL_BUDGET_EXHAUSTED",
+        "TOOL_CANCELLED",
+        "TOOL_CAPABILITY_UNAVAILABLE",
+        "TOOL_EXECUTION_FAILED",
+        "TOOL_HANDLER_UNAVAILABLE",
+        "TOOL_LATE_CALL",
+        "TOOL_MIXED_STREAM",
+        "TOOL_MULTIPLE_CALLS",
+        "TOOL_PROVIDER_PROTOCOL",
+        "TOOL_RESULT_INVALID",
+        "MEMORY_SEARCH_UNAVAILABLE",
+        "TOOL_TIMEOUT",
+        "TOOL_UNKNOWN",
+        "TOOL_NOT_GRANTED",
+    }
+)
+_TOOL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+
 
 def validate_memory_activity(data: dict[str, Any]) -> dict[str, Any]:
     """Return a safe copy of a memory activity payload or raise ``ValueError``.
@@ -133,3 +181,36 @@ def validate_memory_activity(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(occurred_at, str) or not occurred_at:
         raise ValueError("memory activity occurredAt is required")
     return _json_values(data)
+
+
+def validate_tool_status(data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the strict metadata-only tool lifecycle envelope."""
+
+    required = {"callId", "toolId", "toolVersion", "status"}
+    if not set(data).issubset(_TOOL_STATUS_FIELDS) or not required.issubset(data):
+        raise ValueError("tool status contains unsupported or missing fields")
+    try:
+        UUID(str(data["callId"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid tool status call identifier") from exc
+    tool_id = data["toolId"]
+    if (
+        not isinstance(tool_id, str)
+        or not _TOOL_ID_PATTERN.fullmatch(tool_id)
+        or len(tool_id) > 128
+    ):
+        raise ValueError("invalid tool status tool identifier")
+    if type(data["toolVersion"]) is not int or data["toolVersion"] < 1:
+        raise ValueError("invalid tool status version")
+    if data["status"] not in _TOOL_STATUS_VALUES:
+        raise ValueError("unsupported tool status")
+    error_class = data.get("errorClass")
+    if error_class is not None and error_class not in _TOOL_ERROR_CLASSES:
+        raise ValueError("unsupported tool status error class")
+    error_code = data.get("errorCode")
+    if error_code is not None and error_code not in _TOOL_ERROR_CODES:
+        raise ValueError("invalid tool status error code")
+    count = data.get("resultCount")
+    if count is not None and (type(count) is not int or not 0 <= count <= 8):
+        raise ValueError("invalid tool status result count")
+    return _json_values(dict(data))

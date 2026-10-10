@@ -1,6 +1,6 @@
 # Tools, automation, and integrations
 
-> **Status:** Architecture baseline plus envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture) and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
+> **Status:** Architecture baseline with implemented governed read-only tool runtime v1, plus envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
 
 ## Baseline separation
 
@@ -21,11 +21,19 @@ PostgreSQL owns deterministic automation, workflow and scheduler state, and serv
 
 Every tool has a stable identifier and version, typed input and result schemas, read/mutation classification, permission and confirmation policy, timeout and bounded retry rules, idempotency expectations, audit fields, sensitivity classification, validation requirements, and an observable component identifier.
 
-## Future governed memory search
+## Governed memory search v1
 
-A future read-only `memory.search` model-facing tool may let an agent decide when deeper recall is useful. It must enter through the general tool runtime and reuse the existing authorized memory-recall use case rather than create a parallel retrieval path. Aura policy remains authoritative for owner and agent scope, lifecycle and validity filters, fallback grants, result and context limits, and metadata-only audit. Returned memory remains untrusted evidence and never policy or instruction authority.
+The implemented v1 registry exposes exactly one executable product tool, `memory.search@1`. It is classified as read-only, requires `memory:read`, never requires confirmation, has a 30-second maximum timeout, allows no retries, is read-only-idempotent, carries private sensitivity, and is observed as `aura.runtime.tool_execution`. Its JSON Schema 2020-12 input is an object containing only a trimmed `query` string of 1–200 characters. Its bounded result contains memory identifier, content, and scope items plus a truncation indicator. The result is private, untrusted evidence supplied only to response synthesis; raw input and result values are not durable tool lifecycle or telemetry fields.
 
-This specification reserves the capability only. It does not define a tool schema, grant, executor, or `on_demand` or `hybrid` recall mode, and it does not authorize executable behavior before the general tool runtime is implemented.
+`memory.search@1` invokes the existing authorized memory-recall use case rather than a second retrieval path. Aura fixes the principal, current agent, lifecycle and validity filters, embedding generation, fallback grants, result limit, and context budget from the run's pinned policies. The model cannot request historical states, choose scopes or agents, change fallback grants, or raise result limits. Tool search bypasses only the ambient automatic-recall enablement and confidence gate: setting recall mode to `off` does not revoke an explicit `memory.search@1` tool grant and does not create `on_demand` or `hybrid` memory-policy modes.
+
+The built-in Aura agent has an explicit seeded grant; custom agents are deny-by-default. Owners inspect the safe tool catalog, create immutable exact-version grant policies, and attach a policy through a new immutable agent revision. V1 policies derive a maximum of one call per run when any grant is present, a 30-second timeout, and zero retries. Runs pin these limits and never rely on provider behavior to enforce them.
+
+Aura uses provider-native tool calls through a provider-neutral runtime interface. Unsupported models retain normal text chat and emit a content-free capability outcome. Unknown, ungranted, invalid, multiple, late, over-budget, timed-out, or provider-malformed requests execute nothing. Successful execution produces one tools-disabled synthesis step; unsuccessful attempts may do the same with only a typed content-free failure statement. Tool results never become policy, system instructions, or authority for additional grants.
+
+The authenticated catalog and policy APIs, additive agent/run policy identifiers and counters, and metadata-only `tool.status` event are authoritative in `contracts/openapi/aura-v1.yaml` version 1.6.0 and `contracts/events/runs/v1/run-events.schema.json`. Provider-native call identifiers and payloads, tool arguments, queries, raw results, memory content, prompts, responses, credentials, and hidden reasoning are excluded from these public contracts.
+
+This slice does not authorize mutating tools, confirmation workflows, shell or filesystem access, network fetching, Home Assistant, calendars, documents, automation, external providers, or Observatory product behavior. Those remain envisioned capabilities requiring separately approved scope and policy.
 
 ## Deterministic automation
 

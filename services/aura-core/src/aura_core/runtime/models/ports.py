@@ -37,6 +37,36 @@ class ChatModelPort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ModelTextDelta:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelToolCall:
+    name: str
+    arguments: object
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStreamCompleted:
+    pass
+
+
+ModelToolStreamEvent = ModelTextDelta | ModelToolCall | ModelStreamCompleted
+
+
+class ToolCallingModelPort(Protocol):
+    """Optional native-tool capability; provider payloads stay behind adapters."""
+
+    def stream_chat_with_tools(
+        self,
+        model_id: str,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[Mapping[str, object]],
+    ) -> AsyncIterator[ModelToolStreamEvent]: ...
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderTraceContext:
     """Optional metadata-only context propagated across provider calls.
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable, computed, signal } from '@angular/core';
-import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 
@@ -26,10 +26,14 @@ export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): 
 export function visibleMemoryActivities(items: ReadonlyArray<MemoryActivity>): ReadonlyArray<MemoryActivity> {
   return items.filter((item) => item.action === 'recalled' || Boolean(item.memoryId || item.candidateId));
 }
+/** Tool lifecycle records are metadata-only and intentionally append in SSE order so replay and live delivery render identically. */
+export function appendToolStatusActivity(existing: ReadonlyArray<ToolStatusData>, next: ToolStatusData): ReadonlyArray<ToolStatusData> {
+  return [...existing, { ...next }];
+}
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
-export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly archivedAt: string | null; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; }
+export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly archivedAt: string | null; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; readonly toolActivities?: Readonly<Record<string, ReadonlyArray<ToolStatusData>>>; readonly toolActivityEventIds?: Readonly<Record<string, ReadonlyArray<string>>>; readonly toolActivityCursors?: Readonly<Record<string, string>>; }
 export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
 
 const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
@@ -90,7 +94,12 @@ export class ConversationStore {
   readonly memoryPopupLoading = signal<Readonly<Record<string, boolean>>>({});
   readonly memoryPopupErrors = signal<Readonly<Record<string, string | null>>>({});
 
+  toolActivitiesForRun(runId: string): ReadonlyArray<ToolStatusData> { return this.find(this.selectedId())?.toolActivities?.[runId] ?? []; }
+
   private readonly subscriptions = new Map<string, RunEventSubscription>();
+  /** Historical replay is kept separate from live subscriptions so a detail
+   * refresh cannot re-apply assistant deltas or create duplicate run streams. */
+  private readonly toolReplaySubscriptions = new Map<string, RunEventSubscription>();
   private readonly lastEventIds = new Map<string, string>();
   private readonly expiredCursorRecoveries = new Set<string>();
   private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -264,6 +273,7 @@ export class ConversationStore {
       // activity. Keep the server-provided list order (and append a direct
       // route lookup that was not present in the list).
       this.upsertConversation(conversation);
+      this.hydrateHistoricalToolActivities(conversation);
       this.cancelPendingConfigurationForSelection(id);
       this.selectedId.set(id);
       this.setNotice(id, null);
@@ -651,6 +661,7 @@ export class ConversationStore {
       const detail = await this.api.getConversation(run.conversationId);
       const conversation = this.fromDetail(detail);
       this.replaceConversation(conversation);
+      this.hydrateHistoricalToolActivities(conversation);
       if (this.api.getRunMemoryActivity) {
         await this.readMemoryActivity(run.conversationId, run.id);
       }
@@ -679,10 +690,11 @@ export class ConversationStore {
     else if (event.eventType === 'assistant.delta') this.appendAssistantDelta(event.conversationId, event.data.messageId, event.data.offset, event.data.text, event.runId);
     else if (event.eventType === 'assistant.snapshot') this.upsertTurn(event.conversationId, this.fromMessage(event.data.message));
     else if (event.eventType === 'memory.activity') this.applyMemoryActivity(event.conversationId, event.runId, event.data);
+    else if (event.eventType === 'tool.status') this.applyToolStatus(event.conversationId, event.runId, event.data, event.eventId, cursor);
     else if (event.eventType === 'run.error') { this.setRunState(event.conversationId, 'error'); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: 'failed', error: event.data } : run); this.setNotice(event.conversationId, event.data.message || 'Aura could not complete this response. Your message is still here.'); }
   }
 
-  private async refresh(id: string): Promise<void> { try { const detail = await this.api.getConversation(id); const conversation = this.fromDetail(detail); this.replaceConversation(conversation); const latestRun = detail.currentRun ?? conversation.runs.at(-1); if (latestRun && this.api.getRunMemoryActivity) await this.readMemoryActivity(id, latestRun.id); if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); } else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); } } catch (error: unknown) { this.handleError(id, error); } }
+  private async refresh(id: string): Promise<void> { try { const detail = await this.api.getConversation(id); const conversation = this.fromDetail(detail); this.replaceConversation(conversation); this.hydrateHistoricalToolActivities(conversation); const latestRun = detail.currentRun ?? conversation.runs.at(-1); if (latestRun && this.api.getRunMemoryActivity) await this.readMemoryActivity(id, latestRun.id); if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); } else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); } } catch (error: unknown) { this.handleError(id, error); } }
   private async loadConversationPage(generation: number): Promise<ReadonlyArray<ConversationSummary>> {
     const page = await this.api.listConversations(undefined, this.libraryFilters());
     if (generation === this.libraryRequestGeneration) this.libraryNextCursor.set(page.nextCursor);
@@ -729,12 +741,30 @@ export class ConversationStore {
     for (const run of mapped.runs) runsById.set(run.id, run);
     const currentRun = mapped.currentRun;
     const retryableRun = currentRun && this.isRetryable(currentRun.status) ? currentRun : existing.retryableRun;
-    return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()] };
+    return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()], ...(existing.toolActivities ? { toolActivities: existing.toolActivities } : {}), ...(existing.toolActivityEventIds ? { toolActivityEventIds: existing.toolActivityEventIds } : {}), ...(existing.toolActivityCursors ? { toolActivityCursors: existing.toolActivityCursors } : {}) };
   }
-  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]) }; }
+  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
   private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
+  private hydrateHistoricalToolActivities(conversation: Conversation): void {
+    for (const run of conversation.runs) {
+      if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;
+      let finished = false;
+      let subscription: RunEventSubscription | null = null;
+      const finish = (): void => {
+        finished = true;
+        subscription?.close();
+        this.toolReplaySubscriptions.delete(run.id);
+      };
+      subscription = this.api.streamRunEvents(run.id, conversation.toolActivityCursors?.[run.id], (event, cursor) => {
+        if (event.eventType === 'tool.status') this.applyToolStatus(event.conversationId, event.runId, event.data, event.eventId, cursor);
+        else if (event.eventType === 'run.status' && this.isTerminal(event.data.status)) finish();
+      }, finish);
+      if (finished) subscription.close();
+      else this.toolReplaySubscriptions.set(run.id, subscription);
+    }
+  }
   private applyMemoryActivity(conversationId: string, runId: string, activity: MemoryActivity): void {
     // Recall is published synchronously with the answer while extraction may
     // still be settling. Keep reconciliation alive until a non-recall
@@ -749,6 +779,20 @@ export class ConversationStore {
     const index = existing.findIndex((item) => item.id === activity.id);
     const activities = index < 0 ? [...existing, ...visibleMemoryActivities([activity])] : visibleMemoryActivities(existing.map((item, itemIndex) => itemIndex === index ? activity : item));
     this.upsertTurn(conversationId, { ...assistant, memoryActivities: activities });
+  }
+  private applyToolStatus(conversationId: string, runId: string, activity: ToolStatusData, eventId?: string, cursor?: string): void {
+    const conversation = this.find(conversationId);
+    if (!conversation) return;
+    const existing = conversation.toolActivities?.[runId] ?? [];
+    const eventIds = conversation.toolActivityEventIds?.[runId] ?? [];
+    const lifecycleKey = `${activity.callId}:${activity.status}:${activity.errorClass ?? ''}:${activity.errorCode ?? ''}:${activity.resultCount ?? ''}`;
+    const duplicate = (eventId && eventIds.includes(eventId)) || existing.some((item) => `${item.callId}:${item.status}:${item.errorClass ?? ''}:${item.errorCode ?? ''}:${item.resultCount ?? ''}` === lifecycleKey);
+    if (duplicate) {
+      if (cursor) this.replaceConversation({ ...conversation, toolActivityCursors: { ...(conversation.toolActivityCursors ?? {}), [runId]: cursor } });
+      return;
+    }
+    const activities = appendToolStatusActivity(existing, activity);
+    this.replaceConversation({ ...conversation, toolActivities: { ...(conversation.toolActivities ?? {}), [runId]: activities }, toolActivityEventIds: { ...(conversation.toolActivityEventIds ?? {}), [runId]: eventId ? [...eventIds, eventId] : eventIds }, ...(cursor ? { toolActivityCursors: { ...(conversation.toolActivityCursors ?? {}), [runId]: cursor } } : {}) });
   }
   private applyMemorySnapshot(snapshot: RunMemoryActivitySnapshot): void {
     const conversation = this.conversations().find((item) => item.runs.some((run) => run.id === snapshot.runId) || item.currentRun?.id === snapshot.runId);

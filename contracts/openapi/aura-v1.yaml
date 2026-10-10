@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.5.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, and memory transport contract. Provider endpoints, credentials, and embedding vectors are never exposed by this API."
+    "version": "1.6.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, memory content, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -14,6 +14,7 @@
     { "name": "Personas" },
     { "name": "Conversations" },
     { "name": "Runs" },
+    { "name": "Tools" },
     { "name": "Memories" },
     { "name": "Health" }
   ],
@@ -79,6 +80,17 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "operationId": "listTools",
+        "tags": ["Tools"],
+        "responses": {
+          "200": { "description": "Safe provider-neutral catalog of tool descriptors available for policy configuration", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolCatalog" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
     },
@@ -702,6 +714,51 @@
         }
       }
     },
+    "/api/v1/agents/{agent_profile_id}/tool-policies": {
+      "get": {
+        "operationId": "listAgentToolPolicies",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }],
+        "responses": {
+          "200": { "description": "Immutable owner-scoped tool policy revisions for the agent", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentToolPolicyCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "operationId": "createAgentToolPolicy",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentToolPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "Validated immutable tool policy revision created without changing an agent revision", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentToolPolicy" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach": {
+      "post": {
+        "operationId": "attachAgentToolPolicy",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/ToolPolicyRevisionId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachAgentToolPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "New immutable agent revision created with the selected owner-scoped tool policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -734,6 +791,7 @@
       "MemoryId": { "name": "memory_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -792,6 +850,34 @@
           "disabledReason": { "type": ["string", "null"], "maxLength": 500 }
         }
       },
+      "ToolCatalog": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDescriptorSummary" } } }
+      },
+      "ToolDescriptorSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Safe provider-neutral metadata for policy configuration. Provider request shapes, handlers, arguments, results, and private content are not exposed.",
+        "required": ["id", "version", "displayName", "description", "classification", "permissionScope", "confirmation", "timeoutMs", "retryLimit", "idempotency", "sensitivity", "observableComponent"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "version": { "type": "integer", "minimum": 1 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "classification": { "$ref": "#/components/schemas/ToolClassification" },
+          "permissionScope": { "type": "string", "pattern": "^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$", "maxLength": 128 },
+          "confirmation": { "$ref": "#/components/schemas/ToolConfirmation" },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+          "retryLimit": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "idempotency": { "$ref": "#/components/schemas/ToolIdempotency" },
+          "sensitivity": { "$ref": "#/components/schemas/ToolSensitivity" },
+          "observableComponent": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 }
+        }
+      },
+      "ToolClassification": { "type": "string", "enum": ["read", "mutation"] },
+      "ToolConfirmation": { "type": "string", "enum": ["never", "policy", "always"] },
+      "ToolIdempotency": { "type": "string", "enum": ["read_only", "idempotent", "non_idempotent"] },
+      "ToolSensitivity": { "type": "string", "enum": ["public", "internal", "private", "restricted"] },
       "MemoryKind": { "type": "string", "enum": ["episodic", "semantic", "procedural", "preference", "system"] },
       "MemoryScopeType": { "type": "string", "enum": ["user", "agent"], "description": "Persisted or single-resource memory scope. All is intentionally not a valid stored scope." },
       "MemoryCollectionScopeType": { "type": "string", "enum": ["user", "agent", "all"], "description": "Owner-authorized collection selector. Agent means every owned agent scope unless narrowed by agentProfileId; all combines user memory with every owned agent scope." },
@@ -1256,6 +1342,51 @@
         "required": ["expectedAgentVersion"],
         "properties": { "expectedAgentVersion": { "type": "integer", "minimum": 1 } }
       },
+      "AgentToolPolicyCollection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "attachedPolicyRevisionId", "agentVersion"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/AgentToolPolicy" } },
+          "attachedPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "agentVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AgentToolPolicy": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "agentProfileId", "revision", "grants", "maxCallsPerRun", "timeoutMs", "retryLimit", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "agentProfileId": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "grants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" } },
+          "maxCallsPerRun": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Aura-derived immutable v1 call budget; zero when no tool is granted and one otherwise." },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+          "retryLimit": { "type": "integer", "minimum": 0, "maximum": 0 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ToolGrant": {
+        "type": "object", "additionalProperties": false,
+        "required": ["toolId", "toolVersion"],
+        "properties": {
+          "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "toolVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "CreateAgentToolPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "description": "Creates an immutable policy from exact versioned grants. Aura derives execution budgets; callers cannot supply them.",
+        "required": ["grants", "expectedRevision"],
+        "properties": {
+          "grants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" } },
+          "expectedRevision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AttachAgentToolPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedAgentVersion"],
+        "properties": { "expectedAgentVersion": { "type": "integer", "minimum": 1 } }
+      },
       "MemoryActivityAction": { "type": "string", "enum": ["created", "reinforced", "disputed", "recalled", "queued_for_review"] },
       "MemoryActivityStatus": { "type": "string", "enum": ["queued", "completed", "failed"] },
       "MemoryActivityReconciliationStatus": { "type": "string", "enum": ["pending", "authoritative"] },
@@ -1334,6 +1465,7 @@
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
           "memoryPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid", "description": "Pinned immutable tool policy. Optional only for backward compatibility with pre-1.6 producers." },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },
@@ -1600,6 +1732,9 @@
           "status": { "$ref": "#/components/schemas/RunStatus" },
           "agentRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid", "description": "Pinned immutable tool policy. Optional only for backward compatibility with pre-1.6 producers." },
+          "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Pinned Aura-enforced tool-call budget. Optional only for backward compatibility with pre-1.6 producers." },
+          "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Calls admitted for execution. Optional only for backward compatibility with pre-1.6 producers." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -1641,6 +1776,7 @@
           { "$ref": "#/components/schemas/AssistantSnapshotEvent" },
           { "$ref": "#/components/schemas/RunErrorEvent" },
           { "$ref": "#/components/schemas/MemoryActivityEvent" },
+          { "$ref": "#/components/schemas/ToolStatusEvent" },
           { "$ref": "#/components/schemas/HeartbeatEvent" }
         ],
         "discriminator": { "propertyName": "eventType" }
@@ -1676,6 +1812,9 @@
       "MemoryActivityEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "memory.activity" }, "data": { "$ref": "#/components/schemas/MemoryActivity" } } }]
       },
+      "ToolStatusEvent": {
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "tool.status" }, "data": { "$ref": "#/components/schemas/ToolStatusData" } } }]
+      },
       "HeartbeatEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "heartbeat" }, "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "type": "string", "format": "date-time" } } } } }]
       },
@@ -1698,6 +1837,21 @@
         "type": "object", "additionalProperties": false,
         "required": ["message"],
         "properties": { "message": { "$ref": "#/components/schemas/Message" } }
+      },
+      "ToolStatus": { "type": "string", "enum": ["pending", "executing", "completed", "denied", "failed"] },
+      "ToolStatusData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only tool lifecycle state. Tool arguments, queries, results, memory content, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "required": ["callId", "toolId", "toolVersion", "status"],
+        "properties": {
+          "callId": { "type": "string", "format": "uuid", "description": "Aura-generated call identifier; provider call identifiers are never exposed." },
+          "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "toolVersion": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/ToolStatus" },
+          "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
+          "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+          "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+        }
       },
       "ErrorEnvelope": {
         "type": "object", "additionalProperties": false,

@@ -17,6 +17,7 @@ from aura_core.entrypoints.api.routes import (
     models,
     personas,
     runs,
+    tools,
 )
 from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Settings
@@ -119,6 +120,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(personas.router)
     app.include_router(conversations.router)
     app.include_router(runs.router)
+    app.include_router(tools.router)
     app.include_router(health.router)
     return app
 

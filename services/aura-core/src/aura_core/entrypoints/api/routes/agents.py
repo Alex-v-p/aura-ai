@@ -20,6 +20,8 @@ from aura_core.domains.interaction.agents.public import (
     ConfigurationVersionConflict,
     MemoryPolicy,
     MemoryRecallMode,
+    ToolGrant,
+    ToolPolicy,
 )
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.entrypoints.api.state import AppState
@@ -73,6 +75,25 @@ class AgentMemoryPolicyRequest(BaseModel):
 
 
 class AttachAgentMemoryPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    expected_agent_version: int = Field(ge=1, alias="expectedAgentVersion")
+
+
+class ToolGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    tool_id: str = Field(min_length=1, max_length=128, alias="toolId")
+    tool_version: int = Field(ge=1, alias="toolVersion")
+
+
+class AgentToolPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    grants: list[ToolGrantRequest] = Field(  # pyright: ignore[reportUnknownVariableType]
+        default_factory=list, max_length=32
+    )
+    expected_revision: int = Field(ge=1, alias="expectedRevision")
+
+
+class AttachAgentToolPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     expected_agent_version: int = Field(ge=1, alias="expectedAgentVersion")
 
@@ -156,6 +177,8 @@ def revision_payload(item: AgentRevision) -> dict[str, object]:
         "personaRevisionId": str(item.persona_revision_id),
         "promptBundleRevisionId": str(item.prompt_bundle_revision_id),
         "modelPolicyRevisionId": str(item.model_policy_revision_id),
+        "memoryPolicyRevisionId": str(item.memory_policy_revision_id),
+        "toolPolicyRevisionId": str(item.tool_policy_revision_id),
         "createdAt": item.created_at.isoformat(),
     }
 
@@ -192,6 +215,22 @@ def memory_policy_payload(item: MemoryPolicy) -> dict[str, object]:
         "fallbackAgentProfileIds": [str(value) for value in item.fallback_agent_profile_ids],
         "recallMode": item.recall_mode.value,
         "automaticRecallThreshold": item.automatic_recall_threshold,
+        "createdAt": item.created_at.isoformat(),
+    }
+
+
+def tool_policy_payload(item: ToolPolicy) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "agentProfileId": str(item.agent_profile_id),
+        "revision": item.revision,
+        "grants": [
+            {"toolId": grant.tool_id, "toolVersion": grant.tool_version}
+            for grant in item.grants
+        ],
+        "maxCallsPerRun": item.max_calls_per_run,
+        "timeoutMs": item.timeout_ms,
+        "retryLimit": item.retry_limit,
         "createdAt": item.created_at.isoformat(),
     }
 
@@ -395,6 +434,96 @@ async def attach_agent_memory_policy(
         result = await agent_call(
             request,
             "attach_memory_policy",
+            session.principal.issuer,
+            session.principal.subject,
+            agent_profile_id,
+            policy_revision_id,
+            body.expected_agent_version,
+            str(idempotency_key),
+        )
+    except ConfigurationVersionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConfigurationNotFound as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
+    return profile_payload(result)
+
+
+@router.get("/{agent_profile_id}/tool-policies")
+async def list_agent_tool_policies(
+    request: Request, agent_profile_id: UUID, session: Session = Depends(require_session)
+) -> dict[str, object]:
+    try:
+        profile = await agent_call(request, "get_agent", agent_profile_id)
+        policies = await agent_call(
+            request,
+            "list_tool_policies",
+            session.principal.issuer,
+            session.principal.subject,
+            agent_profile_id,
+        )
+    except ConfigurationNotFound as exc:
+        raise HTTPException(status_code=404, detail="agent not found") from exc
+    return {
+        "items": [tool_policy_payload(item) for item in policies],
+        "attachedPolicyRevisionId": str(profile.current_revision.tool_policy_revision_id),
+        "agentVersion": profile.version,
+    }
+
+
+@router.post("/{agent_profile_id}/tool-policies", status_code=status.HTTP_201_CREATED)
+async def create_agent_tool_policy(
+    request: Request,
+    agent_profile_id: UUID,
+    body: AgentToolPolicyRequest,
+    session: Session = Depends(require_csrf),
+    idempotency_key: UUID = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    try:
+        await agent_call(request, "get_agent", agent_profile_id)
+        grants = tuple(
+            ToolGrant(item.tool_id, item.tool_version)
+            for item in body.grants
+        )
+        policy = ToolPolicy(
+            uuid4(),
+            agent_profile_id,
+            body.expected_revision + 1,
+            grants=grants,
+            max_calls_per_run=1 if grants else 0,
+        )
+        result = await agent_call(
+            request,
+            "create_tool_policy",
+            session.principal.issuer,
+            session.principal.subject,
+            policy,
+            str(idempotency_key),
+        )
+    except ConfigurationVersionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConfigurationIdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except (ConfigurationNotFound, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="tool policy rejected") from exc
+    return tool_policy_payload(result)
+
+
+@router.post(
+    "/{agent_profile_id}/tool-policies/{policy_revision_id}/attach",
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_agent_tool_policy(
+    request: Request,
+    agent_profile_id: UUID,
+    policy_revision_id: UUID,
+    body: AttachAgentToolPolicyRequest,
+    session: Session = Depends(require_csrf),
+    idempotency_key: UUID = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    try:
+        result = await agent_call(
+            request,
+            "attach_tool_policy",
             session.principal.issuer,
             session.principal.subject,
             agent_profile_id,

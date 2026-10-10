@@ -13,6 +13,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from time import monotonic
 from typing import Protocol, cast
 from uuid import UUID
@@ -29,6 +30,17 @@ from aura_core.domains.knowledge.memory.repository_ports import MemoryRepository
 
 RRF_K = 60
 RETRIEVAL_VERSION = "memory-retrieval-v2"
+
+
+class MemoryRecallPurpose(StrEnum):
+    """Why a caller is asking for memory; policy gates remain explicit."""
+
+    AUTOMATIC_CONTEXT = "automatic_context"
+    TOOL_SEARCH = "tool_search"
+
+
+class MemoryRecallUnavailable(RuntimeError):
+    """A recall dependency could not produce an explicit tool-search result."""
 MAX_CANDIDATES_PER_CHANNEL = 50
 MAX_RECALLED_MEMORIES = 8
 ORDINARY_STATUSES = frozenset({MemoryLifecycleStatus.ACTIVE})
@@ -87,6 +99,7 @@ class MemoryRecallTelemetryEvent:
     generation_id: str | None = None
     run_id: str | None = None
     conversation_id: str | None = None
+    tool_policy_revision_id: str | None = None
     recall_mode: str | None = None
     gate_outcome: str | None = None
     retrieval_version: str = RETRIEVAL_VERSION
@@ -116,6 +129,8 @@ class MemoryRecallRequest:
     conversation_id: UUID | None = None
     trace_id: str | None = None
     parent_span_id: str | None = None
+    tool_policy_revision_id: UUID | None = None
+    purpose: MemoryRecallPurpose = MemoryRecallPurpose.AUTOMATIC_CONTEXT
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -329,6 +344,11 @@ class MemoryRecallService:
             generation_id=generation_id,
             run_id=str(request.run_id) if request.run_id else None,
             conversation_id=str(request.conversation_id) if request.conversation_id else None,
+            tool_policy_revision_id=(
+                str(request.tool_policy_revision_id)
+                if request.tool_policy_revision_id
+                else None
+            ),
             recall_mode=recall_mode or request.policy.recall_mode.value,
             gate_outcome=gate_outcome,
         )
@@ -338,9 +358,22 @@ class MemoryRecallService:
             # Telemetry is advisory and must never affect conversational recall.
             return
 
+    @staticmethod
+    def _raise_for_tool_search(
+        request: MemoryRecallRequest, reason: str, cause: BaseException | None = None
+    ) -> None:
+        if request.purpose is MemoryRecallPurpose.TOOL_SEARCH:
+            if cause is None:
+                raise MemoryRecallUnavailable(reason)
+            raise MemoryRecallUnavailable(reason) from cause
+
     async def recall(self, request: MemoryRecallRequest) -> MemoryRecallResult:
         started = monotonic()
-        if request.policy.recall_mode is MemoryRecallMode.OFF and not request.historical:
+        if (
+            request.policy.recall_mode is MemoryRecallMode.OFF
+            and not request.historical
+            and request.purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT
+        ):
             # This branch intentionally precedes generation lookup and query
             # embedding. Off disables ambient retrieval only; extraction and
             # reinforcement remain on the independent worker path.
@@ -389,6 +422,9 @@ class MemoryRecallService:
                     degradation="database",
                     error_class=type(exc).__name__,
                 )
+                self._raise_for_tool_search(
+                    request, "active_embedding_generation_unavailable", exc
+                )
                 return MemoryRecallResult(
                     (),
                     False,
@@ -411,7 +447,7 @@ class MemoryRecallService:
                     retrieval_stage="query_embedding",
                     generation_id=str(generation.id),
                 )
-            except Exception:
+            except Exception as exc:
                 self._emit(
                     request,
                     "query_embedding",
@@ -434,6 +470,7 @@ class MemoryRecallService:
                     error_class="provider",
                     generation_id=str(generation.id),
                 )
+                self._raise_for_tool_search(request, "query_embedding_unavailable", exc)
                 return MemoryRecallResult(
                     (), False, True, "query_embedding_unavailable", None, request.policy.id
                 )
@@ -457,6 +494,9 @@ class MemoryRecallService:
                 retrieval_stage="primary",
                 degradation="database",
                 error_class="generation",
+            )
+            self._raise_for_tool_search(
+                request, "active_embedding_generation_unavailable"
             )
             return MemoryRecallResult(
                 (), False, True, "active_embedding_generation_unavailable", None, request.policy.id
@@ -488,6 +528,7 @@ class MemoryRecallService:
                 error_class="identity_mismatch",
                 generation_id=str(generation.id),
             )
+            self._raise_for_tool_search(request, "query_embedding_identity_mismatch")
             return MemoryRecallResult(
                 (), False, True, "query_embedding_identity_mismatch", None, request.policy.id
             )
@@ -529,6 +570,7 @@ class MemoryRecallService:
                 error_class=type(exc).__name__,
                 generation_id=str(generation.id),
             )
+            self._raise_for_tool_search(request, "retrieval_unavailable", exc)
             return MemoryRecallResult(
                 (), False, True, "retrieval_unavailable", generation.id, request.policy.id
             )
@@ -538,8 +580,11 @@ class MemoryRecallService:
             fallback_outcome = "not_needed"
             fallback_error: str | None = None
             fallback_candidates: list[MemoryRecallCandidate] = []
-            if self._primary_below_threshold(
-                candidates, request.policy.fallback_relevance_threshold
+            if (
+                request.purpose is MemoryRecallPurpose.TOOL_SEARCH
+                or self._primary_below_threshold(
+                    candidates, request.policy.fallback_relevance_threshold
+                )
             ):
                 fallback_scopes = tuple(
                     (MemoryScopeType.AGENT, item)
@@ -558,6 +603,7 @@ class MemoryRecallService:
                     except Exception as exc:
                         fallback_error = type(exc).__name__
                         fallback_outcome = "error"
+                        self._raise_for_tool_search(request, "fallback_unavailable", exc)
                 if fallback_outcome != "error":
                     candidates = self._merge(candidates, fallback_candidates)
             self._emit(
@@ -727,7 +773,11 @@ class MemoryRecallService:
         )
         rerank_started = monotonic()
         result = self._rerank(fused)
-        if request.policy.recall_mode is MemoryRecallMode.AUTOMATIC and not historical:
+        if (
+            request.policy.recall_mode is MemoryRecallMode.AUTOMATIC
+            and not historical
+            and request.purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT
+        ):
             result = [
                 item
                 for item in result
@@ -910,9 +960,11 @@ __all__ = [
     "MemoryRecallRepository",
     "MemoryRecallRequest",
     "MemoryRecallResult",
+    "MemoryRecallPurpose",
     "MemoryRecallService",
     "MemoryRecallTelemetryEvent",
     "MemoryRecallTelemetryPort",
+    "MemoryRecallUnavailable",
     "RRF_K",
     "RETRIEVAL_VERSION",
 ]

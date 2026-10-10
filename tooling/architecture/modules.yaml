@@ -123,6 +123,16 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/runtime/__init__.py
   dependencies: []
+- id: aura-core.runtime.tools
+  root: services/aura-core/src/aura_core/runtime/tools
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/tools/__init__.py
+  python_modules:
+  - aura_core.runtime.tools
+  source_files:
+  - services/aura-core/src/aura_core/runtime/tools/__init__.py
+  - services/aura-core/src/aura_core/runtime/tools/public.py
+  dependencies: []
 - id: aura-core.bootstrap
   root: services/aura-core/src/aura_core/bootstrap
   kind: package
@@ -170,6 +180,8 @@ modules:
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.database.base
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.tools
 - id: aura-core.domains.governance.audit
   root: services/aura-core/src/aura_core/domains/governance/audit
   kind: package
@@ -268,6 +280,7 @@ modules:
   - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
   - aura-core.entrypoints.api.routes.runs
+  - aura-core.entrypoints.api.routes.tools
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.database.engine
@@ -279,6 +292,7 @@ modules:
   - aura-core.providers.models.ollama.adapter
   - aura-core.runtime.models.gateway
   - aura-core.runtime.models.ports
+  - aura-core.runtime.tools
   - aura-core.runtime.streaming.publisher
 - id: aura-core.entrypoints.api.routes
   root: services/aura-core/src/aura_core/entrypoints/api/routes
@@ -668,6 +682,8 @@ modules:
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.interaction.conversations.public
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.tools
 - id: aura-core.domains.governance.audit.persistence
   root: services/aura-core/src/aura_core/domains/governance/audit/persistence.py
   kind: python
@@ -932,6 +948,7 @@ modules:
   - aura-core.entrypoints.api.routes.models
   - aura-core.entrypoints.api.routes.personas
   - aura-core.entrypoints.api.routes.runs
+  - aura-core.entrypoints.api.routes.tools
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
@@ -1049,6 +1066,17 @@ modules:
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.platform.auth
   - aura-core.platform.telemetry
+- id: aura-core.entrypoints.api.routes.tools
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/tools.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/tools.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.tools
+  dependencies:
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.runtime.tools
 - id: aura-core.entrypoints.api.state
   root: services/aura-core/src/aura_core/entrypoints/api/state.py
   kind: python
@@ -1079,6 +1107,7 @@ modules:
   - aura-core.providers.models.ollama.adapter
   - aura-core.runtime.models.gateway
   - aura-core.runtime.models.ports
+  - aura-core.runtime.tools
   - aura-core.runtime.streaming.publisher
 - id: aura-core.entrypoints.cli
   root: services/aura-core/src/aura_core/entrypoints/cli.py
@@ -1117,6 +1146,7 @@ modules:
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.runtime.streaming.publisher
+  - aura-core.runtime.tools
 - id: aura-core.platform.auth
   root: services/aura-core/src/aura_core/platform/auth.py
   kind: python

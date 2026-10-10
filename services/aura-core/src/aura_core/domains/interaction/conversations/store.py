@@ -174,6 +174,29 @@ class ConversationStore:
         value = getattr(revision, "memory_policy_revision_id", None)
         return value if isinstance(value, UUID) else None
 
+    def _tool_policy_snapshot(
+        self, revision: AgentRevision
+    ) -> tuple[UUID | None, int, int, int]:
+        """Snapshot the immutable tool policy at in-memory run admission."""
+
+        policy_id = getattr(revision, "tool_policy_revision_id", None)
+        if not isinstance(policy_id, UUID):
+            return None, 0, 30_000, 0
+        policy = self.agents.get_tool_policy(policy_id)
+        return (
+            policy_id,
+            int(policy.max_calls_per_run),
+            int(policy.timeout_ms),
+            int(policy.retry_limit),
+        )
+
+    async def tool_policy_for_run(self, run: Run) -> object | None:
+        """Resolve the immutable tool-policy snapshot through the public catalog."""
+
+        if run.tool_policy_revision_id is None:
+            return None
+        return self.agents.get_tool_policy(run.tool_policy_revision_id)
+
     async def _recall_context(
         self,
         conversation: Conversation,
@@ -482,6 +505,12 @@ class ConversationStore:
         effective_persona = persona_revision_id or revision.persona_revision_id
         if persona_revision_id is not None:
             self._resolve_active_persona(persona_revision_id)
+        (
+            tool_policy_id,
+            tool_call_limit,
+            tool_timeout_ms,
+            tool_retry_limit,
+        ) = self._tool_policy_snapshot(revision)
         conversation = Conversation(
             principal_issuer=issuer,
             principal_subject=subject,
@@ -504,6 +533,10 @@ class ConversationStore:
             prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
             prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
             memory_policy_revision_id=self._memory_policy_revision(revision),
+            tool_policy_revision_id=tool_policy_id,
+            tool_call_limit=tool_call_limit,
+            tool_timeout_ms=tool_timeout_ms,
+            tool_retry_limit=tool_retry_limit,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
@@ -945,6 +978,12 @@ class ConversationStore:
             if conversation.current_run is not None:
                 raise ActiveRunConflict
             current_revision = self._resolve_agent(conversation.agent_revision_id)
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = self._tool_policy_snapshot(current_revision)
             effective_persona = (
                 conversation.persona_override_revision_id or current_revision.persona_revision_id
             )
@@ -962,6 +1001,10 @@ class ConversationStore:
                     current_revision.id, effective_persona
                 ).prompt_hash,
                 memory_policy_revision_id=self._memory_policy_revision(current_revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -1021,6 +1064,18 @@ class ConversationStore:
             persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
                 prior.agent_revision_id, prior.persona_revision_id
             )
+        tool_policy_id = prior.tool_policy_revision_id
+        tool_call_limit = prior.tool_call_limit
+        tool_timeout_ms = prior.tool_timeout_ms
+        tool_retry_limit = prior.tool_retry_limit
+        if tool_policy_id is None:
+            revision = self._revision_unchecked(prior.agent_revision_id)
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = self._tool_policy_snapshot(revision)
         async with await self._lock_for(conversation.id):
             if conversation.current_run is not None:
                 raise ActiveRunConflict
@@ -1039,6 +1094,10 @@ class ConversationStore:
                 prompt_hash=prompt_hash,
                 retry_of_run_id=prior.id,
                 memory_policy_revision_id=prior.memory_policy_revision_id,
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
             )
             conversation.runs.append(run)
             conversation.version += 1

@@ -9,6 +9,7 @@ type Revision = {
   purpose?: string;
   instructions: string;
   personaRevisionId?: string;
+  toolPolicyRevisionId?: string;
 };
 
 type Profile = {
@@ -34,8 +35,11 @@ async function installConfigurationFake(page: Page): Promise<void> {
   let assignmentRevision = auraRevision.id;
   let assignments: Array<Record<string, unknown>> = [{ id: 'assignment-0', agent: { profileId: agent.id, revisionId: auraRevision.id, revision: 1, displayName: agent.displayName, status: agent.status, newerRevisionAvailable: true }, reason: 'initial', effectiveAfterMessageId: null, createdAt: now() }];
   let disabledFixture = false;
+  let toolPolicyRevision = 1;
+  let toolPolicyId = 'tool-policy-aura-r1';
+  let toolGrants: Array<{ toolId: string; toolVersion: number }> = [{ toolId: 'memory.search', toolVersion: 1 }];
   page.on('framenavigated', (frame) => { if (frame === page.mainFrame() && frame.url().includes('fixture=disabled')) disabledFixture = true; });
-  const revisionPayload = (profile: Profile, revision: Revision): Record<string, unknown> => ({ id: revision.id, profileId: profile.id, revision: revision.revision, displayName: revision.displayName ?? profile.displayName, purpose: revision.purpose ?? '', description: profile.id.startsWith('persona-') ? 'A reusable interaction style.' : '', instructions: revision.instructions, personaRevisionId: revision.personaRevisionId ?? null, promptBundleRevisionId: 'prompt-bundle-1', modelPolicyRevisionId: 'policy-1', createdAt: now() });
+  const revisionPayload = (profile: Profile, revision: Revision): Record<string, unknown> => ({ id: revision.id, profileId: profile.id, revision: revision.revision, displayName: revision.displayName ?? profile.displayName, purpose: revision.purpose ?? '', description: profile.id.startsWith('persona-') ? 'A reusable interaction style.' : '', instructions: revision.instructions, personaRevisionId: revision.personaRevisionId ?? null, promptBundleRevisionId: 'prompt-bundle-1', modelPolicyRevisionId: 'policy-1', memoryPolicyRevisionId: 'memory-policy-1', toolPolicyRevisionId: revision.toolPolicyRevisionId ?? (profile.id === agent.id ? toolPolicyId : 'tool-policy-deny-r1'), createdAt: now() });
   const profileSummary = (profile: Profile): Record<string, unknown> => {
     const current = profile.revisions.at(-1);
     if (!current) throw new Error(`Profile ${profile.id} has no revision`);
@@ -65,10 +69,20 @@ async function installConfigurationFake(page: Page): Promise<void> {
     const url = new URL(request.url());
     if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf', idleExpiresAt: now(), absoluteExpiresAt: now() } });
     if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'qwen2.5:7b', observedAt: now() } });
+    if (url.pathname === '/api/v1/tools' && request.method() === 'GET') return route.fulfill({ json: { items: [{ id: 'memory.search', version: 1, displayName: 'Search memory', description: 'Search the agent\'s authorized private memory.', classification: 'read', permissionScope: 'memory:read', confirmation: 'never', timeoutMs: 30000, retryLimit: 0, idempotency: 'read_only', sensitivity: 'private', observableComponent: 'aura.runtime.tool_execution' }] } });
     if (url.pathname === '/api/v1/agents' && request.method() === 'GET') return route.fulfill({ json: { items: [profileSummary(agent), profileSummary(researcher)] } });
     if (url.pathname === '/api/v1/personas' && request.method() === 'GET') return route.fulfill({ json: { items: [profileSummary(persona)] } });
     if (url.pathname === '/api/v1/agents/agent-aura' && request.method() === 'GET') return route.fulfill({ json: profileDetail(agent) });
     if (url.pathname === '/api/v1/agents/agent-researcher' && request.method() === 'GET') return route.fulfill({ json: profileDetail(researcher) });
+    if (url.pathname === '/api/v1/agents/agent-aura/tool-policies' && request.method() === 'GET') return route.fulfill({ json: { items: [{ id: toolPolicyId, agentProfileId: agent.id, revision: toolPolicyRevision, grants: toolGrants, maxCallsPerRun: toolGrants.length ? 1 : 0, timeoutMs: 30000, retryLimit: 0, createdAt: now() }], attachedPolicyRevisionId: toolPolicyId, agentVersion: agent.version } });
+    if (url.pathname === '/api/v1/agents/agent-aura/tool-policies' && request.method() === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as { grants?: Array<{ toolId: string; toolVersion: number }> };
+      toolPolicyRevision += 1;
+      toolPolicyId = `tool-policy-aura-r${toolPolicyRevision}`;
+      toolGrants = body.grants ?? [];
+      return route.fulfill({ status: 201, json: { id: toolPolicyId, agentProfileId: agent.id, revision: toolPolicyRevision, grants: toolGrants, maxCallsPerRun: toolGrants.length ? 1 : 0, timeoutMs: 30000, retryLimit: 0, createdAt: now() } });
+    }
+    if (url.pathname.startsWith('/api/v1/agents/agent-aura/tool-policies/') && request.method() === 'POST') return route.fulfill({ status: 201, json: profileDetail(agent) });
     if (url.pathname === '/api/v1/personas/persona-neutral' && request.method() === 'GET') return route.fulfill({ json: profileDetail(persona) });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: [summary()], nextCursor: null } });
     if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'GET') return route.fulfill({ json: { ...summary(), messages: [{ id: 'assistant-0', conversationId: 'welcome', role: 'assistant', content: 'Welcome.', state: 'complete', runId: null, createdAt: now(), updatedAt: now() }], recentRuns: [], agentAssignments: assignments } });
@@ -163,6 +177,19 @@ test('confirms full-transcript sharing and renders an assignment transition mark
   await expect(confirmation).toContainText(/full completed transcript/i);
   await confirmation.getByRole('button', { name: 'Confirm change' }).click();
   await expect(page.getByText(/agent changed/i)).toBeVisible();
+});
+
+test('configures an immutable read-only memory tool policy with accessible controls', async ({ page }) => {
+  await page.goto('/agents/agent-aura/tools');
+  await expect(page.getByRole('heading', { name: 'Tool policy' })).toBeVisible();
+  const search = page.getByRole('checkbox', { name: /search memory/i });
+  await expect(search).toBeChecked();
+  await search.uncheck();
+  await page.getByRole('button', { name: /save and attach revision/i }).click();
+  await expect(page.getByText(/revision 2/i)).toBeVisible();
+  await expect(page.getByText(/no tools granted/i)).toBeVisible();
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
 });
 
 test('preserves a draft and offers an active replacement when the assigned agent is disabled', async ({ page }) => {

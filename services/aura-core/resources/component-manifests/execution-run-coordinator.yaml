@@ -1,14 +1,14 @@
 component:
   id: aura.execution.run_coordinator
-  version: 1.4.0
+  version: 1.5.0
   owner: aura-core
   category: execution
 input:
-  schema: aura-run-command-v2
+  schema: aura-run-command-v3
   replayable: false
   replay_reason: Executes durable side effects and provider inference.
 output:
-  schema: aura-run-events-v2
+  schema: aura-run-events-v3
   capture:
     content: none
     metadata: allowlisted
@@ -18,6 +18,9 @@ dependencies:
   - aura.runtime.model_inference
   - aura.runtime.stream_delivery
   - aura.knowledge.memory_retrieval
+  - aura.runtime.tool_selection
+  - aura.runtime.policy_evaluation
+  - aura.runtime.tool_execution
 metrics:
   - queue_wait_ms
   - run_duration_ms
@@ -40,7 +43,7 @@ metric_semantics:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [status, error_class, provider, dependency, outcome]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, command_id, correlation_id, causation_id, attempt_count, delivery_count]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id]
   prohibited: [prompt, response, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

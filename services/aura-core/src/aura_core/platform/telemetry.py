@@ -30,8 +30,11 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
+    "aura.runtime.tool_selection": "1.0.0",
+    "aura.runtime.policy_evaluation": "1.0.0",
+    "aura.runtime.tool_execution": "1.0.0",
     "aura.interaction.agent_configuration": "1.1.0",
-    "aura.execution.run_coordinator": "1.4.0",
+    "aura.execution.run_coordinator": "1.5.0",
     "aura.interaction.conversation_persistence": "1.6.0",
     "aura.runtime.model_inference": "1.4.0",
     "aura.runtime.model_routing": "1.2.0",
@@ -42,10 +45,24 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
-    "aura.knowledge.memory_retrieval": "1.1.0",
+    "aura.knowledge.memory_retrieval": "1.2.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
+    "aura.runtime.tool_selection": frozenset(
+        {"tool_selection_duration_ms", "tool_selection_outcome"}
+    ),
+    "aura.runtime.policy_evaluation": frozenset(
+        {
+            "tool_argument_validation_outcome",
+            "tool_policy_decision",
+            "tool_policy_evaluation_duration_ms",
+            "tool_budget_exhaustion_count",
+        }
+    ),
+    "aura.runtime.tool_execution": frozenset(
+        {"tool_execution_duration_ms", "tool_execution_outcome", "tool_timeout_count"}
+    ),
     "aura.interaction.agent_configuration": frozenset(
         {
             "configuration_outcome",
@@ -189,6 +206,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "aura.runtime.tool_selection": frozenset({"tool.select"}),
+    "aura.runtime.policy_evaluation": frozenset({"tool.policy.evaluate"}),
+    "aura.runtime.tool_execution": frozenset({"tool.execute"}),
     "aura.interaction.agent_configuration": frozenset({"agent.configure"}),
     "aura.execution.run_coordinator": frozenset(
         {
@@ -292,6 +312,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
+    "aura.runtime.tool_selection": "tool_selection_duration_ms",
+    "aura.runtime.policy_evaluation": "tool_policy_evaluation_duration_ms",
+    "aura.runtime.tool_execution": "tool_execution_duration_ms",
     "aura.interaction.agent_configuration": "operation_duration_ms",
     "aura.execution.run_coordinator": "operation_duration_ms",
     "aura.interaction.conversation_persistence": "persistence_duration_ms",
@@ -394,6 +417,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "title_input_size",
         "title_output_size",
         "memory_policy_revision_id",
+        "tool_policy_revision_id",
+        "policy_revision_id",
         "embedding_generation_id",
         "retrieval_version",
         "selection_order",
@@ -426,6 +451,8 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "run_id",
         "user_message_id",
         "memory_policy_revision_id",
+        "tool_policy_revision_id",
+        "policy_revision_id",
         "embedding_generation_id",
         "fallback_grant_id",
     }
@@ -480,6 +507,11 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "persistence",
             "provider",
             "generation",
+            "capability",
+            "policy",
+            "provider_protocol",
+            "execution",
+            "cancellation",
             "purged",
             "queue",
             "timeout",
@@ -504,7 +536,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",
-            "policy_off", "selected", "rejected", "personal", "explicit_request", "none",
+            "policy_off", "selected", "allowed", "completed", "failed", "rejected",
+            "personal", "explicit_request", "none", "text", "tool_call", "allow", "deny",
+            "invalid", "valid", "capability",
         }
     ),
     "status": frozenset(
@@ -1359,6 +1393,7 @@ def record_memory_retrieval(
     memory_id: str | None = None,
     memory_revision_id: str | None = None,
     memory_policy_revision_id: str | None = None,
+    tool_policy_revision_id: str | None = None,
     generation_id: str | None = None,
     embedding_generation_id: str | None = None,
     run_id: str | None = None,
@@ -1438,6 +1473,7 @@ def record_memory_retrieval(
         "memory_id": memory_id,
         "memory_revision_id": memory_revision_id,
         "memory_policy_revision_id": memory_policy_revision_id,
+        "tool_policy_revision_id": tool_policy_revision_id,
         "generation_id": generation_id,
         "embedding_generation_id": embedding_generation_id,
         "retrieval_version": retrieval_version,

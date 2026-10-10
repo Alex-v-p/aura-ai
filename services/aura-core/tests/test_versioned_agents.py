@@ -19,6 +19,7 @@ from aura_core.domains.interaction.agents.public import (
     AgentRevision,
     ConfigurationDisabled,
     ConfigurationIdempotencyConflict,
+    ConfigurationNotFound,
     ConfigurationStatus,
     ConfigurationVersionConflict,
     MemoryPolicy,
@@ -26,6 +27,7 @@ from aura_core.domains.interaction.agents.public import (
     PromptBundleRevision,
     PromptCompiler,
     PromptComponentRevision,
+    ToolGrant,
 )
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
@@ -95,6 +97,71 @@ def test_built_in_aura_promotes_personal_memory_but_custom_agents_default_off() 
     assert not catalog.memory_policies[
         custom.current_revision.memory_policy_revision_id
     ].allow_shared_user_promotion
+
+
+def test_built_in_aura_has_explicit_memory_search_and_custom_agents_are_deny_by_default() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    aura_policy = catalog.get_tool_policy(aura.current_revision.tool_policy_revision_id)
+    assert aura_policy.grants == (ToolGrant("memory.search", 1),)
+    assert aura_policy.max_calls_per_run == 1
+    assert aura_policy.timeout_ms == 30_000
+    assert aura_policy.retry_limit == 0
+
+    custom = catalog.create_agent(
+        "custom-agent",
+        "Custom",
+        "A custom assistant.",
+        "Be helpful.",
+    )
+    custom_policy = catalog.get_tool_policy(custom.current_revision.tool_policy_revision_id)
+    assert custom_policy.grants == ()
+    assert custom_policy.max_calls_per_run == 0
+
+
+def test_tool_policy_is_immutable_versioned_and_agent_owned() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    original = aura.current_revision
+
+    policy = catalog.create_tool_policy(
+        aura.id,
+        (ToolGrant("memory.search", 1),),
+        expected_revision=1,
+        idempotency_key="tool-policy-r2",
+    )
+    assert policy.revision == 2
+    assert catalog.get_tool_policy(original.tool_policy_revision_id).revision == 1
+
+    updated = catalog.attach_tool_policy(
+        aura.id, policy.id, aura.version, key="tool-policy-attach-r2"
+    )
+    assert updated.version == aura.version + 1
+    assert updated.current_revision.tool_policy_revision_id == policy.id
+    assert updated.revisions[0].tool_policy_revision_id == original.tool_policy_revision_id
+
+
+def test_tool_policy_rejects_unknown_grants_and_stale_revision() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    with pytest.raises(ValueError, match="unknown tool grant"):
+        catalog.create_tool_policy(aura.id, (ToolGrant("shell.exec", 1),))
+    with pytest.raises(ConfigurationVersionConflict):
+        catalog.create_tool_policy(
+            aura.id,
+            (ToolGrant("memory.search", 1),),
+            expected_revision=0,
+        )
+
+
+def test_tool_policy_cannot_be_attached_across_agent_ownership() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    custom = catalog.create_agent("custom-agent", "Custom", "purpose", "instructions")
+    policy = catalog.create_tool_policy(custom.id, (ToolGrant("memory.search", 1),))
+
+    with pytest.raises(ConfigurationNotFound):
+        catalog.attach_tool_policy(aura.id, policy.id, aura.version)
 
 
 def test_revisions_are_sequenced_immutably_and_require_expected_version() -> None:

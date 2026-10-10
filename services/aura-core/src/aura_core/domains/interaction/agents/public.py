@@ -36,6 +36,7 @@ GENERAL_MEMORY_POLICY_ID = uuid5(NAMESPACE, "general-assistant-memory-policy-1")
 GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID = uuid5(
     NAMESPACE, "general-assistant-memory-personal-first-policy-3"
 )
+GENERAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-1")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -88,6 +89,10 @@ class AgentRevision:
     # with.  The default keeps old callers source-compatible while all
     # catalog-created revisions use the deterministic seeded policy.
     memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID
+    # Tool access is independently versioned and pinned.  The default keeps
+    # old callers source-compatible while newly created custom agents receive
+    # a deterministic empty (deny-by-default) policy.
+    tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +145,55 @@ AgentMemoryPolicy = MemoryPolicy
 MemoryPolicyRevision = MemoryPolicy
 
 
+@dataclass(frozen=True, slots=True)
+class ToolGrant:
+    """A stable, versioned grant in an immutable agent tool policy."""
+
+    tool_id: str
+    tool_version: int
+
+    def __post_init__(self) -> None:
+        if not self.tool_id or len(self.tool_id) > 128:
+            raise ValueError("tool identifier is required")
+        if self.tool_version < 1:
+            raise ValueError("tool version must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPolicy:
+    """Immutable, owner-scoped tool execution policy revision."""
+
+    id: UUID
+    agent_profile_id: UUID
+    revision: int
+    grants: tuple[ToolGrant, ...] = ()
+    max_calls_per_run: int = 0
+    timeout_ms: int = 30_000
+    retry_limit: int = 0
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        if self.revision < 1:
+            raise ValueError("tool policy revision must be positive")
+        if self.max_calls_per_run not in (0, 1):
+            raise ValueError("tool call budget must be zero or one")
+        if self.timeout_ms < 1 or self.timeout_ms > 30_000:
+            raise ValueError("tool timeout must be between one and 30000 milliseconds")
+        if self.retry_limit != 0:
+            raise ValueError("tool retries are disabled")
+        if len(set(self.grants)) != len(self.grants):
+            raise ValueError("tool grants must be unique")
+        if self.grants and self.max_calls_per_run != 1:
+            raise ValueError("a granted tool policy must permit one call")
+        if not self.grants and self.max_calls_per_run != 0:
+            raise ValueError("an empty tool policy must deny calls")
+
+
+AgentToolPolicy = ToolPolicy
+ToolPolicyRevision = ToolPolicy
+ToolPolicyGrant = ToolGrant
+
+
 @dataclass(slots=True)
 class AgentProfile:
     id: UUID
@@ -175,6 +229,7 @@ class AgentConfigurationRepository(Protocol):
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentProfile: ...
     async def revise_agent(
         self,
@@ -188,6 +243,7 @@ class AgentConfigurationRepository(Protocol):
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID | None = None,
+        tool_policy_revision_id: UUID | None = None,
     ) -> AgentProfile: ...
     async def set_status(
         self,
@@ -211,6 +267,24 @@ class AgentConfigurationRepository(Protocol):
         self, issuer: str, subject: str, agent_profile_id: UUID
     ) -> list[MemoryPolicy]: ...
     async def attach_memory_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile: ...
+    async def get_tool_policy(
+        self, issuer: str, subject: str, policy_id: UUID
+    ) -> ToolPolicy: ...
+    async def create_tool_policy(
+        self, issuer: str, subject: str, policy: ToolPolicy, key: str | None = None
+    ) -> ToolPolicy: ...
+    async def list_tool_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[ToolPolicy]: ...
+    async def attach_tool_policy(
         self,
         issuer: str,
         subject: str,
@@ -255,6 +329,8 @@ class AgentCatalog:
         self.persona_query = persona_query or PersonaCatalog()
         self.memory_policies: dict[UUID, MemoryPolicy] = {}
         self.policy_idempotency: dict[str, tuple[str, MemoryPolicy]] = {}
+        self.tool_policies: dict[UUID, ToolPolicy] = {}
+        self.tool_policy_idempotency: dict[str, tuple[str, ToolPolicy]] = {}
         platform = PromptComponentRevision(PLATFORM_COMPONENT_ID, "platform", 1, "")
         governance = PromptComponentRevision(GOVERNANCE_COMPONENT_ID, "governance", 1, "")
         self.bundle = PromptBundleRevision(PROMPT_BUNDLE_ID, 1, platform, governance)
@@ -271,6 +347,7 @@ class AgentCatalog:
             GENERAL_POLICY_ID,
             "You are Aura, a helpful local-first household assistant.",
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+            tool_policy_revision_id=GENERAL_TOOL_POLICY_ID,
         )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
             GENERAL_MEMORY_POLICY_ID,
@@ -281,6 +358,13 @@ class AgentCatalog:
             allow_shared_user_promotion=True,
             recall_mode=MemoryRecallMode.AUTOMATIC,
             automatic_recall_threshold=0.70,
+        )
+        self.tool_policies[GENERAL_TOOL_POLICY_ID] = ToolPolicy(
+            GENERAL_TOOL_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            1,
+            grants=(ToolGrant("memory.search", 1),),
+            max_calls_per_run=1,
         )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
@@ -327,6 +411,7 @@ class AgentCatalog:
         model_policy_revision_id: UUID = GENERAL_POLICY_ID,
         idempotency_key: str | None = None,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentProfile:
         fingerprint = _canonical_fingerprint(
             "agent",
@@ -359,9 +444,17 @@ class AgentCatalog:
                 recall_mode=MemoryRecallMode.OFF,
                 automatic_recall_threshold=0.70,
             )
+        if tool_policy_revision_id == GENERAL_TOOL_POLICY_ID:
+            tool_policy_revision_id = uuid5(NAMESPACE, f"agent-tool-policy:{profile_id}:1")
+            self.tool_policies[tool_policy_revision_id] = ToolPolicy(
+                tool_policy_revision_id, profile_id, 1
+            )
         policy = self.memory_policies.get(memory_policy_revision_id)
+        tool_policy = self.tool_policies.get(tool_policy_revision_id)
         if policy is None or policy.agent_profile_id != profile_id:
             raise ConfigurationNotFound("memory policy revision not found")
+        if tool_policy is None or tool_policy.agent_profile_id != profile_id:
+            raise ConfigurationNotFound("tool policy revision not found")
         revision = self._new_agent_revision(
             profile_id,
             1,
@@ -371,6 +464,7 @@ class AgentCatalog:
             persona_revision_id,
             model_policy_revision_id,
             memory_policy_revision_id=memory_policy_revision_id,
+            tool_policy_revision_id=tool_policy_revision_id,
         )
         profile = AgentProfile(
             profile_id, slug, display_name, current_revision_id=revision.id, revisions=[revision]
@@ -390,6 +484,7 @@ class AgentCatalog:
         idempotency_key: str | None = None,
         display_name: str | None = None,
         memory_policy_revision_id: UUID | None = None,
+        tool_policy_revision_id: UUID | None = None,
     ) -> AgentRevision:
         profile = self.get_agent(profile_id)
         fingerprint = _canonical_fingerprint(
@@ -403,6 +498,9 @@ class AgentCatalog:
                 "personaRevisionId": str(persona_revision_id),
                 "memoryPolicyRevisionId": str(
                     memory_policy_revision_id or profile.current_revision.memory_policy_revision_id
+                ),
+                "toolPolicyRevisionId": str(
+                    tool_policy_revision_id or profile.current_revision.tool_policy_revision_id
                 ),
             },
         )
@@ -418,9 +516,15 @@ class AgentCatalog:
         chosen_memory_policy = (
             memory_policy_revision_id or profile.current_revision.memory_policy_revision_id
         )
+        chosen_tool_policy = (
+            tool_policy_revision_id or profile.current_revision.tool_policy_revision_id
+        )
         policy = self.memory_policies.get(chosen_memory_policy)
         if policy is None or policy.agent_profile_id != profile_id:
             raise ConfigurationNotFound("memory policy revision not found")
+        tool_policy = self.tool_policies.get(chosen_tool_policy)
+        if tool_policy is None or tool_policy.agent_profile_id != profile_id:
+            raise ConfigurationNotFound("tool policy revision not found")
         revision = self._new_agent_revision(
             profile.id,
             len(profile.revisions) + 1,
@@ -431,6 +535,7 @@ class AgentCatalog:
             profile.current_revision.model_policy_revision_id,
             display_name or profile.display_name,
             chosen_memory_policy,
+            chosen_tool_policy,
         )
         profile.revisions.append(revision)
         profile.current_revision_id = revision.id
@@ -561,6 +666,105 @@ class AgentCatalog:
         )
         return self.get_agent(agent_profile_id)
 
+    def get_tool_policy(self, policy_id: UUID) -> ToolPolicy:
+        try:
+            return self.tool_policies[policy_id]
+        except KeyError as exc:
+            raise ConfigurationNotFound("tool policy revision not found") from exc
+
+    def create_tool_policy(
+        self,
+        agent_profile_id: UUID,
+        grants: tuple[ToolGrant, ...] = (),
+        *,
+        expected_revision: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> ToolPolicy:
+        if agent_profile_id not in self.agents:
+            raise ConfigurationNotFound("agent not found")
+        if any(grant != ToolGrant("memory.search", 1) for grant in grants):
+            raise ValueError("unknown tool grant")
+        fingerprint = _canonical_fingerprint(
+            "tool-policy",
+            {
+                "agentProfileId": str(agent_profile_id),
+                "grants": [
+                    {"toolId": grant.tool_id, "toolVersion": grant.tool_version}
+                    for grant in grants
+                ],
+            },
+        )
+        if idempotency_key is not None and idempotency_key in self.tool_policy_idempotency:
+            prior_fingerprint, prior = self.tool_policy_idempotency[idempotency_key]
+            if prior_fingerprint != fingerprint:
+                raise ConfigurationIdempotencyConflict("idempotency key payload conflict")
+            return prior
+        prior = self.list_tool_policies(agent_profile_id)
+        next_revision = max((item.revision for item in prior), default=0) + 1
+        if expected_revision is not None and expected_revision != next_revision - 1:
+            raise ConfigurationVersionConflict("tool policy revision conflict")
+        policy = ToolPolicy(
+            uuid4(),
+            agent_profile_id,
+            next_revision,
+            tuple(grants),
+            max_calls_per_run=1 if grants else 0,
+        )
+        self.tool_policies[policy.id] = policy
+        if idempotency_key is not None:
+            self.tool_policy_idempotency[idempotency_key] = (fingerprint, policy)
+        return policy
+
+    def list_tool_policies(self, agent_profile_id: UUID) -> list[ToolPolicy]:
+        return sorted(
+            (
+                item
+                for item in self.tool_policies.values()
+                if item.agent_profile_id == agent_profile_id
+            ),
+            key=lambda item: item.revision,
+        )
+
+    def attach_tool_policy(
+        self,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str | None = None,
+    ) -> AgentProfile:
+        profile = self.get_agent(agent_profile_id)
+        policy = self.get_tool_policy(policy_revision_id)
+        if policy.agent_profile_id != agent_profile_id:
+            raise ConfigurationNotFound("tool policy revision not found")
+        # Replace the aggregate rather than mutating an object returned by a
+        # prior read.  This preserves the immutable read snapshot expected by
+        # callers while the catalog advances its current pointer.
+        self.agents[agent_profile_id] = AgentProfile(
+            id=profile.id,
+            slug=profile.slug,
+            display_name=profile.display_name,
+            status=profile.status,
+            version=profile.version,
+            current_revision_id=profile.current_revision_id,
+            revisions=list(profile.revisions),
+            created_at=profile.created_at,
+            updated_at=profile.updated_at,
+        )
+        profile = self.agents[agent_profile_id]
+        revision = profile.current_revision
+        self.revise_agent(
+            agent_profile_id,
+            expected_version,
+            revision.purpose,
+            revision.instructions,
+            revision.persona_revision_id,
+            idempotency_key=key,
+            display_name=profile.display_name,
+            memory_policy_revision_id=revision.memory_policy_revision_id,
+            tool_policy_revision_id=policy_revision_id,
+        )
+        return self.get_agent(agent_profile_id)
+
     def set_agent_status(
         self,
         profile_id: UUID,
@@ -644,6 +848,7 @@ class AgentCatalog:
         policy_id: UUID,
         revision_display_name: str | None = None,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentRevision:
         return AgentRevision(
             uuid4(),
@@ -657,6 +862,7 @@ class AgentCatalog:
             policy_id,
             instructions or purpose,
             memory_policy_revision_id=memory_policy_revision_id,
+            tool_policy_revision_id=tool_policy_revision_id,
         )
 
     @staticmethod
@@ -688,6 +894,7 @@ class AgentMemoryRepository:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentProfile:
         del issuer, subject
         return self.catalog.create_agent(
@@ -698,6 +905,7 @@ class AgentMemoryRepository:
             persona_revision_id,
             idempotency_key=key,
             memory_policy_revision_id=memory_policy_revision_id,
+            tool_policy_revision_id=tool_policy_revision_id,
         )
 
     async def revise_agent(
@@ -712,6 +920,7 @@ class AgentMemoryRepository:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID | None = None,
+        tool_policy_revision_id: UUID | None = None,
     ) -> AgentProfile:
         del issuer, subject
         self.catalog.revise_agent(
@@ -723,6 +932,7 @@ class AgentMemoryRepository:
             idempotency_key=key,
             display_name=display_name,
             memory_policy_revision_id=memory_policy_revision_id,
+            tool_policy_revision_id=tool_policy_revision_id,
         )
         return self.catalog.get_agent(identifier)
 
@@ -803,6 +1013,42 @@ class AgentMemoryRepository:
             agent_profile_id, policy_revision_id, expected_version, key
         )
 
+    async def get_tool_policy(self, issuer: str, subject: str, policy_id: UUID) -> ToolPolicy:
+        del issuer, subject
+        return self.catalog.get_tool_policy(policy_id)
+
+    async def create_tool_policy(
+        self, issuer: str, subject: str, policy: ToolPolicy, key: str | None = None
+    ) -> ToolPolicy:
+        del issuer, subject
+        return self.catalog.create_tool_policy(
+            policy.agent_profile_id,
+            policy.grants,
+            expected_revision=policy.revision - 1,
+            idempotency_key=key,
+        )
+
+    async def list_tool_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[ToolPolicy]:
+        del issuer, subject
+        self.catalog.get_agent(agent_profile_id)
+        return self.catalog.list_tool_policies(agent_profile_id)
+
+    async def attach_tool_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        del issuer, subject
+        return self.catalog.attach_tool_policy(
+            agent_profile_id, policy_revision_id, expected_version, key
+        )
+
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         return self.catalog.resolve_revision_unchecked(identifier)
 
@@ -866,6 +1112,7 @@ class AgentConfigurationService:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentProfile:
         result = await self.repository.create_agent(
             issuer,
@@ -877,6 +1124,7 @@ class AgentConfigurationService:
             persona_revision_id,
             key,
             memory_policy_revision_id,
+            tool_policy_revision_id,
         )
         await self._audit("agent.create", issuer, subject, result)
         return result
@@ -893,6 +1141,7 @@ class AgentConfigurationService:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID | None = None,
+        tool_policy_revision_id: UUID | None = None,
     ) -> AgentProfile:
         result = await self.repository.revise_agent(
             issuer,
@@ -905,6 +1154,7 @@ class AgentConfigurationService:
             persona_revision_id,
             key,
             memory_policy_revision_id,
+            tool_policy_revision_id,
         )
         await self._audit("agent.revise", issuer, subject, result)
         return result
@@ -973,6 +1223,36 @@ class AgentConfigurationService:
         await self._audit("agent.memory_policy.attach", issuer, subject, result)
         return result
 
+    async def get_tool_policy(self, issuer: str, subject: str, policy_id: UUID) -> ToolPolicy:
+        return await self.repository.get_tool_policy(issuer, subject, policy_id)
+
+    async def list_tool_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[ToolPolicy]:
+        return await self.repository.list_tool_policies(issuer, subject, agent_profile_id)
+
+    async def create_tool_policy(
+        self, issuer: str, subject: str, policy: ToolPolicy, key: str | None = None
+    ) -> ToolPolicy:
+        result = await self.repository.create_tool_policy(issuer, subject, policy, key)
+        await self._audit("agent.tool_policy.create", issuer, subject, result)
+        return result
+
+    async def attach_tool_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        result = await self.repository.attach_tool_policy(
+            issuer, subject, agent_profile_id, policy_revision_id, expected_version, key
+        )
+        await self._audit("agent.tool_policy.attach", issuer, subject, result)
+        return result
+
     def resolve_revision_unchecked(self, identifier: UUID) -> AgentRevision:
         return self.repository.resolve_revision_unchecked(identifier)
 
@@ -1024,12 +1304,18 @@ __all__ = [
     "GENERAL_POLICY_ID",
     "GENERAL_MEMORY_POLICY_ID",
     "GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID",
+    "GENERAL_TOOL_POLICY_ID",
     "platform_memory_policy_id",
     "is_platform_memory_policy",
     "MemoryPolicy",
     "AgentMemoryPolicy",
     "MemoryPolicyRevision",
     "MemoryRecallMode",
+    "ToolGrant",
+    "ToolPolicy",
+    "ToolPolicyGrant",
+    "ToolPolicyRevision",
+    "AgentToolPolicy",
     "GENERAL_PROFILE_ID",
     "GENERAL_REVISION_ID",
     "NEUTRAL_PERSONA_ID",

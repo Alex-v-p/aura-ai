@@ -21,12 +21,15 @@ from aura_core.domains.interaction.agents.persistence import (
     MemoryPolicyRevisionRow,
     PromptBundleRevisionRow,
     PromptComponentRevisionRow,
+    ToolPolicyGrantRow,
+    ToolPolicyRevisionRow,
 )
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
     GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
+    GENERAL_TOOL_POLICY_ID,
     NAMESPACE,
     NEUTRAL_PERSONA_REVISION_ID,
     PROMPT_BUNDLE_ID,
@@ -35,6 +38,8 @@ from aura_core.domains.interaction.agents.public import (
     AgentRevision,
     MemoryPolicy,
     MemoryRecallMode,
+    ToolGrant,
+    ToolPolicy,
     is_platform_memory_policy,
     platform_memory_policy_id,
 )
@@ -59,6 +64,15 @@ def _require_memory_policy_id(value: UUID | None) -> UUID:
     if value is None:
         raise ConfigurationNotFound("agent revision has no memory policy revision")
     return value
+
+
+def _require_tool_policy_id(value: UUID | None, agent_profile_id: UUID) -> UUID:
+    """Resolve legacy rows to their deterministic deny policy."""
+    if value is not None:
+        return value
+    if agent_profile_id == GENERAL_PROFILE_ID:
+        return GENERAL_TOOL_POLICY_ID
+    return uuid5(NAMESPACE, f"agent-tool-policy:{agent_profile_id}:1")
 
 
 def _is_deterministic_platform_policy(policy_id: UUID, agent_profile_id: UUID) -> bool:
@@ -93,6 +107,16 @@ def _policy_owner_matches(row: MemoryPolicyRevisionRow, issuer: str, subject: st
     )
 
 
+def _tool_policy_owner_matches(row: ToolPolicyRevisionRow, issuer: str, subject: str) -> bool:
+    return (row.principal_issuer, row.principal_subject) == (issuer, subject) or (
+        (row.principal_issuer, row.principal_subject) == ("", "")
+        and (
+            row.id == GENERAL_TOOL_POLICY_ID
+            or row.id == uuid5(NAMESPACE, f"agent-tool-policy:{row.agent_profile_id}:1")
+        )
+    )
+
+
 class SqlAgentStore:
     """SQL-authoritative agent store with a public persona port."""
 
@@ -124,6 +148,8 @@ class SqlAgentStore:
             fallback_grants = (
                 (await session.execute(select(MemoryPolicyFallbackGrantRow))).scalars().all()
             )
+            tool_policies = (await session.execute(select(ToolPolicyRevisionRow))).scalars().all()
+            tool_grants = (await session.execute(select(ToolPolicyGrantRow))).scalars().all()
             components = (await session.execute(select(PromptComponentRevisionRow))).scalars().all()
             bundles = (await session.execute(select(PromptBundleRevisionRow))).scalars().all()
         if not profiles:
@@ -167,6 +193,9 @@ class SqlAgentStore:
                         memory_policy_revision_id=_require_memory_policy_id(
                             item.memory_policy_revision_id
                         ),
+                        tool_policy_revision_id=_require_tool_policy_id(
+                            item.tool_policy_revision_id, item.agent_profile_id
+                        ),
                         system_prompt=item.system_prompt,
                         created_at=item.created_at or datetime.now(UTC),
                     )
@@ -200,6 +229,23 @@ class SqlAgentStore:
             )
             for item in memory_policies
         }
+        self.catalog.tool_policies = {
+            item.id: ToolPolicy(
+                id=item.id,
+                agent_profile_id=item.agent_profile_id,
+                revision=item.revision,
+                grants=tuple(
+                    ToolGrant(grant.tool_id, grant.tool_version)
+                    for grant in tool_grants
+                    if grant.policy_id == item.id
+                ),
+                max_calls_per_run=item.max_calls_per_run,
+                timeout_ms=item.timeout_ms,
+                retry_limit=item.retry_limit,
+                created_at=item.created_at or datetime.now(UTC),
+            )
+            for item in tool_policies
+        }
 
     async def list_agents(self) -> list[AgentProfile]:
         await self.refresh()
@@ -220,6 +266,7 @@ class SqlAgentStore:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
+        tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
     ) -> AgentProfile:
         fingerprint = self._fingerprint(
             "agent",
@@ -229,6 +276,7 @@ class SqlAgentStore:
             instructions,
             persona_revision_id,
             memory_policy_revision_id,
+            tool_policy_revision_id,
         )
         async with self.sessions() as session, session.begin():
             prior = await self._replay(session, issuer, subject, key, fingerprint)
@@ -236,6 +284,7 @@ class SqlAgentStore:
                 await self._require_active_persona_in_transaction(session, persona_revision_id)
                 identifier, revision_id, created = uuid4(), uuid4(), datetime.now(UTC)
                 selected_memory_policy = memory_policy_revision_id
+                selected_tool_policy = tool_policy_revision_id
                 if selected_memory_policy == GENERAL_MEMORY_POLICY_ID:
                     selected_memory_policy = platform_memory_policy_id(identifier)
                     session.add(
@@ -259,6 +308,28 @@ class SqlAgentStore:
                         or (not _policy_owner_matches(policy_row, issuer, subject))
                     ):
                         raise ConfigurationNotFound("memory policy revision not found")
+                if selected_tool_policy == GENERAL_TOOL_POLICY_ID:
+                    selected_tool_policy = uuid5(NAMESPACE, f"agent-tool-policy:{identifier}:1")
+                    session.add(
+                        ToolPolicyRevisionRow(
+                            id=selected_tool_policy,
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            agent_profile_id=identifier,
+                            revision=1,
+                            max_calls_per_run=0,
+                            timeout_ms=30000,
+                            retry_limit=0,
+                        )
+                    )
+                else:
+                    tool_policy_row = await session.get(ToolPolicyRevisionRow, selected_tool_policy)
+                    if (
+                        tool_policy_row is None
+                        or tool_policy_row.agent_profile_id != identifier
+                        or not _tool_policy_owner_matches(tool_policy_row, issuer, subject)
+                    ):
+                        raise ConfigurationNotFound("tool policy revision not found")
                 session.add(
                     AgentProfileRow(
                         id=identifier,
@@ -282,6 +353,7 @@ class SqlAgentStore:
                         prompt_bundle_revision_id=PROMPT_BUNDLE_ID,
                         model_policy_revision_id=GENERAL_POLICY_ID,
                         memory_policy_revision_id=selected_memory_policy,
+                        tool_policy_revision_id=selected_tool_policy,
                         created_at=created,
                     )
                 )
@@ -304,6 +376,7 @@ class SqlAgentStore:
         persona_revision_id: UUID,
         key: str,
         memory_policy_revision_id: UUID | None = None,
+        tool_policy_revision_id: UUID | None = None,
     ) -> AgentProfile:
         fingerprint = self._fingerprint(
             "agent-revision",
@@ -314,6 +387,7 @@ class SqlAgentStore:
             instructions,
             persona_revision_id,
             memory_policy_revision_id,
+            tool_policy_revision_id,
         )
         async with self.sessions() as session, session.begin():
             prior = await self._replay(session, issuer, subject, key, fingerprint)
@@ -330,6 +404,12 @@ class SqlAgentStore:
                     if current_revision is None:
                         raise ConfigurationNotFound("agent revision not found")
                     selected_memory_policy = current_revision.memory_policy_revision_id
+                current_revision = await session.get(AgentRevisionRow, row.current_revision_id)
+                if current_revision is None:
+                    raise ConfigurationNotFound("agent revision not found")
+                selected_tool_policy = tool_policy_revision_id
+                if selected_tool_policy is None:
+                    selected_tool_policy = current_revision.tool_policy_revision_id
                 policy_row = await session.get(MemoryPolicyRevisionRow, selected_memory_policy)
                 if (
                     policy_row is None
@@ -337,6 +417,13 @@ class SqlAgentStore:
                     or (not _policy_owner_matches(policy_row, issuer, subject))
                 ):
                     raise ConfigurationNotFound("memory policy revision not found")
+                tool_policy_row = await session.get(ToolPolicyRevisionRow, selected_tool_policy)
+                if (
+                    tool_policy_row is None
+                    or tool_policy_row.agent_profile_id != identifier
+                    or not _tool_policy_owner_matches(tool_policy_row, issuer, subject)
+                ):
+                    raise ConfigurationNotFound("tool policy revision not found")
                 number = (
                     await session.execute(
                         select(AgentRevisionRow.revision)
@@ -359,6 +446,7 @@ class SqlAgentStore:
                         prompt_bundle_revision_id=PROMPT_BUNDLE_ID,
                         model_policy_revision_id=GENERAL_POLICY_ID,
                         memory_policy_revision_id=selected_memory_policy,
+                        tool_policy_revision_id=selected_tool_policy,
                         created_at=now,
                     )
                 )
@@ -445,6 +533,9 @@ class SqlAgentStore:
             system_prompt=revision.system_prompt,
             created_at=revision.created_at or datetime.now(UTC),
             memory_policy_revision_id=_require_memory_policy_id(revision.memory_policy_revision_id),
+            tool_policy_revision_id=_require_tool_policy_id(
+                revision.tool_policy_revision_id, revision.agent_profile_id
+            ),
         )
 
     async def get_memory_policy(self, issuer: str, subject: str, policy_id: UUID) -> MemoryPolicy:
@@ -724,6 +815,140 @@ class SqlAgentStore:
             revision.instructions,
             revision.persona_revision_id,
             key,
+            policy_revision_id,
+        )
+
+    async def get_tool_policy(self, issuer: str, subject: str, policy_id: UUID) -> ToolPolicy:
+        async with self.sessions() as session:
+            row = await session.get(ToolPolicyRevisionRow, policy_id)
+            if row is None or not _tool_policy_owner_matches(row, issuer, subject):
+                raise ConfigurationNotFound("tool policy revision not found")
+            return await self._tool_policy_from_row(session, row)
+
+    @staticmethod
+    async def _tool_policy_from_row(
+        session: AsyncSession, row: ToolPolicyRevisionRow
+    ) -> ToolPolicy:
+        grants = (
+            await session.execute(
+                select(ToolPolicyGrantRow).where(ToolPolicyGrantRow.policy_id == row.id)
+            )
+        ).scalars().all()
+        return ToolPolicy(
+            id=row.id,
+            agent_profile_id=row.agent_profile_id,
+            revision=row.revision,
+            grants=tuple(ToolGrant(item.tool_id, item.tool_version) for item in grants),
+            max_calls_per_run=row.max_calls_per_run,
+            timeout_ms=row.timeout_ms,
+            retry_limit=row.retry_limit,
+            created_at=row.created_at or datetime.now(UTC),
+        )
+
+    async def create_tool_policy(
+        self, issuer: str, subject: str, policy: ToolPolicy, key: str | None = None
+    ) -> ToolPolicy:
+        if not issuer or not subject:
+            raise ConfigurationNotFound("tool policy owner is required")
+        if any(item != ToolGrant("memory.search", 1) for item in policy.grants):
+            raise ValueError("unknown tool grant")
+        fingerprint = self._fingerprint(
+            "tool-policy",
+            policy.agent_profile_id,
+            tuple((item.tool_id, item.tool_version) for item in policy.grants),
+        )
+        async with self.sessions() as session, session.begin():
+            if key:
+                prior_response = await self._replay(session, issuer, subject, key, fingerprint)
+                if prior_response is not None:
+                    prior_id = UUID(str(prior_response["policyId"]))
+                    row = await session.get(ToolPolicyRevisionRow, prior_id)
+                    if row is None or not _tool_policy_owner_matches(row, issuer, subject):
+                        raise ConfigurationIdempotencyConflict("idempotency key is unavailable")
+                    return await self._tool_policy_from_row(session, row)
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": f"tool-policy-revision:{issuer}:{subject}:{policy.agent_profile_id}"},
+            )
+            if await session.get(AgentProfileRow, policy.agent_profile_id) is None:
+                raise ConfigurationNotFound("agent not found")
+            prior = (
+                await session.execute(
+                    select(ToolPolicyRevisionRow).where(
+                        ToolPolicyRevisionRow.principal_issuer == issuer,
+                        ToolPolicyRevisionRow.principal_subject == subject,
+                        ToolPolicyRevisionRow.agent_profile_id == policy.agent_profile_id,
+                    )
+                )
+            ).scalars().all()
+            if policy.revision != max((item.revision for item in prior), default=0) + 1:
+                raise ConfigurationVersionConflict("tool policy revision conflict")
+            row = ToolPolicyRevisionRow(
+                id=policy.id,
+                principal_issuer=issuer,
+                principal_subject=subject,
+                agent_profile_id=policy.agent_profile_id,
+                revision=policy.revision,
+                max_calls_per_run=1 if policy.grants else 0,
+                timeout_ms=30_000,
+                retry_limit=0,
+            )
+            session.add(row)
+            for grant in policy.grants:
+                session.add(
+                    ToolPolicyGrantRow(
+                        policy_id=policy.id,
+                        tool_id=grant.tool_id,
+                        tool_version=grant.tool_version,
+                    )
+                )
+            if key:
+                await self._record_policy(session, issuer, subject, key, fingerprint, policy.id)
+            return await self._tool_policy_from_row(session, row)
+
+    async def list_tool_policies(
+        self, issuer: str, subject: str, agent_profile_id: UUID
+    ) -> list[ToolPolicy]:
+        async with self.sessions() as session:
+            rows = (
+                await session.execute(
+                    select(ToolPolicyRevisionRow).where(
+                        ToolPolicyRevisionRow.agent_profile_id == agent_profile_id
+                    )
+                )
+            ).scalars().all()
+            result = [
+                await self._tool_policy_from_row(session, row)
+                for row in rows
+                if _tool_policy_owner_matches(row, issuer, subject)
+            ]
+            return sorted(result, key=lambda item: item.revision)
+
+    async def attach_tool_policy(
+        self,
+        issuer: str,
+        subject: str,
+        agent_profile_id: UUID,
+        policy_revision_id: UUID,
+        expected_version: int,
+        key: str,
+    ) -> AgentProfile:
+        policy = await self.get_tool_policy(issuer, subject, policy_revision_id)
+        if policy.agent_profile_id != agent_profile_id:
+            raise ConfigurationNotFound("tool policy revision not found")
+        profile = self.catalog.get_agent(agent_profile_id)
+        revision = profile.current_revision
+        return await self.revise_agent(
+            issuer,
+            subject,
+            agent_profile_id,
+            expected_version,
+            revision.display_name,
+            revision.purpose,
+            revision.instructions,
+            revision.persona_revision_id,
+            key,
+            revision.memory_policy_revision_id,
             policy_revision_id,
         )
 

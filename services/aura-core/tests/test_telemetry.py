@@ -112,6 +112,68 @@ def test_model_inventory_telemetry_is_registered_and_metadata_only() -> None:
     assert "model_provider" in repr(measurements)
 
 
+def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> None:
+    metrics = MetadataMetrics()
+    trace_id = uuid4().hex
+    metrics.record_span(
+        "aura.runtime.tool_selection",
+        "tool.select",
+        1.0,
+        trace_id=trace_id,
+        span_id=uuid4().hex[:16],
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="selected",
+    )
+    metrics.increment(
+        "aura.runtime.policy_evaluation",
+        "tool_policy_decision",
+        outcome="allowed",
+    )
+    metrics.increment(
+        "aura.runtime.tool_execution",
+        "tool_execution_outcome",
+        outcome="completed",
+    )
+    metrics.record_span(
+        "aura.runtime.tool_selection",
+        "tool.select",
+        1.0,
+        trace_id=trace_id,
+        span_id=uuid4().hex[:16],
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="selected",
+        query="private memory text",
+    )
+    metrics.increment(
+        "aura.runtime.policy_evaluation",
+        "tool_policy_decision",
+        outcome="allowed",
+        arguments='{"query":"private memory text"}',
+    )
+    metrics.increment(
+        "aura.runtime.tool_execution",
+        "tool_execution_outcome",
+        outcome="completed",
+        result="private memory content",
+    )
+    measurements = metrics.snapshot()
+    assert {item.metric for item in measurements} >= {
+        "tool_selection_duration_ms",
+        "tool_policy_decision",
+        "tool_execution_outcome",
+    }
+    assert all("private" not in repr(item.dimensions) for item in measurements)
+    assert all("query" not in dict(item.trace_attributes) for item in measurements)
+    assert all("arguments" not in dict(item.trace_attributes) for item in measurements)
+    assert all("result" not in dict(item.trace_attributes) for item in measurements)
+    assert metrics.stats().rejected >= 3
+    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.0.0"
+    assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.0.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.0.0"
+
+
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:
     metrics = MetadataMetrics()
     trace_id = uuid4().hex

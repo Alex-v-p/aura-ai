@@ -68,6 +68,7 @@ class AgentRevisionRow(Base):
     # historical seed inserts. Migration 0010 backfills every row and then
     # enforces NOT NULL plus the foreign key at the database boundary.
     memory_policy_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    tool_policy_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
         UniqueConstraint("agent_profile_id", "revision", name="uq_agent_revision_number"),
@@ -106,6 +107,32 @@ class MemoryPolicyFallbackGrantRow(Base):
     foreign_agent_profile_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True
     )
+
+
+class ToolPolicyRevisionRow(Base):
+    __tablename__ = "tool_policy_revisions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_profile_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_calls_per_run: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=30000)
+    retry_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint(
+            "principal_issuer", "principal_subject", "agent_profile_id", "revision",
+            name="uq_tool_policy_owner_revision",
+        ),
+    )
+
+
+class ToolPolicyGrantRow(Base):
+    __tablename__ = "tool_policy_grants"
+    policy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    tool_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tool_version: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
 class ModelPolicyRevisionRow(Base):

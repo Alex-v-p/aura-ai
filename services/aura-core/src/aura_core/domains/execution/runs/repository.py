@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aura_core.domains.execution.runs.dto import Run, RunError, RunStatus
-from aura_core.domains.execution.runs.events import RunEvent
+from aura_core.domains.execution.runs.dto import Run, RunClaimLost, RunError, RunStatus
+from aura_core.domains.execution.runs.events import RunEvent, validate_tool_status
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
 from aura_core.domains.interaction.conversations.dto import now
 
@@ -19,29 +19,34 @@ class SqlRunRepository:
     def _run(row: RunRow) -> Run:
         error = row.error or None
         return Run(
-            row.conversation_id,
-            row.user_message_id,
-            row.agent_revision_id,
-            row.model_policy_revision_id,
-            row.provider,
-            row.model_id,
-            row.retry_of_run_id,
-            RunStatus(row.status),
-            row.id,
-            row.assistant_message_id,
-            row.created_at or now(),
-            row.started_at,
-            row.finished_at,
-            RunError(**cast(dict[str, Any], error)) if error else None,
-            row.attempt_id,
-            row.attempt_count,
-            row.lease_expires_at,
-            row.persona_revision_id,
-            row.prompt_bundle_revision_id,
-            row.prompt_hash,
-            row.memory_policy_revision_id,
-            row.memory_embedding_generation_id,
-            row.memory_recall_metadata,
+            conversation_id=row.conversation_id,
+            user_message_id=row.user_message_id,
+            agent_revision_id=row.agent_revision_id,
+            model_policy_revision_id=row.model_policy_revision_id,
+            provider=row.provider,
+            model_id=row.model_id,
+            retry_of_run_id=row.retry_of_run_id,
+            status=RunStatus(row.status),
+            id=row.id,
+            assistant_message_id=row.assistant_message_id,
+            created_at=row.created_at or now(),
+            started_at=row.started_at,
+            finished_at=row.finished_at,
+            error=RunError(**cast(dict[str, Any], error)) if error else None,
+            attempt_id=row.attempt_id,
+            attempt_count=row.attempt_count,
+            lease_expires_at=row.lease_expires_at,
+            persona_revision_id=row.persona_revision_id,
+            prompt_bundle_revision_id=row.prompt_bundle_revision_id,
+            prompt_hash=row.prompt_hash,
+            memory_policy_revision_id=row.memory_policy_revision_id,
+            memory_embedding_generation_id=row.memory_embedding_generation_id,
+            memory_recall_metadata=row.memory_recall_metadata,
+            tool_policy_revision_id=row.tool_policy_revision_id,
+            tool_call_limit=row.tool_call_limit,
+            tool_calls_used=row.tool_calls_used,
+            tool_timeout_ms=row.tool_timeout_ms,
+            tool_retry_limit=row.tool_retry_limit,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -135,6 +140,11 @@ class SqlRunRepository:
                 memory_policy_revision_id=run.memory_policy_revision_id,
                 memory_embedding_generation_id=run.memory_embedding_generation_id,
                 memory_recall_metadata=run.memory_recall_metadata,
+                tool_policy_revision_id=run.tool_policy_revision_id,
+                tool_call_limit=run.tool_call_limit,
+                tool_calls_used=run.tool_calls_used,
+                tool_timeout_ms=run.tool_timeout_ms,
+                tool_retry_limit=run.tool_retry_limit,
                 provider=run.provider,
                 model_id=run.model_id,
                 retry_of_run_id=run.retry_of_run_id,
@@ -164,6 +174,32 @@ class SqlRunRepository:
         row.memory_policy_revision_id = run.memory_policy_revision_id
         row.memory_embedding_generation_id = run.memory_embedding_generation_id
         row.memory_recall_metadata = run.memory_recall_metadata
+        row.tool_policy_revision_id = run.tool_policy_revision_id
+        row.tool_call_limit = run.tool_call_limit
+        row.tool_calls_used = run.tool_calls_used
+        row.tool_timeout_ms = run.tool_timeout_ms
+        row.tool_retry_limit = run.tool_retry_limit
+
+    async def increment_tool_calls(
+        self, session: AsyncSession, run_id: UUID, attempt_id: UUID
+    ) -> int:
+        """Atomically consume the one-call run budget for the active attempt."""
+
+        statement = (
+            update(RunRow)
+            .where(
+                RunRow.id == run_id,
+                RunRow.status == RunStatus.RUNNING.value,
+                RunRow.attempt_id == attempt_id,
+                RunRow.tool_calls_used < RunRow.tool_call_limit,
+            )
+            .values(tool_calls_used=RunRow.tool_calls_used + 1)
+            .returning(RunRow.tool_calls_used)
+        )
+        value = (await session.execute(statement)).scalar_one_or_none()
+        if value is None:
+            raise RunClaimLost
+        return int(value)
 
     @staticmethod
     def _error(error: RunError | None) -> dict[str, object] | None:
@@ -185,6 +221,17 @@ class SqlRunRepository:
         sequence.  Replays return the original durable event unchanged.
         """
 
+        if event.event_type == "tool.status":
+            event = RunEvent(
+                event.event_id,
+                event.sequence,
+                event.event_type,
+                event.run_id,
+                event.conversation_id,
+                event.occurred_at,
+                validate_tool_status(event.data),
+                event.schema_version,
+            )
         existing = await session.get(RunEventRow, event.event_id)
         if existing is not None:
             return self._event(existing)
@@ -243,6 +290,9 @@ class SqlRunRepository:
 
     @staticmethod
     def _event(row: RunEventRow) -> RunEvent:
+        data = cast(dict[str, Any], row.payload.get("data", row.payload))
+        if row.event_type == "tool.status":
+            data = validate_tool_status(data)
         return RunEvent(
             event_id=row.id,
             sequence=row.sequence,
@@ -250,6 +300,6 @@ class SqlRunRepository:
             run_id=row.run_id,
             conversation_id=row.conversation_id,
             occurred_at=row.occurred_at,
-            data=cast(dict[str, Any], row.payload.get("data", row.payload)),
+            data=data,
             schema_version=int(cast(int | str, row.payload.get("schemaVersion", 1))),
         )

@@ -100,6 +100,75 @@ async def test_owner_only_agent_persona_mutations_require_csrf_and_replay_safely
 
 
 @pytest.mark.asyncio
+async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        catalog = await client.get("/api/v1/tools")
+        assert catalog.status_code == 200
+        tools = catalog.json()["items"]
+        assert [item["id"] for item in tools] == ["memory.search"]
+        assert tools[0]["version"] == 1
+        assert "handler" not in tools[0]
+        assert "schema" not in tools[0]
+
+        agents = (await client.get("/api/v1/agents")).json()["items"]
+        aura = agents[0]
+        aura_policies = await client.get(f"/api/v1/agents/{aura['id']}/tool-policies")
+        assert aura_policies.status_code == 200
+        aura_policy = aura_policies.json()
+        assert aura_policy["items"][0]["grants"] == [
+            {"toolId": "memory.search", "toolVersion": 1}
+        ]
+        assert aura_policy["items"][0]["maxCallsPerRun"] == 1
+
+        persona = (await client.get("/api/v1/personas")).json()["items"][0]
+        created = await client.post(
+            "/api/v1/agents",
+            headers=command_headers(session.csrf_token),
+            json={
+                "displayName": "Custom",
+                "purpose": "Test",
+                "instructions": "Be concise.",
+                "personaRevisionId": persona["currentRevision"]["id"],
+            },
+        )
+        assert created.status_code == 201
+        custom = created.json()
+        policies = await client.get(f"/api/v1/agents/{custom['id']}/tool-policies")
+        assert policies.status_code == 200
+        assert policies.json()["items"][0]["grants"] == []
+
+        key = str(uuid4())
+        policy = await client.post(
+            f"/api/v1/agents/{custom['id']}/tool-policies",
+            headers=command_headers(session.csrf_token, key),
+            json={"grants": [{"toolId": "memory.search", "toolVersion": 1}], "expectedRevision": 1},
+        )
+        assert policy.status_code == 201
+        assert policy.json()["maxCallsPerRun"] == 1
+        replay = await client.post(
+            f"/api/v1/agents/{custom['id']}/tool-policies",
+            headers=command_headers(session.csrf_token, key),
+            json={"grants": [{"toolId": "memory.search", "toolVersion": 1}], "expectedRevision": 1},
+        )
+        assert replay.status_code == 201
+        assert replay.json() == policy.json()
+
+        detail = (await client.get(f"/api/v1/agents/{custom['id']}")).json()
+        attached = await client.post(
+            f"/api/v1/agents/{custom['id']}/tool-policies/{policy.json()['id']}/attach",
+            headers=command_headers(session.csrf_token),
+            json={"expectedAgentVersion": detail["version"]},
+        )
+        assert attached.status_code == 201
+        assert attached.json()["currentRevision"]["toolPolicyRevisionId"] == policy.json()["id"]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_revision_history_uses_optimistic_versions_and_persona_non_cascade(
     api_app: FastAPI,
 ) -> None:

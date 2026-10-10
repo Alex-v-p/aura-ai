@@ -97,6 +97,15 @@ kbd { background: var(--surface-subtle); border: 1px solid var(--border); border
 .run-card dl div { display: flex; font-size: .75rem; gap: .5rem; justify-content: space-between; }
 .run-card dt { color: var(--text-muted); }
 .run-card dd { margin: 0; max-width: 65%; overflow-wrap: anywhere; text-align: right; }
+.tool-statuses { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .65rem; }
+.tool-statuses h3 { font-size: .78rem; margin: 0 0 .45rem; }
+.tool-statuses ol { display: grid; gap: .4rem; list-style: none; margin: 0; padding: 0; }
+.tool-statuses li { align-items: baseline; display: grid; font-size: .75rem; gap: .25rem .5rem; grid-template-columns: minmax(0, 1fr) auto; }
+.tool-status-name { overflow-wrap: anywhere; }
+.tool-status-state { color: var(--text-muted); font-weight: 700; }
+.tool-status-state[data-status='completed'] { color: var(--accent); }
+.tool-status-state[data-status='failed'], .tool-status-state[data-status='denied'] { color: var(--danger-text); }
+.tool-statuses small { color: var(--text-muted); grid-column: 1 / -1; overflow-wrap: anywhere; }
 @media (max-width: 720px) { .run-inspector { border: 1px solid var(--border); border-radius: 1rem 1rem 0 0; bottom: 0; left: .5rem; max-height: 88dvh; right: .5rem; top: auto; width: auto; } }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0% { opacity: .7; transform: scale(.5); } 70%, 100% { opacity: 0; transform: scale(1.6); } }

@@ -61,6 +61,7 @@ from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.runtime.models.gateway import ModelGateway
 from aura_core.runtime.models.ports import ChatModelPort, ModelDescriptor, ModelSelectionPort
 from aura_core.runtime.streaming.publisher import EventPublisher, PersistentEventPublisher
+from aura_core.runtime.tools import default_tool_registry
 
 
 class AppState:
@@ -105,6 +106,7 @@ class AppState:
             ),
         )
         self.gateway = ModelGateway(self.provider)
+        self.tool_registry = default_tool_registry()
         self.engine = None
         self.sessions_factory = None
         self.sql_store = None
@@ -293,6 +295,7 @@ class AppState:
             lease_seconds=self.settings.ollama_run_timeout_seconds + 30.0,
             timeout_seconds=self.settings.ollama_run_timeout_seconds,
             context_token_budget=self.settings.context_token_budget,
+            tool_registry=self.tool_registry,
         )
 
     async def startup(self) -> None:

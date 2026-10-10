@@ -47,6 +47,7 @@ from aura_core.platform.telemetry import (
     new_span_id,
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
+from aura_core.runtime.tools import default_tool_registry
 
 
 class MemoryJobProcessor(Protocol):
@@ -541,6 +542,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             lease_seconds=config.ollama_run_timeout_seconds + 30.0,
             timeout_seconds=config.ollama_run_timeout_seconds,
             context_token_budget=config.context_token_budget,
+            tool_registry=default_tool_registry(),
         )
         if memory_processor is not None:
             activity_publisher = coordinator.publisher

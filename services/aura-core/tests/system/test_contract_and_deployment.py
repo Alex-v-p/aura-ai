@@ -50,6 +50,7 @@ def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> No
         "/api/v1/runs/{run_id}/retry",
         "/api/v1/runs/{run_id}/events",
         "/api/v1/runs/{run_id}/memory-activity",
+        "/api/v1/tools",
         "/health/live",
         "/health/ready",
     }
@@ -75,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.5.0"
+    assert contract["info"]["version"] == "1.6.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -193,6 +194,46 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     )
 
 
+def test_governed_tool_contract_is_read_only_versioned_and_csrf_protected() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    tools = contract["paths"]["/api/v1/tools"]["get"]
+    assert tools["operationId"] == "listTools"
+    summary = schemas["ToolDescriptorSummary"]
+    assert summary["properties"]["classification"]["$ref"].endswith("/ToolClassification")
+    assert summary["properties"]["confirmation"]["$ref"].endswith("/ToolConfirmation")
+    assert schemas["CreateAgentToolPolicyRequest"]["additionalProperties"] is False
+    assert set(schemas["CreateAgentToolPolicyRequest"]["required"]) == {
+        "grants",
+        "expectedRevision",
+    }
+    assert "maxCallsPerRun" not in schemas["CreateAgentToolPolicyRequest"]["properties"]
+    create = contract["paths"]["/api/v1/agents/{agent_profile_id}/tool-policies"]["post"]
+    attach = contract["paths"][
+        "/api/v1/agents/{agent_profile_id}/tool-policies/"
+        "{tool_policy_revision_id}/attach"
+    ]["post"]
+    create_refs = {
+        cast(str, parameter["$ref"])
+        for parameter in cast(list[dict[str, Any]], create["parameters"])
+        if "$ref" in parameter
+    }
+    attach_refs = {
+        cast(str, parameter["$ref"])
+        for parameter in cast(list[dict[str, Any]], attach["parameters"])
+        if "$ref" in parameter
+    }
+    expected_refs = {
+        "#/components/parameters/CsrfToken",
+        "#/components/parameters/IdempotencyKey",
+    }
+    assert expected_refs <= create_refs
+    assert expected_refs <= attach_refs
+    assert schemas["AgentToolPolicy"]["properties"]["retryLimit"]["maximum"] == 0
+
+
 def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
     schema = cast(
         dict[str, Any],
@@ -212,6 +253,7 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
         "assistant.snapshot",
         "run.error",
         "memory.activity",
+        "tool.status",
         "heartbeat",
     }
     assert schema["$defs"]["AssistantDeltaEvent"]["allOf"][1]["properties"]["data"]["required"] == [

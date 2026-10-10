@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/AssistantSnapshotEvent" },
     { "$ref": "#/$defs/RunErrorEvent" },
     { "$ref": "#/$defs/MemoryActivityEvent" },
+    { "$ref": "#/$defs/ToolStatusEvent" },
     { "$ref": "#/$defs/HeartbeatEvent" }
   ],
   "$defs": {
@@ -41,6 +42,9 @@
         "status": { "$ref": "#/$defs/RunStatus" },
         "agentRevisionId": { "$ref": "#/$defs/Uuid" },
         "modelPolicyRevisionId": { "$ref": "#/$defs/Uuid" },
+        "toolPolicyRevisionId": { "$ref": "#/$defs/Uuid" },
+        "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1 },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
@@ -163,6 +167,33 @@
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
           "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "memory.activity" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/MemoryActivity" }
+        } }
+      ]
+    },
+    "ToolStatus": {
+      "type": "string",
+      "enum": ["pending", "executing", "completed", "denied", "failed"]
+    },
+    "ToolStatusData": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Metadata-only tool lifecycle state. Tool arguments, queries, results, memory content, prompts, responses, credentials, and hidden reasoning are prohibited.",
+      "required": ["callId", "toolId", "toolVersion", "status"],
+      "properties": {
+        "callId": { "$ref": "#/$defs/Uuid", "description": "Aura-generated call identifier; provider call identifiers are never exposed." },
+        "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+        "toolVersion": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/ToolStatus" },
+        "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
+        "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+        "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    "ToolStatusEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "tool.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ToolStatusData" }
         } }
       ]
     },

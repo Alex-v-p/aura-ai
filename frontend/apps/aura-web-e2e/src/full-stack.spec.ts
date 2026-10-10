@@ -517,5 +517,32 @@ for (const mode of configuredModes) {
       await page.goto(new URL('/memory/settings', config.baseUrl).toString());
       await expect(page.getByRole('heading', { level: 1, name: 'Model settings', exact: true })).toBeVisible({ timeout: 15_000 });
     });
+
+    test('exposes the governed read-only memory tool policy seam', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the tool policy seam`);
+      if (!config) return;
+
+      await signIn(page, config);
+      const toolsResponse = await page.request.get(new URL('/api/v1/tools', config.baseUrl).toString());
+      expect(toolsResponse.ok(), await toolsResponse.text()).toBeTruthy();
+      const tools = (await toolsResponse.json()) as { items?: Array<JsonObject> };
+      expect(tools.items).toEqual([
+        expect.objectContaining({ id: 'memory.search', version: 1, classification: 'read', permissionScope: 'memory:read' }),
+      ]);
+      expect(JSON.stringify(tools.items)).not.toMatch(/handler|schema|credential|query|content/i);
+
+      const agentsResponse = await page.request.get(new URL('/api/v1/agents', config.baseUrl).toString());
+      expect(agentsResponse.ok()).toBeTruthy();
+      const agents = (await agentsResponse.json()) as { items?: Array<JsonObject> };
+      const agentId = agents.items?.[0]?.['id'];
+      expect(typeof agentId).toBe('string');
+      if (typeof agentId !== 'string') return;
+      const policyResponse = await page.request.get(new URL(`/api/v1/agents/${agentId}/tool-policies`, config.baseUrl).toString());
+      expect(policyResponse.ok(), await policyResponse.text()).toBeTruthy();
+      const policy = (await policyResponse.json()) as JsonObject;
+      const attached = (policy['items'] as Array<JsonObject> | undefined)?.find((item) => item['id'] === policy['attachedPolicyRevisionId']);
+      expect(attached).toMatchObject({ maxCallsPerRun: 1, timeoutMs: 30000, retryLimit: 0, grants: [{ toolId: 'memory.search', toolVersion: 1 }] });
+    });
   });
 }

@@ -250,6 +250,9 @@ export class ConversationPanelComponent {
     return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
   }
   sortedRuns(): ReadonlyArray<import('@aura/aura-api-client').Run> { return this.store.selected().runs.slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)); }
+  toolStatuses(runId: string): ReadonlyArray<import('@aura/aura-api-client').ToolStatusData> { return this.store.toolActivitiesForRun(runId); }
+  toolStatusLabel(status: import('@aura/aura-api-client').ToolStatusData['status']): string { return status === 'executing' ? 'Running' : status === 'pending' ? 'Queued' : status === 'completed' ? 'Completed' : status === 'denied' ? 'Not allowed' : 'Unavailable'; }
+  toolStatusDetail(activity: import('@aura/aura-api-client').ToolStatusData): string | null { return activity.errorCode ? `${activity.errorClass ? `${activity.errorClass}: ` : ''}${activity.errorCode}` : activity.status === 'completed' && activity.resultCount !== undefined ? `${activity.resultCount} authorized result${activity.resultCount === 1 ? '' : 's'}` : null; }
   safeRunError(run: { readonly error: { readonly code: string; readonly message: string } | null }): string | null {
     return safeRunErrorDisplay(run.error);
   }

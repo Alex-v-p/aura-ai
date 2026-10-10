@@ -62,6 +62,12 @@ class Run:
     # Identifier-only recall metadata.  Memory text and vectors never belong
     # in a run DTO; the memory domain owns the durable snapshot projection.
     memory_recall_metadata: dict[str, object] | None = None
+    # Immutable execution-tool policy snapshot.  Optional for legacy rows.
+    tool_policy_revision_id: UUID | None = None
+    tool_call_limit: int = 0
+    tool_calls_used: int = 0
+    tool_timeout_ms: int = 30_000
+    tool_retry_limit: int = 0
 
 
 class RunClaim(NamedTuple):

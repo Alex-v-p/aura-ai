@@ -6,6 +6,7 @@ imports or manipulates another domain's ORM mapping.
 """
 
 import hashlib
+import inspect
 import json
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import timedelta
@@ -83,7 +84,11 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationQueryPort,
     PersonaRevisionQueryPort,
 )
-from aura_core.domains.knowledge.memory.recall import MemoryRecallRequest, MemoryRecallResult
+from aura_core.domains.knowledge.memory.recall import (
+    MemoryRecallPurpose,
+    MemoryRecallRequest,
+    MemoryRecallResult,
+)
 from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
@@ -168,10 +173,109 @@ class SqlConversationStore:
             event_id = row[1] if isinstance(row[1], UUID) else None
             return metadata, event_id
 
+    async def save_run(self, run: Run) -> None:
+        """Persist a mutable execution counter through the run repository."""
+
+        async with self.sessions() as session, session.begin():
+            await self.runs.save(session, run)
+
+    async def increment_tool_calls(self, run_id: UUID, attempt_id: UUID) -> int:
+        """Consume a tool budget only while this worker still owns the run."""
+
+        async with self.sessions() as session, session.begin():
+            return await self.runs.increment_tool_calls(session, run_id, attempt_id)
+
+    async def memory_context_fraction_for_run(self, run: Run) -> float:
+        """Read the pinned memory-policy fraction for explicit tool evidence."""
+
+        if run.memory_policy_revision_id is None:
+            return 0.2
+        revision = self._revision_unchecked(run.agent_revision_id)
+        owner = await self._conversation_owner(run.conversation_id)
+        getter = (
+            getattr(self.agent_store, "get_memory_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(owner[0], owner[1], run.memory_policy_revision_id)
+            policy = await value if inspect.isawaitable(value) else value
+        else:
+            policy = self.agents.get_memory_policy(run.memory_policy_revision_id)
+        del revision
+        return max(0.0, min(0.2, float(getattr(policy, "context_budget_fraction", 0.2))))
+
+    async def tool_policy_for_run(self, run: Run) -> object | None:
+        """Resolve the run-pinned tool policy through the agent public port."""
+
+        policy_id = run.tool_policy_revision_id
+        if policy_id is None:
+            return None
+        revision = self._revision_unchecked(run.agent_revision_id)
+        profile = await self._conversation_owner(run.conversation_id)
+        getter = (
+            getattr(self.agent_store, "get_tool_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(profile[0], profile[1], policy_id)
+            if inspect.isawaitable(value):
+                return await value
+            return value
+        getter = getattr(self.agents, "get_tool_policy", None)
+        if callable(getter):
+            return getter(policy_id)
+        del revision
+        return None
+
+    async def _conversation_owner(self, conversation_id: UUID) -> tuple[str, str]:
+        async with self.sessions() as session:
+            row = await session.execute(
+                text(
+                    "SELECT p.issuer, p.subject FROM conversations c "
+                    "JOIN principals p ON p.id = c.principal_id WHERE c.id = :id"
+                ),
+                {"id": conversation_id},
+            )
+            item = row.first()
+            if item is None:
+                raise ConversationNotFound("conversation not found")
+            return str(item[0]), str(item[1])
+
     @staticmethod
     def _memory_policy_revision(revision: object) -> UUID | None:
         value = getattr(revision, "memory_policy_revision_id", None)
         return value if isinstance(value, UUID) else None
+
+    @staticmethod
+    def _tool_policy_revision(revision: object) -> UUID | None:
+        value = getattr(revision, "tool_policy_revision_id", None)
+        return value if isinstance(value, UUID) else None
+
+    async def _tool_policy_snapshot(
+        self, issuer: str, subject: str, revision: object
+    ) -> tuple[UUID | None, int, int, int]:
+        policy_id = self._tool_policy_revision(revision)
+        if policy_id is None:
+            return None, 0, 30_000, 0
+        getter = (
+            getattr(self.agent_store, "get_tool_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(issuer, subject, policy_id)
+            policy = await value if inspect.isawaitable(value) else value
+        else:
+            getter = getattr(self.agents, "get_tool_policy", None)
+            policy = getter(policy_id) if callable(getter) else None
+        return (
+            policy_id,
+            int(getattr(policy, "max_calls_per_run", 0)),
+            int(getattr(policy, "timeout_ms", 30_000)),
+            int(getattr(policy, "retry_limit", 0)),
+        )
 
     async def _recall_context(
         self,
@@ -181,6 +285,7 @@ class SqlConversationStore:
         budget: int,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
+        purpose: MemoryRecallPurpose = MemoryRecallPurpose.AUTOMATIC_CONTEXT,
     ) -> tuple[Sequence[object], float]:
         recall = self.memory_recall
         if recall is None or run.memory_policy_revision_id is None:
@@ -211,6 +316,8 @@ class SqlConversationStore:
                     conversation_id=conversation.id,
                     trace_id=trace_id or run.id.hex,
                     parent_span_id=parent_span_id,
+                    tool_policy_revision_id=run.tool_policy_revision_id,
+                    purpose=purpose,
                 )
             ))
             raw_items: Sequence[object] = tuple(result.memories)
@@ -223,48 +330,74 @@ class SqlConversationStore:
                 if isinstance(gate_outcome, str) and gate_outcome.startswith("skipped/")
                 else "degraded" if degraded else "ok"
             )
-            run.memory_recall_metadata = serialize_memory_recall_metadata(
-                items,
-                policy_revision_id=run.memory_policy_revision_id,
-                embedding_generation_id=result.embedding_generation_id,
-                retrieval_version=str(
-                    getattr(result, "retrieval_version", "memory-retrieval-v2")
-                ),
-                outcome=recall_outcome,
-                fallback_used=bool(getattr(result, "fallback_used", False)),
-                degradation_reason=degradation_reason,
-                recall_mode=getattr(getattr(policy, "recall_mode", None), "value", None),
-                gate_outcome=gate_outcome,
-            )
-            run.memory_embedding_generation_id = result.embedding_generation_id
-            async with self.sessions() as session, session.begin():
-                persisted = await self.runs.get(session, run.id, lock=True)
-                if persisted is not None:
-                    persisted.memory_recall_metadata = run.memory_recall_metadata
-                    persisted.memory_embedding_generation_id = (
-                        run.memory_embedding_generation_id
-                    )
-                    await self.runs.save(session, persisted)
-            return items, policy.context_budget_fraction
-        except Exception:
-            run.memory_recall_metadata = serialize_memory_recall_metadata(
-                (),
-                policy_revision_id=run.memory_policy_revision_id,
-                embedding_generation_id=None,
-                retrieval_version="memory-retrieval-v2",
-                outcome="degraded",
-                fallback_used=False,
-                degradation_reason="recall_failed",
-            )
-            try:
+            if purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT:
+                run.memory_recall_metadata = serialize_memory_recall_metadata(
+                    items,
+                    policy_revision_id=run.memory_policy_revision_id,
+                    embedding_generation_id=result.embedding_generation_id,
+                    retrieval_version=str(
+                        getattr(result, "retrieval_version", "memory-retrieval-v2")
+                    ),
+                    outcome=recall_outcome,
+                    fallback_used=bool(getattr(result, "fallback_used", False)),
+                    degradation_reason=degradation_reason,
+                    recall_mode=getattr(getattr(policy, "recall_mode", None), "value", None),
+                    gate_outcome=gate_outcome,
+                )
+                run.memory_embedding_generation_id = result.embedding_generation_id
                 async with self.sessions() as session, session.begin():
                     persisted = await self.runs.get(session, run.id, lock=True)
                     if persisted is not None:
                         persisted.memory_recall_metadata = run.memory_recall_metadata
+                        persisted.memory_embedding_generation_id = (
+                            run.memory_embedding_generation_id
+                        )
                         await self.runs.save(session, persisted)
-            except Exception:
-                pass
+            return items, policy.context_budget_fraction
+        except Exception:
+            if purpose is MemoryRecallPurpose.TOOL_SEARCH:
+                raise
+            if purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT:
+                run.memory_recall_metadata = serialize_memory_recall_metadata(
+                    (),
+                    policy_revision_id=run.memory_policy_revision_id,
+                    embedding_generation_id=None,
+                    retrieval_version="memory-retrieval-v2",
+                    outcome="degraded",
+                    fallback_used=False,
+                    degradation_reason="recall_failed",
+                )
+                try:
+                    async with self.sessions() as session, session.begin():
+                        persisted = await self.runs.get(session, run.id, lock=True)
+                        if persisted is not None:
+                            persisted.memory_recall_metadata = run.memory_recall_metadata
+                            await self.runs.save(session, persisted)
+                except Exception:
+                    pass
             return [], 0.2
+
+    async def recall_for_tool(
+        self,
+        conversation: Conversation,
+        run: Run,
+        query: str,
+        budget: int,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> Sequence[object]:
+        """Search through the same owner-authorized recall use case."""
+
+        items, _ = await self._recall_context(
+            conversation,
+            run,
+            query,
+            budget,
+            trace_id,
+            parent_span_id,
+            purpose=MemoryRecallPurpose.TOOL_SEARCH,
+        )
+        return items
 
     def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
         """Attach the application metadata-only prompt telemetry sink."""
@@ -520,6 +653,14 @@ class SqlConversationStore:
                 created_at=created,
                 updated_at=created,
             )
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -530,6 +671,10 @@ class SqlConversationStore:
                 id=run_id,
                 created_at=created,
                 memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1272,6 +1417,14 @@ class SqlConversationStore:
                 created_at=created,
                 updated_at=created,
             )
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -1282,6 +1435,10 @@ class SqlConversationStore:
                 id=run_id,
                 created_at=created,
                 memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1441,6 +1598,11 @@ class SqlConversationStore:
                 prompt_bundle_revision_id=prompt_bundle_revision_id,
                 prompt_hash=prompt_hash,
                 memory_policy_revision_id=prior.memory_policy_revision_id,
+                tool_policy_revision_id=prior.tool_policy_revision_id,
+                tool_call_limit=prior.tool_call_limit,
+                tool_calls_used=0,
+                tool_timeout_ms=prior.tool_timeout_ms,
+                tool_retry_limit=prior.tool_retry_limit,
             )
             self.runs.stage(session, retried)
             await session.flush()

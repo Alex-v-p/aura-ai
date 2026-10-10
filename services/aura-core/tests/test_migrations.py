@@ -102,3 +102,14 @@ def test_migration_revision_identifiers_fit_alembic_version_column() -> None:
         if path.name.startswith("0005_"):
             assert revision == "0005_persona_overrides"
             assert module.down_revision == "0004_agent_persona_revisions"
+
+
+def test_governed_tool_runtime_is_the_forward_head_after_personal_first() -> None:
+    path = MIGRATION_DIR / "0013_governed_tool_runtime.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0013", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0013_governed_tool_runtime"
+    assert module.down_revision == "0012_memory_personal_first"

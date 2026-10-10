@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 1ae73ee509d3837c6b6e4082caa6957c1686244b13ebdac6a3dbddd0ae7b0467
+// Contract SHA-256: 95933bb94704d1d3f7974a8e44700181fbb3cc96edea5b496d2b879239f9e57a
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -8,6 +8,18 @@ export type Principal = { readonly "issuer": string; readonly "subject": string;
 export type ModelCatalog = { readonly "models": ReadonlyArray<Model>; readonly "defaultModelId": string | null; readonly "observedAt": string; };
 
 export type Model = { readonly "id": string; readonly "displayName": string; readonly "provider": string; readonly "capabilities": ReadonlyArray<"chat" | "completion" | "embedding" | "vision" | "tools" | "structured_output">; readonly "availability": "available" | "unavailable" | "unknown"; readonly "selectable": boolean; readonly "disabledReason": string | null; };
+
+export type ToolCatalog = { readonly "items": ReadonlyArray<ToolDescriptorSummary>; };
+
+export type ToolDescriptorSummary = { readonly "id": string; readonly "version": number; readonly "displayName": string; readonly "description": string; readonly "classification": ToolClassification; readonly "permissionScope": string; readonly "confirmation": ToolConfirmation; readonly "timeoutMs": number; readonly "retryLimit": number; readonly "idempotency": ToolIdempotency; readonly "sensitivity": ToolSensitivity; readonly "observableComponent": string; };
+
+export type ToolClassification = "read" | "mutation";
+
+export type ToolConfirmation = "never" | "policy" | "always";
+
+export type ToolIdempotency = "read_only" | "idempotent" | "non_idempotent";
+
+export type ToolSensitivity = "public" | "internal" | "private" | "restricted";
 
 export type MemoryKind = "episodic" | "semantic" | "procedural" | "preference" | "system";
 
@@ -109,6 +121,16 @@ export type CreateAgentMemoryPolicyRequest = { readonly "recallMode"?: MemoryRec
 
 export type AttachAgentMemoryPolicyRequest = { readonly "expectedAgentVersion": number; };
 
+export type AgentToolPolicyCollection = { readonly "items": ReadonlyArray<AgentToolPolicy>; readonly "attachedPolicyRevisionId": string; readonly "agentVersion": number; };
+
+export type AgentToolPolicy = { readonly "id": string; readonly "agentProfileId": string; readonly "revision": number; readonly "grants": ReadonlyArray<ToolGrant>; readonly "maxCallsPerRun": number; readonly "timeoutMs": number; readonly "retryLimit": number; readonly "createdAt": string; };
+
+export type ToolGrant = { readonly "toolId": string; readonly "toolVersion": number; };
+
+export type CreateAgentToolPolicyRequest = { readonly "grants": ReadonlyArray<ToolGrant>; readonly "expectedRevision": number; };
+
+export type AttachAgentToolPolicyRequest = { readonly "expectedAgentVersion": number; };
+
 export type MemoryActivityAction = "created" | "reinforced" | "disputed" | "recalled" | "queued_for_review";
 
 export type MemoryActivityStatus = "queued" | "completed" | "failed";
@@ -129,7 +151,7 @@ export type AgentProfile = { readonly "id": string; readonly "status": ProfileSt
 
 export type AgentDetail = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": AgentRevision; readonly "revisions": ReadonlyArray<AgentRevision>; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type AgentRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "promptBundleRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "memoryPolicyRevisionId"?: string; readonly "createdAt": string; };
+export type AgentRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "promptBundleRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "memoryPolicyRevisionId"?: string; readonly "toolPolicyRevisionId"?: string; readonly "createdAt": string; };
 
 export type CreateAgentRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; };
 
@@ -175,7 +197,7 @@ export type ConversationDetail = ConversationSummary & { readonly "messages": Re
 
 export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -185,7 +207,7 @@ export type RunError = { readonly "code": string; readonly "message": string; re
 
 export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; };
 
-export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | HeartbeatEvent;
+export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | HeartbeatEvent;
 
 export type RunEventBase = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "sequence": number; readonly "eventType": string; readonly "runId": string; readonly "conversationId": string; readonly "occurredAt": string; };
 
@@ -201,6 +223,8 @@ export type RunErrorEvent = RunEventBase & { readonly "eventType": "run.error"; 
 
 export type MemoryActivityEvent = RunEventBase & { readonly "eventType": "memory.activity"; readonly "data": MemoryActivity; };
 
+export type ToolStatusEvent = RunEventBase & { readonly "eventType": "tool.status"; readonly "data": ToolStatusData; };
+
 export type HeartbeatEvent = RunEventBase & { readonly "eventType": "heartbeat"; readonly "data": { readonly "serverTime": string; }; };
 
 export type RunSnapshotData = { readonly "run": Run; readonly "assistantMessage": Message | null; };
@@ -210,6 +234,10 @@ export type RunStatusData = { readonly "status": RunStatus; readonly "startedAt"
 export type AssistantDeltaData = { readonly "messageId": string; readonly "offset": number; readonly "text": string; };
 
 export type AssistantSnapshotData = { readonly "message": Message; };
+
+export type ToolStatus = "pending" | "executing" | "completed" | "denied" | "failed";
+
+export type ToolStatusData = { readonly "callId": string; readonly "toolId": string; readonly "toolVersion": number; readonly "status": ToolStatus; readonly "errorClass"?: "capability" | "validation" | "policy" | "budget" | "timeout" | "provider_protocol" | "execution" | "cancellation"; readonly "errorCode"?: string; readonly "resultCount"?: number; };
 
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
 
@@ -227,6 +255,7 @@ export interface AuraApiOperations {
   readonly completeLogin: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "code": string; readonly "state": string; }; readonly headers: Readonly<Record<string, never>>; };
   readonly logout: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; }; };
   readonly listModels: { readonly response: ModelCatalog; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listTools: { readonly response: ToolCatalog; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listAgents: { readonly response: AgentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createAgent: { readonly response: AgentDetail; readonly body: CreateAgentRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getAgent: { readonly response: AgentDetail; readonly body: never; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -267,6 +296,9 @@ export interface AuraApiOperations {
   readonly listAgentMemoryPolicies: { readonly response: AgentMemoryPolicyCollection; readonly body: never; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createAgentMemoryPolicy: { readonly response: AgentMemoryPolicy; readonly body: CreateAgentMemoryPolicyRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly attachAgentMemoryPolicy: { readonly response: AgentDetail; readonly body: AttachAgentMemoryPolicyRequest; readonly path: { readonly "agent_profile_id": string; readonly "policy_revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listAgentToolPolicies: { readonly response: AgentToolPolicyCollection; readonly body: never; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly createAgentToolPolicy: { readonly response: AgentToolPolicy; readonly body: CreateAgentToolPolicyRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly attachAgentToolPolicy: { readonly response: AgentDetail; readonly body: AttachAgentToolPolicyRequest; readonly path: { readonly "agent_profile_id": string; readonly "tool_policy_revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -292,6 +324,7 @@ export const AURA_API_OPERATIONS = {
   completeLogin: { method: 'GET', pathTemplate: '/api/v1/auth/callback', responseMode: 'json' },
   logout: { method: 'POST', pathTemplate: '/api/v1/auth/logout', responseMode: 'json' },
   listModels: { method: 'GET', pathTemplate: '/api/v1/models', responseMode: 'json' },
+  listTools: { method: 'GET', pathTemplate: '/api/v1/tools', responseMode: 'json' },
   listAgents: { method: 'GET', pathTemplate: '/api/v1/agents', responseMode: 'json' },
   createAgent: { method: 'POST', pathTemplate: '/api/v1/agents', responseMode: 'json' },
   getAgent: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}', responseMode: 'json' },
@@ -332,6 +365,9 @@ export const AURA_API_OPERATIONS = {
   listAgentMemoryPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', responseMode: 'json' },
   createAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', responseMode: 'json' },
   attachAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies/{policy_revision_id}/attach', responseMode: 'json' },
+  listAgentToolPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
+  createAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
+  attachAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

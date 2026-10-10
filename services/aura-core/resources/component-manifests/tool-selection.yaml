@@ -1,0 +1,37 @@
+component:
+  id: aura.runtime.tool_selection
+  version: 1.0.0
+  owner: runtime.tools
+  category: selection
+input:
+  schema: provider-neutral-tool-selection-v1
+  replayable: false
+  replay_reason: Selection depends on uncaptured provider prompt and model state; replay requires an owner-authorized evaluation fixture.
+output:
+  schema: provider-neutral-tool-call-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.runtime.model_inference
+  - aura.runtime.policy_evaluation
+metrics:
+  - tool_selection_duration_ms
+  - tool_selection_outcome
+metric_semantics:
+  tool_selection_duration_ms: Bounded native provider selection duration.
+  tool_selection_outcome: Content-free selection branch outcome.
+capture_policy: metadata_only
+evaluators:
+  - tool_selection_quality
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id]
+  prohibited: [prompt, response, arguments, query, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

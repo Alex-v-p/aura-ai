@@ -760,6 +760,54 @@ describe('ConversationStore', () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(recoveryStore.selected().currentRun?.status).toBe('running');
   });
+  it('hydrates completed tool activity from the authorized replay stream after a fresh load', async () => {
+    const now = new Date().toISOString();
+    const run: Run = { id: 'run-completed-tools', conversationId: 'conversation-completed-tools', userMessageId: 'user-completed-tools', assistantMessageId: null, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const detail: ConversationDetail = { ...summary(run.conversationId), currentRun: null, messages: [], recentRuns: [run] };
+    let replayCalls = 0;
+    const replayApi = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run], (id, _last, onEvent) => {
+      replayCalls += 1;
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-pending', sequence: 1, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'replay-call', toolId: 'memory.search', toolVersion: 1, status: 'pending' } });
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-completed', sequence: 2, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'replay-call', toolId: 'memory.search', toolVersion: 1, status: 'completed', resultCount: 1 } });
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-terminal', sequence: 3, eventType: 'run.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } });
+      });
+      return { close: () => undefined };
+    });
+    const freshStore = new ConversationStore(replayApi);
+
+    await vi.waitFor(() => expect(freshStore.toolActivitiesForRun(run.id)).toHaveLength(2));
+
+    expect(replayCalls).toBe(1);
+    expect(freshStore.toolActivitiesForRun(run.id).map((activity) => activity.status)).toEqual(['pending', 'completed']);
+    expect(freshStore.toolActivitiesForRun(run.id)[1]?.resultCount).toBe(1);
+  });
+  it('deduplicates tool lifecycle events when a live stream resets its cursor', async () => {
+    vi.useFakeTimers();
+    const now = new Date().toISOString();
+    const run: Run = { id: 'run-tool-cursor-reset', conversationId: 'conversation-tool-cursor-reset', userMessageId: 'user-tool-cursor-reset', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const detail: ConversationDetail = { ...summary(run.conversationId), currentRun: run, messages: [], recentRuns: [run] };
+    let streamAttempts = 0;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run], (id, _last, onEvent, onError) => {
+      streamAttempts += 1;
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'tool-cursor-pending', sequence: 1, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'cursor-call', toolId: 'memory.search', toolVersion: 1, status: 'pending' } }, 'tool-cursor-1');
+        if (streamAttempts === 1) onError({ message: 'The event cursor has expired.', status: 410, retryable: true });
+        else {
+          onEvent({ schemaVersion: 1, eventId: 'tool-cursor-executing', sequence: 2, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'cursor-call', toolId: 'memory.search', toolVersion: 1, status: 'executing' } }, 'tool-cursor-2');
+        }
+      });
+      return { close: () => undefined };
+    });
+    const cursorStore = new ConversationStore(api);
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.runAllTicks();
+
+    expect(streamAttempts).toBe(2);
+    expect(cursorStore.toolActivitiesForRun(run.id).map((activity) => activity.status)).toEqual(['pending', 'executing']);
+    vi.useRealTimers();
+  });
   it('reconciles and resumes an active run after a multi-second API and stream outage', async () => {
     vi.useFakeTimers();
     const now = new Date().toISOString();

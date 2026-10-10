@@ -1,0 +1,40 @@
+component:
+  id: aura.runtime.tool_execution
+  version: 1.0.0
+  owner: runtime.tools
+  category: execution
+input:
+  schema: governed-tool-request-v1
+  replayable: false
+  replay_reason: Tool execution accesses private owner-scoped memory and provider state.
+output:
+  schema: metadata-only-tool-status-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.runtime.policy_evaluation
+  - aura.knowledge.memory_retrieval
+metrics:
+  - tool_execution_duration_ms
+  - tool_execution_outcome
+  - tool_timeout_count
+metric_semantics:
+  tool_execution_duration_ms: Bounded tool handler duration.
+  tool_execution_outcome: Content-free execution outcome.
+  tool_timeout_count: Bounded execution timeout count.
+capture_policy: metadata_only
+evaluators:
+  - tool_execution_completion
+  - memory_scope_authorization
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id]
+  prohibited: [prompt, response, arguments, query, content, result, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

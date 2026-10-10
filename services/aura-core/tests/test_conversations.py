@@ -1,9 +1,11 @@
+import asyncio
+from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from aura_core.domains.execution.runs.public import RunCoordinator, RunStatus
+from aura_core.domains.execution.runs.public import RunClaimLost, RunCoordinator, RunStatus
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     ConversationStore,
@@ -11,9 +13,18 @@ from aura_core.domains.interaction.conversations.public import (
     ModelUnavailable,
     VersionConflict,
 )
+from aura_core.platform.outbox import InMemoryOutbox
 from aura_core.platform.telemetry import MetadataMetrics, new_span_id
 from aura_core.providers.models.ollama.fake import FakeChatModel
 from aura_core.runtime.models.capacity import estimate_tokens
+from aura_core.runtime.models.ports import (
+    ChatMessage,
+    ModelDescriptor,
+    ModelStreamCompleted,
+    ModelTextDelta,
+    ModelToolCall,
+)
+from aura_core.runtime.streaming.publisher import EventPublisher
 
 
 class _FakeMemoryRecall:
@@ -66,6 +77,43 @@ class _FakeMemoryRecall:
         )
 
 
+class _NativeToolProvider:
+    def __init__(
+        self,
+        *,
+        tool_capable: bool = True,
+        selection_events: Sequence[object] | None = None,
+    ) -> None:
+        self.tool_messages: list[object] = []
+        self.synthesis_messages: list[ChatMessage] = []
+        self.tool_capable = tool_capable
+        self.selection_events = tuple(
+            selection_events
+            if selection_events is not None
+            else (ModelToolCall("memory.search", {"query": "tea"}), ModelStreamCompleted())
+        )
+
+    async def list_models(self) -> tuple[ModelDescriptor, ...]:
+        capabilities = ("chat", "tool_calling") if self.tool_capable else ("chat",)
+        return (ModelDescriptor("tool-model", "Tool model", "fake", capabilities),)
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        return model_id in (None, "tool-model")
+
+    async def stream_chat_with_tools(
+        self, model_id: str, messages: object, tools: object
+    ) -> object:
+        del model_id, messages, tools
+        self.tool_messages.append("selection")
+        for event in self.selection_events:
+            yield event
+
+    async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+        del model_id
+        self.synthesis_messages = list(messages)
+        yield "The owner prefers tea."
+
+
 @pytest.mark.asyncio
 async def test_create_is_atomic_and_idempotent() -> None:
     provider = FakeChatModel()
@@ -82,6 +130,401 @@ async def test_create_is_atomic_and_idempotent() -> None:
     assert first[0].title == "Hello Aura"
     assert len(first[0].messages) == 1
     assert first[2].status == RunStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_native_tool_run_executes_granted_search_and_replays_safe_events() -> None:
+    provider = _NativeToolProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "What do I prefer?", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    searches: list[str] = []
+    budgets: list[int] = []
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(
+        _conversation: object, _run: object, query: str, budget: int, *_args: object
+    ) -> list[dict[str, str]]:
+        searches.append(query)
+        budgets.append(budget)
+        return [{"memoryId": "m1", "content": "The owner prefers tea.", "scope": "user"}]
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox(), metrics)
+
+    await coordinator.execute(run.id, provider)
+
+    completed = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert completed.status is RunStatus.COMPLETED
+    assert searches == ["tea"]
+    assert budgets == [409]
+    assert any(
+        message.content.startswith("[Untrusted memory.search evidence")
+        for message in provider.synthesis_messages
+    ), [message.content for message in provider.synthesis_messages]
+    events = await coordinator.publisher.history(run.id)
+    tool_events = [event for event in events if event.event_type == "tool.status"]
+    assert [event.data["status"] for event in tool_events] == ["pending", "executing", "completed"]
+    assert all(
+        not {"query", "arguments", "content", "result", "prompt", "response"}
+        & set(event.data)
+        for event in tool_events
+    )
+    measurements = metrics.snapshot()
+    assert any(item.metric == "tool_selection_duration_ms" for item in measurements), [
+        (item.component_id, item.metric, item.value) for item in measurements
+    ]
+    selection = next(
+        item for item in measurements if item.metric == "tool_selection_duration_ms"
+    )
+    execution = next(
+        item for item in measurements if item.metric == "tool_execution_duration_ms"
+    )
+    policy = next(item for item in measurements if item.metric == "tool_policy_decision")
+    assert selection.value > 0
+    assert execution.value > 0
+    assert dict(selection.trace_attributes)["run_id"] == str(run.id)
+    assert dict(execution.trace_attributes)["run_id"] == str(run.id)
+    assert dict(policy.trace_attributes)["run_id"] == str(run.id)
+    assert dict(policy.trace_attributes)["policy_revision_id"] == str(run.tool_policy_revision_id)
+    assert dict(selection.dimensions)["outcome"] in {"selected", "text", "failed"}
+    assert dict(policy.dimensions)["outcome"] in {"allowed", "denied", "failed"}
+    assert dict(execution.dimensions)["outcome"] in {"completed", "failed", "denied"}
+
+
+@pytest.mark.asyncio
+async def test_tool_capability_unavailable_falls_back_to_text_with_safe_failure() -> None:
+    provider = _NativeToolProvider(tool_capable=False)
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Answer directly.", "tool-model", models, str(uuid4())
+    )
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+
+    await coordinator.execute(run.id, provider)
+
+    completed = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert completed.status is RunStatus.COMPLETED
+    assert provider.tool_messages == []
+    tool_events = [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert len(tool_events) == 1
+    assert tool_events[0].data["status"] == "failed"
+    assert tool_events[0].data["errorClass"] == "capability"
+    assert "query" not in tool_events[0].data
+
+
+@pytest.mark.asyncio
+async def test_failing_tool_search_publishes_failed_without_claiming_completion() -> None:
+    provider = _NativeToolProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Search safely.", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        raise RuntimeError("recall backend unavailable")
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.COMPLETED
+    statuses = [
+        event.data["status"]
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert statuses == ["pending", "executing", "failed"]
+    assert "completed" not in statuses
+    assert any(
+        "memory search was unavailable" in item.content
+        for item in provider.synthesis_messages
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection_events",
+    [
+        (
+            ModelTextDelta("partial"),
+            ModelToolCall("memory.search", {"query": "tea"}),
+            ModelStreamCompleted(),
+        ),
+        (
+            ModelToolCall("memory.search", {"query": "tea"}),
+            ModelToolCall("memory.search", {"query": "coffee"}),
+            ModelStreamCompleted(),
+        ),
+    ],
+)
+async def test_malformed_native_selection_uses_content_free_synthesis_without_execution(
+    selection_events: Sequence[object],
+) -> None:
+    provider = _NativeToolProvider(selection_events=selection_events)
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer",
+        "owner",
+        "Do not leak malformed tool input.",
+        "tool-model",
+        models,
+        str(uuid4()),
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    searches: list[str] = []
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*args: object) -> list[object]:
+        searches.append(str(args[2]))
+        return [{"memoryId": "unexpected", "content": "must not execute", "scope": "user"}]
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.COMPLETED
+    assert searches == []
+    assert any(
+        "memory search was unavailable" in item.content
+        for item in provider.synthesis_messages
+    )
+    tool_events = [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert tool_events
+    assert tool_events[-1].data["status"] == "failed"
+    assert tool_events[-1].data["errorClass"] == "provider_protocol"
+
+
+@pytest.mark.asyncio
+async def test_native_selection_eof_without_completion_fails_closed_before_execution() -> None:
+    provider = _NativeToolProvider(
+        selection_events=(ModelToolCall("memory.search", {"query": "tea"}),)
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Treat EOF as malformed.", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    searches: list[str] = []
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*args: object) -> list[object]:
+        searches.append(str(args[2]))
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+
+    await coordinator.execute(run.id, provider)
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.COMPLETED
+    assert searches == []
+    assert any(
+        "memory search was unavailable" in item.content
+        for item in provider.synthesis_messages
+    )
+    tool_events = [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert tool_events[-1].data["status"] == "failed"
+    assert tool_events[-1].data["errorClass"] == "provider_protocol"
+
+
+@pytest.mark.asyncio
+async def test_global_run_timeout_during_tool_attempt_is_not_user_cancellation() -> None:
+    provider = _NativeToolProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Timeout the search.", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    entered = asyncio.Event()
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        entered.set()
+        await asyncio.sleep(60)
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(
+        store,
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics,
+        timeout_seconds=0.01,
+    )
+
+    await coordinator.execute(run.id, provider)
+
+    assert entered.is_set()
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.FAILED
+    assert loaded.error is not None
+    assert loaded.error.code == "RUN_TIMEOUT"
+    tool_events = [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    failed_events = [event for event in tool_events if event.data["status"] == "failed"]
+    assert failed_events
+    assert failed_events[-1].data.get("errorClass") == "timeout"
+    assert failed_events[-1].data.get("errorCode") == "TOOL_TIMEOUT"
+    measurements = metrics.snapshot()
+    execution = next(item for item in measurements if item.metric == "tool_execution_duration_ms")
+    assert execution.value > 0
+    assert dict(execution.dimensions)["outcome"] == "failed"
+    timeout_count = next(item for item in measurements if item.metric == "tool_timeout_count")
+    assert timeout_count.value == 1
+    assert all(event.data.get("errorClass") != "cancellation" for event in failed_events)
+
+
+@pytest.mark.asyncio
+async def test_tool_counter_claim_loss_prevents_execution_and_synthesis() -> None:
+    provider = _NativeToolProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    _, _, run = await store.create(
+        "https://issuer", "owner", "Claim the tool budget.", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    searches: list[str] = []
+    claimed: list[tuple[UUID, UUID]] = []
+
+    async def increment_tool_calls(run_id: UUID, attempt_id: UUID) -> int:
+        claimed.append((run_id, attempt_id))
+        raise RunClaimLost
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*args: object) -> list[object]:
+        searches.append(str(args[2]))
+        return []
+
+    store.increment_tool_calls = increment_tool_calls  # type: ignore[attr-defined]
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+
+    await coordinator.execute(run.id, provider)
+
+    assert claimed
+    assert searches == []
+    assert provider.synthesis_messages == []
+    assert not [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_tool_attempt_publishes_failed_status_before_cancelled() -> None:
+    provider = _NativeToolProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer", "owner", "Cancel the search.", "tool-model", models, str(uuid4())
+    )
+    tool_policy_revision_id = store.agents.resolve_revision_unchecked(
+        run.agent_revision_id
+    ).tool_policy_revision_id
+    assert tool_policy_revision_id is not None
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def tool_policy_for_run(_run: object) -> object:
+        return store.agents.get_tool_policy(tool_policy_revision_id)
+
+    async def recall_for_tool(*_args: object) -> list[object]:
+        entered.set()
+        await release.wait()
+        return []
+
+    store.tool_policy_for_run = tool_policy_for_run  # type: ignore[attr-defined]
+    store.recall_for_tool = recall_for_tool  # type: ignore[attr-defined]
+    coordinator = RunCoordinator(store, EventPublisher(), InMemoryOutbox())
+    task = asyncio.create_task(coordinator.execute(run.id, provider))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    await coordinator.cancel(run.id, "owner", "https://issuer", str(uuid4()))
+    # Let the coordinator's stop watcher observe the persisted request before
+    # the tool finishes; this models the user-cancel handshake rather than a
+    # task-level cancellation.
+    await asyncio.sleep(coordinator.cancellation_poll_seconds * 2)
+    release.set()
+    await task
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.CANCELED
+    tool_events = [
+        event
+        for event in await coordinator.publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert [event.data["status"] for event in tool_events] == ["pending", "executing", "failed"]
+    assert tool_events[-1].data["errorClass"] == "cancellation"
 
 
 @pytest.mark.asyncio
