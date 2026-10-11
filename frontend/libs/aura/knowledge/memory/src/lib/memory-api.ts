@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { AuraApiClient, type AuraOperationDescriptor, type AuraOperationId, type AuraOperationInput, type AuraOperationResponse, type MemoryScope, type SearchMemoriesRequest } from '@aura/aura-api-client';
 import type { MemoryApi, MemoryFilters } from './memory-models';
 import type { MemoryCandidateEdit } from '@aura/aura-api-client';
+import { CreateRequestIdempotency, publicMemoryError } from './memory-api-support';
 
 /** A safe, status-aware transport error used for expected first-run states. */
 export class MemoryApiError extends Error {
@@ -19,6 +20,11 @@ function key(): string { return typeof crypto !== 'undefined' && 'randomUUID' in
 export class AuraMemoryApi implements MemoryApi {
   private readonly client = new AuraApiClient(new GeneratedAuraTransport());
   private csrf = '';
+  private sessionEpoch = 0;
+  private readonly createIdempotency = new CreateRequestIdempotency();
+
+  clearSession(): void { this.sessionEpoch += 1; this.csrf = ''; this.createIdempotency.clear(); }
+  cancelCreateDraft(): void { this.createIdempotency.clear(); }
 
   async listMemories(cursor?: string, filters: MemoryFilters = {}) {
     await this.ensureSession();
@@ -27,7 +33,7 @@ export class AuraMemoryApi implements MemoryApi {
     return this.client.execute('listMemories', { ...emptyInput(), query: { ...(cursor ? { cursor } : {}), limit: 30, ...queryFilters } });
   }
   async getMemory(id: string, scope?: MemoryScope) { await this.ensureSession(); return this.client.execute('getMemory', { ...emptyInput(), path: { memory_id: id }, query: scopeQuery(scope) }); }
-  async createMemory(body: Parameters<MemoryApi['createMemory']>[0]) { await this.ensureSession(); return this.client.execute('createMemory', { ...emptyInput(), headers: this.headers(), body }); }
+  async createMemory(body: Parameters<MemoryApi['createMemory']>[0]) { await this.ensureSession(); const result = await this.client.execute('createMemory', { ...emptyInput(), headers: this.headers(this.createIdempotency.next(body)), body }); this.createIdempotency.clear(); return result; }
   async correctMemory(id: string, scope: MemoryScope, body: Parameters<MemoryApi['correctMemory']>[2]) { await this.ensureSession(); return this.client.execute('correctMemory', { ...emptyInput(), path: { memory_id: id }, query: scopeQuery(scope), headers: this.headers(), body }); }
   async updateStatus(id: string, status: Parameters<MemoryApi['updateStatus']>[1], expectedVersion: number, relatedMemoryId: string | null = null, scope?: MemoryScope) { await this.ensureSession(); return this.client.execute('updateMemoryStatus', { ...emptyInput(), path: { memory_id: id }, query: scopeQuery(scope), headers: this.headers(), body: { status, expectedVersion, relatedMemoryId } }); }
   async updatePin(id: string, pinned: boolean, expectedVersion: number, scope?: MemoryScope) { await this.ensureSession(); return this.client.execute('updateMemoryPin', { ...emptyInput(), path: { memory_id: id }, query: scopeQuery(scope), headers: this.headers(), body: { pinned, expectedVersion } }); }
@@ -45,8 +51,8 @@ export class AuraMemoryApi implements MemoryApi {
   async createAgentPolicy(agentProfileId: string, body: Parameters<MemoryApi['createAgentPolicy']>[1]) { await this.ensureSession(); return this.client.execute('createAgentMemoryPolicy', { ...emptyInput(), path: { agent_profile_id: agentProfileId }, headers: this.headers(), body }); }
   async attachAgentPolicy(agentProfileId: string, policyRevisionId: string, expectedAgentVersion: number) { await this.ensureSession(); return this.client.execute('attachAgentMemoryPolicy', { ...emptyInput(), path: { agent_profile_id: agentProfileId, policy_revision_id: policyRevisionId }, headers: this.headers(), body: { expectedAgentVersion } }); }
 
-  private async ensureSession(): Promise<void> { if (this.csrf) return; const session = await this.client.execute('getSession', emptyInput()); this.csrf = session.csrfToken; }
-  private headers(): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } { return { 'X-CSRF-Token': this.csrf, 'Idempotency-Key': key() }; }
+  private async ensureSession(): Promise<void> { if (this.csrf) return; const epoch = this.sessionEpoch; const session = await this.client.execute('getSession', emptyInput()); if (epoch !== this.sessionEpoch) throw new MemoryApiError(401, 'Session expired.'); this.csrf = session.csrfToken; }
+  private headers(idempotencyKey = key()): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } { return { 'X-CSRF-Token': this.csrf, 'Idempotency-Key': idempotencyKey }; }
 }
 
 function scopeQuery(scope?: MemoryScope): Record<string, string> { return scope?.type === 'agent' ? { scopeType: scope.type, agentProfileId: scope.agentProfileId } : scope ? { scopeType: scope.type } : {}; }
@@ -59,7 +65,7 @@ class GeneratedAuraTransport {
     const query = new URLSearchParams();
     for (const [name, value] of Object.entries(request.query)) if (value !== undefined && value !== null && value !== '') query.set(name, String(value));
     const response = await fetch(`${path}${query.size ? `?${query.toString()}` : ''}`, { method: descriptor.method, credentials: 'include', headers: { Accept: 'application/json', ...(request.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...request.headers }, body: request.body === undefined ? undefined : JSON.stringify(request.body) });
-    if (!response.ok) { let detail = ''; try { const body = await response.json() as { detail?: string; message?: string }; detail = body.message ?? body.detail ?? ''; } catch { /* safe fallback */ } throw new MemoryApiError(response.status, detail || (response.status === 401 ? 'Sign in to manage memory.' : 'We could not complete that memory request.')); }
+    if (!response.ok) throw new MemoryApiError(response.status, publicMemoryError(response.status));
     return response.status === 204 ? undefined as AuraOperationResponse<K> : await response.json() as AuraOperationResponse<K>;
   }
 }

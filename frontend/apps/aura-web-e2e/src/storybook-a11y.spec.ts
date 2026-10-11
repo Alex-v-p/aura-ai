@@ -4,7 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 const storybookBaseUrl = (process.env.AURA_WEB_E2E_STORYBOOK_URL ?? `http://127.0.0.1:${process.env.AURA_WEB_E2E_STORYBOOK_PORT ?? '6300'}`).replace(/\/$/, '');
 const stories = ['empty', 'loading', 'working', 'tool-activity', 'interrupted', 'recoverable-error', 'completed', 'archived-recovery', 'run-inspector'] as const;
 const themes = ['light', 'dark'] as const;
-const memoryStories = ['records', 'first-run-setup', 'review-queue', 'empty-records', 'filtered-empty-records', 'configured-settings', 'reindex-settings', 'settings-error', 'mobile-dark-records', 'agent-policy-automatic', 'agent-policy-off'] as const;
+const memoryStories = ['records', 'selected-record-detail', 'create-memory', 'first-run-setup', 'review-queue', 'empty-records', 'filtered-empty-records', 'configured-settings', 'reindex-settings', 'settings-error', 'mobile-dark-records', 'mobile-detail', 'agent-policy-automatic', 'agent-policy-off'] as const;
 const managementStories = ['agent-library', 'agent-builder', 'persona-library', 'persona-builder', 'persona-detail'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;

@@ -32,6 +32,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .memory-item strong { font-size: .93rem; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
 .memory-item-top, .detail-meta, .detail-actions, .form-actions, .form-help, .policy-row > div, .generation-row, .relation-row { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
 .memory-item-meta, small, .form-help { color: var(--text-muted); font-size: .76rem; }
+.memory-item-meta { line-height: 1.4; }
 .kind-pill, .status-pill { border-radius: 999px; display: inline-flex; font-size: .68rem; font-weight: 800; letter-spacing: .02em; padding: .24rem .5rem; text-transform: capitalize; }
 .kind-pill { background: var(--info-surface); color: var(--info-text); }
 .status-pill { background: var(--success-surface); color: var(--success-text); }
@@ -81,6 +82,8 @@ dt { color: var(--text-muted); } dd { margin: 0; text-align: right; }
 .empty-state p { margin-bottom: 0; }
 .empty-detail { display: grid; min-height: 18rem; place-content: center; }
 .empty-detail > span, .setup-icon { color: var(--accent); font-size: 2rem; }
+.setup-icon-error { color: var(--danger, #a33); }
+.inline-button { border: 0; background: transparent; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; font-weight: 600; padding: 0 0.25rem; }
 .notice { align-items: center; border-radius: .7rem; display: flex; flex-wrap: wrap; gap: .65rem; margin: 0 0 1rem; padding: .8rem 1rem; }
 .notice span { color: inherit; flex: 1 1 16rem; }
 .notice-error { background: var(--danger-surface); border: 1px solid var(--danger-text); color: var(--danger-text); }
@@ -121,11 +124,26 @@ dt { color: var(--text-muted); } dd { margin: 0; text-align: right; }
 .setup-points strong { color: var(--text); }
 .setup-form { display: grid; gap: .85rem; }
 .setup-form small { line-height: 1.4; }
+.advanced-disclosure { border-top: 1px solid var(--border); margin-top: .85rem; padding-top: .85rem; }
+.advanced-disclosure summary { color: var(--text); cursor: pointer; font-weight: 750; min-height: 2.5rem; padding: .55rem 0; }
+.advanced-disclosure summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.advanced-disclosure[open] summary { color: var(--accent); margin-bottom: .75rem; }
+.technical-disclosure { margin-top: 1rem; }
+.clear-filters { background: transparent; border: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: .78rem; font-weight: 750; min-height: 2.35rem; padding: .45rem .65rem; text-decoration: underline; }
+.clear-filters:hover { color: var(--accent-hover); }
+.mobile-back-link { color: var(--accent); display: none; font-size: .85rem; font-weight: 750; margin-bottom: 1rem; text-decoration: none; }
+.mobile-back-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.secondary-actions { position: relative; }
+.secondary-actions summary { align-items: center; border: 1px solid var(--control-border); border-radius: .6rem; cursor: pointer; display: inline-flex; font-size: .82rem; font-weight: 750; min-height: 2.5rem; padding: .55rem .9rem; }
+.secondary-actions summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.action-menu { background: var(--surface-raised); border: 1px solid var(--control-border); border-radius: .7rem; box-shadow: 0 .75rem 2rem rgb(30 15 25 / .12); display: grid; gap: .4rem; min-width: 10rem; padding: .5rem; position: absolute; right: 0; top: calc(100% + .4rem); z-index: 2; }
+.action-menu .secondary-button { width: 100%; }
+.detail-copy { font-size: 1.05rem; line-height: 1.6; margin: 0 0 1rem; }
 .loading-card, .empty-settings { align-items: center; grid-template-columns: auto 1fr; }
 .loading-mark { animation: pulse 1.2s ease-in-out infinite; background: var(--accent); border-radius: 999px; display: block; height: .75rem; width: .75rem; }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.75); } }
 code { background: var(--accent-soft); border-radius: .3rem; padding: .15rem .3rem; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
-@media (max-width: 980px) { .memory-heading { align-items: flex-start; flex-direction: column; } .memory-heading-actions { align-items: stretch; justify-items: stretch; width: 100%; } .memory-layout { grid-template-columns: minmax(17rem, 24rem) minmax(0, 1fr); } .setup-card { grid-template-columns: auto 1fr; } .setup-form { grid-column: 1 / -1; } }
-@media (max-width: 760px) { .memory-page { padding: 1.25rem .9rem 3rem; } .memory-layout { grid-template-columns: 1fr; } .memory-detail-panel:not(.has-selection) { display: none; } .memory-detail-panel { min-height: 20rem; } .detail-grid, .settings-grid { grid-template-columns: 1fr; } .inventory-card { margin-top: 0; } .first-use-banner { align-items: flex-start; flex-wrap: wrap; } .first-use-banner .primary-button { width: 100%; } }
+@media (max-width: 980px) { .memory-heading { align-items: flex-start; flex-direction: column; } .memory-heading-actions { align-items: stretch; justify-items: stretch; width: 100%; } .memory-layout { grid-template-columns: 1fr; } .memory-page.detail-open .memory-list-panel { display: none; } .memory-detail-panel:not(.has-selection) { display: none; } .memory-detail-panel { min-height: 20rem; } .mobile-back-link { display: inline-flex; } .setup-card { grid-template-columns: auto 1fr; } .setup-form { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .memory-page { padding: 1.25rem .9rem 3rem; } .detail-grid, .settings-grid { grid-template-columns: 1fr; } .inventory-card { margin-top: 0; } .first-use-banner { align-items: flex-start; flex-wrap: wrap; } .first-use-banner .primary-button { width: 100%; } }
 @media (max-width: 520px) { .quick-filters, .advanced-filters, .form-grid { grid-template-columns: 1fr; } .filter-toggle { grid-column: auto; } .detail-header { flex-direction: column; } .detail-header > button { width: 100%; } .memory-tabs { width: 100%; } .memory-tabs a { flex: 1; text-align: center; } .setup-card { grid-template-columns: 1fr; } .setup-icon { font-size: 1.6rem; } .setup-form { grid-column: auto; } .policy-row { grid-template-columns: 1fr; } .policy-row button { grid-column: 1; grid-row: auto; justify-self: start; } }

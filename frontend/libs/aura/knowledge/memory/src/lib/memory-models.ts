@@ -27,6 +27,8 @@ export function isActionableReviewCandidate(candidate: import('@aura/aura-api-cl
 }
 
 export interface MemoryApi {
+  clearSession?(): void;
+  cancelCreateDraft?(): void;
   listMemories(cursor?: string, filters?: MemoryFilters): Promise<MemoryPage>;
   getMemory(id: string, scope?: MemoryScope): Promise<MemoryDetail>;
   createMemory(input: { content: string; kind: MemoryKind; scope: MemoryScope; confidence: number; importance: number; halfLifeDays: number; observedAt?: string | null; validFrom?: string | null; validTo?: string | null }): Promise<MemoryDetail>;

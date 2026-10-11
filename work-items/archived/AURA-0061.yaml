@@ -1,0 +1,168 @@
+id: AURA-0061
+title: Redesign Memory as a human-readable knowledge workspace
+status: integrated
+change_class: feature
+intent: >
+  Recompose Aura Web Memory into a calm, responsive "What Aura knows"
+  workspace with readable records, route-backed contextual detail, guided
+  correction and lifecycle controls, an explicit review queue, approachable
+  first-use settings, and plain-language Agent memory policy while preserving
+  all existing Core contracts, ownership scopes, immutable history, and
+  privacy boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/reference-research.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - Owner-approved Memory direction in Aura Sidebar and Management Surfaces Redesign
+    - Existing Aura v1 Memory APIs are sufficient; this work item introduces no contract or persistence change
+    - Desktop record detail is a route-backed contextual inspector and mobile detail is the full-screen /memory/:id representation
+    - Technical identifiers, embedding metadata, confidence, importance, retention, and provider diagnostics use progressive disclosure
+    - Existing immutable revision, provenance, lifecycle, scope, and hard-purge semantics remain unchanged
+    - MemoryStore joins the existing application-composed management-session reset port so accepted-session changes clear private Memory state and cached CSRF without introducing a reverse dependency on Conversations
+    - Manual memory creation reuses one client idempotency key after an uncertain failure for the same retained draft and rotates it only after known success, cancellation, draft change, or session reset
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - MEM-001
+  - MEM-002
+  - MEM-003
+  - MEM-004
+  - MEM-005
+  - MEM-011
+  - MEM-012
+  - AUI-001
+  - AUI-004
+  - AUI-005
+  - AUI-008
+ownership_zones:
+  - aura-web.knowledge.memory
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0061.yaml
+  - work-items/archived/AURA-0061.yaml
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/memory-product.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Memory content, provenance, evidence, review candidates, edits, and policy drafts remain owner-authorized and must not enter browser durable storage, logs, telemetry, URLs, or unrelated feature state.
+    - Route-backed detail preserves explicit user or Agent scope and must not broaden the API's safer authorization defaults.
+    - Search and filters must preserve current scope enforcement and must not expose Agent-private records outside authorized results.
+    - Correct, approve, edit-and-approve, reject, dispute, supersede, archive, disable, reactivate, and purge retain their existing deterministic API semantics and conflict handling.
+    - Recoverable failures retain user-authored form state in memory and sanitize provider and server diagnostics.
+    - Hard purge remains a distinct focus-managed destructive confirmation and is never visually conflated with ordinary lifecycle actions.
+  data_classes:
+    - private_memory_content
+    - private_memory_provenance_and_evidence
+    - private_memory_review_candidates
+    - owner_scoped_agent_memory_policy
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The collection is headed "What Aura knows" and prioritizes readable content, scope, lifecycle state, and recency over confidence, identifiers, embedding, or provider detail.
+  - Search is the dominant collection control; scope and lifecycle stay close at hand while kind, provenance, confidence, date, Agent, and historical filters are disclosed under Advanced with a clear-active-filter affordance and safe reset path.
+  - Wide desktop presents a readable record list beside a contextual inspector; tablet detail overlays or occupies a non-squeezed contextual surface; mobile collection selection navigates to a focused full-screen /memory/:id detail with a clear return path and no horizontal scrolling.
+  - Direct /memory/:id visits load the authorized record safely, preserve scope query context, communicate loading, authentication, permission, not-found, and recoverable failure states, and never briefly expose stale detail from another record or principal.
+  - Record detail groups Current memory, Why Aura knows this, Lifecycle, and History; Correct is the primary action while dispute, supersede, archive, disable or reactivate, pinning, technical metadata, and purge are secondary progressive disclosures.
+  - Correction retains entered content, reason, and advanced values after recoverable failures; current lifecycle and version conflicts are explained without presenting an unknown outcome as success.
+  - Manual creation starts with Content and Scope; kind, confidence, importance, retention, and other expert settings appear under Advanced; cancellation is safe and a failed save retains the draft.
+  - The review queue displays a visible pending count and readable source, proposed content, scope, sensitivity, and confidence context before the distinct Approve, Edit and approve, and Reject actions.
+  - Review actions remain unavailable for malformed or non-actionable provider diagnostics, preserve edited inputs on failure, and communicate the terminal decision without retaining an actionable stale row.
+  - Memory settings prioritize initial setup, current extraction and embedding model health, reindex progress, and plain-language recovery; provider inventory, model digests, generations, dimensions, and other diagnostics live under Advanced.
+  - Agent memory policy explains Off and Automatic recall, readable scopes, and sharing behavior first; thresholds, limits, context budget, and fallback Agent identifiers live under Advanced while immutable revision and explicit attachment behavior remain intact.
+  - Loading, empty, filtered-empty, first-use, authentication-required, permission-denied, validation, conflict, offline/provider, success, and destructive confirmation states use semantic text and structure in addition to color.
+  - All new controls have screen-reader names and visible keyboard focus; drawers/dialogs manage and restore focus; status announcements are live where appropriate; ordinary motion is 120-200ms and reduced motion is respected.
+  - Light and dark stories cover collection, selected detail, mobile detail, creation, review queue, settings health and failure, Agent policy, and key empty/loading/error states using only approved semantic tokens.
+  - Automated validation covers 1440x900, iPad Mini, and iPhone 13-equivalent widths, keyboard operation, focus return, 200 percent zoom/reflow, non-color state communication, and axe checks for landing, detail, forms, disclosures, review, settings, and destructive confirmation.
+  - Existing Memory API requests, immutable revisions, owner and Agent scopes, lifecycle actions, review decisions, settings updates, model selection rules, and Agent policy creation/attachment remain behaviorally backward compatible.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0061.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0061.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0061.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0061.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0061.yaml
+  - pnpm --dir frontend exec nx test aura-memory
+  - pnpm --dir frontend exec nx lint aura-memory
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/memory-product.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

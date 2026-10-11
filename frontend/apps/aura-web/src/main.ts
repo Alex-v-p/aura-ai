@@ -5,6 +5,7 @@ import { provideRouter } from '@angular/router';
 import { AURA_MANAGEMENT_SESSION, type ManagementSessionPort } from '@aura/aura/interaction/conversations';
 import { AGENT_API, AgentStore, AuraAgentApi, ToolPolicyStore } from '@aura/aura/interaction/agents';
 import { PERSONA_API, AuraPersonaApi, PersonaStore } from '@aura/aura/interaction/personas';
+import { MemoryStore } from '@aura/aura/knowledge/memory';
 import { AppComponent } from './app/app.component';
 import { routes } from './app/app.routes';
 
@@ -17,7 +18,7 @@ bootstrapApplication(AppComponent, {
     {
       provide: AURA_MANAGEMENT_SESSION,
       useFactory: (): ManagementSessionPort => {
-        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore)];
+        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore)];
         let resetting = false;
         return {
           resetSessionState: (): void => {
