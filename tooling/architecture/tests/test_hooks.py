@@ -217,23 +217,32 @@ class HookTests(unittest.TestCase):
             "deny", json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
         )
 
-    def test_read_only_role_is_denied(self):
-        result = run_hook(
-            "pre-tool-scope-guard.py",
-            {
-                "tool_name": "apply_patch",
-                "tool_input": {
-                    "command": (
-                        "*** Begin Patch\n*** Add File: docs/development/x.md\n+x\n*** End Patch"
-                    )
-                },
-            },
-            AURA_WORK_ITEM="AURA-0001",
-            AURA_AGENT_ROLE="general_reviewer",
-        )
-        self.assertEqual(
-            "deny", json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
-        )
+    def test_read_only_roles_are_denied_for_patch_and_detected_bash_writes(self):
+        cases = [
+            (
+                "general_reviewer",
+                "apply_patch",
+                "*** Begin Patch\n*** Add File: docs/development/x.md\n+x\n*** End Patch",
+            ),
+            (
+                "aura_ux_ui_reviewer",
+                "apply_patch",
+                "*** Begin Patch\n*** Add File: docs/design/x.md\n+x\n*** End Patch",
+            ),
+            ("aura_ux_ui_reviewer", "Bash", "touch docs/design/x.md"),
+        ]
+        for role, tool_name, command in cases:
+            with self.subTest(role=role, tool_name=tool_name):
+                result = run_hook(
+                    "pre-tool-scope-guard.py",
+                    {"tool_name": tool_name, "tool_input": {"command": command}},
+                    AURA_WORK_ITEM="AURA-0001",
+                    AURA_AGENT_ROLE=role,
+                )
+                self.assertEqual(
+                    "deny",
+                    json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"],
+                )
 
     def test_critical_path_requires_authorization(self):
         payload = {
