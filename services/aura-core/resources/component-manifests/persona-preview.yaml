@@ -1,0 +1,45 @@
+component:
+  id: aura.interaction.persona_preview
+  version: 1.0.0
+  owner: interaction.personas
+  category: preview
+input:
+  schema: persona-preview-request-v1
+  replayable: false
+  replay_reason: Preview prompts and model output are private ephemeral content and are never captured.
+output:
+  schema: persona-preview-response-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - model_inventory
+  - model_provider
+  - identity_authorization
+  - transport_validation
+  - configuration_store
+  - application_validation
+  - application_unknown
+metrics:
+  - persona_preview_duration_ms
+  - persona_preview_outcome
+  - errors
+  - provider_errors
+metric_semantics:
+  persona_preview_duration_ms: Metadata-only bounded preview duration.
+  persona_preview_outcome: Metadata-only preview outcome classified by bounded error class.
+  errors: Metadata-only preview failures without content or provider payloads.
+  provider_errors: Provider and provider-timeout failures without provider payload details.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, model_id]
+  prohibited: [prompt, response, draft, output, owner, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

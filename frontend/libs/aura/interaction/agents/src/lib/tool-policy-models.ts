@@ -4,6 +4,7 @@ import type { AgentToolPolicy, ToolCatalog, ToolDescriptorSummary, ToolGrant } f
 export type { AgentToolPolicy, ToolDescriptorSummary, ToolGrant };
 
 export interface ToolPolicyApi {
+  clearSession?(): void;
   listCatalog(): Promise<ToolCatalog>;
   listPolicies(agentProfileId: string): Promise<{
     readonly items: ReadonlyArray<AgentToolPolicy>;
@@ -12,6 +13,18 @@ export interface ToolPolicyApi {
   }>;
   createPolicy(agentProfileId: string, grants: ReadonlyArray<ToolGrant>, expectedRevision: number): Promise<AgentToolPolicy>;
   attachPolicy(agentProfileId: string, policyRevisionId: string, expectedAgentVersion: number): Promise<void>;
+}
+
+export type ToolPolicySessionAuthorizationStatus = 401 | 403;
+
+/** Keep authorization recovery classification testable without importing the Angular store. */
+export function toolPolicyAuthorizationStatus(error: unknown): ToolPolicySessionAuthorizationStatus | null {
+  const status = (error as { status?: unknown })?.status;
+  return status === 401 || status === 403 ? status : null;
+}
+
+export function toolPolicyRecoveryNotice(status: ToolPolicySessionAuthorizationStatus): string {
+  return status === 401 ? 'Your session has expired. Sign in again to manage tool access.' : 'You do not have permission to manage tool access.';
 }
 
 export const TOOL_POLICY_API = new InjectionToken<ToolPolicyApi>('AURA_TOOL_POLICY_API');

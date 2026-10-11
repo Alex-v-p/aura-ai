@@ -1,4 +1,4 @@
-import { Inject, Injectable, computed, signal } from '@angular/core';
+import { Inject, Injectable, InjectionToken, Optional, computed, signal } from '@angular/core';
 import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
@@ -61,6 +61,22 @@ export interface ConversationPersonaAssignment { readonly id: string; readonly p
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
 export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly archivedAt: string | null; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; readonly toolActivities?: Readonly<Record<string, ReadonlyArray<ToolStatusData>>>; readonly toolActivityEventIds?: Readonly<Record<string, ReadonlyArray<string>>>; readonly toolActivityCursors?: Readonly<Record<string, string>>; }
 export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
+export type SessionAuthorizationStatus = 401 | 403;
+interface SessionGuard { readonly epoch: number; readonly fingerprint: string | null; }
+
+/**
+ * The conversation boundary owns accepted-session and logout lifecycle, while
+ * management stores own their private state.  Keeping this narrow port here
+ * preserves the one-way Conversations -> management dependency without
+ * importing feature implementations into this library (and keeps direct
+ * store construction useful in tests and Storybook).
+ */
+export interface ManagementSessionPort {
+  readonly resetSessionState: () => void;
+  readonly registerSessionResetHandler: (handler: ((status?: SessionAuthorizationStatus) => void) | null) => void;
+}
+
+export const AURA_MANAGEMENT_SESSION = new InjectionToken<ManagementSessionPort>('AURA_MANAGEMENT_SESSION');
 
 const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
 const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
@@ -147,8 +163,20 @@ export class ConversationStore {
   private loadGeneration = 0;
   private modelCatalogRequestGeneration = 0;
   private readonly api: ConversationApi;
+  private readonly managementSession: ManagementSessionPort | null;
+  private acceptedSessionFingerprint: string | null = null;
+  private sessionEpoch = 0;
+  private resettingManagementState = false;
 
-  constructor(@Inject(AuraConversationApi) api?: ConversationApi) { this.api = api ?? new AuraConversationApi(); void this.load(); }
+  constructor(@Inject(AuraConversationApi) api?: ConversationApi, @Optional() @Inject(AURA_MANAGEMENT_SESSION) managementSession?: ManagementSessionPort) {
+    this.api = api ?? new AuraConversationApi();
+    this.managementSession = managementSession ?? null;
+    this.managementSession?.registerSessionResetHandler((status) => {
+      if (status === 401 || status === 403) this.handleManagementAuthorizationFailure(status);
+      else this.resetManagementState();
+    });
+    void this.load();
+  }
 
   async load(): Promise<void> {
     const loadGeneration = ++this.loadGeneration;
@@ -157,6 +185,12 @@ export class ConversationStore {
     try {
       const session = await this.api.getSession();
       if (loadGeneration !== this.loadGeneration) return;
+      const fingerprint = this.sessionFingerprint(session);
+      if (this.acceptedSessionFingerprint !== fingerprint) {
+        this.sessionEpoch += 1;
+        if (this.acceptedSessionFingerprint !== null) this.resetManagementState();
+      }
+      this.acceptedSessionFingerprint = fingerprint;
       this.session.set(session); this.authState.set('authenticated');
       // Model discovery depends on the local provider and is deliberately
       // advisory. Start it after authentication, but let transcript hydration
@@ -177,7 +211,12 @@ export class ConversationStore {
     } catch (error: unknown) {
       const apiError = this.toApiError(error);
       if (loadGeneration !== this.loadGeneration) return;
-      if (apiError.status === 401 || apiError.status === 403) this.authState.set('unauthenticated');
+      if (apiError.status === 401 || apiError.status === 403) {
+        this.sessionEpoch += 1;
+        this.resetManagementState();
+        this.authState.set('unauthenticated');
+        if (apiError.status === 401) this.acceptedSessionFingerprint = null;
+      }
       else { this.authState.set('error'); this.setNotice(this.selectedId(), apiError.message); }
     } finally { if (loadGeneration === this.loadGeneration) this.loading.set(false); }
   }
@@ -197,7 +236,10 @@ export class ConversationStore {
       // provider outage, however, is recoverable and must not turn the whole
       // conversation surface into an error state.
       if (apiError.status === 401 || apiError.status === 403) {
+        this.sessionEpoch += 1;
+        this.resetManagementState();
         this.authState.set('unauthenticated');
+        if (apiError.status === 401) this.acceptedSessionFingerprint = null;
         return;
       }
       this.modelCatalogNotice.set('Model discovery is temporarily unavailable. Your conversations are still available; choose a model when the provider is ready.');
@@ -292,16 +334,37 @@ export class ConversationStore {
   }
 
   login(): void { this.api.startLogin(typeof window === 'undefined' ? '/' : window.location.pathname + window.location.search); }
-  async logout(): Promise<void> { const token = this.session()?.csrfToken; if (!token) return; try { await this.api.logout(token); } finally { this.session.set(null); this.authState.set('unauthenticated'); } }
+  async logout(): Promise<void> {
+    const token = this.session()?.csrfToken;
+    this.sessionEpoch += 1;
+    ++this.loadGeneration;
+    ++this.modelCatalogRequestGeneration;
+    this.resetManagementState();
+    this.acceptedSessionFingerprint = null;
+    this.session.set(null);
+    this.authState.set('unauthenticated');
+    const logoutGuard = this.captureSessionGuard();
+    if (!token) return;
+    try { await this.api.logout(token); }
+    finally {
+      if (this.matchesSessionGuard(logoutGuard)) {
+        this.resetManagementState();
+        this.acceptedSessionFingerprint = null;
+        this.session.set(null);
+        this.authState.set('unauthenticated');
+      }
+    }
+  }
 
   select(id: string): void { if (this.conversations().some((conversation) => conversation.id === id)) { this.cancelPendingConfigurationForSelection(id); this.selectedId.set(id); this.setNotice(id, null); if (!id.startsWith('draft-')) void this.refresh(id); } }
 
   async selectFromRoute(id: string, isCurrent: () => boolean = () => true): Promise<ConversationRouteSelection> {
     this.cancelPendingConfigurationForSelection(id);
     if (id.startsWith('draft-')) { if (!isCurrent() || !this.find(id)) return { status: 'stale' }; this.select(id); return { status: 'selected' }; }
+    const guard = this.captureSessionGuard();
     try {
       const detail = await this.api.getConversation(id);
-      if (!isCurrent()) return { status: 'stale' };
+      if (!isCurrent() || !this.matchesSessionGuard(guard)) return { status: 'stale' };
       const conversation = this.fromDetail(detail);
       // Opening a conversation is a selection/detail refresh, not new
       // activity. Keep the server-provided list order (and append a direct
@@ -315,11 +378,11 @@ export class ConversationStore {
       else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); }
       return { status: 'selected' };
     } catch (error: unknown) {
-      if (!isCurrent()) return { status: 'stale' };
+      if (!isCurrent() || !this.matchesSessionGuard(guard)) return { status: 'stale' };
       const apiError = this.toApiError(error);
       if (apiError.status === 404) return { status: 'not_found' };
-      if (apiError.status === 401) { this.authState.set('unauthenticated'); return { status: 'unauthorized', error: apiError }; }
-      if (apiError.status === 403) { this.authState.set('error'); return { status: 'forbidden', error: apiError }; }
+      if (apiError.status === 401) { this.invalidateSession(401); return { status: 'unauthorized', error: apiError }; }
+      if (apiError.status === 403) { this.invalidateSession(403); return { status: 'forbidden', error: apiError }; }
       return { status: 'error', error: apiError };
     }
   }
@@ -607,13 +670,15 @@ export class ConversationStore {
 
   stop(): void {
     const conversation = this.selected(); const run = conversation.currentRun; if (!run || this.runState() !== 'working') return;
-    void this.api.cancelRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((updated) => { this.replaceRun(conversation.id, updated); this.setRunState(conversation.id, this.statusToState(updated.status)); this.setNotice(conversation.id, 'Generation stopped. Your partial response is still here.'); }).catch((error: unknown) => this.handleError(conversation.id, error));
+    const guard = this.captureSessionGuard();
+    void this.api.cancelRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((updated) => { if (!this.matchesSessionGuard(guard)) return; this.replaceRun(conversation.id, updated); this.setRunState(conversation.id, this.statusToState(updated.status)); this.setNotice(conversation.id, 'Generation stopped. Your partial response is still here.'); }).catch((error: unknown) => this.handleError(conversation.id, error, guard));
   }
 
   cancelRunById(conversationId: string, runId: string): void {
     const conversation = this.find(conversationId); const run = conversation?.runs.find((item) => item.id === runId);
     if (!conversation || !run || conversation.archivedAt || !['queued', 'running', 'cancel_requested'].includes(run.status)) return;
-    void this.api.cancelRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((updated) => { this.replaceRun(conversation.id, updated); this.setRunState(conversation.id, this.statusToState(updated.status)); }).catch((error: unknown) => this.handleError(conversation.id, error));
+    const guard = this.captureSessionGuard();
+    void this.api.cancelRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((updated) => { if (!this.matchesSessionGuard(guard)) return; this.replaceRun(conversation.id, updated); this.setRunState(conversation.id, this.statusToState(updated.status)); }).catch((error: unknown) => this.handleError(conversation.id, error, guard));
   }
 
   retry(): void {
@@ -623,7 +688,8 @@ export class ConversationStore {
     if (!this.canRunWithSelectedAgent(conversation.id)) { this.setNotice(conversation.id, conversation.agent ? 'This agent is disabled. Select an active replacement before retrying.' : 'Select an active agent before retrying.'); return; }
     this.clearThinkingForConversation(conversation.id);
     this.setRunState(conversation.id, 'working'); this.setNotice(conversation.id, null);
-    void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => this.acceptRun(conversation.id, accepted)).catch((error: unknown) => this.handleError(conversation.id, error));
+    const guard = this.captureSessionGuard();
+    void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => { if (this.matchesSessionGuard(guard)) this.acceptRun(conversation.id, accepted); }).catch((error: unknown) => this.handleError(conversation.id, error, guard));
   }
 
   retryRunById(conversationId: string, runId: string): void {
@@ -631,15 +697,18 @@ export class ConversationStore {
     if (!conversation || !run || conversation.archivedAt || !this.isRetryable(run.status) || !this.canRunWithSelectedAgent(conversationId)) return;
     this.clearThinkingForConversation(conversationId);
     this.setRunState(conversationId, 'working');
-    void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => this.acceptRun(conversationId, accepted)).catch((error: unknown) => this.handleError(conversationId, error));
+    const guard = this.captureSessionGuard();
+    void this.api.retryRun(run.id, this.session()?.csrfToken ?? '', this.key()).then((accepted) => { if (this.matchesSessionGuard(guard)) this.acceptRun(conversationId, accepted); }).catch((error: unknown) => this.handleError(conversationId, error, guard));
   }
 
   /** Compatibility hook for older local-preview fixtures; provider responses are never synthesized in production. */
   failNextLocalReply(): void { /* no-op */ }
 
   private async createPersisted(draftId: string, text: string): Promise<void> {
+    const guard = this.captureSessionGuard();
     try {
       const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId, clientTimeZone); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
+      if (!this.matchesSessionGuard(guard)) return;
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
       this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
@@ -652,10 +721,19 @@ export class ConversationStore {
         });
       }
       this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
-    } catch (error: unknown) { this.rejectSubmission(draftId, error); }
+    } catch (error: unknown) { this.rejectSubmission(draftId, error, guard); }
   }
 
-  private async createRun(id: string, text: string): Promise<void> { const conversation = this.find(id); if (!conversation) return; try { const submission = this.pendingSubmissions.get(id); const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; this.acceptRun(id, await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone), submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id); } catch (error: unknown) { this.rejectSubmission(id, error); } }
+  private async createRun(id: string, text: string): Promise<void> {
+    const conversation = this.find(id); if (!conversation) return;
+    const guard = this.captureSessionGuard();
+    try {
+      const submission = this.pendingSubmissions.get(id); const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined;
+      const accepted = await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone);
+      if (!this.matchesSessionGuard(guard)) return;
+      this.acceptRun(id, accepted, submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id);
+    } catch (error: unknown) { this.rejectSubmission(id, error, guard); }
+  }
 
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
@@ -670,38 +748,43 @@ export class ConversationStore {
   }
 
   private subscribe(run: Run, attempt = 0): void {
+    const guard = this.captureSessionGuard();
     const pendingReconnect = this.reconnectTimers.get(run.id);
     if (pendingReconnect) { clearTimeout(pendingReconnect); this.reconnectTimers.delete(run.id); }
     this.subscriptions.get(run.id)?.close();
-    const handleEvent: RunEventHandler = (event, cursor) => this.applyEvent(event, cursor);
+    const handleEvent: RunEventHandler = (event, cursor) => { if (this.matchesSessionGuard(guard)) this.applyEvent(event, cursor); };
     this.subscriptions.set(run.id, this.api.streamRunEvents(run.id, this.lastEventIds.get(run.id), handleEvent, (error) => {
+      if (!this.matchesSessionGuard(guard)) return;
       const current = this.find(run.conversationId)?.currentRun;
-      if (!current || this.isTerminal(current.status)) { if (error.status === 401 || error.status === 403) this.handleError(run.conversationId, error); return; }
-      if (error.status === 410 && !this.expiredCursorRecoveries.has(run.id)) { this.expiredCursorRecoveries.add(run.id); this.lastEventIds.delete(run.id); this.scheduleReconciliation(run, attempt); return; }
-      if (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 410) { this.handleError(run.conversationId, error); return; }
-      this.scheduleReconciliation(run, attempt, error);
+      if (!current || this.isTerminal(current.status)) { if (error.status === 401 || error.status === 403) this.handleError(run.conversationId, error, guard); return; }
+      if (error.status === 410 && !this.expiredCursorRecoveries.has(run.id)) { this.expiredCursorRecoveries.add(run.id); this.lastEventIds.delete(run.id); this.scheduleReconciliation(run, attempt, undefined, guard); return; }
+      if (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 410) { this.handleError(run.conversationId, error, guard); return; }
+      this.scheduleReconciliation(run, attempt, error, guard);
     }));
   }
 
-  private scheduleReconciliation(run: Run, attempt: number, error?: ConversationApiError): void {
+  private scheduleReconciliation(run: Run, attempt: number, error?: ConversationApiError, guard = this.captureSessionGuard()): void {
+    if (!this.matchesSessionGuard(guard)) return;
     const current = this.find(run.conversationId)?.currentRun;
     if (!current || this.isTerminal(current.status)) return;
     this.setRunState(run.conversationId, 'working'); this.setNotice(run.conversationId, error?.message ?? 'Connection lost; trying again. Your partial response is still here.');
     const delay = Math.min(30_000, 500 * 2 ** Math.min(attempt, 6));
-    const timer = setTimeout(() => { this.reconnectTimers.delete(run.id); void this.reconcileRun(run, attempt + 1); }, delay);
+    const timer = setTimeout(() => { this.reconnectTimers.delete(run.id); if (this.matchesSessionGuard(guard)) void this.reconcileRun(run, attempt + 1, guard); }, delay);
     this.reconnectTimers.set(run.id, timer);
   }
 
   private clearReconnect(runId: string): void { const timer = this.reconnectTimers.get(runId); if (timer) clearTimeout(timer); this.reconnectTimers.delete(runId); }
 
-  private async reconcileRun(run: Run, attempt: number): Promise<void> {
+  private async reconcileRun(run: Run, attempt: number, guard = this.captureSessionGuard()): Promise<void> {
     try {
       const detail = await this.api.getConversation(run.conversationId);
+      if (!this.matchesSessionGuard(guard)) return;
       const conversation = this.fromDetail(detail);
       this.replaceConversation(conversation);
       this.hydrateHistoricalToolActivities(conversation);
       if (this.api.getRunMemoryActivity) {
-        await this.readMemoryActivity(run.conversationId, run.id);
+        await this.readMemoryActivity(run.conversationId, run.id, guard);
+        if (!this.matchesSessionGuard(guard)) return;
       }
       if (detail.currentRun && !this.isTerminal(detail.currentRun.status)) {
         this.expiredCursorRecoveries.delete(run.id); this.setRunState(run.conversationId, 'working'); this.setNotice(run.conversationId, null); this.subscribe(detail.currentRun, attempt); return;
@@ -711,11 +794,12 @@ export class ConversationStore {
         this.setNotice(run.conversationId, 'Generation stopped. Your partial response is still here.');
         return;
       }
-      this.scheduleReconciliation(run, attempt);
+      this.scheduleReconciliation(run, attempt, undefined, guard);
     } catch (error: unknown) {
       const apiError = this.toApiError(error);
-      if (apiError.status === 401 || apiError.status === 403 || apiError.status === 404 || apiError.status === 410) this.handleError(run.conversationId, apiError);
-      else this.scheduleReconciliation(run, attempt, apiError);
+      if (!this.matchesSessionGuard(guard)) return;
+      if (apiError.status === 401 || apiError.status === 403 || apiError.status === 404 || apiError.status === 410) this.handleError(run.conversationId, apiError, guard);
+      else this.scheduleReconciliation(run, attempt, apiError, guard);
     }
   }
 
@@ -733,7 +817,19 @@ export class ConversationStore {
     else if (event.eventType === 'run.error') { this.setRunState(event.conversationId, 'error'); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: 'failed', error: event.data } : run); this.setNotice(event.conversationId, event.data.message || 'Aura could not complete this response. Your message is still here.'); }
   }
 
-  private async refresh(id: string): Promise<void> { try { const detail = await this.api.getConversation(id); const conversation = this.fromDetail(detail); this.replaceConversation(conversation); this.hydrateHistoricalToolActivities(conversation); const latestRun = detail.currentRun ?? conversation.runs.at(-1); if (latestRun && this.api.getRunMemoryActivity) await this.readMemoryActivity(id, latestRun.id); if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); } else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); } } catch (error: unknown) { this.handleError(id, error); } }
+  private async refresh(id: string): Promise<void> {
+    const guard = this.captureSessionGuard();
+    try {
+      const detail = await this.api.getConversation(id);
+      if (!this.matchesSessionGuard(guard)) return;
+      const conversation = this.fromDetail(detail); this.replaceConversation(conversation); this.hydrateHistoricalToolActivities(conversation);
+      const latestRun = detail.currentRun ?? conversation.runs.at(-1);
+      if (latestRun && this.api.getRunMemoryActivity) await this.readMemoryActivity(id, latestRun.id, guard);
+      if (!this.matchesSessionGuard(guard)) return;
+      if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
+      else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); }
+    } catch (error: unknown) { this.handleError(id, error, guard); }
+  }
   private async loadConversationPage(generation: number): Promise<ReadonlyArray<ConversationSummary>> {
     const page = await this.api.listConversations(undefined, this.libraryFilters());
     if (generation === this.libraryRequestGeneration) this.libraryNextCursor.set(page.nextCursor);
@@ -747,7 +843,8 @@ export class ConversationStore {
     if (!shouldRemove || this.selectedId() === id) return;
     this.conversations.update((items) => items.filter((conversation) => conversation.id !== id));
   }
-  private rejectSubmission(id: string, error: unknown): void {
+  private rejectSubmission(id: string, error: unknown, guard?: SessionGuard): void {
+    if (guard && !this.matchesSessionGuard(guard)) return;
     const submission = this.pendingSubmissions.get(id);
     this.pendingSubmissions.delete(id);
     if (submission) this.removeTurn(id, submission.pendingTurnId);
@@ -762,7 +859,49 @@ export class ConversationStore {
     this.setNotice(id, apiError.message || 'We could not complete this request. Your message is still here.');
   }
 
-  private handleError(id: string, error: unknown): void { this.setRunState(id, 'error'); this.setNotice(id, this.toApiError(error).message || 'We could not complete this request. Your message is still here.'); }
+  private handleError(id: string, error: unknown, guard?: SessionGuard): void {
+    if (guard && !this.matchesSessionGuard(guard)) return;
+    const apiError = this.toApiError(error);
+    if (apiError.status === 401 || apiError.status === 403) this.invalidateSession(apiError.status);
+    this.setRunState(id, 'error');
+    this.setNotice(id, apiError.message || 'We could not complete this request. Your message is still here.');
+  }
+
+  private resetManagementState(): void {
+    if (this.resettingManagementState) return;
+    this.resettingManagementState = true;
+    try { this.managementSession?.resetSessionState(); }
+    finally { this.resettingManagementState = false; }
+  }
+
+  private handleManagementAuthorizationFailure(status: SessionAuthorizationStatus): void {
+    this.invalidateSession(status);
+    if (status === 401) {
+      this.session.set(null);
+      this.authState.set('unauthenticated');
+    } else {
+      this.authState.set('error');
+    }
+  }
+
+  private sessionFingerprint(session: Session): string {
+    return [session.principal.issuer, session.principal.subject, session.csrfToken].join('\u0000');
+  }
+
+  private captureSessionGuard(): SessionGuard { return { epoch: this.sessionEpoch, fingerprint: this.acceptedSessionFingerprint }; }
+  private matchesSessionGuard(guard: SessionGuard): boolean { return guard.epoch === this.sessionEpoch && guard.fingerprint === this.acceptedSessionFingerprint; }
+  private invalidateSession(status: SessionAuthorizationStatus): void {
+    this.sessionEpoch += 1;
+    ++this.modelCatalogRequestGeneration;
+    this.resetManagementState();
+    if (status === 401) {
+      this.acceptedSessionFingerprint = null;
+      this.session.set(null);
+      this.authState.set('unauthenticated');
+    } else {
+      this.authState.set('error');
+    }
+  }
 
   private cancelPendingConfigurationForSelection(id: string): void { if (this.pendingConfiguration()?.conversationId !== id) this.pendingConfiguration.set(null); }
 
@@ -933,10 +1072,11 @@ export class ConversationStore {
       return next;
     });
   }
-  private async readMemoryActivity(conversationId: string, runId: string): Promise<void> {
+  private async readMemoryActivity(conversationId: string, runId: string, guard = this.captureSessionGuard()): Promise<void> {
     if (!this.api.getRunMemoryActivity) return;
     try {
       const snapshot = await this.api.getRunMemoryActivity(runId);
+      if (!this.matchesSessionGuard(guard)) return;
       this.applyMemorySnapshot(snapshot);
       this.setMemoryActivityNotice(conversationId, null);
       // The run stream may close on run.status before the asynchronous memory
@@ -948,20 +1088,23 @@ export class ConversationStore {
         && snapshot.items.some((item) => this.isAuthoritativeMemoryExtraction(item));
       if (terminal) this.clearMemoryActivityRetry(runId);
       else this.scheduleMemoryActivityRetry(conversationId, runId);
-    } catch (error: unknown) { this.handleMemoryActivityReadFailure(conversationId, runId, error); }
+    } catch (error: unknown) {
+      if (this.matchesSessionGuard(guard)) this.handleMemoryActivityReadFailure(conversationId, runId, error, guard);
+    }
   }
-  private handleMemoryActivityReadFailure(conversationId: string, runId: string, error: unknown): void {
+  private handleMemoryActivityReadFailure(conversationId: string, runId: string, error: unknown, guard = this.captureSessionGuard()): void {
     const apiError = this.toApiError(error);
     // Core uses 404 when the run has no memory job or recall metadata yet.
     // That is an expected transient/no-activity result, not a transport
     // outage. The conversation detail was already authorized and loaded by
     // this point, so preserve the transcript, clear the banner, and perform a
     // bounded background retry for an outbox row that is still being created.
-    if (apiError.status === 404) { this.setMemoryActivityNotice(conversationId, null); this.scheduleMemoryActivityRetry(conversationId, runId); return; }
+    if (apiError.status === 404) { this.setMemoryActivityNotice(conversationId, null); this.scheduleMemoryActivityRetry(conversationId, runId, guard); return; }
     this.clearMemoryActivityRetry(runId);
     this.setMemoryActivityNotice(conversationId, 'Memory activity is temporarily unavailable. Your transcript is preserved. Try reconciliation again.');
   }
-  private scheduleMemoryActivityRetry(conversationId: string, runId: string): void {
+  private scheduleMemoryActivityRetry(conversationId: string, runId: string, guard = this.captureSessionGuard()): void {
+    if (!this.matchesSessionGuard(guard)) return;
     if (this.memoryActivityRetryTimers.has(runId)) return;
     const attempts = this.memoryActivityRetryAttempts.get(runId) ?? 0;
     if (attempts >= MEMORY_ACTIVITY_RETRY_DELAYS_MS.length) return;
@@ -969,7 +1112,7 @@ export class ConversationStore {
     this.memoryActivityRetryAttempts.set(runId, attempts + 1);
     const timer = setTimeout(() => {
       this.memoryActivityRetryTimers.delete(runId);
-      if (this.find(conversationId)) void this.readMemoryActivity(conversationId, runId);
+      if (this.matchesSessionGuard(guard) && this.find(conversationId)) void this.readMemoryActivity(conversationId, runId, guard);
     }, delay);
     this.memoryActivityRetryTimers.set(runId, timer);
   }

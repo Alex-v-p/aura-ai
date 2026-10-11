@@ -1,0 +1,289 @@
+id: AURA-0060
+title: Redesign Agents and Personas with atomic publication and ephemeral preview
+status: integrated
+change_class: contract
+intent: >
+  Rebuild the Aura Web Agents and Personas surfaces as coherent guided libraries,
+  builders, and revision-aware detail workspaces while extending the backward-
+  compatible Aura v1 contract for atomic initial Agent policies, Persona usage
+  references, and an authenticated bounded non-durable Persona preview.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved mission-control Agent library and progressive publish builder
+    - Owner-approved creative Persona library editor preview used-by and version views
+    - Owner-approved optional initial tool grants and memory policy values on CreateAgentRequest
+    - Owner-approved authenticated ephemeral Persona preview with no conversation memory tool or durable prompt/output state
+    - Persona preview requires an explicit selectable model and never silently falls back
+    - Persona assigned-Agent data is a current read-model composition and is not copied into Persona persistence
+    - Persona preview is an application use case in the existing Personas public boundary and receives a narrow provider-neutral preview port wired by API state to the existing ModelGateway
+    - Persona domain code must not import runtime or provider implementations and the HTTP route remains validation and translation only
+    - Persona assignment responses are composed at the API read-model boundary through the Agents public query and Personas never imports Agents
+    - Contract Steward updates OpenAPI and regenerates the transport client before Core and frontend consumers implement against the accepted shape
+    - The additive Aura v1 contract advances from 1.10.0 to 1.11.0 and existing version assertions advance with it
+    - Implementation remains inside registered Core modules and any new module or dependency requires a work-item amendment and Platform Worker registry update before implementation
+    - Persona Preview uses new stable component aura.interaction.persona_preview version 1.0.0 rather than the durable agent configuration component
+    - Each preview preallocates one trace with persona.preview as root model inventory as a structured-inference child and model.infer as the provider-inference child
+    - ModelGateway.inventory accepts optional ProviderTraceContext and forwards it through the existing ModelSelectionPort so preview inventory telemetry is parented without importing a provider implementation
+    - The existing Ollama model adapter emits the same parented inventory duration and outcome telemetry for cache hits as provider scans while preserving the bounded cache-outcome metric and all provider behavior
+    - The Storybook application loads Aura Web's existing global stylesheet through its Angular Storybook target configuration so management baselines use the approved semantic tokens without a Storybook source import from Aura Web
+    - ConversationStore remains the frontend owner of accepted Session and logout lifecycle and uses its already-registered dependency direction to synchronously clear Agent Persona and Tool Policy session state; management features never import Conversations and shared UI owns no authentication behavior
+    - The accepted management-session fingerprint includes principal issuer principal subject and CSRF token so logout identity changes and token rotation clear private drafts preview output loaded data model selections policy state and cached credentials before old-principal responses can repopulate them
+    - Aura Web's bootstrap application composition root provides the generic management-session port in the environment injector visible to root ConversationStore by composing the public Agent Persona and Tool Policy stores; the application adds no feature behavior and management libraries do not acquire a reverse dependency
+    - aura.interaction.agent_configuration retains its stable component ID and advances from version 1.1.0 to 1.2.0 with agent-configuration-command-v3 while existing runtime component versions remain unchanged because their observable schemas and semantics do not change
+    - aura.interaction.persona_preview is non-replayable because private input and output are not captured and uses bounded process retention with drop-oldest and bounded export-retry health accounting
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AGT-001
+  - AGT-002
+  - AGT-004
+  - AGT-005
+  - AGT-006
+  - AGT-007
+  - AGT-009
+  - AGT-014
+  - AGT-017
+  - AGT-019
+  - AUI-001
+  - AUI-004
+  - AUI-005
+  - AUI-008
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - aura-core.interaction.agents
+  - aura-core.interaction.personas
+  - aura-core.entrypoints.api
+  - aura-core.platform.telemetry
+  - aura-core.runtime.models
+  - aura-core.providers.models.ollama
+  - aura-web.api-client
+  - aura-web.interaction.agents
+  - aura-web.interaction.personas
+  - aura-web.interaction.conversations
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0060.yaml
+  - work-items/archived/AURA-0060.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/src/aura_core/domains/interaction/agents/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/personas.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/runtime/models/gateway.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/resources/component-manifests/agent-configuration.yaml
+  - services/aura-core/resources/component-manifests/persona-preview.yaml
+  - services/aura-core/resources/component-manifests/model-inference.yaml
+  - services/aura-core/resources/component-manifests/structured-inference.yaml
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_persona_preview.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/system/test_agents_personas_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/personas/**
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-api.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-api.spec.ts
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web-e2e/src/agents-personas.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/project.json
+  - frontend/apps/storybook/src/agents-personas.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/design/**
+  - docs/specifications/**
+  - tooling/architecture/**
+  - contracts/events/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/providers/__init__.py
+  - services/aura-core/src/aura_core/providers/embeddings/**
+  - services/aura-core/src/aura_core/providers/models/__init__.py
+  - services/aura-core/src/aura_core/providers/models/ollama/__init__.py
+  - services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  - services/aura-core/src/aura_core/runtime/__init__.py
+  - services/aura-core/src/aura_core/runtime/models/__init__.py
+  - services/aura-core/src/aura_core/runtime/models/capacity.py
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/src/aura_core/runtime/models/requests.py
+  - services/aura-core/src/aura_core/runtime/models/router.py
+  - services/aura-core/src/aura_core/runtime/models/streaming.py
+  - services/aura-core/src/aura_core/runtime/prompting/**
+  - services/aura-core/src/aura_core/runtime/streaming/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - deploy/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: interaction.agents
+observability:
+  applicable: true
+  affected_components:
+    - aura.interaction.agent_configuration
+    - aura.interaction.persona_preview
+    - aura.runtime.model_inference
+    - aura.runtime.structured_inference
+  required_metrics:
+    - operation_duration_ms
+    - configuration_outcome
+    - persona_preview_duration_ms
+    - persona_preview_outcome
+    - inference_duration_ms
+    - provider_errors
+    - errors
+    - model_inventory_duration_ms
+    - model_inventory_outcome
+    - model_inventory_cache_outcome
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Published Agent and Persona configuration persists only in its domain-owned store; unsaved drafts and preview prompts and outputs remain memory-only principal-bound and clear on logout or session change.
+    - Agent and Persona drafts preview prompts preview outputs and provider diagnostics must not enter logs telemetry audit metadata errors browser durable storage caches or any non-domain persistence.
+    - Create Agent remains owner-authenticated CSRF-protected idempotent and atomic across profile revision memory policy tool policy audit and idempotency state.
+    - Omitted initial Agent policy fields preserve the current deny-by-default tool and bounded memory defaults.
+    - Initial tool grants are validated against the existing registry and may not widen tool permission scopes beyond established policy rules.
+    - Persona Preview requires an authenticated owner session origin-aware CSRF an explicit selectable model bounded inputs and output Cache-Control no-store and direct provider-neutral inference with no automatic retry tools memory conversation run message job event idempotency audit-content or prompt/output persistence.
+    - Persona Preview provider input contains only fixed governance text and the bounded submitted draft or selected active Persona revision plus test prompt; it receives no ambient conversations memories files credentials or provider-native diagnostics.
+    - Persona Preview output is untrusted content rendered escaped and provider failures expose only stable generic recovery messages.
+    - Persona assignment references expose owner-scoped current Agent metadata only and never conversation assignment history or private instructions.
+    - Disabled Personas preserve historical references and cannot be selected for new Agent configuration or preview as a persisted revision.
+  data_classes:
+    - private_agent_configuration
+    - private_persona_configuration
+    - ephemeral_preview_prompt_and_output
+    - owner_scoped_agent_persona_identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - CreateAgentRequest accepts optional initialToolGrants and initialMemoryPolicy values while omission remains backward compatible with current defaults.
+  - Agent creation validates the selected active Persona and all initial policies before one transaction atomically publishes the profile first immutable revision pinned memory policy pinned tool policy audit and idempotency result.
+  - Optional initial policy values participate in the principal-scoped idempotency fingerprint identical replay creates no duplicates conflicting replay returns conflict and omission preserves current defaults.
+  - Tool permission scopes confirmation rules call limits timeouts and retry limits are server-derived from the existing registry and cannot be supplied or widened by the client while fallback Agent references are validated as unique owner-scoped active profiles.
+  - A failed initial policy validation or persistence operation leaves no partial Agent profile revision policy grant audit or idempotency record.
+  - Agent list cards show name purpose status Persona and current revision using calm semantic surfaces and no default exposure of technical identifiers thresholds budgets or revision metadata.
+  - Agent creation uses Identity Persona Behavior Capabilities Memory and Review steps retains its in-memory draft across recoverable SPA navigation and failures and publishes nothing before final Review and Publish.
+  - Agent detail presents Overview Behavior Capabilities Memory and Versions navigation while preserving existing detail tool-policy memory-policy deep links and immutable revision behavior.
+  - Agent versions can be compared without editing historical revisions and advanced identifiers thresholds budgets and policy revision details remain disclosed on demand.
+  - Persona list cards show description status revision and assigned-Agent count and detail responses include at most 50 deduplicated current Agent assignment references plus an assignedAgentsTruncated indicator composed through public APIs.
+  - A current Persona assignment is an Agent current revision pinned to any revision belonging to that Persona profile and exposes only agentProfileId displayName status and current revision number; it never exposes instructions purpose policy identifiers or conversation history.
+  - Persona configuration remains owned by interaction.personas while initial Agent policy persistence remains owned by interaction.agents and Persona assignment references remain a non-persisted API read model.
+  - Persona creation and revision editing separate Identity Behavioral guidance Preview and Review with an in-memory draft that survives recoverable SPA navigation and errors.
+  - POST /api/v1/personas/preview is CSRF-protected accepts a bounded test prompt explicit selectable modelId and exactly one of bounded draft fields or personaRevisionId and returns a bounded escaped ephemeral preview with Cache-Control no-store.
+  - Persona Preview rejects missing unavailable or non-selectable models without fallback rejects disabled persisted Persona revisions and is never retried automatically by the frontend.
+  - Persona Preview passes only fixed governance text selected draft-or-revision fields and the test prompt to its narrow provider-neutral port and receives no ambient conversation memory file tool credential or owner-identity context.
+  - Persona Preview performs no conversation run message memory tool job event idempotency audit-content cache or prompt/output persistence and never records private content or provider exception payloads in telemetry logs audit errors or exporter output.
+  - Persona Preview emits metadata-only bounded outcome duration dependency provider and error-class telemetry with authorization validation not_found capability provider timeout and unknown classifications and no persistence classification for provider failures.
+  - Persona Preview inventory validation always emits one parented model inventory duration span and bounded outcome and cache-outcome metrics, including cache hits, beneath the persona.preview root; model.infer is a second child on the same trace.
+  - The persona-preview observable contract is version 1.0.0 replayable false and limits metric labels to bounded outcome error_class dependency and provider values; model_id and correlation identifiers are trace-only while prompts draft fields output owner identity endpoint tokens and credentials are prohibited.
+  - Persona Preview telemetry uses bounded in-process retention with drop-oldest accounting and bounded export retries whose dropped rejected export-failure and abandoned-batch health counters remain observable.
+  - The agent-configuration manifest and COMPONENT_VERSIONS advance together to 1.2.0 with agent-configuration-command-v3 while its stable component ID is preserved and runtime component versions remain unchanged.
+  - Persona detail presents Overview Preview Used by and Versions and disabling explains affected current Agents while retaining pinned Agent revisions and historical references; disabled revisions cannot be newly selected or previewed by identifier.
+  - Atomic publication tests cover omission defaults identical replay conflicting replay unknown grants server-derived policy ceilings foreign-owner fallback references and injected failures after each staged write with zero partial durable state.
+  - Preview privacy tests cover success validation capability timeout and provider failure with sentinel draft prompt output owner and provider-error content absent from MetadataMetrics StructuredContainerLogExporter API errors caches and persistence and with forbidden telemetry attributes rejected.
+  - Desktop and tablet use the approved library/detail/workspace hierarchy and mobile presents builder steps and detail sections as focused full-width subpages with 44px controls reflow and no horizontal clipping.
+  - Loading empty authentication permission validation conflict provider failure and recovery states use the shared Aura patterns and do not show contradictory create or empty states.
+  - Agent and Persona routes preserve keyboard focus visible non-color state screen-reader names reduced motion 200 percent zoom and WCAG 2.2 AA expectations in light and dark themes.
+  - Agent and Persona Storybook baselines load Aura Web's existing global stylesheet through Storybook target configuration, with no application-source import, duplicated palette, or change to approved token values.
+  - Logout authorization failure principal change and CSRF rotation clear Agent Persona and Tool Policy API credentials root-store state and mounted local builder preview state; request generations prevent stale old-principal responses from repopulating cleared signals.
+  - The OpenAPI contract generated TypeScript client Core implementation and frontend adapters remain synchronized and backward compatible.
+  - The additive OpenAPI document version is 1.11.0 and all repository version assertions agree without changing existing reminder notification or memory behavior.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0060.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0060.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0060.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0060.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0060.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_versioned_agents.py services/aura-core/tests/test_persona_preview.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_reminder_api.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/system/test_agents_personas_api.py services/aura-core/tests/system/test_contract_and_deployment.py -q
+  - node frontend/libs/platform/aura-api-client/tools/generate-client.mjs --check
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/agents-personas.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

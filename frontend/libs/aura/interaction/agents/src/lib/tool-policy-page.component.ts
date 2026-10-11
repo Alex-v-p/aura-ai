@@ -44,12 +44,14 @@ export class AgentToolPolicyPageComponent {
   readonly agentId = this.route.snapshot.paramMap.get('id') ?? '';
   readonly selectedToolIds = signal<ReadonlySet<string>>(new Set());
   private readonly attachedPolicy = computed(() => this.store.policies().find((policy) => policy.id === this.store.attachedPolicyRevisionId()) ?? null);
+  private readonly initialResetEpoch = this.store.resetEpoch();
 
   constructor() {
     effect(() => {
       const attached = this.attachedPolicy();
       if (attached) this.selectedToolIds.set(new Set(attached.grants.map((grant) => `${grant.toolId}:${grant.toolVersion}`)));
     });
+    effect(() => { if (this.store.resetEpoch() !== this.initialResetEpoch) this.selectedToolIds.set(new Set()); });
     if (this.agentId) void this.store.load(this.agentId);
   }
 

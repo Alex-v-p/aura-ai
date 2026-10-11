@@ -116,12 +116,13 @@ class OllamaAdapter:
     async def _load_inventory_locked(
         self, *, force: bool, context: ProviderTraceContext | None
     ) -> tuple[ModelDescriptor, ...]:
+        started = monotonic()
         cached = self._inventory_cache
         if not force and cached is not None and monotonic() - cached[0] < self._inventory_cache_ttl:
             self._record_inventory_cache("hit", context=context)
+            self._record_inventory_telemetry(started, "ok", context=context)
             return cached[1]
         self._record_inventory_cache("miss", context=context)
-        started = monotonic()
         failure: _InventoryFailure | None = None
         descriptors: tuple[ModelDescriptor, ...] | None = None
         try:

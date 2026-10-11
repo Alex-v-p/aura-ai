@@ -1,9 +1,11 @@
 """HTTP contract and lifecycle coverage for versioned agent configuration."""
 
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from aura_core.runtime.models.ports import ChatMessage, ModelDescriptor
 from fastapi import FastAPI
 
 from conftest import owner_client
@@ -97,6 +99,363 @@ async def test_owner_only_agent_persona_mutations_require_csrf_and_replay_safely
             await other.aclose()
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_persona_preview_auth_failures_are_generic_and_not_cached(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    payload = {
+        "modelId": "chat",
+        "prompt": "hello",
+        "draft": {
+            "displayName": "Guide",
+            "description": "A guide.",
+            "instructions": "Be clear.",
+        },
+    }
+    try:
+        missing_csrf = await client.post("/api/v1/personas/preview", json=payload)
+        assert missing_csrf.status_code == 403
+        assert missing_csrf.headers["cache-control"] == "no-store"
+        assert "csrf" not in missing_csrf.text.lower()
+
+        invalid_csrf = await client.post(
+            "/api/v1/personas/preview",
+            headers={"X-CSRF-Token": "invalid"},
+            json=payload,
+        )
+        assert invalid_csrf.status_code == 403
+        assert invalid_csrf.headers["cache-control"] == "no-store"
+        assert "csrf" not in invalid_csrf.text.lower()
+
+        invalid_request = await client.post(
+            "/api/v1/personas/preview",
+            headers={"X-CSRF-Token": "invalid"},
+            json={"modelId": "chat", "prompt": "hello"},
+        )
+        assert invalid_request.status_code == 403
+        assert invalid_request.headers["cache-control"] == "no-store"
+
+        # The dependency must succeed before transport validation can be
+        # observed, so use the real session token for this malformed body.
+        invalid_request = await client.post(
+            "/api/v1/personas/preview",
+            headers={"X-CSRF-Token": session.csrf_token},
+            json={"modelId": "chat", "prompt": "hello"},
+        )
+        assert invalid_request.status_code == 422
+        assert invalid_request.headers["cache-control"] == "no-store"
+
+        preview_spans = [
+            item
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.component_id == "aura.interaction.persona_preview"
+            and item.kind == "span"
+            and dict(item.trace_attributes).get("operation") == "persona.preview"
+        ]
+        auth_span = next(
+            item
+            for item in preview_spans
+            if dict(item.dimensions).get("error_class") == "authorization"
+        )
+        validation_span = next(
+            item
+            for item in preview_spans
+            if dict(item.dimensions).get("error_class") == "validation"
+        )
+        assert dict(auth_span.dimensions)["dependency"] == "identity_authorization"
+        assert dict(validation_span.dimensions)["dependency"] == "transport_validation"
+        assert auth_span.value > 0
+        assert validation_span.value > 0
+
+        client.cookies.clear()
+        unauthenticated = await client.post("/api/v1/personas/preview", json=payload)
+        assert unauthenticated.status_code == 401
+        assert unauthenticated.headers["cache-control"] == "no-store"
+        assert "authentication required" in unauthenticated.text.lower()
+    finally:
+        await client.aclose()
+
+
+class _FailingPreviewProvider:
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        return (ModelDescriptor("chat", "Chat", "ollama", ("chat", "completion")),)
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        return model_id in {None, "chat"}
+
+    async def stream_chat(
+        self, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[str]:
+        del model_id, messages
+        raise RuntimeError("provider failure")
+        yield ""
+
+
+@pytest.mark.asyncio
+async def test_model_gateway_provider_errors_include_bounded_provider() -> None:
+    from aura_core.platform.telemetry import MetadataMetrics
+    from aura_core.runtime.models.gateway import ModelGateway
+
+    metrics = MetadataMetrics()
+    gateway = ModelGateway(_FailingPreviewProvider(), metrics)
+    with pytest.raises(RuntimeError, match="preview provider unavailable"):
+        await gateway.preview("chat", "system", "prompt")
+    provider_error = next(
+        item
+        for item in metrics.snapshot()
+        if item.component_id == "aura.runtime.model_inference"
+        and item.metric == "provider_errors"
+    )
+    assert dict(provider_error.dimensions)["provider"] == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_ollama_persona_preview_trace_parenting_and_inventory_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aura_core.domains.interaction.personas.public import (
+        PersonaCatalog,
+        PersonaConfigurationService,
+        PersonaMemoryRepository,
+        PersonaPreviewResult,
+        PersonaPreviewTrace,
+        PersonaRevision,
+    )
+    from aura_core.platform.telemetry import MetadataMetrics
+    from aura_core.providers.models.ollama.adapter import OllamaAdapter
+    from aura_core.runtime.models.gateway import ModelGateway
+    from aura_core.runtime.models.ports import ProviderTraceContext
+
+    metrics = MetadataMetrics()
+    adapter = OllamaAdapter(
+        "http://ollama.test",
+        telemetry=metrics,
+        inventory_cache_ttl_seconds=60.0,
+    )
+
+    async def inventory() -> tuple[ModelDescriptor, ...]:
+        return (ModelDescriptor("chat", "Chat", "ollama", ("chat", "completion")),)
+
+    async def stream_chat(model_id: str, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+        del model_id, messages
+        yield "preview"
+
+    monkeypatch.setattr(adapter, "_read_inventory", inventory)
+    monkeypatch.setattr(adapter, "stream_chat", stream_chat)
+    gateway = ModelGateway(adapter, metrics)
+    catalog = PersonaCatalog()
+
+    class PreviewPort:
+        async def preview(
+            self,
+            model_id: str,
+            system_prompt: str,
+            prompt: str,
+            *,
+            trace: PersonaPreviewTrace,
+        ) -> PersonaPreviewResult:
+            result = await gateway.preview_with_metadata(
+                model_id,
+                system_prompt,
+                prompt,
+                context=ProviderTraceContext(trace_id=trace.trace_id, span_id=trace.span_id),
+            )
+            return PersonaPreviewResult(result.content, result.provider)
+
+    service = PersonaConfigurationService(
+        PersonaMemoryRepository(catalog),
+        preview_port=PreviewPort(),
+        metrics=metrics,
+    )
+    draft = PersonaRevision(uuid4(), uuid4(), 1, "Description", "Instructions", "Guide")
+    await service.preview("issuer", "subject", "chat", "hello", draft=draft)
+    await service.preview("issuer", "subject", "chat", "hello", draft=draft)
+
+    roots = [
+        item
+        for item in metrics.snapshot()
+        if item.component_id == "aura.interaction.persona_preview"
+        and item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "persona.preview"
+    ]
+    assert len(roots) == 2
+    for root in roots:
+        inventory_spans = [
+            item
+            for item in metrics.snapshot()
+            if item.component_id == "aura.runtime.structured_inference"
+            and dict(item.trace_attributes).get("operation") == "model.inventory"
+            and item.trace_id == root.trace_id
+        ]
+        inference_spans = [
+            item
+            for item in metrics.snapshot()
+            if item.component_id == "aura.runtime.model_inference"
+            and dict(item.trace_attributes).get("operation") == "model.infer"
+            and item.trace_id == root.trace_id
+        ]
+        assert len(inventory_spans) == 1
+        assert len(inference_spans) == 1
+        assert inventory_spans[0].parent_span_id == root.span_id
+        assert inference_spans[0].parent_span_id == root.span_id
+        assert dict(root.dimensions)["provider"] == "ollama"
+
+    cache_outcomes = [
+        dict(item.dimensions)["outcome"]
+        for item in metrics.snapshot()
+        if item.component_id == "aura.runtime.structured_inference"
+        and item.metric == "model_inventory_cache_outcome"
+    ]
+    assert cache_outcomes == ["miss", "hit"]
+
+
+@pytest.mark.asyncio
+async def test_persona_preview_domain_classifications_are_bounded_and_content_free() -> None:
+    from aura_core.domains.interaction.personas.public import (
+        ConfigurationStatus,
+        PersonaCatalog,
+        PersonaConfigurationService,
+        PersonaMemoryRepository,
+        PersonaPreviewError,
+        PersonaPreviewTrace,
+        PersonaRevision,
+    )
+    from aura_core.platform.telemetry import MetadataMetrics
+
+    metrics = MetadataMetrics()
+    catalog = PersonaCatalog()
+    draft = PersonaRevision(uuid4(), uuid4(), 1, "Description", "Instructions", "Guide")
+
+    class ErrorPort:
+        def __init__(self, error_class: str) -> None:
+            self.error_class = error_class
+
+        async def preview(
+            self,
+            model_id: str,
+            system_prompt: str,
+            prompt: str,
+            *,
+            trace: PersonaPreviewTrace,
+        ) -> str:
+            del model_id, system_prompt, prompt, trace
+            if self.error_class == "unknown":
+                raise Exception("UNEXPECTED_PREVIEW_SECRET")
+            raise PersonaPreviewError(self.error_class, provider="ollama")
+
+    async def invoke(
+        service: PersonaConfigurationService,
+        *,
+        persona_revision_id: UUID | None = None,
+    ) -> None:
+        with pytest.raises(PersonaPreviewError):
+            await service.preview(
+                "owner-issuer",
+                "owner-subject",
+                "chat",
+                "PROMPT_SECRET",
+                draft=draft if persona_revision_id is None else None,
+                persona_revision_id=persona_revision_id,
+            )
+
+    await invoke(
+        PersonaConfigurationService(PersonaMemoryRepository(catalog), metrics=metrics)
+    )
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(catalog), preview_port=ErrorPort("provider"), metrics=metrics
+        )
+    )
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(catalog), preview_port=ErrorPort("timeout"), metrics=metrics
+        )
+    )
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(catalog), preview_port=ErrorPort("validation"), metrics=metrics
+        )
+    )
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(catalog), preview_port=ErrorPort("unknown"), metrics=metrics
+        )
+    )
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(catalog), preview_port=ErrorPort("capability"), metrics=metrics
+        ),
+        persona_revision_id=uuid4(),
+    )
+    disabled_catalog = PersonaCatalog()
+    disabled_profile = next(iter(disabled_catalog.personas.values()))
+    disabled_profile.status = ConfigurationStatus.DISABLED
+    await invoke(
+        PersonaConfigurationService(
+            PersonaMemoryRepository(disabled_catalog),
+            preview_port=ErrorPort("provider"),
+            metrics=metrics,
+        ),
+        persona_revision_id=disabled_profile.current_revision_id,
+    )
+
+    outcomes = [
+        dict(item.dimensions).get("error_class")
+        for item in metrics.snapshot()
+        if item.metric == "persona_preview_outcome"
+    ]
+    assert outcomes == [
+        "capability",
+        "provider",
+        "timeout",
+        "validation",
+        "unknown",
+        "not_found",
+        "disabled",
+    ]
+    expected_dependencies = {
+        "capability": "model_provider",
+        "provider": "model_provider",
+        "timeout": "model_provider",
+        "validation": "application_validation",
+        "unknown": "application_unknown",
+        "not_found": "configuration_store",
+        "disabled": "configuration_store",
+    }
+    snapshots = metrics.snapshot()
+    outcome_records = [item for item in snapshots if item.metric == "persona_preview_outcome"]
+    for outcome_record in outcome_records:
+        outcome_dimensions = dict(outcome_record.dimensions)
+        error_class = outcome_dimensions["error_class"]
+        root_span = next(
+            item
+            for item in snapshots
+            if item.trace_id == outcome_record.trace_id
+            and item.kind == "span"
+            and dict(item.trace_attributes).get("operation") == "persona.preview"
+        )
+        error_record = next(
+            item
+            for item in snapshots
+            if item.trace_id == outcome_record.trace_id and item.metric == "errors"
+        )
+        expected_dependency = expected_dependencies[error_class]
+        assert dict(error_record.dimensions)["dependency"] == expected_dependency
+        assert dict(root_span.dimensions)["dependency"] == expected_dependency
+    provider_errors = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "provider_errors"
+    ]
+    assert {dict(item.dimensions)["error_class"] for item in provider_errors} == {
+        "provider",
+        "timeout",
+    }
+    assert all(dict(item.dimensions)["provider"] == "ollama" for item in provider_errors)
+    assert "owner-subject" not in repr(metrics.snapshot())
+    assert "PROMPT_SECRET" not in repr(metrics.snapshot())
+    assert "UNEXPECTED_PREVIEW_SECRET" not in repr(metrics.snapshot())
 
 
 @pytest.mark.asyncio

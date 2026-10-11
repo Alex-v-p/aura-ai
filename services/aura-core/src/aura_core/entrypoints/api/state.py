@@ -3,7 +3,7 @@
 # ruff: noqa: E501
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 from uuid import UUID
 
@@ -35,6 +35,10 @@ from aura_core.domains.interaction.agents.public import (
     AgentCatalog,
     AgentConfigurationService,
     AgentMemoryRepository,
+    ToolGrant,
+    ToolGrantPolicy,
+    ToolGrantResolver,
+    ToolPolicySnapshot,
 )
 from aura_core.domains.interaction.conversations.public import ConversationStore
 from aura_core.domains.interaction.personas.adapters import SqlPersonaStore
@@ -42,6 +46,10 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaConfigurationService,
     PersonaMemoryRepository,
+    PersonaPreviewError,
+    PersonaPreviewPort,
+    PersonaPreviewResult,
+    PersonaPreviewTrace,
 )
 from aura_core.domains.knowledge.memory import public as memory_public
 from aura_core.domains.knowledge.memory.public import MemoryRepository
@@ -80,10 +88,74 @@ from aura_core.platform.telemetry import (
     new_span_id,
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
-from aura_core.runtime.models.gateway import ModelGateway
-from aura_core.runtime.models.ports import ChatModelPort, ModelDescriptor, ModelSelectionPort
+from aura_core.runtime.models.gateway import ModelGateway, ModelPreviewFailure
+from aura_core.runtime.models.ports import (
+    ChatModelPort,
+    ModelDescriptor,
+    ModelSelectionPort,
+    ProviderTraceContext,
+)
 from aura_core.runtime.streaming.publisher import EventPublisher, PersistentEventPublisher
-from aura_core.runtime.tools import default_tool_registry
+from aura_core.runtime.tools import ToolRegistry, default_tool_registry
+
+
+class _ToolRegistryGrantResolver(ToolGrantResolver):
+    """Resolve client grant identifiers from the composition-owned registry."""
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self.registry = registry
+
+    def resolve(self, grants: Sequence[ToolGrant]) -> ToolPolicySnapshot:
+        if len(set(grants)) != len(grants):
+            raise ValueError("tool grants must be unique")
+        resolved: list[ToolGrantPolicy] = []
+        for grant in grants:
+            descriptor = self.registry.get(grant.tool_id, grant.tool_version)
+            if descriptor is None:
+                raise ValueError("tool grant is not registered")
+            resolved.append(
+                ToolGrantPolicy(
+                    grant=grant,
+                    permission_scope=descriptor.permission_scope,
+                    confirmation=descriptor.confirmation,
+                    timeout_ms=descriptor.timeout_ms,
+                    retry_limit=descriptor.retry_limit,
+                )
+            )
+        return ToolPolicySnapshot(
+            grants=tuple(resolved),
+            permission_scopes=frozenset(item.permission_scope for item in resolved),
+            max_calls_per_run=1 if resolved else 0,
+            timeout_ms=max((item.timeout_ms for item in resolved), default=30_000),
+            retry_limit=max((item.retry_limit for item in resolved), default=0),
+        )
+
+
+class _GatewayPersonaPreviewPort(PersonaPreviewPort):
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
+
+    async def preview(
+        self,
+        model_id: str,
+        system_prompt: str,
+        prompt: str,
+        *,
+        trace: PersonaPreviewTrace,
+    ) -> PersonaPreviewResult:
+        try:
+            result = await self.gateway.preview_with_metadata(
+                model_id,
+                system_prompt,
+                prompt,
+                context=ProviderTraceContext(trace_id=trace.trace_id, span_id=trace.span_id),
+            )
+        except ModelPreviewFailure as exc:
+            provider = exc.provider
+            if provider is None and exc.error_class in {"provider", "timeout", "unknown"}:
+                provider = "unknown"
+            raise PersonaPreviewError(exc.error_class, provider=provider) from exc
+        return PersonaPreviewResult(result.content, result.provider)
 
 
 class AppState:
@@ -95,7 +167,7 @@ class AppState:
     def provider(self, value: ChatModelPort) -> None:
         self._provider = value
         if hasattr(self, "gateway"):
-            self.gateway = ModelGateway(value)
+            self.gateway = ModelGateway(value, self.metrics)
         memory_service = getattr(self, "memory_model_service", None)
         if memory_service is not None:
             memory_service.provider = value
@@ -140,8 +212,9 @@ class AppState:
                 getattr(self.settings, "ollama_inventory_cache_ttl_seconds", 15.0)
             ),
         )
-        self.gateway = ModelGateway(self.provider)
+        self.gateway = ModelGateway(self.provider, self.metrics)
         self.tool_registry = default_tool_registry()
+        self.tool_grant_resolver = _ToolRegistryGrantResolver(self.tool_registry)
         self.engine = None
         self.sessions_factory = None
         self.sql_store = None
@@ -170,10 +243,16 @@ class AppState:
                 self.settings.default_model or None, self.agents, self.personas
             )
             self.persona_repository = PersonaMemoryRepository(self.persona_catalog)
-            self.persona_service = PersonaConfigurationService(self.persona_repository)
+            self.persona_service = PersonaConfigurationService(
+                self.persona_repository,
+                preview_port=_GatewayPersonaPreviewPort(self.gateway),
+                metrics=self.metrics,
+            )
             self.agent_repository = AgentMemoryRepository(self.agents)
             self.agent_service = AgentConfigurationService(
-                self.agent_repository, self.persona_service
+                self.agent_repository,
+                self.persona_service,
+                tool_grant_resolver=self.tool_grant_resolver,
             )
             self.persona_service.audit = self.store.record_auth_audit
             self.agent_service.audit = self.store.record_auth_audit
@@ -232,7 +311,11 @@ class AppState:
             self.engine = make_engine(self.settings.database_url)
             self.sessions_factory = session_factory(self.engine)
             self.persona_store = SqlPersonaStore(self.sessions_factory, self.persona_catalog)
-            self.persona_service = PersonaConfigurationService(self.persona_store)
+            self.persona_service = PersonaConfigurationService(
+                self.persona_store,
+                preview_port=_GatewayPersonaPreviewPort(self.gateway),
+                metrics=self.metrics,
+            )
             self.sql_store = SqlConversationStore(
                 self.sessions_factory,
                 self.agents,
@@ -244,7 +327,11 @@ class AppState:
                 self.agents,
                 self.persona_service,  # type: ignore[arg-type]
             )
-            self.agent_service = AgentConfigurationService(self.agent_store, self.persona_service)
+            self.agent_service = AgentConfigurationService(
+                self.agent_store,
+                self.persona_service,
+                tool_grant_resolver=self.tool_grant_resolver,
+            )
             self.sql_store.agent_store = self.agent_store
             self.store = self.sql_store
             memory_topic = str(

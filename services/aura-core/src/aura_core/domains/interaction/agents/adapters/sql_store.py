@@ -37,10 +37,12 @@ from aura_core.domains.interaction.agents.public import (
     AgentCatalog,
     AgentProfile,
     AgentRevision,
+    InitialMemoryPolicy,
     MemoryPolicy,
     MemoryRecallMode,
     ToolGrant,
     ToolPolicy,
+    ToolPolicySnapshot,
     is_platform_memory_policy,
     platform_memory_policy_id,
 )
@@ -270,6 +272,9 @@ class SqlAgentStore:
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
         tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
+        initial_memory_policy: InitialMemoryPolicy | None = None,
+        initial_tool_grants: tuple[ToolGrant, ...] | None = None,
+        initial_tool_policy: ToolPolicySnapshot | None = None,
     ) -> AgentProfile:
         fingerprint = self._fingerprint(
             "agent",
@@ -280,16 +285,46 @@ class SqlAgentStore:
             persona_revision_id,
             memory_policy_revision_id,
             tool_policy_revision_id,
+            initial_memory_policy,
+            initial_tool_grants,
         )
         async with self.sessions() as session, session.begin():
             prior = await self._replay(session, issuer, subject, key, fingerprint)
             if prior is None:
                 await self._require_active_persona_in_transaction(session, persona_revision_id)
                 identifier, revision_id, created = uuid4(), uuid4(), datetime.now(UTC)
+                if initial_memory_policy is not None and memory_policy_revision_id != GENERAL_MEMORY_POLICY_ID:
+                    raise ValueError("initial memory policy cannot be combined with a policy revision")
+                if initial_tool_grants is not None and tool_policy_revision_id != GENERAL_TOOL_POLICY_ID:
+                    raise ValueError("initial tool grants cannot be combined with a policy revision")
                 selected_memory_policy = memory_policy_revision_id
                 selected_tool_policy = tool_policy_revision_id
-                if selected_memory_policy == GENERAL_MEMORY_POLICY_ID:
+                if initial_memory_policy is not None:
+                    fallback_ids = tuple(initial_memory_policy.fallback_agent_profile_ids)
+                    if len(set(fallback_ids)) != len(fallback_ids) or identifier in fallback_ids:
+                        raise ValueError("fallback grants must be unique and cannot include the new agent")
+                    for fallback_id in fallback_ids:
+                        fallback_profile = await session.get(AgentProfileRow, fallback_id)
+                        if fallback_profile is None or fallback_profile.status != ConfigurationStatus.ACTIVE.value:
+                            raise ConfigurationNotFound("fallback agent profile not found")
+                        fallback_policy = (
+                            await session.execute(
+                                select(MemoryPolicyRevisionRow.id).where(
+                                    MemoryPolicyRevisionRow.agent_profile_id == fallback_id,
+                                    MemoryPolicyRevisionRow.principal_issuer == issuer,
+                                    MemoryPolicyRevisionRow.principal_subject == subject,
+                                ).limit(1)
+                            )
+                        ).scalar_one_or_none()
+                        if fallback_policy is None:
+                            raise ConfigurationNotFound("fallback agent profile not found")
+                    selected_memory_policy = uuid5(NAMESPACE, f"agent-memory-policy:{identifier}:1")
+                if initial_memory_policy is not None or selected_memory_policy == GENERAL_MEMORY_POLICY_ID:
+                    policy_values = initial_memory_policy
+                    fallback_ids = tuple(policy_values.fallback_agent_profile_ids) if policy_values else ()
                     selected_memory_policy = platform_memory_policy_id(identifier)
+                    if policy_values is not None:
+                        selected_memory_policy = uuid5(NAMESPACE, f"agent-memory-policy:{identifier}:1")
                     session.add(
                         MemoryPolicyRevisionRow(
                             id=selected_memory_policy,
@@ -297,12 +332,23 @@ class SqlAgentStore:
                             principal_subject=subject,
                             agent_profile_id=identifier,
                             revision=1,
-                            recall_mode="off",
-                            max_memories=2,
-                            context_budget_fraction=0.05,
-                            automatic_recall_threshold=0.7,
+                            shared_user_read=policy_values.shared_user_read if policy_values else True,
+                            current_agent_read=policy_values.current_agent_read if policy_values else True,
+                            allow_shared_user_promotion=policy_values.allow_shared_user_promotion if policy_values else False,
+                            fallback_relevance_threshold=policy_values.fallback_relevance_threshold if policy_values else 0.5,
+                            max_memories=policy_values.max_memories if policy_values else 2,
+                            context_budget_fraction=policy_values.context_budget_fraction if policy_values else 0.05,
+                            recall_mode=policy_values.recall_mode.value if policy_values else "off",
+                            automatic_recall_threshold=policy_values.automatic_recall_threshold if policy_values else 0.7,
                         )
                     )
+                    for fallback_id in fallback_ids:
+                        session.add(
+                            MemoryPolicyFallbackGrantRow(
+                                policy_id=selected_memory_policy,
+                                foreign_agent_profile_id=fallback_id,
+                            )
+                        )
                 else:
                     policy_row = await session.get(MemoryPolicyRevisionRow, selected_memory_policy)
                     if (
@@ -311,7 +357,34 @@ class SqlAgentStore:
                         or (not _policy_owner_matches(policy_row, issuer, subject))
                     ):
                         raise ConfigurationNotFound("memory policy revision not found")
-                if selected_tool_policy == GENERAL_TOOL_POLICY_ID:
+                if initial_tool_grants is not None:
+                    if len(set(initial_tool_grants)) != len(initial_tool_grants):
+                        raise ValueError("tool grants must be unique")
+                    if initial_tool_policy is None:
+                        raise ValueError("server-derived tool policy is required")
+                    if tuple(item.grant for item in initial_tool_policy.grants) != initial_tool_grants:
+                        raise ValueError("tool policy grant snapshot does not match request")
+                    selected_tool_policy = uuid5(NAMESPACE, f"agent-tool-policy:{identifier}:1")
+                    session.add(
+                        ToolPolicyRevisionRow(
+                            id=selected_tool_policy,
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            agent_profile_id=identifier,
+                            revision=1,
+                            max_calls_per_run=initial_tool_policy.max_calls_per_run,
+                            timeout_ms=initial_tool_policy.timeout_ms,
+                            retry_limit=initial_tool_policy.retry_limit,
+                            permission_scopes=sorted(initial_tool_policy.permission_scopes),
+                        )
+                    )
+                    for grant in initial_tool_grants:
+                        session.add(ToolPolicyGrantRow(
+                            policy_id=selected_tool_policy,
+                            tool_id=grant.tool_id,
+                            tool_version=grant.tool_version,
+                        ))
+                elif selected_tool_policy == GENERAL_TOOL_POLICY_ID:
                     selected_tool_policy = uuid5(NAMESPACE, f"agent-tool-policy:{identifier}:1")
                     session.add(
                         ToolPolicyRevisionRow(

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -189,6 +189,24 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/personas/preview": {
+      "post": {
+        "operationId": "previewPersona",
+        "tags": ["Personas"],
+        "description": "Generates one ephemeral, non-durable Persona preview using an explicitly selected model. The request and response are never persisted, audited as content, or retried automatically.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaPreviewRequest" } } } },
+        "responses": {
+          "200": { "description": "Bounded untrusted preview text for escaped rendering", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaPreviewResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
@@ -1710,7 +1728,25 @@
           "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
           "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
-          "personaRevisionId": { "type": "string", "format": "uuid" }
+          "personaRevisionId": { "type": "string", "format": "uuid" },
+          "initialToolGrants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" }, "description": "Optional exact versioned tool grants for the first immutable policy. Omission preserves the deny-by-default policy. Aura derives permission scopes, confirmation rules, call limits, timeouts, and retry limits." },
+          "initialMemoryPolicy": { "$ref": "#/components/schemas/InitialAgentMemoryPolicy", "description": "Optional values for the first immutable memory policy. Omission preserves Aura's bounded default policy." }
+        }
+      },
+      "InitialAgentMemoryPolicy": {
+        "type": "object", "additionalProperties": false,
+        "description": "Initial memory-policy values published atomically with an Agent. Revision identity is server-assigned.",
+        "required": ["sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds"],
+        "properties": {
+          "recallMode": { "allOf": [{ "$ref": "#/components/schemas/MemoryRecallMode" }], "default": "automatic" },
+          "automaticRecallThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+          "sharedUserRead": { "type": "boolean" },
+          "currentAgentRead": { "type": "boolean" },
+          "sharedUserPromotion": { "type": "boolean" },
+          "fallbackRelevanceThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "maxMemories": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "contextBudgetFraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.2 },
+          "fallbackAgentProfileIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Owner-scoped active fallback Agent profiles. These grants never authorize invocation or delegation." }
         }
       },
       "CreateAgentRevisionRequest": {
@@ -1739,27 +1775,41 @@
       },
       "PersonaProfile": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "status", "version", "currentRevision", "createdAt", "updatedAt"],
+        "required": ["id", "status", "version", "currentRevision", "assignedAgentCount", "createdAt", "updatedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/ProfileStatus" },
           "version": { "type": "integer", "minimum": 1 },
           "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
+          "assignedAgentCount": { "type": "integer", "minimum": 0, "description": "Count of owner-scoped active or disabled Agents whose current revision pins any revision of this Persona profile." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
       },
       "PersonaDetail": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "status", "version", "currentRevision", "revisions", "createdAt", "updatedAt"],
+        "required": ["id", "status", "version", "currentRevision", "revisions", "assignedAgentCount", "assignedAgents", "assignedAgentsTruncated", "createdAt", "updatedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/ProfileStatus" },
           "version": { "type": "integer", "minimum": 1 },
           "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
           "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaRevision" } },
+          "assignedAgentCount": { "type": "integer", "minimum": 0 },
+          "assignedAgents": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/components/schemas/PersonaAgentAssignment" }, "description": "Deduplicated owner-scoped Agents whose current revision pins any revision of this Persona profile." },
+          "assignedAgentsTruncated": { "type": "boolean", "description": "True when assignedAgentCount exceeds the returned assignedAgents length." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PersonaAgentAssignment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["agentProfileId", "displayName", "status", "currentRevisionNumber"],
+        "properties": {
+          "agentProfileId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "currentRevisionNumber": { "type": "integer", "minimum": 1 }
         }
       },
       "PersonaRevision": {
@@ -1800,6 +1850,48 @@
         "properties": {
           "status": { "$ref": "#/components/schemas/ProfileStatus" },
           "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
+        }
+      },
+      "PersonaPreviewDraft": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "description", "instructions"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 }
+        }
+      },
+      "PersonaDraftPreviewRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "prompt", "draft"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Exact selectable model identifier. Aura never falls back to another model." },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "draft": { "$ref": "#/components/schemas/PersonaPreviewDraft" }
+        }
+      },
+      "PersonaRevisionPreviewRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "prompt", "personaRevisionId"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Exact selectable model identifier. Aura never falls back to another model." },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "An active owner-visible Persona revision. Disabled Personas cannot be previewed by identifier." }
+        }
+      },
+      "PersonaPreviewRequest": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/PersonaDraftPreviewRequest" },
+          { "$ref": "#/components/schemas/PersonaRevisionPreviewRequest" }
+        ],
+        "description": "Exactly one of a bounded in-memory draft or personaRevisionId is required. Preview input is ephemeral and non-durable."
+      },
+      "PersonaPreviewResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "content"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "content": { "type": "string", "maxLength": 32768, "description": "Bounded untrusted model output. Clients must render it as escaped text, never executable markup." }
         }
       },
       "CreateConversationRequest": {

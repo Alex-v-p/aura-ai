@@ -6,14 +6,26 @@ import type { ToolPolicyApi } from './tool-policy-models';
 export class AuraToolPolicyApi implements ToolPolicyApi {
   private readonly client = new AuraApiClient(new GeneratedAuraTransport());
   private csrf = '';
+  private sessionEpoch = 0;
+  clearSession(): void { this.sessionEpoch += 1; this.csrf = ''; }
 
   async listCatalog() { await this.ensureSession(); return this.client.execute('listTools', emptyInput()); }
   async listPolicies(agentProfileId: string) { await this.ensureSession(); return this.client.execute('listAgentToolPolicies', { ...emptyInput(), path: { agent_profile_id: agentProfileId } }); }
   async createPolicy(agentProfileId: string, grants: ReadonlyArray<ToolGrant>, expectedRevision: number) { await this.ensureSession(); return this.client.execute('createAgentToolPolicy', { ...emptyInput(), path: { agent_profile_id: agentProfileId }, headers: this.headers(), body: { grants, expectedRevision } }); }
   async attachPolicy(agentProfileId: string, policyRevisionId: string, expectedAgentVersion: number) { await this.ensureSession(); await this.client.execute('attachAgentToolPolicy', { ...emptyInput(), path: { agent_profile_id: agentProfileId, tool_policy_revision_id: policyRevisionId }, headers: this.headers(), body: { expectedAgentVersion } }); }
 
-  private async ensureSession(): Promise<void> { if (this.csrf) return; this.csrf = (await this.client.execute('getSession', emptyInput())).csrfToken; }
+  private async ensureSession(): Promise<void> {
+    if (this.csrf) return;
+    const epoch = this.sessionEpoch;
+    const session = await this.client.execute('getSession', emptyInput());
+    if (epoch !== this.sessionEpoch) throw new SessionHydrationInvalidatedError();
+    this.csrf = session.csrfToken;
+  }
   private headers(): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } { return { 'X-CSRF-Token': this.csrf, 'Idempotency-Key': randomKey() }; }
+}
+
+class SessionHydrationInvalidatedError extends Error {
+  constructor() { super('Session hydration was invalidated.'); this.name = 'SessionHydrationInvalidatedError'; }
 }
 
 function emptyInput(): { path: Record<string, never>; query: Record<string, never>; headers: Record<string, never>; body: never } { return { path: {}, query: {}, headers: {}, body: undefined as never }; }

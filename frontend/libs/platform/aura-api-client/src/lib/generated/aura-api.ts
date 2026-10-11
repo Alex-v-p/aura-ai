@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 2521a572a84db6a6b2e99acf85ad9b5b7bb89e3c94a53a7be9bed9baeeb75b76
+// Contract SHA-256: 3b125c90fc5c7f1cf94a21d52fde4b7010dff75873af23bdd1fc84d3e9e99706
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -153,7 +153,9 @@ export type AgentDetail = { readonly "id": string; readonly "status": ProfileSta
 
 export type AgentRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "promptBundleRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "memoryPolicyRevisionId"?: string; readonly "toolPolicyRevisionId"?: string; readonly "createdAt": string; };
 
-export type CreateAgentRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; };
+export type CreateAgentRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "initialToolGrants"?: ReadonlyArray<ToolGrant>; readonly "initialMemoryPolicy"?: InitialAgentMemoryPolicy; };
+
+export type InitialAgentMemoryPolicy = { readonly "recallMode"?: MemoryRecallMode; readonly "automaticRecallThreshold"?: number; readonly "sharedUserRead": boolean; readonly "currentAgentRead": boolean; readonly "sharedUserPromotion": boolean; readonly "fallbackRelevanceThreshold": number; readonly "maxMemories": number; readonly "contextBudgetFraction": number; readonly "fallbackAgentProfileIds": ReadonlyArray<string>; };
 
 export type CreateAgentRevisionRequest = { readonly "displayName": string; readonly "purpose": string; readonly "instructions": string; readonly "personaRevisionId": string; readonly "expectedVersion": number; };
 
@@ -161,9 +163,11 @@ export type UpdateAgentStatusRequest = { readonly "status": ProfileStatus; reado
 
 export type PersonaCollection = { readonly "items": ReadonlyArray<PersonaProfile>; };
 
-export type PersonaProfile = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "createdAt": string; readonly "updatedAt": string; };
+export type PersonaProfile = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "assignedAgentCount": number; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type PersonaDetail = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "revisions": ReadonlyArray<PersonaRevision>; readonly "createdAt": string; readonly "updatedAt": string; };
+export type PersonaDetail = { readonly "id": string; readonly "status": ProfileStatus; readonly "version": number; readonly "currentRevision": PersonaRevision; readonly "revisions": ReadonlyArray<PersonaRevision>; readonly "assignedAgentCount": number; readonly "assignedAgents": ReadonlyArray<PersonaAgentAssignment>; readonly "assignedAgentsTruncated": boolean; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type PersonaAgentAssignment = { readonly "agentProfileId": string; readonly "displayName": string; readonly "status": ProfileStatus; readonly "currentRevisionNumber": number; };
 
 export type PersonaRevision = { readonly "id": string; readonly "profileId": string; readonly "revision": number; readonly "displayName": string; readonly "description": string; readonly "instructions": string; readonly "createdAt": string; };
 
@@ -172,6 +176,16 @@ export type CreatePersonaRequest = { readonly "displayName": string; readonly "d
 export type CreatePersonaRevisionRequest = { readonly "displayName": string; readonly "description": string; readonly "instructions": string; readonly "expectedVersion": number; };
 
 export type UpdatePersonaStatusRequest = { readonly "status": ProfileStatus; readonly "expectedVersion": number; };
+
+export type PersonaPreviewDraft = { readonly "displayName": string; readonly "description": string; readonly "instructions": string; };
+
+export type PersonaDraftPreviewRequest = { readonly "modelId": string; readonly "prompt": string; readonly "draft": PersonaPreviewDraft; };
+
+export type PersonaRevisionPreviewRequest = { readonly "modelId": string; readonly "prompt": string; readonly "personaRevisionId": string; };
+
+export type PersonaPreviewRequest = PersonaDraftPreviewRequest | PersonaRevisionPreviewRequest;
+
+export type PersonaPreviewResponse = { readonly "modelId": string; readonly "content": string; };
 
 export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
 
@@ -321,6 +335,7 @@ export interface AuraApiOperations {
   readonly createAgentRevision: { readonly response: AgentDetail; readonly body: CreateAgentRevisionRequest; readonly path: { readonly "agent_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly listPersonas: { readonly response: PersonaCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createPersona: { readonly response: PersonaDetail; readonly body: CreatePersonaRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly previewPersona: { readonly response: PersonaPreviewResponse; readonly body: PersonaPreviewRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; }; };
   readonly getPersona: { readonly response: PersonaDetail; readonly body: never; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly updatePersonaStatus: { readonly response: PersonaDetail; readonly body: UpdatePersonaStatusRequest; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly createPersonaRevision: { readonly response: PersonaDetail; readonly body: CreatePersonaRevisionRequest; readonly path: { readonly "persona_profile_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
@@ -404,6 +419,7 @@ export const AURA_API_OPERATIONS = {
   createAgentRevision: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/revisions', responseMode: 'json' },
   listPersonas: { method: 'GET', pathTemplate: '/api/v1/personas', responseMode: 'json' },
   createPersona: { method: 'POST', pathTemplate: '/api/v1/personas', responseMode: 'json' },
+  previewPersona: { method: 'POST', pathTemplate: '/api/v1/personas/preview', responseMode: 'json' },
   getPersona: { method: 'GET', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
   updatePersonaStatus: { method: 'PATCH', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
   createPersonaRevision: { method: 'POST', pathTemplate: '/api/v1/personas/{persona_profile_id}/revisions', responseMode: 'json' },

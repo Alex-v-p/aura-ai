@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -14,6 +15,22 @@ from uuid import UUID, uuid4, uuid5
 PERSONA_NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 NEUTRAL_PERSONA_ID = uuid5(PERSONA_NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(PERSONA_NAMESPACE, "neutral-persona-revision-1")
+PREVIEW_GOVERNANCE = (
+    "This is an ephemeral Persona preview. Answer the supplied test prompt directly; "
+    "do not use tools, memory, conversation history, files, or credentials."
+)
+_PREVIEW_ERROR_CLASSES = frozenset(
+    {
+        "authorization",
+        "validation",
+        "not_found",
+        "disabled",
+        "capability",
+        "provider",
+        "timeout",
+        "unknown",
+    }
+)
 
 
 class ConfigurationStatus(StrEnum):
@@ -35,6 +52,90 @@ class ConfigurationVersionConflict(RuntimeError):
 
 class ConfigurationIdempotencyConflict(RuntimeError):
     """An idempotency key was replayed with a different payload."""
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaPreviewTrace:
+    trace_id: str
+    span_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaPreviewResult:
+    """Bounded provider metadata and content returned by the preview port."""
+
+    content: str
+    provider: str | None = None
+
+
+class PersonaPreviewPort(Protocol):
+    async def preview(
+        self,
+        model_id: str,
+        system_prompt: str,
+        prompt: str,
+        *,
+        trace: PersonaPreviewTrace,
+    ) -> PersonaPreviewResult | str: ...
+
+
+class PersonaPreviewMetricsPort(Protocol):
+    def increment(
+        self, component: str, name: str, *, trace_id: str | None = None, **attributes: str
+    ) -> None: ...
+    def record_span(
+        self,
+        component: str,
+        operation: str,
+        duration_ms: float,
+        *,
+        trace_id: str,
+        span_id: str,
+        parent_span_id: str | None,
+        dependency: str,
+        outcome: str,
+        error_class: str | None = None,
+        provider: str | None = None,
+        **attributes: str,
+    ) -> None: ...
+
+
+class PersonaPreviewError(RuntimeError):
+    """Stable, content-free preview failure."""
+
+    def __init__(self, error_class: str, *, provider: str | None = None) -> None:
+        super().__init__("persona preview unavailable")
+        self.error_class = error_class
+        self.provider = provider
+
+
+def _bounded_provider(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", value) else "unknown"
+
+
+def _preview_dependency(error_class: str | None, provider: str | None) -> str:
+    """Return the bounded dependency origin for a preview outcome.
+
+    Preview telemetry has both a failure counter and a root span.  Keeping
+    this classification in one function prevents those two records from
+    attributing the same failure to different dependencies.
+    """
+
+    if error_class is None:
+        return "model_provider"
+    if error_class in {"capability", "provider", "timeout"}:
+        return "model_provider"
+    if error_class in {"not_found", "disabled"}:
+        return "configuration_store"
+    if error_class == "authorization":
+        return "identity_authorization"
+    if error_class == "validation":
+        return "application_validation"
+    if error_class == "unknown":
+        return "model_provider" if provider is not None else "application_unknown"
+    return "application_unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,10 +455,16 @@ class PersonaConfigurationService:
     """Public application service shared by memory and SQL compositions."""
 
     def __init__(
-        self, repository: PersonaConfigurationRepository, audit: object | None = None
+        self,
+        repository: PersonaConfigurationRepository,
+        audit: object | None = None,
+        preview_port: PersonaPreviewPort | None = None,
+        metrics: PersonaPreviewMetricsPort | None = None,
     ) -> None:
         self.repository = repository
         self.audit = audit
+        self.preview_port = preview_port
+        self.metrics = metrics
 
     async def list_personas(self) -> list[PersonaProfile]:
         return await self.repository.list_personas()
@@ -372,6 +479,146 @@ class PersonaConfigurationService:
         self, session: object, identifier: UUID
     ) -> PersonaRevision:
         return await self.repository.require_active_revision_in_transaction(session, identifier)
+
+    async def preview(
+        self,
+        issuer: str,
+        subject: str,
+        model_id: str,
+        prompt: str,
+        *,
+        draft: PersonaRevision | None = None,
+        persona_revision_id: UUID | None = None,
+    ) -> str:
+        del issuer, subject
+        trace_id = uuid4().hex
+        span_id = uuid4().hex[:16]
+        started = datetime.now(UTC)
+        outcome = "error"
+        error_class: str | None = None
+        provider: str | None = None
+        try:
+            if self.preview_port is None:
+                raise PersonaPreviewError("capability")
+            if (draft is None) == (persona_revision_id is None):
+                raise ValueError("exactly one preview source is required")
+            if draft is None:
+                draft = await self.repository.require_active_revision(persona_revision_id)  # type: ignore[arg-type]
+            preview = await self.preview_port.preview(
+                model_id,
+                (
+                    f"{PREVIEW_GOVERNANCE}\nYou are {draft.display_name}. {draft.description}\n"
+                    f"Behavioral guidance: {draft.instructions}"
+                )[:35_000],
+                prompt,
+                trace=PersonaPreviewTrace(trace_id, span_id),
+            )
+            if isinstance(preview, PersonaPreviewResult):
+                content = preview.content
+                provider = _bounded_provider(preview.provider)
+            else:
+                content = preview
+            content = content[:32_768]
+            outcome = "ok"
+        except PersonaPreviewError as exc:
+            error_class = (
+                exc.error_class
+                if exc.error_class in _PREVIEW_ERROR_CLASSES
+                else "unknown"
+            )
+            provider = _bounded_provider(exc.provider)
+            raise PersonaPreviewError(error_class, provider=provider) from exc
+        except TimeoutError as exc:
+            error_class = "timeout"
+            provider = _bounded_provider(getattr(exc, "provider", None))
+            raise PersonaPreviewError("timeout", provider=provider) from exc
+        except ConfigurationNotFound as exc:
+            error_class = "not_found"
+            raise PersonaPreviewError("not_found") from exc
+        except ConfigurationDisabled as exc:
+            error_class = "disabled"
+            raise PersonaPreviewError("disabled") from exc
+        except LookupError as exc:
+            error_class = "capability"
+            raise PersonaPreviewError("capability", provider=provider) from exc
+        except ValueError as exc:
+            error_class = "validation"
+            raise PersonaPreviewError("validation") from exc
+        except RuntimeError as exc:
+            error_class = "provider"
+            provider = _bounded_provider(getattr(exc, "provider", None))
+            raise PersonaPreviewError("provider", provider=provider) from exc
+        except Exception as exc:
+            error_class = "unknown"
+            provider = _bounded_provider(getattr(exc, "provider", None))
+            raise PersonaPreviewError("unknown", provider=provider) from exc
+        finally:
+            elapsed = (datetime.now(UTC) - started).total_seconds() * 1000
+            dependency = _preview_dependency(error_class, provider)
+            self._metric_increment(
+                "persona_preview_outcome",
+                trace_id=trace_id,
+                outcome=outcome,
+                **({"provider": provider} if provider else {}),
+                **({"error_class": error_class} if error_class else {}),
+            )
+            if outcome == "error" and error_class is not None:
+                self._metric_increment(
+                    "errors",
+                    trace_id=trace_id,
+                    outcome=outcome,
+                    error_class=error_class,
+                    dependency=dependency,
+                )
+                if error_class in {"provider", "timeout", "unknown"} and provider is not None:
+                    self._metric_increment(
+                        "provider_errors",
+                        trace_id=trace_id,
+                        outcome=outcome,
+                        error_class=error_class,
+                        dependency="model_provider",
+                        provider=provider or "unknown",
+                    )
+            self._record_span(
+                trace_id,
+                span_id,
+                elapsed,
+                outcome,
+                error_class,
+                provider,
+                dependency,
+            )
+        return content
+
+    def _metric_increment(self, name: str, *, trace_id: str, **attributes: str) -> None:
+        if self.metrics is not None:
+            self.metrics.increment(
+                "aura.interaction.persona_preview", name, trace_id=trace_id, **attributes
+            )
+
+    def _record_span(
+        self,
+        trace_id: str,
+        span_id: str,
+        duration_ms: float,
+        outcome: str,
+        error_class: str | None,
+        provider: str | None,
+        dependency: str,
+    ) -> None:
+        if self.metrics is not None:
+            self.metrics.record_span(
+                "aura.interaction.persona_preview",
+                "persona.preview",
+                duration_ms,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=None,
+                dependency=dependency,
+                outcome=outcome,
+                error_class=error_class,
+                provider=provider,
+            )
 
     async def create_persona(
         self,
@@ -472,4 +719,9 @@ __all__ = [
     "PersonaConfigurationQueryPort",
     "PersonaRevisionQueryPort",
     "PersonaMemoryRepository",
+    "PersonaPreviewError",
+    "PersonaPreviewMetricsPort",
+    "PersonaPreviewPort",
+    "PersonaPreviewResult",
+    "PersonaPreviewTrace",
 ]

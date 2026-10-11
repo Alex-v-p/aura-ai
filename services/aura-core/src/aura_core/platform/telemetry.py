@@ -33,7 +33,8 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.tool_selection": "1.2.0",
     "aura.runtime.policy_evaluation": "1.1.0",
     "aura.runtime.tool_execution": "1.1.0",
-    "aura.interaction.agent_configuration": "1.1.0",
+    "aura.interaction.agent_configuration": "1.2.0",
+    "aura.interaction.persona_preview": "1.0.0",
     "aura.execution.run_coordinator": "1.7.0",
     "aura.interaction.conversation_persistence": "1.6.0",
     "aura.runtime.model_inference": "1.5.0",
@@ -83,6 +84,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "memory_policy_configuration_duration_ms",
             "memory_policy_configuration_outcome",
         }
+    ),
+    "aura.interaction.persona_preview": frozenset(
+        {"persona_preview_duration_ms", "persona_preview_outcome", "errors", "provider_errors"}
     ),
     "aura.execution.run_coordinator": frozenset(
         {
@@ -279,6 +283,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.runtime.policy_evaluation": frozenset({"tool.policy.evaluate"}),
     "aura.runtime.tool_execution": frozenset({"tool.execute"}),
     "aura.interaction.agent_configuration": frozenset({"agent.configure"}),
+    "aura.interaction.persona_preview": frozenset({"persona.preview"}),
     "aura.execution.run_coordinator": frozenset(
         {
             "consumer.delivery",
@@ -417,6 +422,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.policy_evaluation": "tool_policy_evaluation_duration_ms",
     "aura.runtime.tool_execution": "tool_execution_duration_ms",
     "aura.interaction.agent_configuration": "operation_duration_ms",
+    "aura.interaction.persona_preview": "persona_preview_duration_ms",
     "aura.execution.run_coordinator": "operation_duration_ms",
     "aura.interaction.conversation_persistence": "persistence_duration_ms",
     "aura.runtime.model_inference": "inference_duration_ms",
@@ -639,6 +645,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "reminder_store",
             "approval_store",
             "approval-replay",
+            "identity_authorization",
+            "transport_validation",
+            "application_validation",
+            "application_unknown",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),

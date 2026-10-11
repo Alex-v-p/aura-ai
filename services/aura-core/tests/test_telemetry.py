@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import yaml
 from aura_core.domains.execution.runs.public import (
@@ -45,7 +46,9 @@ from aura_core.platform.telemetry import (
     record_memory_retrieval,
     root_span_id,
 )
+from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.providers.models.ollama.fake import FakeChatModel
+from aura_core.runtime.models.ports import ProviderTraceContext
 from aura_core.runtime.streaming.publisher import EventPublisher
 
 
@@ -238,6 +241,54 @@ def test_model_inventory_telemetry_is_registered_and_metadata_only() -> None:
     }
     assert all(item.trace_id in {None, trace_id} for item in measurements)
     assert "model_provider" in repr(measurements)
+
+
+@pytest.mark.asyncio
+async def test_ollama_inventory_cache_hit_and_miss_stay_parented_to_preview_root() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "chat",
+                        "capabilities": ["chat"],
+                        "details": {},
+                    }
+                ]
+            },
+        )
+
+    metrics = MetadataMetrics()
+    adapter = OllamaAdapter("https://ollama.test", telemetry=metrics)
+    context = ProviderTraceContext(trace_id="a" * 32, span_id="b" * 16)
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(  # type: ignore[method-assign]
+        *args, transport=transport, **kwargs
+    )
+    try:
+        await adapter.list_models(context=context)
+        await adapter.list_models(context=context)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+    measurements = metrics.snapshot()
+    inventory_spans = [
+        item
+        for item in measurements
+        if item.kind == "span" and item.metric == "model_inventory_duration_ms"
+    ]
+    assert len(inventory_spans) == 2
+    assert all(item.trace_id == context.trace_id for item in inventory_spans)
+    assert all(item.parent_span_id == context.span_id for item in inventory_spans)
+    cache_outcomes = [
+        dict(item.dimensions)["outcome"]
+        for item in measurements
+        if item.metric == "model_inventory_cache_outcome"
+    ]
+    assert cache_outcomes == ["miss", "hit"]
 
 
 def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> None:
@@ -748,6 +799,92 @@ def test_component_manifest_versions_match_runtime_catalogue() -> None:
         component = cast(dict[str, Any], document["component"])
         manifest_versions[str(component["id"])] = str(component["version"])
     assert manifest_versions == dict(COMPONENT_VERSIONS)
+
+
+def test_persona_preview_component_is_ephemeral_and_cardinality_bounded() -> None:
+    manifest_path = (
+        Path(__file__).parents[1] / "resources" / "component-manifests" / "persona-preview.yaml"
+    )
+    document = cast(dict[str, Any], yaml.safe_load(manifest_path.read_text()))
+    component = cast(dict[str, Any], document["component"])
+    cardinality = cast(dict[str, Any], document["cardinality"])
+    assert component == {
+        "id": "aura.interaction.persona_preview",
+        "version": "1.0.0",
+        "owner": "interaction.personas",
+        "category": "preview",
+    }
+    assert document["input"]["replayable"] is False
+    assert set(cardinality["metric_attributes"]) == {
+        "outcome",
+        "error_class",
+        "dependency",
+        "provider",
+    }
+    assert set(cardinality["prohibited"]) >= {
+        "prompt",
+        "response",
+        "draft",
+        "output",
+        "owner",
+        "endpoint",
+        "token",
+        "credential",
+    }
+    assert document["retention"]["process_buffer"] == "bounded"
+    assert document["retention"]["overflow"] == "drop_oldest_and_count"
+    assert document["retention"]["export_failure"] == "retry_three_times_then_drop_and_count"
+
+
+def test_persona_preview_rejects_forbidden_content_attributes_before_retention() -> None:
+    metrics = MetadataMetrics(capacity=2)
+    trace_id = uuid4().hex
+    metrics.increment(
+        "aura.interaction.persona_preview",
+        "persona_preview_outcome",
+        trace_id=trace_id,
+        outcome="ok",
+        prompt="PRIVATE_PROMPT",
+    )
+    metrics.record_span(
+        "aura.interaction.persona_preview",
+        "persona.preview",
+        1.0,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+        output="PRIVATE_OUTPUT",
+    )
+    assert metrics.snapshot() == ()
+    assert metrics.stats().rejected == 2
+
+
+@pytest.mark.asyncio
+async def test_persona_preview_retention_health_counts_drop_and_export_abandonment() -> None:
+    class FailingExporter:
+        async def export(self, batch: TelemetryBatch) -> None:
+            del batch
+            raise RuntimeError("collector unavailable")
+
+    metrics = MetadataMetrics(capacity=1, exporter=FailingExporter(), max_export_attempts=2)
+    metrics.increment(
+        "aura.interaction.persona_preview",
+        "persona_preview_outcome",
+        outcome="ok",
+    )
+    metrics.increment(
+        "aura.interaction.persona_preview",
+        "persona_preview_outcome",
+        outcome="error",
+        error_class="provider",
+    )
+    assert metrics.stats().dropped == 1
+    assert not await metrics.flush()
+    assert not await metrics.flush()
+    assert metrics.stats().abandoned_batches == 1
+    assert metrics.stats().export_failures == 2
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from aura_core.domains.interaction.agents.public import (
     ConfigurationNotFound,
     ConfigurationStatus,
     ConfigurationVersionConflict,
+    InitialMemoryPolicy,
     MemoryPolicy,
     MemoryRecallMode,
     ToolGrant,
@@ -31,12 +32,35 @@ from aura_core.platform.telemetry import Stopwatch, new_span_id
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
 
+class ToolGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    tool_id: str = Field(min_length=1, max_length=128, alias="toolId")
+    tool_version: int = Field(ge=1, alias="toolVersion")
+
+
+class InitialMemoryPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    shared_user_read: bool = Field(alias="sharedUserRead")
+    current_agent_read: bool = Field(alias="currentAgentRead")
+    shared_user_promotion: bool = Field(alias="sharedUserPromotion")
+    fallback_relevance_threshold: float = Field(ge=0, le=1, alias="fallbackRelevanceThreshold")
+    max_memories: int = Field(ge=1, le=8, alias="maxMemories")
+    context_budget_fraction: float = Field(gt=0, le=0.2, alias="contextBudgetFraction")
+    fallback_agent_profile_ids: list[UUID] = Field(  # pyright: ignore[reportUnknownVariableType]
+        default_factory=list, max_length=64, alias="fallbackAgentProfileIds"
+    )
+    recall_mode: MemoryRecallMode = Field(default=MemoryRecallMode.AUTOMATIC, alias="recallMode")
+    automatic_recall_threshold: float = Field(default=0.70, ge=0, le=1, alias="automaticRecallThreshold")
+
+
 class AgentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     displayName: str = Field(min_length=1, max_length=255)
     purpose: str = Field(min_length=1, max_length=2000)
     instructions: str = Field(min_length=1, max_length=32768)
     personaRevisionId: UUID
+    initialToolGrants: list[ToolGrantRequest] | None = Field(default=None, max_length=32)
+    initialMemoryPolicy: InitialMemoryPolicyRequest | None = None
 
 
 class AgentRevisionRequest(BaseModel):
@@ -77,12 +101,6 @@ class AgentMemoryPolicyRequest(BaseModel):
 class AttachAgentMemoryPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     expected_agent_version: int = Field(ge=1, alias="expectedAgentVersion")
-
-
-class ToolGrantRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    tool_id: str = Field(min_length=1, max_length=128, alias="toolId")
-    tool_version: int = Field(ge=1, alias="toolVersion")
 
 
 class AgentToolPolicyRequest(BaseModel):
@@ -262,6 +280,26 @@ async def create_agent(
             body.instructions,
             persona_revision_id,
             str(idempotency_key),
+            initial_memory_policy=(
+                InitialMemoryPolicy(
+                    shared_user_read=body.initialMemoryPolicy.shared_user_read,
+                    current_agent_read=body.initialMemoryPolicy.current_agent_read,
+                    allow_shared_user_promotion=body.initialMemoryPolicy.shared_user_promotion,
+                    fallback_relevance_threshold=body.initialMemoryPolicy.fallback_relevance_threshold,
+                    max_memories=body.initialMemoryPolicy.max_memories,
+                    context_budget_fraction=body.initialMemoryPolicy.context_budget_fraction,
+                    fallback_agent_profile_ids=tuple(body.initialMemoryPolicy.fallback_agent_profile_ids),
+                    recall_mode=body.initialMemoryPolicy.recall_mode,
+                    automatic_recall_threshold=body.initialMemoryPolicy.automatic_recall_threshold,
+                )
+                if body.initialMemoryPolicy is not None
+                else None
+            ),
+            initial_tool_grants=(
+                tuple(ToolGrant(item.tool_id, item.tool_version) for item in body.initialToolGrants)
+                if body.initialToolGrants is not None
+                else None
+            ),
         )
     except Exception as exc:
         record_configuration_failure(request, "agent.create", timer, trace_id, exc)
@@ -269,6 +307,8 @@ async def create_agent(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if isinstance(exc, (ConfigurationDisabled, ConfigurationNotFound)):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if isinstance(exc, (ValueError, TypeError)):
+            raise HTTPException(status_code=422, detail="invalid initial agent policy") from exc
         raise
     record_configuration(request, "agent.create", timer, profile, trace_id)
     return profile_payload(profile)

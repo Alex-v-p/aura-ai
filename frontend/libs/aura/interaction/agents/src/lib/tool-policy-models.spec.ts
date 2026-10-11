@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InMemoryToolPolicyApi, MEMORY_SEARCH_TOOL_ID, MEMORY_SEARCH_TOOL_VERSION, grantsMemorySearch } from './tool-policy-models';
+import { InMemoryToolPolicyApi, MEMORY_SEARCH_TOOL_ID, MEMORY_SEARCH_TOOL_VERSION, grantsMemorySearch, toolPolicyAuthorizationStatus, toolPolicyRecoveryNotice } from './tool-policy-models';
 
 describe('tool policy model', () => {
   it('recognizes only the versioned memory search grant', () => {
@@ -18,5 +18,10 @@ describe('tool policy model', () => {
     const attached = await api.listPolicies('custom-agent');
     expect(attached.attachedPolicyRevisionId).toBe(policy.id);
     expect(attached.items[0] && grantsMemorySearch(attached.items[0])).toBe(true);
+  });
+
+  it.each([401, 403] as const)('classifies catalog authorization failures for %s recovery', (status) => {
+    expect(toolPolicyAuthorizationStatus({ status })).toBe(status);
+    expect(toolPolicyRecoveryNotice(status)).toContain(status === 401 ? 'session has expired' : 'permission');
   });
 });

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -162,6 +163,47 @@ class ToolGrant:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolGrantPolicy:
+    """Server-derived immutable metadata for one registered tool grant."""
+
+    grant: ToolGrant
+    permission_scope: str
+    confirmation: str
+    timeout_ms: int
+    retry_limit: int
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPolicySnapshot:
+    """Resolved policy values copied from the authoritative tool registry."""
+
+    grants: tuple[ToolGrantPolicy, ...]
+    permission_scopes: frozenset[str]
+    max_calls_per_run: int
+    timeout_ms: int
+    retry_limit: int
+
+
+class ToolGrantResolver(Protocol):
+    def resolve(self, grants: Sequence[ToolGrant]) -> ToolPolicySnapshot: ...
+
+
+@dataclass(frozen=True, slots=True)
+class InitialMemoryPolicy:
+    """Client-supplied values for the first immutable memory policy."""
+
+    shared_user_read: bool
+    current_agent_read: bool
+    allow_shared_user_promotion: bool
+    fallback_relevance_threshold: float
+    max_memories: int
+    context_budget_fraction: float
+    fallback_agent_profile_ids: tuple[UUID, ...] = ()
+    recall_mode: MemoryRecallMode = MemoryRecallMode.AUTOMATIC
+    automatic_recall_threshold: float = 0.70
+
+
+@dataclass(frozen=True, slots=True)
 class ToolPolicy:
     """Immutable, owner-scoped tool execution policy revision."""
 
@@ -240,6 +282,9 @@ class AgentConfigurationRepository(Protocol):
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
         tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
+        initial_memory_policy: InitialMemoryPolicy | None = None,
+        initial_tool_grants: tuple[ToolGrant, ...] | None = None,
+        initial_tool_policy: ToolPolicySnapshot | None = None,
     ) -> AgentProfile: ...
     async def revise_agent(
         self,
@@ -329,6 +374,24 @@ def _canonical_fingerprint(operation: str, payload: dict[str, object]) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _canonical_initial_memory_policy(
+    policy: InitialMemoryPolicy | None,
+) -> dict[str, object] | None:
+    if policy is None:
+        return None
+    return {
+        "sharedUserRead": policy.shared_user_read,
+        "currentAgentRead": policy.current_agent_read,
+        "sharedUserPromotion": policy.allow_shared_user_promotion,
+        "fallbackRelevanceThreshold": policy.fallback_relevance_threshold,
+        "maxMemories": policy.max_memories,
+        "contextBudgetFraction": policy.context_budget_fraction,
+        "fallbackAgentProfileIds": [str(item) for item in policy.fallback_agent_profile_ids],
+        "recallMode": policy.recall_mode.value,
+        "automaticRecallThreshold": policy.automatic_recall_threshold,
+    }
 
 
 class AgentCatalog:
@@ -446,6 +509,9 @@ class AgentCatalog:
         idempotency_key: str | None = None,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
         tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
+        initial_memory_policy: InitialMemoryPolicy | None = None,
+        initial_tool_grants: tuple[ToolGrant, ...] | None = None,
+        initial_tool_policy: ToolPolicySnapshot | None = None,
     ) -> AgentProfile:
         fingerprint = _canonical_fingerprint(
             "agent",
@@ -456,6 +522,12 @@ class AgentCatalog:
                 "instructions": instructions,
                 "personaRevisionId": str(persona_revision_id),
                 "memoryPolicyRevisionId": str(memory_policy_revision_id),
+                "toolPolicyRevisionId": str(tool_policy_revision_id),
+                "initialMemoryPolicy": _canonical_initial_memory_policy(initial_memory_policy),
+                "initialToolGrants": [
+                    {"toolId": grant.tool_id, "toolVersion": grant.tool_version}
+                    for grant in (initial_tool_grants or ())
+                ] if initial_tool_grants is not None else None,
             },
         )
         if idempotency_key is not None and idempotency_key in self._idempotency:
@@ -467,7 +539,42 @@ class AgentCatalog:
         if persona.status != ConfigurationStatus.ACTIVE:
             raise ConfigurationDisabled("persona is disabled")
         profile_id = uuid4()
-        if memory_policy_revision_id == GENERAL_MEMORY_POLICY_ID:
+        if (
+            initial_memory_policy is not None
+            and memory_policy_revision_id != GENERAL_MEMORY_POLICY_ID
+        ):
+            raise ValueError("initial memory policy cannot be combined with a policy revision")
+        if initial_tool_grants is not None and tool_policy_revision_id != GENERAL_TOOL_POLICY_ID:
+            raise ValueError("initial tool grants cannot be combined with a policy revision")
+        if initial_tool_grants is not None:
+            if len(set(initial_tool_grants)) != len(initial_tool_grants):
+                raise ValueError("tool grants must be unique")
+            if initial_tool_policy is None:
+                raise ValueError("server-derived tool policy is required")
+            if tuple(item.grant for item in initial_tool_policy.grants) != initial_tool_grants:
+                raise ValueError("tool policy grant snapshot does not match request")
+        if initial_memory_policy is not None:
+            fallback_ids = tuple(initial_memory_policy.fallback_agent_profile_ids)
+            if len(set(fallback_ids)) != len(fallback_ids) or profile_id in fallback_ids:
+                raise ValueError("fallback grants must be unique and cannot include the new agent")
+            for fallback_id in fallback_ids:
+                fallback = self.agents.get(fallback_id)
+                if fallback is None or fallback.status != ConfigurationStatus.ACTIVE:
+                    raise ConfigurationNotFound("fallback agent profile not found")
+            memory_policy_revision_id = uuid5(NAMESPACE, f"agent-memory-policy:{profile_id}:1")
+            self.memory_policies[memory_policy_revision_id] = MemoryPolicy(
+                memory_policy_revision_id, profile_id, 1,
+                shared_user_read=initial_memory_policy.shared_user_read,
+                current_agent_read=initial_memory_policy.current_agent_read,
+                allow_shared_user_promotion=initial_memory_policy.allow_shared_user_promotion,
+                fallback_relevance_threshold=initial_memory_policy.fallback_relevance_threshold,
+                max_memories=initial_memory_policy.max_memories,
+                context_budget_fraction=initial_memory_policy.context_budget_fraction,
+                fallback_agent_profile_ids=fallback_ids,
+                recall_mode=initial_memory_policy.recall_mode,
+                automatic_recall_threshold=initial_memory_policy.automatic_recall_threshold,
+            )
+        elif memory_policy_revision_id == GENERAL_MEMORY_POLICY_ID:
             memory_policy_revision_id = uuid5(NAMESPACE, f"agent-memory-policy:{profile_id}:1")
             self.memory_policies[memory_policy_revision_id] = MemoryPolicy(
                 memory_policy_revision_id,
@@ -478,7 +585,19 @@ class AgentCatalog:
                 recall_mode=MemoryRecallMode.OFF,
                 automatic_recall_threshold=0.70,
             )
-        if tool_policy_revision_id == GENERAL_TOOL_POLICY_ID:
+        if initial_tool_grants is not None:
+            if initial_tool_policy is None:
+                raise ValueError("server-derived tool policy is required")
+            tool_policy_revision_id = uuid5(NAMESPACE, f"agent-tool-policy:{profile_id}:1")
+            self.tool_policies[tool_policy_revision_id] = ToolPolicy(
+                tool_policy_revision_id, profile_id, 1,
+                grants=tuple(initial_tool_grants),
+                max_calls_per_run=initial_tool_policy.max_calls_per_run,
+                timeout_ms=initial_tool_policy.timeout_ms,
+                retry_limit=initial_tool_policy.retry_limit,
+                permission_scopes=initial_tool_policy.permission_scopes,
+            )
+        elif tool_policy_revision_id == GENERAL_TOOL_POLICY_ID:
             tool_policy_revision_id = uuid5(NAMESPACE, f"agent-tool-policy:{profile_id}:1")
             self.tool_policies[tool_policy_revision_id] = ToolPolicy(
                 tool_policy_revision_id, profile_id, 1
@@ -932,6 +1051,9 @@ class AgentMemoryRepository:
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
         tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
+        initial_memory_policy: InitialMemoryPolicy | None = None,
+        initial_tool_grants: tuple[ToolGrant, ...] | None = None,
+        initial_tool_policy: ToolPolicySnapshot | None = None,
     ) -> AgentProfile:
         del issuer, subject
         return self.catalog.create_agent(
@@ -943,6 +1065,9 @@ class AgentMemoryRepository:
             idempotency_key=key,
             memory_policy_revision_id=memory_policy_revision_id,
             tool_policy_revision_id=tool_policy_revision_id,
+            initial_memory_policy=initial_memory_policy,
+            initial_tool_grants=initial_tool_grants,
+            initial_tool_policy=initial_tool_policy,
         )
 
     async def revise_agent(
@@ -1127,10 +1252,12 @@ class AgentConfigurationService:
         repository: AgentConfigurationRepository,
         personas: PersonaConfigurationService,
         audit: object | None = None,
+        tool_grant_resolver: ToolGrantResolver | None = None,
     ) -> None:
         self.repository = repository
         self.personas = personas
         self.audit = audit
+        self.tool_grant_resolver = tool_grant_resolver
 
     async def list_agents(self) -> list[AgentProfile]:
         return await self.repository.list_agents()
@@ -1150,7 +1277,14 @@ class AgentConfigurationService:
         key: str,
         memory_policy_revision_id: UUID = GENERAL_MEMORY_POLICY_ID,
         tool_policy_revision_id: UUID = GENERAL_TOOL_POLICY_ID,
+        initial_memory_policy: InitialMemoryPolicy | None = None,
+        initial_tool_grants: tuple[ToolGrant, ...] | None = None,
     ) -> AgentProfile:
+        initial_tool_policy = None
+        if initial_tool_grants is not None:
+            if self.tool_grant_resolver is None:
+                raise ValueError("tool grant resolver is not configured")
+            initial_tool_policy = self.tool_grant_resolver.resolve(initial_tool_grants)
         result = await self.repository.create_agent(
             issuer,
             subject,
@@ -1162,6 +1296,9 @@ class AgentConfigurationService:
             key,
             memory_policy_revision_id,
             tool_policy_revision_id,
+            initial_memory_policy,
+            initial_tool_grants,
+            initial_tool_policy,
         )
         await self._audit("agent.create", issuer, subject, result)
         return result
@@ -1354,6 +1491,10 @@ __all__ = [
     "ToolPolicy",
     "ToolPolicyGrant",
     "ToolPolicyRevision",
+    "ToolGrantPolicy",
+    "ToolGrantResolver",
+    "ToolPolicySnapshot",
+    "InitialMemoryPolicy",
     "AgentToolPolicy",
     "GENERAL_PROFILE_ID",
     "GENERAL_REVISION_ID",
