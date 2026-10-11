@@ -5,9 +5,10 @@ export type ReminderView = 'upcoming' | 'history';
 export interface RemindersApi {
   list(view: ReminderView, cursor?: string): Promise<ReminderPage>;
   get(id: string): Promise<Reminder>;
-  create(content: string, dueAt: string): Promise<Reminder>;
+  create(content: string, dueAt: string, idempotencyKey?: string): Promise<Reminder>;
   complete(id: string, expectedVersion: number): Promise<Reminder>;
   cancel(id: string, expectedVersion: number): Promise<Reminder>;
+  clearSession?(): void;
 }
 
 export interface ReminderCollection {

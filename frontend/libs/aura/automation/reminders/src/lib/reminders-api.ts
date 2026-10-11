@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { AuraApiClient, type AuraOperationDescriptor, type AuraOperationId, type AuraOperationInput, type AuraOperationResponse } from '@aura/aura-api-client';
 import type { CreateReminderRequest, Reminder, ReminderPage, ReminderTransitionRequest } from '@aura/aura-api-client';
 import type { ReminderView, RemindersApi } from './reminder-models';
+import { ReminderSessionHydrator } from './reminder-session-hydration';
 
 type Input = { path: Record<string, string>; query: Record<string, unknown>; headers: Record<string, string>; body: unknown };
 
@@ -23,8 +24,9 @@ export class ReminderApiError extends Error {
 @Injectable({ providedIn: 'root' })
 export class AuraRemindersApi implements RemindersApi {
   private readonly client = new AuraApiClient(new GeneratedAuraTransport());
-  private csrf = '';
-  private sessionPromise: Promise<void> | null = null;
+  private readonly session = new ReminderSessionHydrator(() => this.client.execute('getSession', emptyInput()).then((value) => value.csrfToken), () => new ReminderApiError(401, 'Session changed.'));
+
+  clearSession(): void { this.session.clearSession(); }
 
   async list(view: ReminderView = 'upcoming', cursor?: string): Promise<ReminderPage> {
     await this.ensureSession();
@@ -36,10 +38,10 @@ export class AuraRemindersApi implements RemindersApi {
     return this.client.execute('getReminder', { ...emptyInput(), path: { reminder_id: id } });
   }
 
-  async create(content: string, dueAt: string): Promise<Reminder> {
+  async create(content: string, dueAt: string, requestId = idempotencyKey()): Promise<Reminder> {
     await this.ensureSession();
     const body: CreateReminderRequest = { content, dueAt };
-    return this.client.execute('createReminder', { ...emptyInput(), headers: this.mutationHeaders(), body });
+    return this.client.execute('createReminder', { ...emptyInput(), headers: this.mutationHeaders(requestId), body });
   }
 
   async complete(id: string, expectedVersion: number): Promise<Reminder> {
@@ -55,13 +57,11 @@ export class AuraRemindersApi implements RemindersApi {
   }
 
   private async ensureSession(): Promise<void> {
-    if (this.csrf) return;
-    this.sessionPromise ??= this.client.execute('getSession', emptyInput()).then((session) => { this.csrf = session.csrfToken; }).finally(() => { this.sessionPromise = null; });
-    await this.sessionPromise;
+    await this.session.ensure();
   }
 
-  private mutationHeaders(): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } {
-    return { 'X-CSRF-Token': this.csrf, 'Idempotency-Key': idempotencyKey() };
+  private mutationHeaders(requestId = idempotencyKey()): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } {
+    return { 'X-CSRF-Token': this.session.currentToken(), 'Idempotency-Key': requestId };
   }
 }
 

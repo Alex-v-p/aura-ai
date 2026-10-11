@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { AuraApiClient, type AuraOperationDescriptor, type AuraOperationId, type AuraOperationInput, type AuraOperationResponse, type NotificationStatus, type NotificationStreamEvent } from '@aura/aura-api-client';
-import { NotificationApiError, type NotificationEvent, type NotificationPage, type NotificationRecord, type NotificationStream, type NotificationsApi } from './notification-models';
+import { isValidNotificationEvent, NotificationApiError, type NotificationEvent, type NotificationPage, type NotificationRecord, type NotificationStream, type NotificationsApi } from './notification-models';
+import { NotificationSessionHydrator } from './notification-session-hydration';
 
 type RequestInput = { path: Record<string, string>; query: Record<string, unknown>; headers: Record<string, string>; body: unknown };
 
@@ -15,8 +16,9 @@ function idempotencyKey(): string {
 @Injectable({ providedIn: 'root' })
 export class AuraNotificationsApi implements NotificationsApi {
   private readonly client = new AuraApiClient(new GeneratedAuraTransport());
-  private csrf = '';
-  private sessionPromise: Promise<void> | null = null;
+  private readonly session = new NotificationSessionHydrator(() => this.client.execute('getSession', emptyInput()).then((value) => value.csrfToken), () => new NotificationApiError(401, 'Session changed.'));
+
+  clearSession(): void { this.session.clearSession(); }
 
   async list(cursor?: string, status?: NotificationStatus): Promise<NotificationPage> {
     await this.ensureSession();
@@ -60,6 +62,7 @@ export class AuraNotificationsApi implements NotificationsApi {
       let buffer = '';
       while (!signal.aborted) {
         const chunk = await reader.read();
+        if (signal.aborted) return;
         if (chunk.done) break;
         buffer += decoder.decode(chunk.value, { stream: true });
         const blocks = buffer.split(/\r?\n\r?\n/);
@@ -86,7 +89,7 @@ export class AuraNotificationsApi implements NotificationsApi {
     if (!data.length || fields.get('event') === 'heartbeat') return;
     try {
       const payload = JSON.parse(data.join('\n')) as NotificationStreamEvent;
-      if (payload.schemaVersion !== 1 || payload.eventType === 'heartbeat' || !payload.notificationId || !payload.occurredAt) return;
+      if (!isValidNotificationEvent(payload)) return;
       onEvent(payload);
     } catch {
       // Durable reconciliation on reconnect is authoritative.
@@ -94,13 +97,11 @@ export class AuraNotificationsApi implements NotificationsApi {
   }
 
   private async ensureSession(): Promise<void> {
-    if (this.csrf) return;
-    this.sessionPromise ??= this.client.execute('getSession', emptyInput()).then((session) => { this.csrf = session.csrfToken; }).finally(() => { this.sessionPromise = null; });
-    await this.sessionPromise;
+    await this.session.ensure();
   }
 
   private mutationHeaders(): { readonly 'X-CSRF-Token': string; readonly 'Idempotency-Key': string } {
-    return { 'X-CSRF-Token': this.csrf, 'Idempotency-Key': idempotencyKey() };
+    return { 'X-CSRF-Token': this.session.currentToken(), 'Idempotency-Key': idempotencyKey() };
   }
 }
 
@@ -120,7 +121,7 @@ class GeneratedAuraTransport {
     if (!response.ok) {
       let detail = '';
       try { const body = await response.json() as { detail?: string; message?: string }; detail = body.message ?? body.detail ?? ''; } catch { /* use fallback */ }
-      throw new Error(detail || 'The notification request could not be completed.');
+      throw new NotificationApiError(response.status, detail || 'The notification request could not be completed.', response.status >= 500 || response.status === 409 || response.status === 429);
     }
     return response.status === 204 ? undefined as AuraOperationResponse<K> : await response.json() as AuraOperationResponse<K>;
   }

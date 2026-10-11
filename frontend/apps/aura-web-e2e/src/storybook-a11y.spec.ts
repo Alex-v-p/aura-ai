@@ -6,6 +6,8 @@ const stories = ['empty', 'loading', 'working', 'tool-activity', 'interrupted', 
 const themes = ['light', 'dark'] as const;
 const memoryStories = ['records', 'selected-record-detail', 'create-memory', 'first-run-setup', 'review-queue', 'empty-records', 'filtered-empty-records', 'configured-settings', 'reindex-settings', 'settings-error', 'mobile-dark-records', 'mobile-detail', 'agent-policy-automatic', 'agent-policy-off'] as const;
 const managementStories = ['agent-library', 'agent-builder', 'persona-library', 'persona-builder', 'persona-detail'] as const;
+const reminderStories = ['workspace', 'history', 'composer', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
+const notificationStories = ['inbox', 'history', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
   document.documentElement.style.colorScheme = theme;
@@ -72,6 +74,73 @@ for (const story of memoryStories) {
       await expect(page.locator('.memory-page').first()).toBeVisible();
       await applyAndSettleStoryTheme(page, theme);
       const results = await new AxeBuilder({ page }).include('.memory-page').analyze();
+      expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of reminderStories) {
+  for (const theme of themes) {
+    test(`Reminder Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Storybook axe coverage runs once in the desktop project.');
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-reminders-product--${story}&viewMode=story`);
+      await expect(page.locator('.reminders-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'workspace') {
+        await expect(page.getByRole('heading', { name: 'Upcoming', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /History/ })).toBeVisible();
+      }
+      if (story === 'history') {
+        await page.getByRole('button', { name: /History/ }).click();
+        await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
+        await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+      }
+      if (story === 'composer') {
+        await page.getByRole('button', { name: 'New reminder', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'What should Aura remind you about?' })).toBeVisible();
+      }
+      if (story === 'detail') {
+        const detail = page.getByRole('dialog', { name: 'Bring the library books back' });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByRole('button', { name: 'Mark complete', exact: true })).toBeVisible();
+        await expect(detail.getByRole('button', { name: 'Cancel reminder', exact: true })).toBeVisible();
+        await expect(detail.getByText('Timezone', { exact: true })).toBeVisible();
+      }
+      if (story === 'loading') await expect(page.getByRole('status').filter({ hasText: 'Loading reminders' })).toBeVisible();
+      if (story === 'empty') await expect(page.getByRole('heading', { name: 'No upcoming reminders', exact: true })).toBeVisible();
+      if (story === 'recovery') await expect(page.getByRole('alert').filter({ hasText: 'temporarily unavailable' })).toBeVisible();
+      const results = await new AxeBuilder({ page }).include('.reminders-page').analyze();
+      expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of notificationStories) {
+  for (const theme of themes) {
+    test(`Notification Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Storybook axe coverage runs once in the desktop project.');
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-notifications-centre--${story}&viewMode=story`);
+      await expect(page.locator('.notifications-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'inbox') {
+        await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Unread/ })).toBeVisible();
+      }
+      if (story === 'history') {
+        await expect(page.getByRole('button', { name: /History/ })).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible();
+      }
+      if (story === 'detail') {
+        const detail = page.getByRole('dialog', { name: 'Bring the library books back' });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByRole('button', { name: 'Mark reminder complete', exact: true })).toBeVisible();
+        await expect(detail.getByText(/Due/)).toBeVisible();
+        await expect(detail.getByText('Unknown time', { exact: true })).toHaveCount(0);
+      }
+      if (story === 'loading') await expect(page.getByRole('status').filter({ hasText: 'Loading notifications' })).toBeVisible();
+      if (story === 'empty') await expect(page.getByRole('heading', { name: 'All caught up', exact: true })).toBeVisible();
+      if (story === 'recovery') await expect(page.getByRole('alert').filter({ hasText: 'temporarily unavailable' })).toBeVisible();
+      const results = await new AxeBuilder({ page }).include('.notifications-page').analyze();
       expect(results.violations).toEqual([]);
     });
   }
