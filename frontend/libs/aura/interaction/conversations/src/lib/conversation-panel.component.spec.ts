@@ -32,4 +32,11 @@ describe('conversation configuration select bindings', () => {
     expect(componentSource).toContain('visibleFocusTarget(opener, navigationTrigger)?.focus()');
     expect(componentSource).toContain('if (returnFocus) setTimeout(() => {');
   });
+
+  it('routes conversation approvals to governed review without inline decisions', () => {
+    expect(template).toContain(`[routerLink]="['/approvals', approval.id]"`);
+    expect(template).toContain('>Review and decide</a>');
+    expect(template).not.toContain('(click)="approvalStore.approve');
+    expect(template).not.toContain('(click)="approvalStore.reject');
+  });
 });

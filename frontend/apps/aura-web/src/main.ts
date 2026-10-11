@@ -8,6 +8,7 @@ import { PERSONA_API, AuraPersonaApi, PersonaStore } from '@aura/aura/interactio
 import { MemoryStore } from '@aura/aura/knowledge/memory';
 import { ReminderStore } from '@aura/aura/automation/reminders';
 import { NotificationStore } from '@aura/aura/automation/notifications';
+import { ApprovalStore } from '@aura/aura/governance/approvals';
 import { AppComponent } from './app/app.component';
 import { routes } from './app/app.routes';
 
@@ -22,7 +23,8 @@ bootstrapApplication(AppComponent, {
       useFactory: (): ManagementSessionPort => {
         const injector = inject(Injector);
         const notificationStore = inject(NotificationStore);
-        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(ReminderStore), notificationStore];
+        const approvalStore = inject(ApprovalStore);
+        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(ReminderStore), notificationStore, approvalStore];
         let authorizationFailure = false;
         let resetting = false;
         return {
@@ -35,7 +37,7 @@ bootstrapApplication(AppComponent, {
               // replacement principal; an auth failure remains disconnected.
               queueMicrotask(() => {
                 const accepted = injector.get(ConversationStore).authState() === 'authenticated';
-                if (!authorizationFailure && accepted) notificationStore.resumeAfterAcceptedSession();
+                if (!authorizationFailure && accepted) { notificationStore.resumeAfterAcceptedSession(); approvalStore.resumeAfterAcceptedSession(); }
                 authorizationFailure = false;
               });
             }

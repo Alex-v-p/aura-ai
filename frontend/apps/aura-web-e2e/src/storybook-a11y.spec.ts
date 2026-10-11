@@ -8,6 +8,7 @@ const memoryStories = ['records', 'selected-record-detail', 'create-memory', 'fi
 const managementStories = ['agent-library', 'agent-builder', 'persona-library', 'persona-builder', 'persona-detail'] as const;
 const reminderStories = ['workspace', 'history', 'composer', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
 const notificationStories = ['inbox', 'history', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
+const approvalStories = ['pending', 'history', 'detail', 'terminal-detail', 'loading', 'empty', 'authentication-error', 'permission-error', 'conflict', 'unknown-outcome', 'unavailable-stream', 'recovery', 'mobile'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
   document.documentElement.style.colorScheme = theme;
@@ -141,6 +142,77 @@ for (const story of notificationStories) {
       if (story === 'empty') await expect(page.getByRole('heading', { name: 'All caught up', exact: true })).toBeVisible();
       if (story === 'recovery') await expect(page.getByRole('alert').filter({ hasText: 'temporarily unavailable' })).toBeVisible();
       const results = await new AxeBuilder({ page }).include('.notifications-page').analyze();
+      expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of approvalStories) {
+  for (const theme of themes) {
+    test(`Approval Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Approval Storybook axe coverage runs once in the desktop project.');
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-governance-approval-inbox--${story}&viewMode=story`);
+      await expect(page.locator('.approvals-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'pending') {
+        await expect(page.getByRole('heading', { name: 'Approvals', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Pending/ })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Approve|Reject/ })).toHaveCount(0);
+      }
+      if (story === 'history') {
+        await expect(page.getByRole('button', { name: /History/ })).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+        await expect(page.getByText('Rejected', { exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Approve|Reject/ })).toHaveCount(0);
+      }
+      if (story === 'detail' || story === 'conflict' || story === 'unknown-outcome') {
+        const detail = page.getByRole('dialog', { name: /Create a reminder/ });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByText('What will happen', { exact: true })).toBeVisible();
+        await expect(detail.getByText('Origin', { exact: true })).toBeVisible();
+        await expect(detail.getByText('Expires', { exact: true })).toBeVisible();
+        await expect(detail.getByText('Technical details', { exact: true })).toBeVisible();
+        await expect(detail.getByText('reminder.create v1', { exact: true })).not.toBeVisible();
+        await detail.getByText('Technical details', { exact: true }).click();
+        await expect(detail.getByText('reminder.create v1', { exact: true })).toBeVisible();
+        await expect(detail.getByText('approval-pending', { exact: true })).toBeVisible();
+        if (story === 'unknown-outcome') {
+          const unknownNotice = detail.getByRole('alert').filter({ hasText: 'outcome is unknown' });
+          await expect(unknownNotice).toBeVisible();
+          await expect(unknownNotice.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+          await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+          await expect(detail.getByRole('button', { name: 'Reject', exact: true })).toHaveCount(0);
+        } else {
+          await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+          await expect(detail.getByRole('button', { name: 'Reject', exact: true })).toBeVisible();
+        }
+      }
+      if (story === 'terminal-detail') {
+        const detail = page.getByRole('dialog', { name: /Create a reminder/ });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByRole('status').filter({ hasText: 'durable' })).toBeVisible();
+        await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+        await expect(detail.getByRole('button', { name: 'Reject', exact: true })).toHaveCount(0);
+      }
+      if (story === 'loading') await expect(page.getByRole('status').filter({ hasText: 'Loading pending approvals' })).toBeVisible();
+      if (story === 'empty') await expect(page.getByRole('heading', { name: 'Nothing needs your decision', exact: true })).toBeVisible();
+      if (story === 'authentication-error') {
+        const sessionAlert = page.getByRole('alert').filter({ hasText: 'session has expired' });
+        await expect(sessionAlert).toBeVisible();
+        await expect(sessionAlert.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      }
+      if (story === 'permission-error') {
+        const permissionAlert = page.getByRole('alert').filter({ hasText: 'permission' });
+        await expect(permissionAlert).toBeVisible();
+        await expect(permissionAlert.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      }
+      if (story === 'unavailable-stream') await expect(page.getByRole('button', { name: 'Retry live updates', exact: true })).toBeVisible();
+      if (story === 'recovery') {
+        const recoveryNotice = page.getByRole('alert').filter({ hasText: 'temporarily unavailable' });
+        await expect(recoveryNotice).toBeVisible();
+        await expect(recoveryNotice.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+      }
+      const results = await new AxeBuilder({ page }).include('.approvals-page').analyze();
       expect(results.violations).toEqual([]);
     });
   }

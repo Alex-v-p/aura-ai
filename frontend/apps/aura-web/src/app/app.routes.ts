@@ -27,6 +27,7 @@ export const routes: Routes = [
   { path: 'notifications', component: NotificationsPageComponent },
   { path: 'notifications/:id', component: NotificationsPageComponent },
   { path: 'approvals', component: ApprovalsPageComponent },
+  { path: 'approvals/:id', component: ApprovalsPageComponent },
   { path: 'agents/:id/memory', component: AgentMemoryPolicyPageComponent },
   { path: '**', redirectTo: 'conversation' },
 ];

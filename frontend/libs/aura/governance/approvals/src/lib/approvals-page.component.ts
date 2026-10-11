@@ -1,30 +1,61 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostListener, Injector, afterNextRender, effect, inject, signal } from '@angular/core';
+import { A11yModule } from '@angular/cdk/a11y';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ApprovalStore } from './approval-store';
-import type { ApprovalDetail, ApprovalSummary, ApprovalStatus } from './approval-models';
+import type { ApprovalDetail, ApprovalSummary } from './approval-models';
 
-@Component({
-  selector: 'aura-approvals-page',
-  standalone: true,
-  imports: [RouterLink],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './approvals-page.component.html',
-  styleUrl: './approvals-page.component.css',
-})
+type ReturnFocusState = { readonly returnFocusRequested?: boolean; readonly returnFocusId?: string | null };
+function boundedFocusId(value: unknown): string | null { return typeof value === 'string' && value.startsWith('approval-') && value.length <= 160 && /^[A-Za-z0-9_-]+$/.test(value) ? value : null; }
+
+@Component({ selector: 'aura-approvals-page', standalone: true, imports: [A11yModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './approvals-page.component.html', styleUrl: './approvals-page.component.css' })
 export class ApprovalsPageComponent {
   readonly store = inject(ApprovalStore);
   readonly selectedId = signal<string | null>(null);
-  readonly statuses: ReadonlyArray<'all' | ApprovalStatus> = ['all', 'pending', 'approved', 'rejected', 'expired', 'canceled'];
-  constructor() { void this.store.start(); }
-  async inspect(approval: ApprovalSummary): Promise<void> { this.selectedId.set(approval.id); await this.store.inspect(approval.id); }
-  closeDetail(): void { this.selectedId.set(null); this.store.selected.set(null); }
-  async approve(approval: ApprovalSummary): Promise<void> { await this.store.approve(approval); }
-  async reject(approval: ApprovalSummary): Promise<void> { await this.store.reject(approval); }
-  label(status: ApprovalStatus): string { return this.store.statusLabel(status); }
-  executionLabel(status: ApprovalSummary['executionStatus']): string { return status === 'not_started' ? 'Waiting to run' : status === 'queued' ? 'Queued' : status === 'executing' ? 'Executing' : status === 'completed' ? 'Completed' : status === 'denied' ? 'Denied' : 'Failed'; }
-  formatDate(value: string | null | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Unknown time'; }
-  canDecide(approval: ApprovalSummary): boolean { return approval.status === 'pending'; }
+  readonly decisionInFlight = signal<string | null>(null);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly injector = inject(Injector);
+  private readonly changeDetector = inject(ChangeDetectorRef);
+  private returnFocusState = this.readReturnFocusState();
+  private routeGeneration = 0;
+  private readonly initialResetEpoch = this.store.resetEpoch();
+  private readonly resetWatcher = effect(() => {
+    const resetEpoch = this.store.resetEpoch();
+    if (resetEpoch === this.initialResetEpoch || !this.selectedId() || !this.route.snapshot.paramMap.get('id')) return;
+    this.routeGeneration += 1;
+    this.decisionInFlight.set(null);
+    this.changeDetector.detectChanges();
+    this.selectedId.set(null);
+    this.returnFocusState = { returnFocusRequested: false, returnFocusId: null };
+    void this.router.navigate(['/approvals'], { replaceUrl: true, state: this.returnFocusState });
+  });
+
+  constructor() {
+    this.route.paramMap.subscribe((params) => { const id = params.get('id'); if (id !== this.selectedId()) { this.routeGeneration += 1; this.decisionInFlight.set(null); } this.selectedId.set(id); if (id) void this.openRoute(id); else { this.returnFocusState = this.readReturnFocusState(); this.store.clearDetail(); if (this.returnFocusState.returnFocusRequested) this.scheduleReturnFocus(); } });
+  }
+  inspect(approval: ApprovalSummary, event?: Event): void { const returnFocusId = boundedFocusId((event?.currentTarget as HTMLElement | null)?.id); this.returnFocusState = { returnFocusRequested: true, returnFocusId }; void this.router.navigate(['/approvals', approval.id], { state: this.returnFocusState }); }
+  closeDetail(): void { this.routeGeneration += 1; this.decisionInFlight.set(null); this.changeDetector.detectChanges(); this.store.clearDetail(); this.selectedId.set(null); void this.router.navigate(['/approvals'], { state: { ...this.returnFocusState, returnFocusRequested: true } satisfies ReturnFocusState }); }
+  retryDetail(): void { const id = this.selectedId(); if (id) void this.store.inspect(id); }
+  retryDetailRecovery(): void { if (!this.selectedId()) return; const reconciliation = this.store.retry(); this.focusDetailPanel(); void reconciliation.finally(() => this.focusDetailPanel()); }
+  async approve(approval: ApprovalDetail): Promise<void> { await this.runDecision(approval, () => this.store.approve(approval)); }
+  async reject(approval: ApprovalDetail): Promise<void> { await this.runDecision(approval, () => this.store.reject(approval)); }
+  statusLabel(status: ApprovalSummary['status']): string { return this.store.statusLabel(status); }
+  executionLabel(status: ApprovalSummary['executionStatus']): string { return this.store.executionLabel(status); }
+  actionLabel(approval: ApprovalSummary): string { return approval.toolId === 'reminder.create' ? 'Create a reminder' : 'Take an action'; }
+  formatDate(value: string | null | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value)) : 'Unknown time'; }
   isTerminal(approval: ApprovalSummary): boolean { return approval.status !== 'pending'; }
-  trackApproval(_: number, approval: ApprovalSummary): string { return approval.id; }
-  asSummary(detail: ApprovalDetail): ApprovalSummary { return detail; }
+  private async runDecision(approval: ApprovalDetail, decision: () => Promise<boolean>): Promise<void> {
+    const routeId = this.selectedId();
+    if (routeId !== approval.id || this.decisionInFlight() !== null) return;
+    const routeGeneration = this.routeGeneration;
+    this.decisionInFlight.set(approval.id);
+    this.changeDetector.detectChanges();
+    try { await decision(); }
+    finally { if (routeGeneration === this.routeGeneration && this.selectedId() === approval.id && this.decisionInFlight() === approval.id) { this.decisionInFlight.set(null); this.changeDetector.detectChanges(); } }
+  }
+  private async openRoute(id: string): Promise<void> { await this.store.inspect(id); }
+  private focusDetailPanel(): void { afterNextRender(() => { if (typeof document === 'undefined' || !this.selectedId()) return; (document.getElementById('approval-detail-panel') as HTMLElement | null)?.focus(); }, { injector: this.injector }); }
+  private scheduleReturnFocus(): void { afterNextRender(() => { if (typeof document === 'undefined') return; const target = this.returnFocusState.returnFocusId ? document.getElementById(this.returnFocusState.returnFocusId) : document.getElementById('approvals-heading'); (target as HTMLElement | null)?.focus(); }, { injector: this.injector }); }
+  private readReturnFocusState(): ReturnFocusState { const state = this.router.getCurrentNavigation()?.extras.state ?? (typeof history !== 'undefined' ? history.state : null); return { returnFocusRequested: state?.['returnFocusRequested'] === true, returnFocusId: boundedFocusId(state?.['returnFocusId']) }; }
+  @HostListener('document:keydown.escape') onEscape(): void { if (this.selectedId()) this.closeDetail(); }
 }
