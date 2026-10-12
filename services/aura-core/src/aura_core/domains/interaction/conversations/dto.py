@@ -171,6 +171,7 @@ class Conversation:
     persona_assignments: list[PersonaAssignment] = field(
         default_factory=list[PersonaAssignment]
     )
+    client_time_zone: str | None = None
 
     @property
     def current_run(self) -> Run | None:

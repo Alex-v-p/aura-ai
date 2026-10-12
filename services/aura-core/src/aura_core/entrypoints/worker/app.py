@@ -11,12 +11,20 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, Protocol, cast
-from uuid import uuid4, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import RunEventPort
-from aura_core.domains.execution.runs.public import ChatCompletionPort, RunCoordinator
+from aura_core.domains.execution.runs.public import (
+    ChatCompletionPort,
+    RunClaimLost,
+    RunCoordinator,
+)
+from aura_core.domains.governance.approvals.public import (
+    Approval,
+    ApprovalApplicationService,
+)
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
 from aura_core.domains.interaction.agents.public import AgentCatalog, AgentConfigurationService
 from aura_core.domains.interaction.personas.adapters import SqlPersonaStore
@@ -34,7 +42,12 @@ from aura_core.domains.knowledge.memory.public import (
 )
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
-from aura_core.platform.outbox import OutboxCommand, TransactionalOutboxTransport
+from aura_core.platform.outbox import (
+    APPROVAL_EVENT_TOPIC,
+    RUN_RESUME_TOPIC,
+    OutboxCommand,
+    TransactionalOutboxTransport,
+)
 from aura_core.platform.outbox.nats import NatsIdentifierConsumer, NatsOutbox, NatsRunConsumer
 from aura_core.platform.telemetry import (
     MemoryTraceContext,
@@ -47,6 +60,7 @@ from aura_core.platform.telemetry import (
     new_span_id,
 )
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
+from aura_core.runtime.tools import default_tool_registry
 
 
 class MemoryJobProcessor(Protocol):
@@ -65,6 +79,8 @@ async def run_once(
     if command is None:
         return
     try:
+        if command.run_id is None:
+            raise ValueError("run consumer received a command without a run identity")
         await coordinator.execute(command.run_id, provider)
     except Exception:
         # Leave the JetStream delivery unacknowledged so it can be redelivered.
@@ -136,6 +152,39 @@ async def run_memory_once(
                 result,
             )
         await consumer.ack()
+
+
+async def run_resume_once(
+    consumer: NatsIdentifierConsumer,
+    handler: Callable[[UUID], Awaitable[None]],
+) -> None:
+    """Consume one durable approval resume command after validating its event id."""
+
+    try:
+        command = await consumer.receive()
+    except (TypeError, ValueError):
+        await consumer.reject(error_class="validation")
+        return
+    if command is None:
+        return
+    try:
+        if command.topic != RUN_RESUME_TOPIC:
+            raise ValueError("unexpected resume command subject")
+        event_id = command.identifier("eventId")
+        if event_id is None:
+            raise ValueError("resume command is missing eventId")
+        await handler(UUID(event_id))
+    except (TypeError, ValueError):
+        await consumer.reject(error_class="validation")
+        return
+    except Exception:
+        delivery_count = int(getattr(consumer, "delivery_count", 1))
+        await consumer.nack(
+            retry_delay=_retry_delay(delivery_count),
+            error_class="delivery",
+        )
+        return
+    await consumer.ack()
 
 
 def _memory_context(memory_command: MemoryProcessingCommand) -> MemoryTraceContext:
@@ -382,6 +431,21 @@ async def run_memory_loop(
             await asyncio.sleep(0.2)
 
 
+async def run_resume_loop(
+    consumer: NatsIdentifierConsumer,
+    handler: Callable[[UUID], Awaitable[None]],
+) -> None:
+    """Keep durable approval resumption independent from run execution."""
+
+    while True:
+        try:
+            await run_resume_once(consumer, handler)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await asyncio.sleep(0.2)
+
+
 async def run_memory_maintenance(processor: object) -> None:
     """Invoke the Core-owned maintenance use case when configured."""
 
@@ -456,6 +520,183 @@ async def run_memory_housekeeping(processor: object, interval_seconds: float = 6
         await asyncio.sleep(max(1.0, interval_seconds))
 
 
+async def _resume_approval(
+    approval: Approval,
+    approval_service: ApprovalApplicationService,
+    store: SqlConversationStore,
+    coordinator: RunCoordinator,
+    provider: ChatCompletionPort,
+    metrics: MetadataMetrics,
+    event_id: UUID | None = None,
+) -> None:
+    """Consume one owner-authorized decision through public application ports."""
+
+    run_id = approval.run_id
+    approval_id = approval.id
+    status = approval.status.value
+    trace_id = event_id or approval_id
+    span_id = new_span_id()
+    started = monotonic()
+    trace = {
+        "approval_id": str(approval_id),
+        "run_id": str(run_id),
+        "conversation_id": str(approval.conversation_id),
+    }
+    if event_id is not None:
+        trace["event_id"] = str(event_id)
+    if status == "pending":
+        metrics.record_span(
+            "aura.governance.approval_workflow",
+            "approval.resume",
+            (monotonic() - started) * 1000,
+            trace_id=trace_id.hex,
+            span_id=span_id,
+            parent_span_id=None,
+            dependency="postgresql",
+            outcome="ignored",
+            **trace,
+        )
+        return
+
+    async def execute_recoverable() -> None:
+        """Do not acknowledge while an executing run is still recoverable."""
+
+        _conversation, before = await store.find_run_any(run_id)
+        lease = before.lease_expires_at
+        if (
+            before.status.value == "running"
+            and before.tool_lifecycle_status in {"approved", "denied", "executing"}
+            and lease is not None
+            and lease > datetime.now(UTC)
+        ):
+            raise RuntimeError("approval resume lease is still active")
+        await coordinator.execute(run_id, provider)
+        _conversation, after = await store.find_run_any(run_id)
+        if (
+            after.status.value == "running"
+            and after.tool_lifecycle_status in {"approved", "denied", "executing"}
+        ):
+            raise RuntimeError("approval resume remains in progress")
+
+    async def reconcile_completed() -> bool:
+        _conversation, current = await store.find_run_any(run_id)
+        if current.status.value != "completed":
+            return False
+        return await coordinator.reconcile_approval_completion(run_id, approval_id)
+
+    try:
+        _conversation, current_run = await store.find_run_any(run_id)
+        if current_run.status.value == "completed" and await reconcile_completed():
+            return
+        if (
+            current_run.status.value == "running"
+            and current_run.tool_lifecycle_status in {"approved", "denied", "executing"}
+        ):
+            # A redelivery can arrive after the tool marked the run executing
+            # but before its lease was recovered. Let start_run reclaim the
+            # expired lease and replay the idempotent mutation.
+            await execute_recoverable()
+            return
+        run = await store.resume_waiting_run(run_id, approval_id, approved=status == "approved")
+    except RunClaimLost:
+        _conversation, current_run = await store.find_run_any(run_id)
+        if current_run.status.value == "completed" and await reconcile_completed():
+            return
+        if (
+            current_run.status.value == "running"
+            and current_run.tool_lifecycle_status in {"approved", "denied", "executing"}
+        ):
+            await execute_recoverable()
+            return
+        metrics.record_span(
+            "aura.governance.approval_workflow",
+            "approval.resume",
+            (monotonic() - started) * 1000,
+            trace_id=trace_id.hex,
+            span_id=span_id,
+            parent_span_id=None,
+            dependency="postgresql",
+            outcome="duplicate",
+            error_class="lifecycle",
+            **trace,
+        )
+        return
+    except Exception:
+        metrics.record_span(
+            "aura.governance.approval_workflow",
+            "approval.resume",
+            (monotonic() - started) * 1000,
+            trace_id=trace_id.hex,
+            span_id=span_id,
+            parent_span_id=None,
+            dependency="postgresql",
+            outcome="error",
+            error_class="persistence",
+            **trace,
+        )
+        raise
+    metrics.record_span(
+        "aura.governance.approval_workflow",
+        "approval.resume",
+        (monotonic() - started) * 1000,
+        trace_id=trace_id.hex,
+        span_id=span_id,
+        parent_span_id=None,
+        dependency="postgresql",
+        outcome="resumed",
+        **trace,
+    )
+    # The transactional outbox already carries the durable wakeup.  Execute
+    # directly after the row transition so a worker that consumed the wakeup
+    # cannot wait for another detached queue command.
+    await coordinator.execute(run.id, provider)
+
+
+async def run_approval_housekeeping(
+    approval_service: ApprovalApplicationService,
+    store: SqlConversationStore,
+    coordinator: RunCoordinator,
+    provider: ChatCompletionPort,
+    metrics: MetadataMetrics,
+    interval_seconds: float = 1.0,
+) -> None:
+    """Expire due approvals and resume their waiting runs durably."""
+
+    while True:
+        try:
+            expired = await approval_service.expire_due(limit=100)
+            metrics.increment(
+                "aura.governance.approval_workflow",
+                "approval_expiry_outcome",
+                outcome="expired" if expired else "empty",
+            )
+            for approval in expired:
+                try:
+                    await _resume_approval(
+                        approval, approval_service, store, coordinator, provider, metrics
+                    )
+                    metrics.increment(
+                        "aura.governance.approval_workflow",
+                        "approval_resume_outcome",
+                        outcome="expired",
+                    )
+                except Exception:
+                    metrics.increment(
+                        "aura.governance.approval_workflow",
+                        "approval_resume_outcome",
+                        outcome="failed",
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            metrics.increment(
+                "aura.governance.approval_workflow",
+                "approval_expiry_outcome",
+                outcome="failed",
+            )
+        await asyncio.sleep(max(0.1, interval_seconds))
+
+
 async def run_forever(settings: Settings | None = None) -> None:
     """Production worker loop; every command is acknowledged after execution."""
     config = settings or Settings()
@@ -478,6 +719,17 @@ async def run_forever(settings: Settings | None = None) -> None:
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry()
+    from aura_core.bootstrap.approval_uow import approval_repository, approval_service
+    from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+    reminder_repository_instance = reminder_repository(sessions, metrics=metrics)
+    reminder_service_instance = reminder_service(reminder_repository_instance)
+    approval_repository_instance = approval_repository(
+        sessions, metrics=metrics, execution_port=store
+    )
+    approval_service_instance = approval_service(
+        approval_repository_instance,
+        execution_port=store,
+    )
     # The worker composes the same owner-scoped recall boundary as the API.
     # Run execution happens in this process too, so leaving this unset would
     # silently bypass pinned automatic/off policies before prompt compilation.
@@ -504,7 +756,18 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-memory-worker",
         component="aura.knowledge.memory_extraction",
     )
-    event_transport = NatsOutbox(config.nats_url, additional_subjects=(memory_topic,))
+    resume_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        RUN_RESUME_TOPIC,
+        metrics=metrics,
+        durable="aura-core-approval-resume-worker",
+        component="aura.governance.approval_workflow",
+    )
+    event_transport = NatsOutbox(
+        config.nats_url,
+        additional_subjects=(memory_topic, APPROVAL_EVENT_TOPIC, RUN_RESUME_TOPIC),
+        metrics=metrics,
+    )
     memory_processor: MemoryJobProcessor | None = None
     try:
         factory = getattr(memory_uow, "memory_processing_service", None)
@@ -523,24 +786,71 @@ async def run_forever(settings: Settings | None = None) -> None:
         # that state.
         memory_processor = None
     memory_task: asyncio.Task[None] | None = None
+    resume_task: asyncio.Task[None] | None = None
     housekeeping_task: asyncio.Task[None] | None = None
+    approval_task: asyncio.Task[None] | None = None
     await telemetry.start()
     try:
         await consumer.connect()
+        await resume_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
             housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
         await event_transport.connect()
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
+        provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
         coordinator = RunCoordinator(
             store,
-            PersistentEventPublisher(store.append_event, event_transport.publish_event),
+            PersistentEventPublisher(
+                store.append_event,
+                event_transport.publish_event,
+                metrics=metrics,
+            ),
             TransactionalOutboxTransport(),
             metrics,
             lease_seconds=config.ollama_run_timeout_seconds + 30.0,
             timeout_seconds=config.ollama_run_timeout_seconds,
             context_token_budget=config.context_token_budget,
+            tool_registry=default_tool_registry(),
+            approval_service=approval_service_instance,
+            reminder_service=reminder_service_instance,
+            thinking_publisher=event_transport,
+        )
+        # Approval/resumption wakeups are identifier-only; the worker always
+        # reloads owner-authorized state through the governance public port.
+        async def resume_wakeup(event_id: UUID) -> None:
+            event = await approval_service_instance.resume_event(event_id)
+            if event is None:
+                return
+            conversation, _ = await store.find_run_any(event.run_id)
+            detail = await approval_service_instance.get(
+                conversation.principal_issuer,
+                conversation.principal_subject,
+                event.approval_id,
+            )
+            await _resume_approval(
+                detail.approval,
+                approval_service_instance,
+                store,
+                coordinator,
+                provider,
+                metrics,
+                event_id,
+            )
+
+        # Approval lifecycle events are API/SSE wakeups only.  Resumption is
+        # consumed through the durable JetStream command below so a worker
+        # outage cannot lose an approved/rejected/expired decision.
+        resume_task = asyncio.create_task(run_resume_loop(resume_consumer, resume_wakeup))
+        approval_task = asyncio.create_task(
+            run_approval_housekeeping(
+                approval_service_instance,
+                store,
+                coordinator,
+                provider,
+                metrics,
+            )
         )
         if memory_processor is not None:
             activity_publisher = coordinator.publisher
@@ -562,14 +872,23 @@ async def run_forever(settings: Settings | None = None) -> None:
             memory_task = asyncio.create_task(
                 run_memory_loop(memory_processor, memory_consumer, publish_activity)
             )
-        provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
         while True:
             expired_runs = await store.expire_leases()
             for expired_run in expired_runs:
                 expiry_timer = Stopwatch()
                 expiry_span_id = new_span_id()
                 try:
-                    await coordinator.publish_reconciled_status(expired_run)
+                    if (
+                        expired_run.approval_id is not None
+                        and expired_run.tool_lifecycle_status in {
+                            "approved",
+                            "denied",
+                            "executing",
+                        }
+                    ):
+                        await coordinator.execute(expired_run.id, provider)
+                    else:
+                        await coordinator.publish_reconciled_status(expired_run)
                 except Exception:
                     metrics.record_span(
                         "aura.execution.run_coordinator",
@@ -606,13 +925,20 @@ async def run_forever(settings: Settings | None = None) -> None:
                 )
             await run_once(coordinator, provider, consumer)
     finally:
+        if approval_task is not None:
+            approval_task.cancel()
+            await asyncio.gather(approval_task, return_exceptions=True)
         if housekeeping_task is not None:
             housekeeping_task.cancel()
             await asyncio.gather(housekeeping_task, return_exceptions=True)
         if memory_task is not None:
             memory_task.cancel()
             await asyncio.gather(memory_task, return_exceptions=True)
+        if resume_task is not None:
+            resume_task.cancel()
+            await asyncio.gather(resume_task, return_exceptions=True)
         await memory_consumer.close()
+        await resume_consumer.close()
         await consumer.close()
         await event_transport.close()
         await telemetry.stop()

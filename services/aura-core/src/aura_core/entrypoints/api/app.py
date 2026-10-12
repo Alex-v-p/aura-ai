@@ -10,13 +10,17 @@ from fastapi import FastAPI, Request, Response
 from aura_core.entrypoints.api.errors import install_error_handlers
 from aura_core.entrypoints.api.routes import (
     agents,
+    approvals,
     auth,
     conversations,
     health,
     memories,
     models,
+    notifications,
     personas,
+    reminders,
     runs,
+    tools,
 )
 from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Settings
@@ -110,15 +114,51 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
         )
         return response
 
+    @app.middleware("http")
+    async def observe_reminder_boundaries(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        if not request.url.path.startswith("/api/v1/reminders"):
+            return await call_next(request)
+        operation = _reminder_operation(request.url.path, request.method.upper())
+        started = monotonic()
+        try:
+            response = await call_next(request)
+        except Exception:
+            _record_reminder_boundary(state, operation, started, "error", "unknown")
+            raise
+        error_class = None
+        if response.status_code >= 400:
+            error_class = {
+                404: "not_found",
+                409: "conflict",
+                422: "validation",
+            }.get(
+                response.status_code,
+                "authorization" if response.status_code in {401, 403} else "persistence",
+            )
+        _record_reminder_boundary(
+            state,
+            operation,
+            started,
+            "ok" if response.status_code < 400 else "error",
+            error_class,
+        )
+        return response
+
     app.include_router(auth.router)
     app.include_router(models.router)
     app.include_router(models.memory_router)
     app.include_router(memories.router)
     app.include_router(memories.candidate_router)
     app.include_router(agents.router)
+    app.include_router(approvals.router)
     app.include_router(personas.router)
     app.include_router(conversations.router)
     app.include_router(runs.router)
+    app.include_router(tools.router)
+    app.include_router(reminders.router)
+    app.include_router(notifications.router)
     app.include_router(health.router)
     return app
 
@@ -180,6 +220,55 @@ def _memory_boundary(
             "memory_store",
         )
     return None
+
+
+def _reminder_operation(path: str, method: str) -> str:
+    suffix = path.removeprefix("/api/v1/reminders").strip("/")
+    if not suffix:
+        return "reminder.create" if method == "POST" else "reminder.list"
+    if suffix.endswith("/complete"):
+        return "reminder.complete"
+    if suffix.endswith("/cancel"):
+        return "reminder.cancel"
+    return "reminder.get"
+
+
+def _record_reminder_boundary(
+    state: AppState,
+    operation: str,
+    started: float,
+    outcome: str,
+    error_class: str | None,
+) -> None:
+    duration = (monotonic() - started) * 1000
+    trace_id = uuid4().hex
+    span_id = new_span_id()
+    state.metrics.record_span(
+        "aura.automation.reminder_management",
+        operation,
+        duration,
+        trace_id=trace_id,
+        span_id=span_id,
+        parent_span_id=None,
+        dependency="reminder_store",
+        outcome=outcome,
+        error_class=error_class,
+    )
+    state.metrics.observe(
+        "aura.automation.reminder_management",
+        "reminder_command_duration_ms",
+        duration,
+        trace_id=trace_id,
+        dependency="reminder_store",
+        outcome=outcome,
+    )
+    state.metrics.increment(
+        "aura.automation.reminder_management",
+        "reminder_command_outcome",
+        trace_id=trace_id,
+        dependency="reminder_store",
+        outcome=outcome,
+    )
 
 
 def _record_memory_boundary(

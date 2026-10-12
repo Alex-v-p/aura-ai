@@ -1,7 +1,7 @@
 """Ollama HTTP adapter; no Ollama types cross the Core boundary."""
 
 # Provider JSON schema declarations are intentionally compact.
-# ruff: noqa: E501
+# ruff: noqa: E501, I001
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnknownMemberType=false
 
 import asyncio
@@ -26,6 +26,10 @@ from aura_core.runtime.models.ports import (
     ProviderTelemetryPort,
     ProviderTraceContext,
     StructuredInferenceRequest,
+    ModelStreamCompleted,
+    ModelThinkingDelta,
+    ModelTextDelta,
+    ModelToolCall,
 )
 
 # Title inference is presentation metadata.  Keep the provider-side budget
@@ -45,6 +49,7 @@ INVENTORY_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 EMBEDDING_RESPONSE_MAX_BYTES = 512 * 1024
 MAX_EMBEDDING_DIMENSION = 16_384
 EMBEDDING_DIMENSION_PROBE_INPUT = "aura embedding dimension probe"
+THINKING_DELTA_MAX_CHARS = 4096
 
 
 class OllamaUnavailable(RuntimeError):
@@ -56,6 +61,15 @@ class _InventoryFailure(Exception):
 
     def __init__(self, error_class: str) -> None:
         self.error_class = error_class
+
+
+def _bounded_thinking_chunks(value: str) -> tuple[str, ...]:
+    """Split native reasoning frames into transport-safe fixed-size chunks."""
+
+    return tuple(
+        value[offset : offset + THINKING_DELTA_MAX_CHARS]
+        for offset in range(0, len(value), THINKING_DELTA_MAX_CHARS)
+    )
 
 
 class OllamaAdapter:
@@ -102,12 +116,13 @@ class OllamaAdapter:
     async def _load_inventory_locked(
         self, *, force: bool, context: ProviderTraceContext | None
     ) -> tuple[ModelDescriptor, ...]:
+        started = monotonic()
         cached = self._inventory_cache
         if not force and cached is not None and monotonic() - cached[0] < self._inventory_cache_ttl:
             self._record_inventory_cache("hit", context=context)
+            self._record_inventory_telemetry(started, "ok", context=context)
             return cached[1]
         self._record_inventory_cache("miss", context=context)
-        started = monotonic()
         failure: _InventoryFailure | None = None
         descriptors: tuple[ModelDescriptor, ...] | None = None
         try:
@@ -336,6 +351,13 @@ class OllamaAdapter:
                     selected,
                     capabilities=tuple(sorted(set(selected.capabilities) | {"structured_output"})),
                 )
+        elif capability in {"tool_calling", "tools"} and (
+            "tool_calling" in selected.capabilities or "tools" in selected.capabilities
+        ):
+            verified = replace(
+                selected,
+                capabilities=tuple(sorted(set(selected.capabilities) | {"tool_calling", "tools"})),
+            )
         elif capability == "embedding" and "embedding" in selected.capabilities:
             dimension = selected.dimension
             if dimension is None:
@@ -577,6 +599,102 @@ class OllamaAdapter:
                         message = cast(dict[str, Any] | None, payload.get("message"))
                         if isinstance(message, dict) and isinstance(message.get("content"), str):
                             yield message["content"]
+        except httpx.HTTPError as exc:
+            raise OllamaUnavailable("model inference unavailable") from exc
+
+    async def stream_chat_events(
+        self, model_id: str, messages: Sequence[ChatMessage]
+    ) -> AsyncIterator[ModelTextDelta | ModelThinkingDelta | ModelStreamCompleted]:
+        """Stream visible and thinking frames without exposing Ollama JSON.
+
+        ``stream_chat`` remains the compatibility text-only port.  Execution
+        uses this additive typed method when available so Ollama's native
+        ``message.thinking`` field can be delivered through the ephemeral
+        reasoning seam without ever becoming assistant content.
+        """
+
+        body = {
+            "model": model_id,
+            "messages": [
+                {"role": message.role, "content": message.content} for message in messages
+            ],
+            "stream": True,
+            "think": True,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                async with client.stream("POST", "/api/chat", json=body) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            payload = cast(dict[str, Any], json.loads(line))
+                        except json.JSONDecodeError as exc:
+                            raise OllamaUnavailable("provider returned malformed stream") from exc
+                        message = payload.get("message")
+                        if isinstance(message, dict):
+                            thinking = message.get("thinking")
+                            if isinstance(thinking, str) and thinking:
+                                for chunk in _bounded_thinking_chunks(thinking):
+                                    yield ModelThinkingDelta(chunk)
+                            content = message.get("content")
+                            if isinstance(content, str) and content:
+                                yield ModelTextDelta(content)
+                        if payload.get("done") is True:
+                            yield ModelStreamCompleted()
+        except httpx.HTTPError as exc:
+            raise OllamaUnavailable("model inference unavailable") from exc
+
+    async def stream_chat_with_tools(
+        self,
+        model_id: str,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[Mapping[str, object]],
+    ) -> AsyncIterator[ModelTextDelta | ModelThinkingDelta | ModelToolCall | ModelStreamCompleted]:
+        """Normalize Ollama's native tool-call stream to the Core port."""
+
+        body = {
+            "model": model_id,
+            "messages": [
+                {"role": message.role, "content": message.content} for message in messages
+            ],
+            "tools": list(tools),
+            "stream": True,
+            "think": True,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
+                async with client.stream("POST", "/api/chat", json=body) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            payload = cast(dict[str, Any], json.loads(line))
+                        except json.JSONDecodeError as exc:
+                            raise OllamaUnavailable("provider returned malformed stream") from exc
+                        message = payload.get("message")
+                        if not isinstance(message, dict):
+                            continue
+                        thinking = message.get("thinking")
+                        if isinstance(thinking, str) and thinking:
+                            for chunk in _bounded_thinking_chunks(thinking):
+                                yield ModelThinkingDelta(chunk)
+                        content = message.get("content")
+                        if isinstance(content, str) and content:
+                            yield ModelTextDelta(content)
+                        calls = message.get("tool_calls")
+                        if isinstance(calls, list):
+                            for item in calls:
+                                if not isinstance(item, dict):
+                                    raise OllamaUnavailable("provider returned malformed tool call")
+                                function = item.get("function")
+                                if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                                    raise OllamaUnavailable("provider returned malformed tool call")
+                                yield ModelToolCall(function["name"], function.get("arguments", {}))
+                        if payload.get("done") is True:
+                            yield ModelStreamCompleted()
         except httpx.HTTPError as exc:
             raise OllamaUnavailable("model inference unavailable") from exc
 
@@ -1020,13 +1138,16 @@ def _valid_model_name(value: object) -> bool:
 def _parse_capabilities(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
-    return {
+    result = {
         item
         for item in value[:MAX_MODEL_CAPABILITIES]
         if isinstance(item, str)
         and 1 <= len(item) <= 64
         and all(char.isalnum() or char in "._-" for char in item)
     }
+    if "tools" in result:
+        result.add("tool_calling")
+    return result
 
 
 def _parse_dimension(value: object) -> int | None:

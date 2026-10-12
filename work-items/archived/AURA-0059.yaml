@@ -1,0 +1,136 @@
+id: AURA-0059
+title: Rebuild the Aura Web shell and shared UI foundation
+status: integrated
+change_class: feature
+intent: >
+  Replace the cramped destination strip and unstable compact navigation with a
+  grouped accessible adaptive sidebar, keep conversation-library controls
+  contextual to Conversations, preserve drafts through SPA navigation, and
+  establish product-neutral shared page and state primitives for later
+  management-surface migrations.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved grouped Conversations Personalize Automate and Activity navigation
+    - Owner-approved approximately 280px desktop sidebar 72px rail and grouped mobile drawer
+    - Owner-approved conversation library as Conversations-only contextual navigation
+    - Owner-approved Preferences placement for appearance and persistent approval and notification badges
+  contracts: []
+feature_references:
+  - AUI-001
+  - AUI-002
+  - AUI-003
+  - AUI-004
+  - AUI-005
+  - AUI-007
+ownership_zones:
+  - aura-web.shell
+  - aura-web.shared-ui
+  - aura-web.shared-layout
+  - aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0059.yaml
+  - work-items/archived/AURA-0059.yaml
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/libs/shared/ui/**
+  - frontend/libs/shared/layout/**
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/design/**
+  - contracts/**
+  - services/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - deploy/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Shell navigation must not broaden access to approval notification conversation or memory content.
+    - Badges expose counts only and must not reveal sensitive approval or notification payloads.
+    - Draft preservation applies only within the currently authorized browser context and does not add durable storage.
+  data_classes:
+    - owner_navigation_state
+    - owner_conversation_draft
+    - approval_and_notification_counts
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Wide desktop presents a readable approximately 280px grouped sidebar that can collapse to a 72px rail without removing any global destination badge or Preferences access.
+  - Tablet presents rail-appropriate global controls only and opens conversation search filters and history contextually without clipping the content canvas.
+  - Mobile presents the same grouped hierarchy in a focus-managed drawer that closes on Escape and restores focus to its trigger.
+  - Navigation labels are at least 14px expanded preferred targets are at least 44 by 44px and current location uses aria-current plus a visible non-color marker or surface.
+  - Conversations Personalize Automate and Activity groups contain exactly the approved destinations while approval and notification counts remain reachable in every shell mode.
+  - Conversation library controls render only for conversation routes and never inside the compact rail.
+  - Appearance uses an accessible Preferences disclosure with system light and dark choices and does not reload the page or move focus unexpectedly.
+  - Both Aura wordmarks and all destination links use Angular router navigation and preserve an unsent conversation draft.
+  - Shared UI and layout additions remain product-neutral and expose consistent page header state panel tabs list-detail drawer and status patterns without importing Aura feature libraries.
+  - Existing route deep links theme behavior conversation functions authentication boundaries and Core Observatory separation remain compatible.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0059.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0059.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

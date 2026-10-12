@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.5.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, and memory transport contract. Provider endpoints, credentials, and embedding vectors are never exposed by this API."
+    "version": "1.11.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -14,7 +14,11 @@
     { "name": "Personas" },
     { "name": "Conversations" },
     { "name": "Runs" },
+    { "name": "Tools" },
     { "name": "Memories" },
+    { "name": "Reminders" },
+    { "name": "Notifications" },
+    { "name": "Approvals" },
     { "name": "Health" }
   ],
   "paths": {
@@ -79,6 +83,17 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "operationId": "listTools",
+        "tags": ["Tools"],
+        "responses": {
+          "200": { "description": "Safe provider-neutral catalog of tool descriptors available for policy configuration", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ToolCatalog" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
     },
@@ -174,6 +189,24 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "409": { "$ref": "#/components/responses/Conflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/personas/preview": {
+      "post": {
+        "operationId": "previewPersona",
+        "tags": ["Personas"],
+        "description": "Generates one ephemeral, non-durable Persona preview using an explicitly selected model. The request and response are never persisted, audited as content, or retried automatically.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaPreviewRequest" } } } },
+        "responses": {
+          "200": { "description": "Bounded untrusted preview text for escaped rendering", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaPreviewResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
@@ -357,11 +390,11 @@
         "tags": ["Runs"],
         "parameters": [
           { "$ref": "#/components/parameters/RunId" },
-          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed event identifier when reconnecting." }
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed persisted event identifier when reconnecting. Live-only model.thinking.delta events omit the SSE id field and never advance this cursor." }
         ],
         "responses": {
           "200": {
-            "description": "A persisted snapshot followed by ordered live run events. SSE id fields equal eventId and event names equal eventType.",
+            "description": "A persisted snapshot followed by ordered live run events. Durable event SSE id fields equal eventId and event names equal eventType. Private model.thinking.delta reasoning is live-only: its payload keeps eventId for envelope compatibility, but its SSE id field is omitted and it is never persisted, replayed, or included in transcript content.",
             "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } },
             "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/RunEvent" } } }
           },
@@ -702,6 +735,279 @@
         }
       }
     },
+    "/api/v1/agents/{agent_profile_id}/tool-policies": {
+      "get": {
+        "operationId": "listAgentToolPolicies",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }],
+        "responses": {
+          "200": { "description": "Immutable owner-scoped tool policy revisions for the agent", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentToolPolicyCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "operationId": "createAgentToolPolicy",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentToolPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "Validated immutable tool policy revision created without changing an agent revision", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentToolPolicy" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach": {
+      "post": {
+        "operationId": "attachAgentToolPolicy",
+        "tags": ["Agents", "Tools"],
+        "parameters": [{ "$ref": "#/components/parameters/AgentProfileId" }, { "$ref": "#/components/parameters/ToolPolicyRevisionId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachAgentToolPolicyRequest" } } } },
+        "responses": {
+          "201": { "description": "New immutable agent revision created with the selected owner-scoped tool policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminders": {
+      "get": {
+        "operationId": "listReminders",
+        "tags": ["Reminders"],
+        "parameters": [
+          { "name": "view", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/ReminderListView" }], "default": "upcoming" }, "description": "Upcoming returns scheduled reminders ordered by dueAt ascending. History returns fired, completed, and canceled reminders ordered by updatedAt descending." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and view-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder page with deterministic ordering and reminder ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      },
+      "post": {
+        "operationId": "createReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReminderRequest" } } } },
+        "responses": {
+          "201": { "description": "One-shot owner-scoped reminder created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ReminderId" }],
+      "get": {
+        "operationId": "getReminder",
+        "tags": ["Reminders"],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}/complete": {
+      "post": {
+        "operationId": "completeReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Scheduled or fired reminder completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminders/{reminder_id}/cancel": {
+      "post": {
+        "operationId": "cancelReminder",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Scheduled reminder canceled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Reminder" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "operationId": "listApprovals",
+        "tags": ["Approvals"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ApprovalStatus" }, "description": "Optional durable decision-state filter. Omission returns approvals in every state." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped approval summaries ordered by updatedAt descending with approval ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }],
+      "get": {
+        "operationId": "getApproval",
+        "tags": ["Approvals"],
+        "responses": {
+          "200": { "description": "Owner-authorized approval detail including the private reminder proposal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}/approve": {
+      "post": {
+        "operationId": "approveApproval",
+        "tags": ["Approvals"],
+        "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDecisionRequest" } } } },
+        "responses": {
+          "200": { "description": "Pending approval durably approved and its waiting run queued for resumption", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Approval" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}/reject": {
+      "post": {
+        "operationId": "rejectApproval",
+        "tags": ["Approvals"],
+        "parameters": [{ "$ref": "#/components/parameters/ApprovalId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDecisionRequest" } } } },
+        "responses": {
+          "200": { "description": "Pending approval durably rejected and its waiting run queued for denied synthesis", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Approval" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/approvals/stream": {
+      "get": {
+        "operationId": "streamApprovals",
+        "tags": ["Approvals"],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed owner-authorized persisted approval event. Replay resumes strictly after this event." }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped persisted approval replay followed by live metadata-only events and heartbeats", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/ApprovalStreamEvent" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Last-Event-ID is not an owner-authorized persisted approval event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from the approval list before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "operationId": "listNotifications",
+        "tags": ["Notifications"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/NotificationStatus" }, "description": "Optional lifecycle-state filter. Omission returns delivered and acknowledged notifications." },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped notification page ordered by createdAt descending with notification ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/NotificationId" }],
+      "get": {
+        "operationId": "getNotification",
+        "tags": ["Notifications"],
+        "responses": {
+          "200": { "description": "Owner-scoped notification detail. The referenced reminder is fetched separately through the owner-authorized reminder API.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}/acknowledge": {
+      "post": {
+        "operationId": "acknowledgeNotification",
+        "tags": ["Notifications"],
+        "parameters": [{ "$ref": "#/components/parameters/NotificationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationAcknowledgeRequest" } } } },
+        "responses": {
+          "200": { "description": "Notification acknowledged without changing the referenced reminder", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/notifications/stream": {
+      "get": {
+        "operationId": "streamNotificationEvents",
+        "tags": ["Notifications"],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed owner-authorized persisted notification event. Replay resumes strictly after this event." }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped persisted notification replay followed by live metadata-only events and heartbeats", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "schema": { "type": "string", "const": "no" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/NotificationStreamEvent" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Last-Event-ID is not an owner-authorized persisted notification event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from the notification list before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -734,6 +1040,10 @@
       "MemoryId": { "name": "memory_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -792,6 +1102,34 @@
           "disabledReason": { "type": ["string", "null"], "maxLength": 500 }
         }
       },
+      "ToolCatalog": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items"],
+        "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDescriptorSummary" } } }
+      },
+      "ToolDescriptorSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Safe provider-neutral metadata for policy configuration. Provider request shapes, handlers, arguments, results, and private content are not exposed.",
+        "required": ["id", "version", "displayName", "description", "classification", "permissionScope", "confirmation", "timeoutMs", "retryLimit", "idempotency", "sensitivity", "observableComponent"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "version": { "type": "integer", "minimum": 1 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "classification": { "$ref": "#/components/schemas/ToolClassification" },
+          "permissionScope": { "type": "string", "pattern": "^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$", "maxLength": 128 },
+          "confirmation": { "$ref": "#/components/schemas/ToolConfirmation" },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+          "retryLimit": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "idempotency": { "$ref": "#/components/schemas/ToolIdempotency" },
+          "sensitivity": { "$ref": "#/components/schemas/ToolSensitivity" },
+          "observableComponent": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 }
+        }
+      },
+      "ToolClassification": { "type": "string", "enum": ["read", "mutation"] },
+      "ToolConfirmation": { "type": "string", "enum": ["never", "policy", "always"] },
+      "ToolIdempotency": { "type": "string", "enum": ["read_only", "idempotent", "non_idempotent"] },
+      "ToolSensitivity": { "type": "string", "enum": ["public", "internal", "private", "restricted"] },
       "MemoryKind": { "type": "string", "enum": ["episodic", "semantic", "procedural", "preference", "system"] },
       "MemoryScopeType": { "type": "string", "enum": ["user", "agent"], "description": "Persisted or single-resource memory scope. All is intentionally not a valid stored scope." },
       "MemoryCollectionScopeType": { "type": "string", "enum": ["user", "agent", "all"], "description": "Owner-authorized collection selector. Agent means every owned agent scope unless narrowed by agentProfileId; all combines user memory with every owned agent scope." },
@@ -1256,6 +1594,51 @@
         "required": ["expectedAgentVersion"],
         "properties": { "expectedAgentVersion": { "type": "integer", "minimum": 1 } }
       },
+      "AgentToolPolicyCollection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "attachedPolicyRevisionId", "agentVersion"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/AgentToolPolicy" } },
+          "attachedPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "agentVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AgentToolPolicy": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "agentProfileId", "revision", "grants", "maxCallsPerRun", "timeoutMs", "retryLimit", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "agentProfileId": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "grants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" } },
+          "maxCallsPerRun": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Aura-derived immutable v1 call budget; zero when no tool is granted and one otherwise." },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+          "retryLimit": { "type": "integer", "minimum": 0, "maximum": 0 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ToolGrant": {
+        "type": "object", "additionalProperties": false,
+        "required": ["toolId", "toolVersion"],
+        "properties": {
+          "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "toolVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "CreateAgentToolPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "description": "Creates an immutable policy from exact versioned grants. Aura derives execution budgets; callers cannot supply them.",
+        "required": ["grants", "expectedRevision"],
+        "properties": {
+          "grants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" } },
+          "expectedRevision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AttachAgentToolPolicyRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedAgentVersion"],
+        "properties": { "expectedAgentVersion": { "type": "integer", "minimum": 1 } }
+      },
       "MemoryActivityAction": { "type": "string", "enum": ["created", "reinforced", "disputed", "recalled", "queued_for_review"] },
       "MemoryActivityStatus": { "type": "string", "enum": ["queued", "completed", "failed"] },
       "MemoryActivityReconciliationStatus": { "type": "string", "enum": ["pending", "authoritative"] },
@@ -1334,6 +1717,7 @@
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
           "memoryPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid", "description": "Pinned immutable tool policy. Optional only for backward compatibility with pre-1.6 producers." },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },
@@ -1344,7 +1728,25 @@
           "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
           "purpose": { "type": "string", "minLength": 1, "maxLength": 2000 },
           "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 },
-          "personaRevisionId": { "type": "string", "format": "uuid" }
+          "personaRevisionId": { "type": "string", "format": "uuid" },
+          "initialToolGrants": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ToolGrant" }, "description": "Optional exact versioned tool grants for the first immutable policy. Omission preserves the deny-by-default policy. Aura derives permission scopes, confirmation rules, call limits, timeouts, and retry limits." },
+          "initialMemoryPolicy": { "$ref": "#/components/schemas/InitialAgentMemoryPolicy", "description": "Optional values for the first immutable memory policy. Omission preserves Aura's bounded default policy." }
+        }
+      },
+      "InitialAgentMemoryPolicy": {
+        "type": "object", "additionalProperties": false,
+        "description": "Initial memory-policy values published atomically with an Agent. Revision identity is server-assigned.",
+        "required": ["sharedUserRead", "currentAgentRead", "sharedUserPromotion", "fallbackRelevanceThreshold", "maxMemories", "contextBudgetFraction", "fallbackAgentProfileIds"],
+        "properties": {
+          "recallMode": { "allOf": [{ "$ref": "#/components/schemas/MemoryRecallMode" }], "default": "automatic" },
+          "automaticRecallThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+          "sharedUserRead": { "type": "boolean" },
+          "currentAgentRead": { "type": "boolean" },
+          "sharedUserPromotion": { "type": "boolean" },
+          "fallbackRelevanceThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "maxMemories": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "contextBudgetFraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.2 },
+          "fallbackAgentProfileIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Owner-scoped active fallback Agent profiles. These grants never authorize invocation or delegation." }
         }
       },
       "CreateAgentRevisionRequest": {
@@ -1373,27 +1775,41 @@
       },
       "PersonaProfile": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "status", "version", "currentRevision", "createdAt", "updatedAt"],
+        "required": ["id", "status", "version", "currentRevision", "assignedAgentCount", "createdAt", "updatedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/ProfileStatus" },
           "version": { "type": "integer", "minimum": 1 },
           "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
+          "assignedAgentCount": { "type": "integer", "minimum": 0, "description": "Count of owner-scoped active or disabled Agents whose current revision pins any revision of this Persona profile." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
       },
       "PersonaDetail": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "status", "version", "currentRevision", "revisions", "createdAt", "updatedAt"],
+        "required": ["id", "status", "version", "currentRevision", "revisions", "assignedAgentCount", "assignedAgents", "assignedAgentsTruncated", "createdAt", "updatedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/ProfileStatus" },
           "version": { "type": "integer", "minimum": 1 },
           "currentRevision": { "$ref": "#/components/schemas/PersonaRevision" },
           "revisions": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaRevision" } },
+          "assignedAgentCount": { "type": "integer", "minimum": 0 },
+          "assignedAgents": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/components/schemas/PersonaAgentAssignment" }, "description": "Deduplicated owner-scoped Agents whose current revision pins any revision of this Persona profile." },
+          "assignedAgentsTruncated": { "type": "boolean", "description": "True when assignedAgentCount exceeds the returned assignedAgents length." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PersonaAgentAssignment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["agentProfileId", "displayName", "status", "currentRevisionNumber"],
+        "properties": {
+          "agentProfileId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "status": { "$ref": "#/components/schemas/ProfileStatus" },
+          "currentRevisionNumber": { "type": "integer", "minimum": 1 }
         }
       },
       "PersonaRevision": {
@@ -1436,6 +1852,48 @@
           "expectedVersion": { "type": "integer", "minimum": 1, "description": "Expected current profile version." }
         }
       },
+      "PersonaPreviewDraft": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "description", "instructions"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "instructions": { "type": "string", "minLength": 1, "maxLength": 32768 }
+        }
+      },
+      "PersonaDraftPreviewRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "prompt", "draft"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Exact selectable model identifier. Aura never falls back to another model." },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "draft": { "$ref": "#/components/schemas/PersonaPreviewDraft" }
+        }
+      },
+      "PersonaRevisionPreviewRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "prompt", "personaRevisionId"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Exact selectable model identifier. Aura never falls back to another model." },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "An active owner-visible Persona revision. Disabled Personas cannot be previewed by identifier." }
+        }
+      },
+      "PersonaPreviewRequest": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/PersonaDraftPreviewRequest" },
+          { "$ref": "#/components/schemas/PersonaRevisionPreviewRequest" }
+        ],
+        "description": "Exactly one of a bounded in-memory draft or personaRevisionId is required. Preview input is ephemeral and non-durable."
+      },
+      "PersonaPreviewResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["modelId", "content"],
+        "properties": {
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "content": { "type": "string", "maxLength": 32768, "description": "Bounded untrusted model output. Clients must render it as escaped text, never executable markup." }
+        }
+      },
       "CreateConversationRequest": {
         "type": "object", "additionalProperties": false,
         "required": ["message", "modelId"],
@@ -1443,7 +1901,8 @@
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "agentRevisionId": { "type": "string", "format": "uuid" },
-          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." }
+          "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
         }
       },
       "UpdateConversationRequest": {
@@ -1483,7 +1942,8 @@
         "required": ["message", "conversationVersion"],
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
-          "conversationVersion": { "type": "integer", "minimum": 1 }
+          "conversationVersion": { "type": "integer", "minimum": 1 },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
         }
       },
       "ConversationPage": {
@@ -1600,6 +2060,13 @@
           "status": { "$ref": "#/components/schemas/RunStatus" },
           "agentRevisionId": { "type": "string", "format": "uuid" },
           "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid", "description": "Pinned immutable tool policy. Optional only for backward compatibility with pre-1.6 producers." },
+          "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Pinned Aura-enforced tool-call budget. Optional only for backward compatibility with pre-1.6 producers." },
+          "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Calls admitted for execution. Optional only for backward compatibility with pre-1.6 producers." },
+          "clientTimeZone": { "oneOf": [{ "$ref": "#/components/schemas/ClientTimeZone" }, { "type": "null" }], "description": "Validated IANA timezone immutably pinned at run admission. Optional for backward compatibility with pre-1.9 producers." },
+          "approvalId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
+          "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
+          "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -1612,7 +2079,9 @@
           "error": { "oneOf": [{ "$ref": "#/components/schemas/RunError" }, { "type": "null" }] }
         }
       },
-      "RunStatus": { "type": "string", "enum": ["queued", "running", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+      "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+      "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier. Producers validate membership in the deployed IANA timezone database." },
+      "RunToolLifecycleStatus": { "type": "string", "enum": ["awaiting_confirmation", "approved", "denied", "executing", "completed", "failed"] },
       "ConversationArchiveState": { "type": "string", "enum": ["active", "archived", "all"] },
       "RunError": {
         "type": "object", "additionalProperties": false,
@@ -1638,9 +2107,12 @@
           { "$ref": "#/components/schemas/RunSnapshotEvent" },
           { "$ref": "#/components/schemas/RunStatusEvent" },
           { "$ref": "#/components/schemas/AssistantDeltaEvent" },
+          { "$ref": "#/components/schemas/ModelThinkingDeltaEvent" },
           { "$ref": "#/components/schemas/AssistantSnapshotEvent" },
           { "$ref": "#/components/schemas/RunErrorEvent" },
           { "$ref": "#/components/schemas/MemoryActivityEvent" },
+          { "$ref": "#/components/schemas/ToolStatusEvent" },
+          { "$ref": "#/components/schemas/ApprovalStatusEvent" },
           { "$ref": "#/components/schemas/HeartbeatEvent" }
         ],
         "discriminator": { "propertyName": "eventType" }
@@ -1667,6 +2139,10 @@
       "AssistantDeltaEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "assistant.delta" }, "data": { "$ref": "#/components/schemas/AssistantDeltaData" } } }]
       },
+      "ModelThinkingDeltaEvent": {
+        "description": "This live-only event carries private transient model reasoning solely to an active owner-authorized stream. It is never persisted, replayed, included in transcript content, audit, outbox, telemetry, or retained transport. Its eventId is payload-only: producers omit the SSE id field, and consumers must not advance a Last-Event-ID cursor for it.",
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "model.thinking.delta" }, "data": { "$ref": "#/components/schemas/ModelThinkingDeltaData" } } }]
+      },
       "AssistantSnapshotEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "assistant.snapshot" }, "data": { "$ref": "#/components/schemas/AssistantSnapshotData" } } }]
       },
@@ -1675,6 +2151,12 @@
       },
       "MemoryActivityEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "memory.activity" }, "data": { "$ref": "#/components/schemas/MemoryActivity" } } }]
+      },
+      "ToolStatusEvent": {
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "tool.status" }, "data": { "$ref": "#/components/schemas/ToolStatusData" } } }]
+      },
+      "ApprovalStatusEvent": {
+        "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "approval.status" }, "data": { "$ref": "#/components/schemas/ApprovalStatusData" } } }]
       },
       "HeartbeatEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "heartbeat" }, "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "type": "string", "format": "date-time" } } } } }]
@@ -1694,10 +2176,233 @@
         "required": ["messageId", "offset", "text"],
         "properties": { "messageId": { "type": "string", "format": "uuid" }, "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1 } }
       },
+      "ModelThinkingDeltaData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Strict provider-neutral live reasoning delta. Text is private transient reasoning and is never persisted or treated as assistant transcript content.",
+        "required": ["offset", "text"],
+        "properties": { "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+      },
       "AssistantSnapshotData": {
         "type": "object", "additionalProperties": false,
         "required": ["message"],
         "properties": { "message": { "$ref": "#/components/schemas/Message" } }
+      },
+      "ToolStatus": { "type": "string", "enum": ["pending", "awaiting_confirmation", "executing", "completed", "denied", "failed"] },
+      "ToolStatusData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only tool lifecycle state. Tool arguments, queries, results, memory content, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "required": ["callId", "toolId", "toolVersion", "status"],
+        "properties": {
+          "callId": { "type": "string", "format": "uuid", "description": "Aura-generated call identifier; provider call identifiers are never exposed." },
+          "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+          "toolVersion": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/ToolStatus" },
+          "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
+          "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+          "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+        }
+      },
+      "ApprovalStatusData": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only approval lifecycle state. Proposal content, requested due time, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "required": ["approvalId", "proposalId", "runId", "conversationId", "status", "executionStatus", "version"],
+        "properties": {
+          "approvalId": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "ReminderStatus": { "type": "string", "enum": ["scheduled", "fired", "completed", "canceled"] },
+      "ReminderListView": { "type": "string", "enum": ["upcoming", "history"] },
+      "Reminder": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "content", "dueAt", "status", "version", "createdAt", "updatedAt", "firedAt", "completedAt", "canceledAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "UTC timestamp. Create input must be RFC 3339 with an explicit offset and strictly in the future; Core normalizes it to UTC." },
+          "status": { "$ref": "#/components/schemas/ReminderStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "firedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "canceledAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Reminder" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "CreateReminderRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["content", "dueAt"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000, "description": "Core trims leading and trailing whitespace before validation and persistence." },
+          "dueAt": { "type": "string", "format": "date-time", "description": "RFC 3339 timestamp with an explicit offset. Must resolve to a strictly future instant and is normalized to UTC." }
+        }
+      },
+      "ReminderTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "ApprovalStatus": { "type": "string", "enum": ["pending", "approved", "rejected", "expired", "canceled"] },
+      "ApprovalExecutionStatus": { "type": "string", "enum": ["not_started", "queued", "executing", "completed", "failed", "denied"] },
+      "Approval": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable approval metadata. Proposal content and requested due time are available only from ApprovalDetail.",
+        "required": ["id", "proposalId", "runId", "conversationId", "toolCallId", "toolId", "toolVersion", "status", "executionStatus", "version", "expiresAt", "createdAt", "updatedAt", "decidedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "toolCallId": { "type": "string", "format": "uuid" },
+          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolVersion": { "type": "integer", "const": 1 },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderProposalDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private automation-owned proposal returned only after owner authorization.",
+        "required": ["id", "content", "dueAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "Validated requested instant normalized to UTC." }
+        }
+      },
+      "ApprovalDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Approval" },
+          { "type": "object", "required": ["proposal"], "properties": { "proposal": { "$ref": "#/components/schemas/ReminderProposalDetail" } } }
+        ]
+      },
+      "ApprovalPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Approval" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "ApprovalDecisionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "ApprovalStreamEvent": {
+        "description": "Metadata-only approval stream envelope. Proposal content, requested due time, owner identity, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ApprovalEvent" },
+          { "$ref": "#/components/schemas/ApprovalHeartbeatEvent" }
+        ],
+        "discriminator": { "propertyName": "eventType" }
+      },
+      "ApprovalEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "approvalId", "proposalId", "runId", "conversationId", "toolId", "toolVersion", "status", "executionStatus", "version", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["approval.pending", "approval.approved", "approval.rejected", "approval.expired", "approval.canceled"] },
+          "approvalId": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "runId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolVersion": { "type": "integer", "const": 1 },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApprovalHeartbeatEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventType", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventType": { "type": "string", "const": "heartbeat" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
+      "Notification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable inbox record. Reminder content is retrieved separately through the reminder API.",
+        "required": ["id", "reminderId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "reminderId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "NotificationPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "unacknowledgedCount"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Notification" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "unacknowledgedCount": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "NotificationAcknowledgeRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "NotificationStreamEvent": {
+        "description": "Metadata-only notification stream envelope. Reminder content, notification content, owner identity, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/NotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/NotificationHeartbeatEvent" }
+        ],
+        "discriminator": { "propertyName": "eventType" }
+      },
+      "NotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" },
+          "reminderId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "notificationVersion": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "NotificationHeartbeatEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventType", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventType": { "type": "string", "const": "heartbeat" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
       },
       "ErrorEnvelope": {
         "type": "object", "additionalProperties": false,

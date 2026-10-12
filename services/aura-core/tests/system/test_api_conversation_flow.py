@@ -507,6 +507,77 @@ async def test_streaming_contract_replays_snapshot_deltas_and_terminal_status(
 
 
 @pytest.mark.asyncio
+async def test_live_thinking_stream_is_owner_scoped_and_metadata_only(
+    api_app: FastAPI,
+) -> None:
+    owner, session = await owner_client(api_app)
+    anonymous = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api_app),
+        base_url="https://aura.dev.example",
+        headers={"Origin": "https://aura.dev.example"},
+    )
+    foreign, _ = await owner_client(api_app, subject="other-owner")
+    try:
+        created = await owner.post(
+            "/api/v1/conversations",
+            headers={"X-CSRF-Token": session.csrf_token, "Idempotency-Key": str(uuid4())},
+            json={"message": "live reasoning", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        run_id = UUID(created.json()["run"]["id"])
+        conversation_id = UUID(created.json()["conversation"]["id"])
+
+        reasoning = "private reasoning must stay out of telemetry"
+
+        async def inject_live_delta_and_terminal() -> None:
+            # ASGITransport buffers a streaming response until its generator
+            # completes, so close the deterministic test stream after the
+            # injected live event and a terminal durable event.
+            await asyncio.sleep(0.05)
+            await api_app.state.aura.publisher.publish_thinking_delta(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                offset=0,
+                text=reasoning,
+            )
+            await api_app.state.aura.publisher.publish(
+                new_event(
+                    "run.status",
+                    run_id,
+                    conversation_id,
+                    1,
+                    {"status": "completed", "startedAt": None, "finishedAt": None},
+                )
+            )
+
+        injection = asyncio.create_task(inject_live_delta_and_terminal())
+        response = await owner.get(f"/api/v1/runs/{run_id}/events")
+        await injection
+        assert response.status_code == 200
+        blocks = [block for block in response.text.strip().split("\n\n") if block]
+        thinking_block = next(
+            block.splitlines() for block in blocks if "event: model.thinking.delta" in block
+        )
+        assert not any(line.startswith("id:") for line in thinking_block)
+        payload = json.loads(
+            next(line[6:] for line in thinking_block if line.startswith("data:"))
+        )
+        assert payload["data"] == {"offset": 0, "text": reasoning}
+
+        anonymous_response = await anonymous.get(f"/api/v1/runs/{run_id}/events")
+        assert anonymous_response.status_code == 401
+        foreign_response = await foreign.get(f"/api/v1/runs/{run_id}/events")
+        assert foreign_response.status_code == 403
+        assert reasoning not in repr(api_app.state.aura.metrics.snapshot())
+        assert "owner-subject" not in repr(api_app.state.aura.metrics.snapshot())
+        assert reasoning not in foreign_response.text
+    finally:
+        await owner.aclose()
+        await anonymous.aclose()
+        await foreign.aclose()
+
+
+@pytest.mark.asyncio
 async def test_completed_question_delivers_and_processes_durable_memory_end_to_end(
     api_app: FastAPI,
 ) -> None:

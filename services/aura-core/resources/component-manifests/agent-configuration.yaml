@@ -1,10 +1,10 @@
 component:
   id: aura.interaction.agent_configuration
-  version: 1.1.0
+  version: 1.2.0
   owner: interaction.agents
   category: configuration
 input:
-  schema: agent-configuration-command-v2
+  schema: agent-configuration-command-v3
   replayable: false
   replay_reason: Configuration mutations are durable side effects without a replay hook.
 output:

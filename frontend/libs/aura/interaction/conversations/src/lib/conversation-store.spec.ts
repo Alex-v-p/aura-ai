@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
 
 const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
 function hydrateDefaultAgent(store: ConversationStore): void { store.setDefaultDraftAgent(hydratedDefaultAgent); }
@@ -40,6 +40,25 @@ function fakeApi(listConversations: ConversationApi['listConversations'] = async
   return api;
 }
 
+function managementPort(): { readonly port: ManagementSessionPort; readonly resetCount: () => number; readonly triggerAuthorizationFailure: (status: 401 | 403) => void } {
+  let resets = 0;
+  let handler: ((status?: 401 | 403) => void) | null = null;
+  return {
+    port: {
+      resetSessionState: () => { resets += 1; },
+      registerSessionResetHandler: (next) => { handler = next; },
+    },
+    resetCount: () => resets,
+    triggerAuthorizationFailure: (status) => handler?.(status),
+  };
+}
+
+const changedSessions: ReadonlyArray<Session> = [
+  { ...session, principal: { ...session.principal, issuer: 'https://next-authentik.test' } },
+  { ...session, principal: { ...session.principal, subject: 'another-owner' } },
+  { ...session, csrfToken: 'rotated-csrf' },
+];
+
 function summary(id: string): ConversationSummary {
   const now = new Date().toISOString();
   return { id, title: id, agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: model.id, version: 1, createdAt: now, updatedAt: now, currentRun: null };
@@ -52,6 +71,143 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('clears management state synchronously before awaiting logout', async () => {
+    const management = managementPort();
+    const api = fakeApi();
+    let releaseLogout!: () => void;
+    let resetCountAtLogout = 0;
+    api.logout = async () => {
+      resetCountAtLogout = management.resetCount();
+      await new Promise<void>((resolve) => { releaseLogout = resolve; });
+    };
+    const logoutStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(logoutStore.authState()).toBe('authenticated'));
+
+    const pending = logoutStore.logout();
+    expect(resetCountAtLogout).toBe(1);
+    expect(logoutStore.session()).toBeNull();
+    expect(logoutStore.authState()).toBe('unauthenticated');
+    releaseLogout();
+    await pending;
+  });
+
+  it('keeps management state cleared when logout fails', async () => {
+    const management = managementPort();
+    const api = fakeApi();
+    api.logout = async () => { throw new Error('logout unavailable'); };
+    const logoutStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(logoutStore.authState()).toBe('authenticated'));
+
+    await expect(logoutStore.logout()).rejects.toThrow('logout unavailable');
+    expect(management.resetCount()).toBe(2);
+    expect(logoutStore.session()).toBeNull();
+    expect(logoutStore.authState()).toBe('unauthenticated');
+  });
+
+  it('does not let a pending logout clear a replacement session', async () => {
+    const management = managementPort();
+    const api = fakeApi();
+    let currentSession = session;
+    let releaseLogout!: () => void;
+    api.getSession = async () => currentSession;
+    api.logout = async () => await new Promise<void>((resolve) => { releaseLogout = resolve; });
+    const logoutStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(logoutStore.authState()).toBe('authenticated'));
+
+    const pendingLogout = logoutStore.logout();
+    currentSession = { ...session, principal: { ...session.principal, subject: 'replacement-owner' }, csrfToken: 'replacement-csrf' };
+    await logoutStore.load();
+    expect(logoutStore.session()?.principal.subject).toBe('replacement-owner');
+    releaseLogout();
+    await pendingLogout;
+
+    expect(logoutStore.session()?.principal.subject).toBe('replacement-owner');
+    expect(logoutStore.authState()).toBe('authenticated');
+  });
+
+  it.each(changedSessions)('clears management state before accepting a changed session fingerprint', async (nextSession) => {
+    const management = managementPort();
+    const api = fakeApi();
+    let currentSession = session;
+    api.getSession = async () => currentSession;
+    const sessionStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(sessionStore.authState()).toBe('authenticated'));
+    expect(management.resetCount()).toBe(0);
+
+    currentSession = nextSession;
+    await sessionStore.load();
+    expect(management.resetCount()).toBe(1);
+    expect(sessionStore.session()).toEqual(nextSession);
+  });
+
+  it.each([401, 403] as const)('keeps management authorization recovery explicit for %s responses', async (status) => {
+    const management = managementPort();
+    const sessionStore = new ConversationStore(fakeApi(), management.port);
+    await vi.waitFor(() => expect(sessionStore.authState()).toBe('authenticated'));
+
+    management.triggerAuthorizationFailure(status);
+
+    expect(management.resetCount()).toBe(1);
+    expect(sessionStore.authState()).toBe(status === 401 ? 'unauthenticated' : 'error');
+    expect(sessionStore.session()).toEqual(status === 401 ? null : session);
+  });
+
+  it.each([401, 403] as const)('ignores a stale route-detail %s after the principal changes', async (status) => {
+    const management = managementPort();
+    let currentSession = session;
+    let rejectDetail!: (error: unknown) => void;
+    const api = fakeApi(undefined, [], [], undefined, async () => new Promise<ConversationDetail>((_resolve, reject) => { rejectDetail = reject; }));
+    api.getSession = async () => currentSession;
+    const routeStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(routeStore.authState()).toBe('authenticated'));
+
+    const pending = routeStore.selectFromRoute('stale-detail');
+    currentSession = { ...session, principal: { ...session.principal, subject: 'new-owner' }, csrfToken: 'new-csrf' };
+    await routeStore.load();
+    expect(management.resetCount()).toBe(1);
+
+    rejectDetail({ status, message: 'old session response' });
+    await expect(pending).resolves.toEqual({ status: 'stale' });
+    expect(management.resetCount()).toBe(1);
+    expect(routeStore.session()?.principal.subject).toBe('new-owner');
+  });
+
+  it.each([401, 403] as const)('ignores a stale run cancellation %s after the principal changes', async (status) => {
+    const run: Run = { id: 'run-stale-cancel', conversationId: 'stale-cancel', userMessageId: 'user-stale-cancel', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: new Date().toISOString(), startedAt: new Date().toISOString(), finishedAt: null, error: null };
+    const detail = { ...summary('stale-cancel'), currentRun: run, messages: [], recentRuns: [run] } as ConversationDetail;
+    const management = managementPort();
+    let currentSession = session;
+    let rejectCancel!: (error: unknown) => void;
+    const api = fakeApi(async () => ({ items: [summary(detail.id)], nextCursor: null }), [detail]);
+    api.getSession = async () => currentSession;
+    api.cancelRun = async () => new Promise<Run>((_resolve, reject) => { rejectCancel = reject; });
+    const runStore = new ConversationStore(api, management.port);
+    await vi.waitFor(() => expect(runStore.selected().id).toBe(detail.id));
+
+    runStore.cancelRunById(detail.id, run.id);
+    currentSession = { ...session, principal: { ...session.principal, subject: 'new-owner' }, csrfToken: 'new-csrf' };
+    await runStore.load();
+    expect(management.resetCount()).toBe(1);
+
+    rejectCancel({ status, message: 'old session response' });
+    await Promise.resolve();
+    expect(management.resetCount()).toBe(1);
+    expect(runStore.session()?.principal.subject).toBe('new-owner');
+  });
+
+  it('does not recurse when a shared reset callback is re-entered', async () => {
+    let resets = 0;
+    let handler: (() => void) | null = null;
+    const port: ManagementSessionPort = {
+      resetSessionState: () => { resets += 1; if (resets === 1) handler?.(); },
+      registerSessionResetHandler: (next) => { handler = next; },
+    };
+    const resetStore = new ConversationStore(fakeApi(), port);
+    await vi.waitFor(() => expect(resetStore.authState()).toBe('authenticated'));
+    resetStore.logout();
+    expect(resets).toBe(1);
+  });
+
   it('keeps recall and creation/update indicators independent', () => {
     const recalled = { action: 'recalled' } as MemoryActivity;
     const created = { action: 'created' } as MemoryActivity;
@@ -64,6 +220,47 @@ describe('ConversationStore', () => {
     const candidate = { ...placeholder, id: 'candidate', candidateId: 'candidate-1' } as MemoryActivity;
     expect(visibleMemoryActivities([placeholder])).toEqual([]);
     expect(visibleMemoryActivities([placeholder, candidate])).toEqual([candidate]);
+  });
+  it('reconciles only exact-next bounded thinking deltas', () => {
+    let state = reconcileModelThinkingDelta(null, 'run-1', 0, 'first');
+    expect(state).toEqual({ runId: 'run-1', text: 'first', nextOffset: 5 });
+    expect(reconcileModelThinkingDelta(state, 'run-1', 0, 'first')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 4, 'stale')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 7, 'out of order')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-2', 5, 'cross-run')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 5.5, 'malformed')).toBeNull();
+    const inert = reconcileModelThinkingDelta(state, 'run-1', 5, '<script>plain text</script>');
+    expect(inert?.text).toBe('first<script>plain text</script>');
+    expect(inert?.nextOffset).toBe(inert?.text.length);
+    const unicode = reconcileModelThinkingDelta(null, 'run-unicode', 0, '🙂');
+    expect(unicode?.nextOffset).toBe(1);
+    expect(reconcileModelThinkingDelta(unicode, 'run-unicode', 1, '続き')?.text).toBe('🙂続き');
+    expect(reconcileModelThinkingDelta(state, 'run-1', 5, 'x'.repeat(4_097))).toBeNull();
+    state = { runId: 'run-1', text: 'x'.repeat(65_536), nextOffset: 65_536 };
+    expect(reconcileModelThinkingDelta(state, 'run-1', 65_536, 'x')).toBeNull();
+    expect(reconcileModelThinkingDelta(state, 'run-1', 65_536, { bad: true })).toBeNull();
+  });
+  it('keeps live thinking separate and collapses it when the run becomes terminal', async () => {
+    const now = new Date().toISOString();
+    const running: Run = { id: 'run-thinking-terminal', conversationId: 'conversation-thinking-terminal', userMessageId: 'user-thinking-terminal', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const detail: ConversationDetail = { ...summary(running.conversationId), currentRun: running, messages: [], recentRuns: [running] };
+    let serverDetail: ConversationDetail = detail;
+    const stream = (_id: string, _last: string | undefined, onEvent: (event: RunEvent, cursor?: string) => void): RunEventSubscription => {
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'thinking-live', sequence: 1, eventType: 'model.thinking.delta', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { offset: 0, text: '<private reasoning>' } });
+        const completed: Run = { ...running, status: 'completed', finishedAt: now };
+        serverDetail = { ...detail, currentRun: null, recentRuns: [completed] };
+        onEvent({ schemaVersion: 1, eventId: 'thinking-terminal', sequence: 2, eventType: 'run.status', runId: running.id, conversationId: running.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } } as RunEvent, 'thinking-terminal');
+      });
+      return { close: () => undefined };
+    };
+    const api = fakeApi(async () => ({ items: [{ ...summary(running.conversationId), currentRun: running }], nextCursor: null }), [detail], [running], stream, async () => serverDetail);
+    const thinkingStore = new ConversationStore(api);
+
+    await vi.waitFor(() => expect(thinkingStore.thinkingForRun(running.id)?.text).toBe('<private reasoning>'));
+    expect(thinkingStore.selected().turns).toEqual([]);
+    await vi.waitFor(() => expect(thinkingStore.thinkingIsOpen(running.id)).toBe(false));
+    expect(thinkingStore.thinkingForRun(running.id)?.text).toBe('<private reasoning>');
   });
   let store: ConversationStore;
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); hydrateDefaultAgent(store); });
@@ -759,6 +956,54 @@ describe('ConversationStore', () => {
     recoveryStore.retry();
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(recoveryStore.selected().currentRun?.status).toBe('running');
+  });
+  it('hydrates completed tool activity from the authorized replay stream after a fresh load', async () => {
+    const now = new Date().toISOString();
+    const run: Run = { id: 'run-completed-tools', conversationId: 'conversation-completed-tools', userMessageId: 'user-completed-tools', assistantMessageId: null, status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const detail: ConversationDetail = { ...summary(run.conversationId), currentRun: null, messages: [], recentRuns: [run] };
+    let replayCalls = 0;
+    const replayApi = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run], (id, _last, onEvent) => {
+      replayCalls += 1;
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-pending', sequence: 1, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'replay-call', toolId: 'memory.search', toolVersion: 1, status: 'pending' } });
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-completed', sequence: 2, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'replay-call', toolId: 'memory.search', toolVersion: 1, status: 'completed', resultCount: 1 } });
+        onEvent({ schemaVersion: 1, eventId: 'tool-replay-terminal', sequence: 3, eventType: 'run.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { status: 'completed', startedAt: now, finishedAt: now } });
+      });
+      return { close: () => undefined };
+    });
+    const freshStore = new ConversationStore(replayApi);
+
+    await vi.waitFor(() => expect(freshStore.toolActivitiesForRun(run.id)).toHaveLength(2));
+
+    expect(replayCalls).toBe(1);
+    expect(freshStore.toolActivitiesForRun(run.id).map((activity) => activity.status)).toEqual(['pending', 'completed']);
+    expect(freshStore.toolActivitiesForRun(run.id)[1]?.resultCount).toBe(1);
+  });
+  it('deduplicates tool lifecycle events when a live stream resets its cursor', async () => {
+    vi.useFakeTimers();
+    const now = new Date().toISOString();
+    const run: Run = { id: 'run-tool-cursor-reset', conversationId: 'conversation-tool-cursor-reset', userMessageId: 'user-tool-cursor-reset', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const detail: ConversationDetail = { ...summary(run.conversationId), currentRun: run, messages: [], recentRuns: [run] };
+    let streamAttempts = 0;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail], [run], (id, _last, onEvent, onError) => {
+      streamAttempts += 1;
+      queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'tool-cursor-pending', sequence: 1, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'cursor-call', toolId: 'memory.search', toolVersion: 1, status: 'pending' } }, 'tool-cursor-1');
+        if (streamAttempts === 1) onError({ message: 'The event cursor has expired.', status: 410, retryable: true });
+        else {
+          onEvent({ schemaVersion: 1, eventId: 'tool-cursor-executing', sequence: 2, eventType: 'tool.status', runId: id, conversationId: run.conversationId, occurredAt: now, data: { callId: 'cursor-call', toolId: 'memory.search', toolVersion: 1, status: 'executing' } }, 'tool-cursor-2');
+        }
+      });
+      return { close: () => undefined };
+    });
+    const cursorStore = new ConversationStore(api);
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.runAllTicks();
+
+    expect(streamAttempts).toBe(2);
+    expect(cursorStore.toolActivitiesForRun(run.id).map((activity) => activity.status)).toEqual(['pending', 'executing']);
+    vi.useRealTimers();
   });
   it('reconciles and resumes an active run after a multi-second API and stream outage', async () => {
     vi.useFakeTimers();

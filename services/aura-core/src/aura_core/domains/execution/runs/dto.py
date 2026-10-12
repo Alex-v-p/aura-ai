@@ -18,6 +18,7 @@ class RunStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
 
 
 def _now() -> datetime:
@@ -62,6 +63,20 @@ class Run:
     # Identifier-only recall metadata.  Memory text and vectors never belong
     # in a run DTO; the memory domain owns the durable snapshot projection.
     memory_recall_metadata: dict[str, object] | None = None
+    # Immutable execution-tool policy snapshot.  Optional for legacy rows.
+    tool_policy_revision_id: UUID | None = None
+    tool_call_limit: int = 0
+    tool_calls_used: int = 0
+    tool_timeout_ms: int = 30_000
+    tool_retry_limit: int = 0
+    # Browser-supplied IANA zone pinned at admission.  The server clock remains
+    # authoritative; this is only used to render deterministic local context.
+    client_time_zone: str | None = None
+    # Identifier-only approval lifecycle markers.  Proposal arguments remain
+    # owned by automation/governance and are never copied into a run DTO.
+    approval_id: UUID | None = None
+    pending_tool_call_id: UUID | None = None
+    tool_lifecycle_status: str | None = None
 
 
 class RunClaim(NamedTuple):

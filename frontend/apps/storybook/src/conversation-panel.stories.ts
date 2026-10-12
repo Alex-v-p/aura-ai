@@ -6,8 +6,9 @@ import { ConversationPanelComponent, ConversationStore, type ConversationApi, ty
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, Message, Model, ModelCatalog, Run, Session } from '@aura/aura-api-client';
 import { AGENT_API, AgentStore, InMemoryAgentApi } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
+import { ApprovalStore } from '@aura/aura/governance/approvals';
 
-type FixtureState = 'empty' | 'loading' | 'working' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
+type FixtureState = 'empty' | 'loading' | 'working' | 'thinking' | 'tool-activity' | 'interrupted' | 'recoverable-error' | 'completed' | 'archived' | 'run-inspector';
 
 const turns: Record<'completed', ReadonlyArray<ConversationTurn>> = {
   completed: [
@@ -22,14 +23,14 @@ const fixtureAgent = { profileId: 'fixture-agent', revisionId: 'fixture-agent-r1
 const now = '2026-10-06T12:00:00.000Z';
 
 function fixtureRun(state: FixtureState): Run | null {
-  if (!['working', 'interrupted', 'recoverable-error', 'run-inspector'].includes(state)) return null;
-  const status = state === 'working' ? 'running' : state === 'interrupted' ? 'interrupted' : 'failed';
+  if (!['working', 'thinking', 'tool-activity', 'interrupted', 'recoverable-error', 'run-inspector'].includes(state)) return null;
+  const status = state === 'working' || state === 'thinking' || state === 'tool-activity' ? 'running' : state === 'interrupted' ? 'interrupted' : 'failed';
   return { id: 'fixture-run', conversationId: 'fixture', userMessageId: 'fixture-user', assistantMessageId: null, status, agentRevisionId: fixtureAgent.revisionId, modelPolicyRevisionId: 'fixture-policy', provider: 'fake', modelId: fixtureModel.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: status === 'running' ? null : '2026-10-06T12:00:01.000Z', error: status === 'failed' ? { code: 'PROVIDER_ERROR', message: 'Private provider payload', retryable: true, traceId: '0123456789abcdef0123456789abcdef' } : null };
 }
 
 function fixtureSummary(state: FixtureState): ConversationSummary {
   const run = fixtureRun(state);
-  return { id: 'fixture', title: state === 'archived' ? 'Archived fixture conversation' : 'Fixture conversation', agentProfileId: fixtureAgent.profileId, agentRevisionId: fixtureAgent.revisionId, agent: fixtureAgent, modelId: fixtureModel.id, version: 1, createdAt: now, updatedAt: now, archivedAt: state === 'archived' ? now : null, currentRun: state === 'working' ? run : null };
+  return { id: 'fixture', title: state === 'archived' ? 'Archived fixture conversation' : 'Fixture conversation', agentProfileId: fixtureAgent.profileId, agentRevisionId: fixtureAgent.revisionId, agent: fixtureAgent, modelId: fixtureModel.id, version: 1, createdAt: now, updatedAt: now, archivedAt: state === 'archived' ? now : null, currentRun: state === 'working' || state === 'thinking' || state === 'tool-activity' ? run : null };
 }
 
 function fixtureMessages(state: FixtureState): ReadonlyArray<Message> {
@@ -66,7 +67,15 @@ function fixtureApi(state: FixtureState): ConversationApi {
       return { ...run, status: 'canceled' as const, finishedAt: now };
     },
     retryRun: async () => acceptedRun('fixture', 'Retry fixture', fixtureModel.id),
-    streamRunEvents: () => ({ close: () => undefined }),
+    streamRunEvents: (_runId, _lastEventId, onEvent) => {
+      if (state === 'thinking') queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'thinking-delta', sequence: 1, eventType: 'model.thinking.delta', runId: 'fixture-run', conversationId: 'fixture', occurredAt: now, data: { offset: 0, text: '<private model notes>\nReasoning remains inert text.' } });
+      });
+      if (state === 'tool-activity') queueMicrotask(() => {
+        onEvent({ schemaVersion: 1, eventId: 'tool-completed', sequence: 1, eventType: 'tool.status', runId: 'fixture-run', conversationId: 'fixture', occurredAt: now, data: { callId: 'fixture-call', toolId: 'memory.search', toolVersion: 1, status: 'completed', resultCount: 2 } });
+      });
+      return { close: () => undefined };
+    },
   };
   return api;
 
@@ -81,14 +90,18 @@ function fixtureApi(state: FixtureState): ConversationApi {
 function fixtureStore(state: FixtureState): ConversationStore {
   const store = new ConversationStore(fixtureApi(state));
   if (state === 'loading') store.loading.set(true);
-  if (state === 'run-inspector') store.runInspectorRequested.set(1);
+  if (state === 'run-inspector' || state === 'tool-activity') store.runInspectorRequested.set(1);
   return store;
+}
+
+function fixtureApprovals(): ApprovalStore {
+  return { start: async () => undefined, stop: () => undefined, forConversation: () => [], saving: signal(false), pendingCount: signal(0), connectionState: signal('live') } as unknown as ApprovalStore;
 }
 
 const meta: Meta<ConversationPanelComponent> = {
   title: 'Aura/Conversation panel',
   component: ConversationPanelComponent,
-  // The browser matrix owns deterministic automated axe coverage for these six
+  // The browser matrix owns deterministic automated axe coverage for these
   // fixture states. Keep the addon available for manual inspection without
   // racing its scan against the component-scoped Playwright scan.
   parameters: { layout: 'fullscreen', a11y: { manual: true } },
@@ -97,11 +110,13 @@ export default meta;
 
 type Story = StoryObj<ConversationPanelComponent>;
 
-const story = (state: FixtureState): Story => ({ decorators: [applicationConfig({ providers: [{ provide: ConversationStore, useValue: fixtureStore(state) }, { provide: AGENT_API, useFactory: () => new InMemoryAgentApi() }, { provide: AgentStore, useClass: AgentStore }, { provide: PersonaStore, useValue: { activePersonas: signal([]) } }, provideRouter([])] })] });
+const story = (state: FixtureState): Story => ({ decorators: [applicationConfig({ providers: [{ provide: ConversationStore, useValue: fixtureStore(state) }, { provide: ApprovalStore, useValue: fixtureApprovals() }, { provide: AGENT_API, useFactory: () => new InMemoryAgentApi() }, { provide: AgentStore, useClass: AgentStore }, { provide: PersonaStore, useValue: { activePersonas: signal([]) } }, provideRouter([])] })] });
 
 export const Empty: Story = { ...story('empty'), name: 'Empty' };
 export const Loading: Story = { ...story('loading'), name: 'Loading' };
 export const Working: Story = { ...story('working'), name: 'Working' };
+export const Thinking: Story = { ...story('thinking'), name: 'Thinking model' };
+export const ToolActivity: Story = { ...story('tool-activity'), name: 'Tool activity' };
 export const Interrupted: Story = { ...story('interrupted'), name: 'Interrupted' };
 export const RecoverableError: Story = { ...story('recoverable-error'), name: 'Recoverable error' };
 export const Completed: Story = { ...story('completed'), name: 'Completed' };

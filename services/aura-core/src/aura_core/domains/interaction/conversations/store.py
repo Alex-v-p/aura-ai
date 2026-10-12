@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import cast
 from uuid import UUID, uuid4, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aura_core.domains.execution.runs.dto import (
     Run,
@@ -26,7 +27,7 @@ from aura_core.domains.execution.runs.dto import (
 from aura_core.domains.interaction.agents.public import (
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
-    GENERAL_REVISION_ID,
+    GENERAL_SUCCESSOR_REVISION_ID,
     AgentCatalog,
     AgentRevision,
     ConfigurationDisabled,
@@ -75,7 +76,7 @@ NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 type CommandResult = tuple[Conversation, Message, Run]
 GENERAL_AGENT = SeededAgent(
     profile_id=GENERAL_PROFILE_ID,
-    revision_id=GENERAL_REVISION_ID,
+    revision_id=GENERAL_SUCCESSOR_REVISION_ID,
     policy_revision_id=GENERAL_POLICY_ID,
     system_prompt="You are Aura, a helpful local-first household assistant.",
 )
@@ -123,6 +124,56 @@ class ArchivedConversationConflict(RuntimeError):
 
 class AgentSwitchConfirmationRequired(ValueError):
     pass
+
+
+LEGACY_TIME_CLARIFICATION = (
+    "When a reminder time is ambiguous or no timezone is pinned, ask the owner "
+    "for an explicit RFC3339 timestamp with a numeric UTC offset before creating it."
+)
+
+
+def validate_client_time_zone(value: str | None) -> str | None:
+    """Validate and canonicalize an optional browser IANA zone identifier."""
+
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > 128 or candidate != value:
+        raise InvalidConversationMetadata("clientTimeZone must be an IANA timezone")
+    try:
+        zone = ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise InvalidConversationMetadata("clientTimeZone must be an IANA timezone") from exc
+    if zone.key != candidate:
+        raise InvalidConversationMetadata("clientTimeZone must be an IANA timezone")
+    return candidate
+
+
+def server_local_time(value: datetime, client_time_zone: str | None) -> str | None:
+    """Render the server clock in a pinned zone for prompt context."""
+
+    if client_time_zone is None:
+        return None
+    return value.astimezone(ZoneInfo(client_time_zone)).isoformat()
+
+
+def needs_legacy_time_clarification(message: str) -> bool:
+    """Detect deterministic natural-language time requests without guessing a zone."""
+
+    lowered = message.casefold()
+    return any(
+        token in lowered
+        for token in (
+            "remind",
+            "reminder",
+            "tomorrow",
+            "today",
+            "tonight",
+            "next week",
+            "next month",
+            " at ",
+        )
+    )
 
 
 class ConversationStore:
@@ -173,6 +224,29 @@ class ConversationStore:
     def _memory_policy_revision(revision: AgentRevision) -> UUID | None:
         value = getattr(revision, "memory_policy_revision_id", None)
         return value if isinstance(value, UUID) else None
+
+    def _tool_policy_snapshot(
+        self, revision: AgentRevision
+    ) -> tuple[UUID | None, int, int, int]:
+        """Snapshot the immutable tool policy at in-memory run admission."""
+
+        policy_id = getattr(revision, "tool_policy_revision_id", None)
+        if not isinstance(policy_id, UUID):
+            return None, 0, 30_000, 0
+        policy = self.agents.get_tool_policy(policy_id)
+        return (
+            policy_id,
+            int(policy.max_calls_per_run),
+            int(policy.timeout_ms),
+            int(policy.retry_limit),
+        )
+
+    async def tool_policy_for_run(self, run: Run) -> object | None:
+        """Resolve the immutable tool-policy snapshot through the public catalog."""
+
+        if run.tool_policy_revision_id is None:
+            return None
+        return self.agents.get_tool_policy(run.tool_policy_revision_id)
 
     async def _recall_context(
         self,
@@ -465,10 +539,12 @@ class ConversationStore:
         idempotency_key: str,
         agent_revision_id: UUID | None = None,
         persona_revision_id: UUID | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         key = (issuer, subject, idempotency_key)
         fingerprint = _fingerprint(
-            "create", message, model_id, agent_revision_id, persona_revision_id
+            "create", message, model_id, agent_revision_id, persona_revision_id,
+            client_time_zone,
         )
         existing = self._idempotency.get(key)
         if existing is not None:
@@ -479,9 +555,16 @@ class ConversationStore:
             return cast(CommandResult, existing)
         self._validate_model(model_id, models)
         revision = self._resolve_agent(agent_revision_id)
+        client_time_zone = validate_client_time_zone(client_time_zone)
         effective_persona = persona_revision_id or revision.persona_revision_id
         if persona_revision_id is not None:
             self._resolve_active_persona(persona_revision_id)
+        (
+            tool_policy_id,
+            tool_call_limit,
+            tool_timeout_ms,
+            tool_retry_limit,
+        ) = self._tool_policy_snapshot(revision)
         conversation = Conversation(
             principal_issuer=issuer,
             principal_subject=subject,
@@ -490,6 +573,7 @@ class ConversationStore:
             agent_revision_id=revision.id,
             model_id=model_id,
             persona_override_revision_id=persona_revision_id,
+            client_time_zone=client_time_zone,
             title_state=TitleState.PENDING,
         )
         user_message = Message(conversation.id, MessageRole.USER, message)
@@ -504,6 +588,11 @@ class ConversationStore:
             prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
             prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
             memory_policy_revision_id=self._memory_policy_revision(revision),
+            tool_policy_revision_id=tool_policy_id,
+            tool_call_limit=tool_call_limit,
+            tool_timeout_ms=tool_timeout_ms,
+            tool_retry_limit=tool_retry_limit,
+            client_time_zone=client_time_zone,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
@@ -922,17 +1011,20 @@ class ConversationStore:
         expected_version: int,
         idempotency_key: str,
         issuer: str | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if issuer is None:
             raise ValueError("issuer is required")
         conversation = await self.get(conversation_id, subject, issuer)
         if conversation.archived_at is not None:
             raise ArchivedConversationConflict
+        client_time_zone = validate_client_time_zone(client_time_zone)
+        pinned_time_zone = client_time_zone or conversation.client_time_zone
         key = (issuer, subject, idempotency_key)
         existing = self._idempotency.get(key)
         if existing is not None:
             fingerprint = hashlib.sha256(
-                f"run:{conversation_id}:{message}:{expected_version}".encode()
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
             ).hexdigest()
             if self._idempotency_fingerprints.get(key) != fingerprint:
                 raise IdempotencyConflict
@@ -945,6 +1037,12 @@ class ConversationStore:
             if conversation.current_run is not None:
                 raise ActiveRunConflict
             current_revision = self._resolve_agent(conversation.agent_revision_id)
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = self._tool_policy_snapshot(current_revision)
             effective_persona = (
                 conversation.persona_override_revision_id or current_revision.persona_revision_id
             )
@@ -962,6 +1060,11 @@ class ConversationStore:
                     current_revision.id, effective_persona
                 ).prompt_hash,
                 memory_policy_revision_id=self._memory_policy_revision(current_revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
+                client_time_zone=pinned_time_zone,
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -971,7 +1074,7 @@ class ConversationStore:
         result = (conversation, user_message, run)
         self._idempotency[key] = result
         self._idempotency_fingerprints[key] = hashlib.sha256(
-            f"run:{conversation_id}:{message}:{expected_version}".encode()
+            f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
         ).hexdigest()
         return result
 
@@ -1021,6 +1124,18 @@ class ConversationStore:
             persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
                 prior.agent_revision_id, prior.persona_revision_id
             )
+        tool_policy_id = prior.tool_policy_revision_id
+        tool_call_limit = prior.tool_call_limit
+        tool_timeout_ms = prior.tool_timeout_ms
+        tool_retry_limit = prior.tool_retry_limit
+        if tool_policy_id is None:
+            revision = self._revision_unchecked(prior.agent_revision_id)
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = self._tool_policy_snapshot(revision)
         async with await self._lock_for(conversation.id):
             if conversation.current_run is not None:
                 raise ActiveRunConflict
@@ -1039,6 +1154,11 @@ class ConversationStore:
                 prompt_hash=prompt_hash,
                 retry_of_run_id=prior.id,
                 memory_policy_revision_id=prior.memory_policy_revision_id,
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
+                client_time_zone=prior.client_time_zone,
             )
             conversation.runs.append(run)
             conversation.version += 1
@@ -1071,6 +1191,11 @@ class ConversationStore:
             raise ArchivedConversationConflict
         if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
             run.status = RunStatus.CANCEL_REQUESTED
+            conversation.updated_at = now()
+        elif run.status is RunStatus.WAITING_FOR_CONFIRMATION:
+            run.status = RunStatus.CANCELED
+            run.finished_at = now()
+            run.lease_expires_at = None
             conversation.updated_at = now()
         self._idempotency[key] = run
         self._idempotency_fingerprints[key] = fingerprint
@@ -1117,6 +1242,27 @@ class ConversationStore:
 
                             run.lease_expires_at = current + timedelta(seconds=lease_seconds)
                             acquired = True
+                        elif (
+                            run.status == RunStatus.RUNNING
+                            and run.approval_id is not None
+                            and run.tool_lifecycle_status in {"approved", "denied", "executing"}
+                            and run.lease_expires_at is not None
+                            and run.lease_expires_at <= current
+                        ):
+                            run.started_at = current
+                            run.attempt_id = worker_id or uuid5(
+                                NAMESPACE, f"attempt:{run.id}:{run.attempt_count + 1}"
+                            )
+                            run.attempt_count += 1
+                            from datetime import timedelta
+
+                            run.lease_expires_at = current + timedelta(seconds=lease_seconds)
+                            acquired = True
+                        elif run.status == RunStatus.WAITING_FOR_CONFIRMATION:
+                            # Approval resumption changes the durable run back
+                            # to queued before redelivery.  Never reacquire a
+                            # waiting lease or invoke a provider here.
+                            acquired = False
                         elif (
                             run.status == RunStatus.RUNNING
                             and run.lease_expires_at is not None
@@ -1204,6 +1350,79 @@ class ConversationStore:
                         await result
         return conversation, run, assistant
 
+    async def wait_for_confirmation(
+        self,
+        run_id: UUID,
+        attempt_id: UUID,
+        approval_id: UUID,
+        tool_call_id: UUID,
+        *,
+        transaction: object | None = None,
+    ) -> Run:
+        del transaction
+        conversation, run = await self._find_run_any(run_id)
+        async with await self._lock_for(conversation.id):
+            if run.status is not RunStatus.RUNNING or run.attempt_id != attempt_id:
+                raise RunClaimLost
+            run.status = RunStatus.WAITING_FOR_CONFIRMATION
+            run.approval_id = approval_id
+            run.pending_tool_call_id = tool_call_id
+            run.tool_lifecycle_status = "awaiting_confirmation"
+            run.lease_expires_at = None
+            run.attempt_id = None
+            conversation.updated_at = now()
+            return run
+
+    async def lock_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        del transaction
+        conversation, run = await self._find_run_any(run_id)
+        async with await self._lock_for(conversation.id):
+            if (
+                run.approval_id != approval_id
+                or run.status is not RunStatus.WAITING_FOR_CONFIRMATION
+            ):
+                raise RunClaimLost
+            return run
+
+    async def resume_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        transaction: object | None = None,
+    ) -> Run:
+        del transaction
+        conversation, run = await self._find_run_any(run_id)
+        async with await self._lock_for(conversation.id):
+            if run.approval_id != approval_id:
+                raise RunClaimLost
+            if run.status is RunStatus.QUEUED:
+                return run
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                raise RunClaimLost
+            run.status = RunStatus.QUEUED
+            run.tool_lifecycle_status = "approved" if approved else "denied"
+            conversation.updated_at = now()
+            return run
+
+    async def cancel_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        del transaction
+        conversation, run = await self._find_run_any(run_id)
+        async with await self._lock_for(conversation.id):
+            if (
+                run.approval_id != approval_id
+                or run.status is not RunStatus.WAITING_FOR_CONFIRMATION
+            ):
+                raise RunClaimLost
+            run.status = RunStatus.CANCELED
+            run.tool_lifecycle_status = "denied"
+            run.finished_at = now()
+            run.lease_expires_at = None
+            run.attempt_id = None
+            conversation.updated_at = now()
+            return run
+
     async def _find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]:
         for conversation in self._conversations.values():
             for run in conversation.runs:
@@ -1245,6 +1464,17 @@ class ConversationStore:
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
+        pinned_zone = (
+            run.client_time_zone
+            if run is not None
+            else conversation.client_time_zone
+        )
+        local_now = server_local_time(now(), pinned_zone)
+        if local_now is not None:
+            prompt = (
+                f"{prompt}\n\nCurrent local date and time (server-derived; zone "
+                f"{pinned_zone}): {local_now}"
+            )
         query = ""
         if run is not None:
             query = next(
@@ -1265,6 +1495,8 @@ class ConversationStore:
             )
         else:
             memory = []
+        if local_now is None and needs_legacy_time_clarification(query):
+            prompt = f"{prompt}\n\n{LEGACY_TIME_CLARIFICATION}"
         render_started = perf_counter()
         context, admitted_memory_count = build_context_with_admission(
             conversation, prompt, budget, memory, memory_fraction

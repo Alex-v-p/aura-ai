@@ -1,0 +1,42 @@
+component:
+  id: aura.runtime.policy_evaluation
+  version: 1.1.0
+  owner: runtime.tools
+  category: policy
+input:
+  schema: immutable-tool-policy-v1
+  replayable: false
+  replay_reason: Argument validation and policy evaluation are execution-boundary decisions; prohibited arguments are not captured for replay.
+output:
+  schema: tool-policy-decision-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - configuration_store
+metrics:
+  - tool_argument_validation_outcome
+  - tool_policy_decision
+  - tool_policy_evaluation_duration_ms
+  - tool_budget_exhaustion_count
+metric_semantics:
+  tool_argument_validation_outcome: Content-free schema validation outcome.
+  tool_policy_decision: Exact grant and version decision without arguments.
+  tool_policy_evaluation_duration_ms: Duration of the provider-neutral policy evaluator.
+  tool_budget_exhaustion_count: Bounded execution budget exhaustion count.
+capture_policy: metadata_only
+evaluators:
+  - tool_argument_accuracy
+  - tool_permission_enforcement
+  - reminder_tool_permission_enforcement
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id]
+  prohibited: [prompt, response, arguments, query, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

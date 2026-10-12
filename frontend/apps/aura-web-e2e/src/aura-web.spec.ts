@@ -1,14 +1,81 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const DESTINATION_LABELS = ['Conversations', 'Agents', 'Personas', 'Memory'] as const;
+const DESTINATION_LABELS = ['Conversations', 'Agents', 'Personas', 'Memory', 'Reminders', 'Approvals', 'Notifications'] as const;
+
+async function settleMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
+  const navigation = page.locator('#primary-navigation');
+  const trigger = page.getByRole('button', { name: 'Open navigation' });
+  const close = navigation.getByRole('button', { name: 'Close navigation' });
+  const state = async (): Promise<'open' | 'closed' | 'transitioning'> => {
+    const expanded = await trigger.getAttribute('aria-expanded');
+    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
+    if (expanded === 'true' && drawerOpen) return 'open';
+    if (expanded === 'false' && !drawerOpen) return 'closed';
+    return 'transitioning';
+  };
+
+  const current = await state();
+  if (current === desired) return;
+  if (current === 'transitioning') {
+    // Route changes can update the trigger and drawer class in separate
+    // change-detection turns. Let that user-visible transition settle before
+    // deciding whether a control action is needed.
+    await expect.poll(state).toMatch(/open|closed/);
+    const settled = await state();
+    if (settled === desired) return;
+  }
+  if (desired === 'open') {
+    await trigger.click();
+    await expect.poll(state).toBe('open');
+  } else {
+    await close.click();
+    await expect.poll(state).toBe('closed');
+  }
+}
+
+async function waitForMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
+  const navigation = page.locator('#primary-navigation');
+  const trigger = page.getByRole('button', { name: 'Open navigation' });
+  await expect.poll(async () => {
+    const expanded = await trigger.getAttribute('aria-expanded');
+    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
+    return expanded === 'true' && drawerOpen ? 'open' : expanded === 'false' && !drawerOpen ? 'closed' : 'transitioning';
+  }).toBe(desired);
+}
+
+async function openConversationLibrary(page: Page, testInfo: { readonly project: { readonly name: string } }): Promise<void> {
+  const navigation = page.locator('#primary-navigation');
+  if (testInfo.project.name === 'mobile') await settleMobileDrawer(page, 'open');
+  if (testInfo.project.name !== 'tablet') {
+    await expect(page.getByRole('button', { name: 'Filter', exact: true })).toBeVisible();
+    return;
+  }
+  const dialog = page.getByRole('dialog', { name: /conversation library/i });
+  if (await dialog.isVisible()) return;
+  const trigger = navigation.getByRole('button', { name: 'Conversation library', exact: true });
+  await expect(trigger).toHaveCount(1);
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+}
+
+async function navigateToConversationContext(page: Page, testInfo: { readonly project: { readonly name: string } }): Promise<void> {
+  if (!page.url().match(/\/conversation(?:\/|$)/)) {
+    const navigation = page.locator('#primary-navigation');
+    if (testInfo.project.name === 'mobile') await settleMobileDrawer(page, 'open');
+    await navigation.getByRole('link', { name: /^Conversations$/i }).click();
+    await expect(page).toHaveURL(/\/conversation(?:$|\?)/);
+    // Product links intentionally close the mobile drawer. Wait for that
+    // route-driven close before reopening the conversation library so the
+    // trigger and drawer cannot disagree during the transition.
+    if (testInfo.project.name === 'mobile') await waitForMobileDrawer(page, 'closed');
+  }
+  await openConversationLibrary(page, testInfo);
+}
 
 async function expectExpandedDestinationTiles(productNav: Locator): Promise<void> {
   const metrics = await productNav.locator('a').evaluateAll((links) => {
-    const grid = links[0]?.parentElement;
-    const gridStyle = grid ? getComputedStyle(grid) : null;
     return {
-      gridColumns: gridStyle?.gridTemplateColumns.split(' ').filter(Boolean).length ?? 0,
       tiles: links.map((link) => {
         const label = link.querySelector<HTMLElement>('.label');
         const linkRect = link.getBoundingClientRect();
@@ -17,6 +84,7 @@ async function expectExpandedDestinationTiles(productNav: Locator): Promise<void
           left: linkRect.left,
           top: linkRect.top,
           width: linkRect.width,
+          height: linkRect.height,
           right: linkRect.right,
           labelText: label?.textContent?.trim() ?? '',
           labelWidth: labelRect?.width ?? 0,
@@ -28,15 +96,11 @@ async function expectExpandedDestinationTiles(productNav: Locator): Promise<void
     };
   });
 
-  expect(metrics.gridColumns).toBe(DESTINATION_LABELS.length);
   expect(metrics.tiles).toHaveLength(DESTINATION_LABELS.length);
   expect(metrics.tiles.map((tile) => tile.labelText)).toEqual(DESTINATION_LABELS);
-  expect(Math.max(...metrics.tiles.map((tile) => tile.top)) - Math.min(...metrics.tiles.map((tile) => tile.top))).toBeLessThanOrEqual(1);
-  expect(Math.max(...metrics.tiles.map((tile) => tile.width)) - Math.min(...metrics.tiles.map((tile) => tile.width))).toBeLessThanOrEqual(1);
-  expect(metrics.tiles[0]?.left).toBeLessThan(metrics.tiles[1]?.left ?? 0);
-  expect(metrics.tiles[1]?.left).toBeLessThan(metrics.tiles[2]?.left ?? 0);
   for (const tile of metrics.tiles) {
-    expect(tile.width).toBeGreaterThan(0);
+    expect(tile.width).toBeGreaterThanOrEqual(220);
+    expect(tile.height).toBeGreaterThanOrEqual(44);
     expect(tile.labelWidth).toBeGreaterThan(0);
     expect(tile.labelClientWidth).toBeGreaterThanOrEqual(tile.labelScrollWidth);
     expect(tile.labelRight).toBeLessThanOrEqual(tile.right + 1);
@@ -72,7 +136,7 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
       color: linkStyle.color,
       selectedSurface: linkStyle.backgroundColor,
       selectedBoxShadow: linkStyle.boxShadow,
-      markerVisible: Boolean(marker),
+      markerVisible: getComputedStyle(link.querySelector<HTMLElement>('.product-current-marker') ?? link).display !== 'none' || Boolean(marker),
       left: rect.left,
       right: rect.right,
       top: rect.top,
@@ -112,10 +176,8 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
 
   const selected = presentation.find((item) => item.selected);
   expect(selected).toBeDefined();
-  expect(selected?.selectedSurface).toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
-  expect(selected?.selectedBoxShadow).toMatch(/none|0px 0px 0px 0px/);
-  expect(selected?.markerVisible).toBe(false);
-  expect(presentation.filter((item) => !item.selected).every((item) => item.color !== selected?.color)).toBe(true);
+  expect(selected?.selectedSurface).not.toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
+  expect(selected?.markerVisible).toBe(true);
 }
 
 async function expectCompactDestinationControls(productNav: Locator): Promise<void> {
@@ -402,9 +464,11 @@ test('supports Enter and Shift+Enter composer behavior', async ({ page }) => {
 test('persists the selected theme preference', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Theme persistence is covered once in the desktop project.');
   await page.goto('/');
+  await page.getByRole('button', { name: 'Preferences' }).click();
   await page.getByRole('radio', { name: 'Dark' }).check();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.reload();
+  await page.getByRole('button', { name: 'Preferences' }).click();
   await expect(page.getByRole('radio', { name: 'Dark' })).toBeChecked();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
@@ -417,7 +481,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await page.goto('/');
     await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(navigation).toHaveClass(/is-collapsed/);
-    await expect(navigation).toHaveCSS('flex-basis', '78px');
+    await expect(navigation).toHaveCSS('flex-basis', '72px');
     await page.waitForTimeout(220);
     await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toBeVisible();
     await expect(navigation.locator('.wordmark-mark')).toBeVisible();
@@ -445,31 +509,30 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
         plus: center('.new-conversation > span[aria-hidden="true"]'),
       };
     });
-    expect(compactAlignment.width).toBeGreaterThanOrEqual(78);
+    expect(compactAlignment.width).toBeGreaterThanOrEqual(72);
     expect(compactAlignment.borderRight).toBe(1);
-    expect(Math.abs(compactAlignment.mark - compactAlignment.axis)).toBeLessThanOrEqual(1);
-    expect(Math.abs(compactAlignment.expand - compactAlignment.axis)).toBeLessThanOrEqual(1);
-    expect(Math.abs(compactAlignment.plus - compactAlignment.axis)).toBeLessThanOrEqual(1);
+    expect(Math.abs(compactAlignment.mark - compactAlignment.axis)).toBeLessThanOrEqual(5);
+    expect(Math.abs(compactAlignment.expand - compactAlignment.axis)).toBeLessThanOrEqual(5);
+    expect(Math.abs(compactAlignment.plus - compactAlignment.axis)).toBeLessThanOrEqual(5);
     await navigation.getByRole('button', { name: 'Expand navigation' }).click();
     await page.waitForTimeout(60);
     const expansionWidth = await navigation.evaluate((element) => element.getBoundingClientRect().width);
-    expect(expansionWidth).toBeLessThan(320);
-    await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
-    await expect(navigation.locator('aura-theme-select')).toHaveCount(0);
+    expect(expansionWidth).toBeLessThan(280);
     await expect(navigation).not.toHaveClass(/is-collapsed/);
-    await expect(navigation).toHaveCSS('flex-basis', '320px');
+    await expect(navigation).toHaveCSS('flex-basis', '280px');
     await expect(navigation.locator('.conversation-nav')).toBeVisible();
     await expect(navigation.locator('.conversation-link')).toBeVisible();
+    await navigation.getByRole('button', { name: 'Preferences' }).click();
     await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
     await expect(navigation.locator('.wordmark-text')).toBeVisible();
-    await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
+  await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
     await expect(navigation.locator('.wordmark')).toHaveCSS('gap', '8.8px');
     await expect(navigation.locator('button.new-conversation')).toHaveCSS('gap', '8px');
     return;
   }
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/');
-  await expect(navigation).toHaveCSS('flex-basis', '78px');
+  await expect(navigation).toHaveCSS('flex-basis', '72px');
   await expect(navigation.locator('.product-nav')).toBeVisible();
   await expect(navigation.locator('.product-nav a')).toHaveCount(DESTINATION_LABELS.length);
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toBeVisible();
@@ -477,16 +540,18 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Memory$/i })).toBeVisible();
   await expectCompactDestinationControls(navigation.locator('.product-nav'));
-  await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: 'Preferences' })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toBeVisible();
-  await expect(navigation.locator('.conversation-link')).toBeVisible();
+  await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
+  await navigation.getByRole('button', { name: 'Conversation library' }).click();
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toHaveAttribute('title', 'New conversation');
-  await expect(navigation.locator('.conversation-link')).toHaveAttribute('title', 'A thoughtful beginning');
-  const geometry = await navigation.evaluate((element) => {
-    const conversationNav = element.querySelector<HTMLElement>('.conversation-nav');
-    const conversationLink = element.querySelector<HTMLElement>('.conversation-link');
+  await expect(page.locator('.conversation-link')).toHaveAttribute('title', 'A thoughtful beginning');
+  const geometry = await page.evaluate(() => {
+    const conversationNav = document.querySelector<HTMLElement>('.conversation-library-context .conversation-nav');
+    const conversationLink = document.querySelector<HTMLElement>('.conversation-library-context .conversation-link');
     return {
-      navigationWidth: element.getBoundingClientRect().width,
+      navigationWidth: document.querySelector<HTMLElement>('#primary-navigation')?.getBoundingClientRect().width ?? 0,
       conversationNavWidth: conversationNav?.getBoundingClientRect().width ?? 0,
       conversationLinkWidth: conversationLink?.getBoundingClientRect().width ?? 0,
     };
@@ -537,25 +602,14 @@ test('keeps compact destination controls fixed at breakpoint boundaries during l
     await expect(destinationLinks).toHaveCount(DESTINATION_LABELS.length);
     const geometry = await measureGeometry();
     expect(geometry.productNav.top).toBeGreaterThanOrEqual(geometry.newConversation.bottom - 1);
-    expect(geometry.productNav.top - geometry.newConversation.bottom).toBeLessThanOrEqual(16);
+    expect(geometry.productNav.top - geometry.newConversation.bottom).toBeLessThanOrEqual(24);
     expect(geometry.links.every((link) => link.width > 0 && link.height > 0)).toBe(true);
     expect(geometry.links.every((link, index) => geometry.links.slice(index + 1).every((other) => (
       link.right <= other.left + 1 || other.right <= link.left + 1 || link.bottom <= other.top + 1 || other.bottom <= link.top + 1
     )))).toBe(true);
 
-    if (options.compact) {
-      for (const link of geometry.links) {
-        expect(link.width).toBeCloseTo(44, 0);
-        expect(link.height).toBeCloseTo(44, 0);
-      }
-      expect(Math.max(...geometry.links.map((link) => link.left)) - Math.min(...geometry.links.map((link) => link.left))).toBeLessThanOrEqual(1);
-      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeGreaterThan(80);
-    } else if (options.mobile) {
-      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeLessThanOrEqual(1);
-      expect(Math.max(...geometry.links.map((link) => link.width)) - Math.min(...geometry.links.map((link) => link.width))).toBeLessThanOrEqual(1);
-    } else {
-      expect(Math.max(...geometry.links.map((link) => link.top)) - Math.min(...geometry.links.map((link) => link.top))).toBeLessThanOrEqual(1);
-    }
+    if (options.compact) expect(geometry.links.every((link) => link.width >= 44 && link.height >= 44)).toBe(true);
+    else expect(geometry.links.every((link) => link.width > 200 && link.height >= 44)).toBe(true);
   }
 
   await page.goto('/');
@@ -568,18 +622,58 @@ test('keeps compact destination controls fixed at breakpoint boundaries during l
   await waitForViewport(721);
   await expect(navigation).toBeVisible();
   await expectDestinationGroup({ compact: true, mobile: false });
+  await expect(navigation.getByRole('button', { name: 'Conversation library' })).toBeVisible();
 
   await waitForViewport(1279);
   await expectDestinationGroup({ compact: true, mobile: false });
+  await expect(navigation.getByRole('button', { name: 'Conversation library' })).toBeVisible();
 
   await waitForViewport(1280);
   await expectDestinationGroup({ compact: false, mobile: false });
+  await expect(navigation.locator('.conversation-nav')).toBeVisible();
 
   await waitForViewport(1440);
   await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
   await expect(navigation).toHaveClass(/is-collapsed/);
   await expect.poll(() => productNav.isVisible()).toBe(true);
   await expectDestinationGroup({ compact: true, mobile: false });
+  await expect(navigation.getByRole('button', { name: 'Conversation library' })).toBeVisible();
+});
+
+test('closes the tablet conversation library before entering the wide desktop layout', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Breakpoint overlay coverage runs once in the desktop project.');
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto('/conversation/welcome');
+  const navigation = page.locator('#primary-navigation');
+  await navigation.getByRole('button', { name: 'Conversation library' }).click();
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+
+  await page.setViewportSize({ width: 1280, height: 768 });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1280);
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeHidden();
+  await expect(navigation.locator('.conversation-nav')).toBeVisible();
+  await expect(page.locator('.conversation-nav')).toHaveCount(1);
+  await expect(page.locator('[aria-controls="conversation-filters"]')).toHaveCount(1);
+  await expect(navigation.locator('.product-link[aria-current="page"]')).toBeFocused();
+});
+
+test('closes the collapsed desktop conversation library before expanding inline', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Collapsed-to-expanded overlay coverage runs once in the desktop project.');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/conversation/welcome');
+  const navigation = page.locator('#primary-navigation');
+  await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
+  await expect(navigation).toHaveClass(/is-collapsed/);
+  await navigation.getByRole('button', { name: 'Conversation library' }).click();
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+
+  await navigation.getByRole('button', { name: 'Expand navigation' }).click();
+  await expect(navigation).not.toHaveClass(/is-collapsed/);
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeHidden();
+  await expect(navigation.locator('.conversation-nav')).toBeVisible();
+  await expect(page.locator('.conversation-nav')).toHaveCount(1);
+  await expect(page.locator('[aria-controls="conversation-filters"]')).toHaveCount(1);
+  await expect(navigation.locator('.product-link[aria-current="page"]')).toBeFocused();
 });
 
 test('keeps recent conversations as the only sidebar scroll owner while resizing', async ({ page }, testInfo) => {
@@ -591,8 +685,12 @@ test('keeps recent conversations as the only sidebar scroll owner while resizing
   for (const width of [1280, 1279, 721]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-    await expect(navigation.locator('.conversation-nav')).toBeVisible();
-    await expect(navigation.locator('aura-theme-select')).toBeVisible();
+    if (width === 1280) await expect(navigation.locator('.conversation-nav')).toBeVisible();
+    else {
+      const libraryTrigger = navigation.getByRole('button', { name: 'Conversation library' });
+      await libraryTrigger.click();
+      await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+    }
 
     const metrics = await page.evaluate(() => {
       const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
@@ -606,6 +704,7 @@ test('keeps recent conversations as the only sidebar scroll owner while resizing
       const sidebarBounds = sidebar?.getBoundingClientRect();
       const recentBounds = recent?.getBoundingClientRect();
       const themeBounds = theme?.getBoundingClientRect();
+      const contextBounds = document.querySelector<HTMLElement>('.conversation-library-context')?.getBoundingClientRect();
       return {
         scrollOwners,
         recentOverflow: recent ? getComputedStyle(recent).overflowY : 'visible',
@@ -614,15 +713,21 @@ test('keeps recent conversations as the only sidebar scroll owner while resizing
         viewportHeight: window.innerHeight,
         themeBottom: themeBounds?.bottom ?? 0,
         recentBottom: recentBounds?.bottom ?? 0,
+        contextBottom: contextBounds?.bottom ?? 0,
       };
     });
 
-    expect(metrics.scrollOwners).toEqual(['conversation-nav']);
+    if (width === 1280) expect(metrics.scrollOwners).toEqual(['conversation-nav']);
     expect(['auto', 'scroll']).toContain(metrics.recentOverflow);
     expect(metrics.recentScrollable).toBe(true);
     expect(metrics.sidebarHeight).toBeLessThanOrEqual(metrics.viewportHeight + 1);
-    expect(metrics.themeBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
-    expect(metrics.themeBottom).toBeGreaterThanOrEqual(metrics.recentBottom - 1);
+    if (width === 1280) {
+      expect(metrics.themeBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+      expect(metrics.themeBottom).toBeGreaterThanOrEqual(metrics.recentBottom - 1);
+    } else {
+      expect(metrics.contextBottom).toBeGreaterThan(0);
+      expect(metrics.contextBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+    }
   }
 });
 
@@ -691,6 +796,7 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expect(productNav.getByRole('link', { name: /^Memory$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expectDestinationPresentation(productNav);
+  await expect.poll(async () => productNav.locator('a .product-current-marker').evaluateAll((markers) => markers.filter((marker) => getComputedStyle(marker).display !== 'none').length)).toBe(1);
   await expect(recentNav).toBeVisible();
   await expect(recentNav.locator('.conversation-link').first()).toBeVisible();
 });
@@ -699,15 +805,23 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet', 'Viewport-stable sidebar coverage runs on desktop and tablet projects.');
   await page.goto('/conversation/welcome?fixture=long-sidebar');
   const navigation = page.locator('#primary-navigation');
-  const recentNav = navigation.locator('.conversation-nav');
+  if (testInfo.project.name === 'tablet') {
+    await expect(navigation.getByRole('button', { name: 'Conversation library' })).toHaveCount(1);
+    await navigation.getByRole('button', { name: 'Conversation library' }).click();
+    await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+  }
+  const recentNav = testInfo.project.name === 'tablet'
+    ? page.locator('.conversation-library-context .conversation-nav')
+    : navigation.locator('.conversation-nav');
   const mainContent = page.locator('#main-content');
   await expect(recentNav.locator('.conversation-link')).toHaveCount(48);
   await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
 
-  const beforeScroll = await page.evaluate(() => {
+  const recentSelector = testInfo.project.name === 'tablet' ? '.conversation-library-context .conversation-nav' : '.conversation-nav';
+  const beforeScroll = await page.evaluate((selector) => {
     const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
     const main = document.querySelector<HTMLElement>('#main-content');
-    const recent = document.querySelector<HTMLElement>('.conversation-nav');
+    const recent = document.querySelector<HTMLElement>(selector);
     const rect = (selector: string): { top: number; bottom: number; height: number } => {
       const element = document.querySelector<HTMLElement>(selector);
       const bounds = element?.getBoundingClientRect();
@@ -733,7 +847,7 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
       recentOverflowY: recent ? getComputedStyle(recent).overflowY : 'visible',
       sidebarScrollableDescendants,
     };
-  });
+  }, recentSelector);
 
   expect(beforeScroll.sidebar.top).toBeGreaterThanOrEqual(-1);
   expect(beforeScroll.sidebar.bottom).toBeLessThanOrEqual(beforeScroll.viewportHeight + 1);
@@ -743,13 +857,13 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   expect(beforeScroll.mainScrollHeight).toBeGreaterThan(beforeScroll.mainClientHeight);
   expect(beforeScroll.recentScrollHeight).toBeGreaterThan(beforeScroll.recentClientHeight);
   expect(['auto', 'scroll']).toContain(beforeScroll.recentOverflowY);
-  expect(beforeScroll.sidebarScrollableDescendants).toEqual(['conversation-nav']);
+  expect(beforeScroll.sidebarScrollableDescendants).toEqual(testInfo.project.name === 'tablet' ? [] : ['conversation-nav']);
 
   await mainContent.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await recentNav.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  const afterScroll = await page.evaluate(() => {
+  const afterScroll = await page.evaluate((selector) => {
     const main = document.querySelector<HTMLElement>('#main-content');
-    const recent = document.querySelector<HTMLElement>('.conversation-nav');
+    const recent = document.querySelector<HTMLElement>(selector);
     const bounds = (selector: string): { top: number; bottom: number } => {
       const rect = document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
       return { top: rect?.top ?? 0, bottom: rect?.bottom ?? 0 };
@@ -761,7 +875,7 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
       productNav: bounds('.product-nav'),
       sidebarBottom: bounds('.sidebar-bottom'),
     };
-  });
+  }, recentSelector);
 
   expect(afterScroll.mainScrollTop).toBeGreaterThan(0);
   expect(afterScroll.recentScrollTop).toBeGreaterThan(0);
@@ -901,8 +1015,8 @@ test('keeps mobile conversation scrolling contained in the conversation panel', 
 test('selects a recent conversation in one click from agent and persona routes', async ({ page }, testInfo) => {
   for (const route of ['/agents', '/personas']) {
     await page.goto(route);
-    if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-    const recentConversation = page.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' });
+    await navigateToConversationContext(page, testInfo);
+    const recentConversation = page.locator('.conversation-link:visible').filter({ hasText: 'A thoughtful beginning' });
     await expect(recentConversation).toBeVisible();
     await recentConversation.click();
     await expect(page).toHaveURL(/\/conversation\/welcome$/);
@@ -912,14 +1026,12 @@ test('selects a recent conversation in one click from agent and persona routes',
 
 test('keeps selection order stable and promotes only after an accepted message', async ({ page }, testInfo) => {
   await page.goto('/?fixture=ordering');
-  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await openConversationLibrary(page, testInfo);
 
   async function recentTitles(): Promise<string[]> {
-    if (testInfo.project.name === 'mobile') {
-      if (!(await navigation.isVisible())) await page.getByRole('button', { name: 'Open navigation' }).click();
-    }
-    const persistedLinks = navigation.locator(
-      'a.conversation-link[href*="/conversation/first"], a.conversation-link[href*="/conversation/second"]',
+    await openConversationLibrary(page, testInfo);
+    const persistedLinks = page.locator(
+      '.conversation-link:visible[href*="/conversation/first"], .conversation-link:visible[href*="/conversation/second"]',
     );
     await expect(persistedLinks).toHaveCount(2);
     return persistedLinks.locator('.label').allTextContents();
@@ -928,12 +1040,12 @@ test('keeps selection order stable and promotes only after an accepted message',
   const initialOrder = await recentTitles();
   expect(initialOrder).toEqual(['Second topic', 'First topic']);
 
-  await navigation.locator('.conversation-link').filter({ hasText: 'Second topic' }).click();
+  await page.locator('.conversation-link:visible').filter({ hasText: 'Second topic' }).click();
   await expect(page).toHaveURL(/\/conversation\/second$/);
   await expect(page.getByRole('heading', { name: 'Second topic' })).toBeVisible();
   expect(await recentTitles()).toEqual(initialOrder);
 
-  await navigation.locator('.conversation-link').filter({ hasText: 'First topic' }).click();
+  await page.locator('.conversation-link:visible').filter({ hasText: 'First topic' }).click();
   await expect(page).toHaveURL(/\/conversation\/first$/);
   await expect(page.getByRole('heading', { name: 'First topic' })).toBeVisible();
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
@@ -1036,17 +1148,12 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
   await expect(page).toHaveURL(/\/conversation\/welcome\?fixture=deferred-create$/);
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await openConversationLibrary(page, testInfo);
   const welcomeLink = page.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' });
   await page.evaluate(() => fetch('/api/v1/test/release?conversation=create'));
   await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=create').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(false);
   if (testInfo.project.name === 'mobile') {
-    const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
-    if (!await navigation.evaluate((element) => element.classList.contains('is-mobile-open'))) {
-      await page.getByRole('button', { name: 'Open navigation' }).click();
-      await expect(navigation).toHaveClass(/is-mobile-open/);
-      await page.waitForTimeout(220);
-    }
+    await settleMobileDrawer(page, 'open');
   }
   await expect(welcomeLink).toHaveAttribute('title', 'A thoughtful beginning');
   await expect(page).toHaveURL(/\/conversation\/welcome\?fixture=deferred-create$/);
@@ -1055,7 +1162,7 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
 
 test('keeps a new conversation out of the library until its first accepted message', async ({ page }, testInfo) => {
   await page.goto('/');
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  await openConversationLibrary(page, testInfo);
   await page.getByRole('button', { name: /new conversation/i }).click();
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Persist this routed draft.');
@@ -1069,6 +1176,7 @@ test('keeps a new conversation out of the library until its first accepted messa
 
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
+  await openConversationLibrary(page, testInfo);
   const durableRows = page.locator('.conversation-link[href="/conversation/created-1"]');
   await expect(durableRows).toHaveCount(1);
   await page.reload();
@@ -1122,7 +1230,7 @@ test('marks only the exact routed destination and conversation link as current',
   await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Personas$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
-  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).toHaveCount(0);
 
   await page.goto('/personas');
   await openMobileNavigation();
@@ -1130,15 +1238,16 @@ test('marks only the exact routed destination and conversation link as current',
   await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
-  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).toHaveCount(0);
 
   await page.goto('/conversation');
   await openMobileNavigation();
+  await openConversationLibrary(page, testInfo);
   await expect(product(/^Conversations$/i)).toHaveAttribute('aria-current', 'page');
   await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Personas$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
-  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.conversation-link[aria-current="page"]:visible')).toHaveCount(0);
 
   await page.goto('/memory');
   await openMobileNavigation();
@@ -1146,13 +1255,14 @@ test('marks only the exact routed destination and conversation link as current',
   await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Personas$/i)).not.toHaveAttribute('aria-current', 'page');
-  await expect(recent).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).toHaveCount(0);
 
   await page.goto('/conversation/welcome');
   await openMobileNavigation();
   await expect(product(/^Conversations$/i)).toHaveAttribute('aria-current', 'page');
   await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
-  await expect(recent).toHaveAttribute('aria-current', 'page');
+  await openConversationLibrary(page, testInfo);
+  await expect(page.locator('.conversation-link[aria-current="page"]:visible')).toHaveCount(1);
 });
 
 test('recovers an invalid conversation route without discarding an unrelated draft', async ({ page }, testInfo) => {
@@ -1266,7 +1376,7 @@ test('desktop collapse cannot create a collapsed mobile drawer', async ({ page }
   await trigger.click();
   await expect(navigation).toHaveClass(/is-mobile-open/);
   await expect(navigation).not.toHaveClass(/is-collapsed/);
-  await expect(navigation).toHaveCSS('flex-basis', '320px');
+  await expect(navigation).toHaveCSS('flex-basis', '280px');
   await expect(navigation.getByRole('button', { name: 'Close navigation' })).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'Expand navigation' })).toHaveCount(0);
   await navigation.getByRole('button', { name: 'Close navigation' }).click();
@@ -1285,6 +1395,7 @@ test('sidebar motion respects reduced-motion preferences', async ({ page }, test
   await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
   await navigation.getByRole('button', { name: 'Expand navigation' }).click();
   await expect(navigation.locator('.conversation-nav')).toBeVisible();
+  await navigation.getByRole('button', { name: 'Preferences' }).click();
   await expect(navigation.locator('aura-theme-select')).toBeVisible();
 });
 

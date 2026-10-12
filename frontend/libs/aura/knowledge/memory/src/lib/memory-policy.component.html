@@ -16,19 +16,16 @@
         </div>
       </fieldset>
       @if (recallMode === 'automatic') {
-        <label>Automatic recall threshold<input name="automaticThreshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="automaticRecallThreshold" aria-describedby="automatic-threshold-help" /><small id="automatic-threshold-help">A higher value keeps more task context focused. Start at 0.70; Aura combines lexical and semantic relevance.</small></label>
+        <details class="advanced-disclosure"><summary>Advanced recall threshold</summary><label>Automatic recall threshold<input name="automaticThreshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="automaticRecallThreshold" aria-describedby="automatic-threshold-help" /><small id="automatic-threshold-help">A higher value keeps more task context focused. Start at 0.70; Aura combines lexical and semantic relevance.</small></label></details>
       } @else {
         <p class="policy-note" role="status"><strong>Recall is off for this agent.</strong> Completed turns can still create and reinforce memories for later review or another authorized agent.</p>
       }
       <label class="check-label"><input type="checkbox" name="sharedUserRead" [(ngModel)]="sharedUserRead" /> Read shared user memory</label>
       <label class="check-label"><input type="checkbox" name="currentAgentRead" [(ngModel)]="currentAgentRead" /> Read this agent's private memory</label>
       <label class="check-label"><input type="checkbox" name="sharedUserPromotion" [(ngModel)]="sharedUserPromotion" /> Allow promotion to shared user scope</label>
-      <label>Fallback relevance threshold<input name="threshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="fallbackThreshold" /></label>
-      <label>Maximum memories<input name="maxMemories" type="number" min="1" max="8" step="1" [(ngModel)]="maxMemories" /></label>
-      <label>Context budget fraction<input name="budget" type="number" min="0.01" max="0.2" step="0.01" [(ngModel)]="budgetFraction" /></label>
-      <label>Granted fallback agent IDs<small>Comma-separated IDs. Retrieval only; Aura never contacts or delegates to these agents.</small><input name="fallbackAgents" [(ngModel)]="fallbackAgents" /></label>
+      <details class="advanced-disclosure"><summary>Advanced limits and fallback agents</summary><div class="form-grid"><label>Fallback relevance threshold<input name="threshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="fallbackThreshold" /></label><label>Maximum memories<input name="maxMemories" type="number" min="1" max="8" step="1" [(ngModel)]="maxMemories" /></label><label>Context budget fraction<input name="budget" type="number" min="0.01" max="0.2" step="0.01" [(ngModel)]="budgetFraction" /></label><label>Granted fallback agent IDs<small>Comma-separated IDs. Retrieval only; Aura never contacts or delegates to these agents.</small><input name="fallbackAgents" [(ngModel)]="fallbackAgents" /></label></div></details>
       <p class="form-help">Each save creates an immutable policy revision. Existing conversations keep their pinned revision until explicitly upgraded.</p>
-      <button class="primary-button" type="submit" [disabled]="!valid() || store.saving()">Create immutable revision</button>
+      <button class="primary-button" type="submit" [disabled]="!store.policiesLoaded() || !valid() || store.saving()">{{ store.policiesLoaded() ? 'Create immutable revision' : 'Loading current policy…' }}</button>
     </form>
     <section class="detail-card">
       <h2>Policy revisions</h2>

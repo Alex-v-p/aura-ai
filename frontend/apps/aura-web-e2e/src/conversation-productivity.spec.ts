@@ -221,8 +221,7 @@ async function waitForLibrary(page: Page, options: { readonly keepMobileNavigati
   const navigation = page.getByRole('navigation', { name: /primary navigation/i });
   const openNavigation = page.getByRole('button', { name: /open navigation/i });
   if (await openNavigation.count()) {
-    await openNavigation.click();
-    await expect(navigation).toHaveClass(/is-mobile-open/);
+    await settleMobileDrawer(page, 'open');
     if (!options.keepMobileNavigationOpen) {
       await navigation.getByRole('button', { name: 'Close navigation' }).click();
       await expect(navigation).toBeHidden();
@@ -230,6 +229,69 @@ async function waitForLibrary(page: Page, options: { readonly keepMobileNavigati
   } else {
     await expect(navigation).toBeVisible();
   }
+  const contextualLibrary = navigation.getByRole('button', { name: 'Conversation library', exact: true });
+  if (await contextualLibrary.count()) {
+    await contextualLibrary.click();
+    await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
+  }
+}
+
+async function settleMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
+  const navigation = page.locator('#primary-navigation');
+  const trigger = page.getByRole('button', { name: /open navigation/i });
+  const close = navigation.getByRole('button', { name: /close navigation/i });
+  const state = async (): Promise<'open' | 'closed' | 'transitioning'> => {
+    const expanded = await trigger.getAttribute('aria-expanded');
+    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
+    if (expanded === 'true' && drawerOpen) return 'open';
+    if (expanded === 'false' && !drawerOpen) return 'closed';
+    return 'transitioning';
+  };
+  const current = await state();
+  if (current === desired) return;
+  if (current === 'transitioning') {
+    // Route changes can update the trigger and drawer class in separate
+    // change-detection turns. Let that user-visible transition settle before
+    // deciding whether a control action is needed.
+    await expect.poll(state).toMatch(/open|closed/);
+    const settled = await state();
+    if (settled === desired) return;
+  }
+  if (desired === 'open') {
+    await trigger.click();
+    await expect.poll(state).toBe('open');
+  } else {
+    await close.click();
+    await expect.poll(state).toBe('closed');
+  }
+}
+
+async function waitForMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
+  const navigation = page.locator('#primary-navigation');
+  const trigger = page.getByRole('button', { name: /open navigation/i });
+  await expect.poll(async () => {
+    const expanded = await trigger.getAttribute('aria-expanded');
+    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
+    return expanded === 'true' && drawerOpen ? 'open' : expanded === 'false' && !drawerOpen ? 'closed' : 'transitioning';
+  }).toBe(desired);
+}
+
+async function reopenLibraryAfterRoute(page: Page): Promise<void> {
+  const navigation = page.getByRole('navigation', { name: /primary navigation/i });
+  const openNavigation = page.getByRole('button', { name: /open navigation/i });
+  if (await openNavigation.count()) {
+    await waitForMobileDrawer(page, 'closed');
+    await settleMobileDrawer(page, 'open');
+  }
+  const inlineLibrary = navigation.locator('.conversation-nav');
+  if (await inlineLibrary.count()) {
+    await expect(inlineLibrary).toBeVisible();
+    return;
+  }
+  const contextualLibrary = navigation.getByRole('button', { name: 'Conversation library', exact: true });
+  await expect(contextualLibrary).toHaveCount(1);
+  await contextualLibrary.click();
+  await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
 }
 
 test.describe('conversation productivity', () => {
@@ -341,14 +403,14 @@ test.describe('conversation productivity', () => {
     await composer.fill('Keep this private draft');
     await page.getByRole('link', { name: /beta notes/i }).click();
     await expect(page).toHaveURL(/conversation\/conversation-beta/);
+    await reopenLibraryAfterRoute(page);
     await expect(page.getByRole('link', { name: /beta notes/i })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { name: 'Beta notes' })).toBeVisible();
     await composer.fill('Keep the selected draft too');
 
     const openNavigation = page.getByRole('button', { name: /open navigation/i });
     if (await openNavigation.count()) {
-      await openNavigation.click();
-      await expect(page.getByRole('navigation', { name: /primary navigation/i })).toHaveClass(/is-mobile-open/);
+      await settleMobileDrawer(page, 'open');
     }
     const betaRow = page.getByRole('link', { name: /beta notes/i });
     const actionButton = betaRow.locator('..').getByRole('button', { name: /conversation actions|more actions/i });
@@ -402,7 +464,9 @@ test.describe('conversation productivity', () => {
     await expect(drawer).toBeHidden();
     const openNavigation = page.getByRole('button', { name: /open navigation/i });
     if (await openNavigation.count()) await expect(openNavigation).toBeFocused();
-    else await expect(opener).toBeFocused();
+    else if (await page.getByRole('button', { name: 'Conversation library', exact: true }).count()) {
+      await expect(page.getByRole('button', { name: 'Conversation library', exact: true })).toBeFocused();
+    } else await expect(opener).toBeFocused();
   });
 
   test('inspects a nonselected row, loads historical runs, and restores row-menu focus', async ({ page }) => {
@@ -436,7 +500,9 @@ test.describe('conversation productivity', () => {
     await expect(drawer.getByText('completed', { exact: true })).toBeVisible();
     await drawer.getByRole('button', { name: 'Close run details' }).click();
     await expect(drawer).toBeHidden();
-    await expect(inspectTrigger).toBeFocused();
+    if (await page.getByRole('button', { name: 'Conversation library', exact: true }).count()) {
+      await expect(page.getByRole('button', { name: 'Conversation library', exact: true })).toBeFocused();
+    } else await expect(inspectTrigger).toBeFocused();
   });
 
   test('reconciles an active run snapshot and keeps cancel/retry eligibility correct', async ({ page }) => {

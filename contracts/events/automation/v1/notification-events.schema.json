@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/automation/v1/notification-events.schema.json",
+  "title": "Aura notification lifecycle events v1",
+  "description": "Identifier-, status-, and timestamp-only durable notification lifecycle events used for PostgreSQL replay and NATS wakeups. Reminder content, notification content, owner identity, prompts, responses, credentials, and other private payloads are prohibited.",
+  "oneOf": [
+    { "$ref": "#/$defs/NotificationDeliveredEvent" },
+    { "$ref": "#/$defs/NotificationAcknowledgedEvent" }
+  ],
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "NotificationStatus": {
+      "type": "string",
+      "enum": ["delivered", "acknowledged"]
+    },
+    "NotificationEventProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "notificationId",
+        "reminderId",
+        "status",
+        "notificationVersion",
+        "occurredAt"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": {
+          "type": "string",
+          "enum": ["notification.delivered", "notification.acknowledged"]
+        },
+        "notificationId": { "$ref": "#/$defs/Uuid" },
+        "reminderId": { "$ref": "#/$defs/Uuid" },
+        "status": { "$ref": "#/$defs/NotificationStatus" },
+        "notificationVersion": { "type": "integer", "minimum": 1 },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "NotificationDeliveredEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/NotificationEventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "eventId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "notification.delivered" },
+            "notificationId": { "$ref": "#/$defs/Uuid" },
+            "reminderId": { "$ref": "#/$defs/Uuid" },
+            "status": { "const": "delivered" },
+            "notificationVersion": { "type": "integer", "minimum": 1 },
+            "occurredAt": { "$ref": "#/$defs/Timestamp" }
+          }
+        }
+      ]
+    },
+    "NotificationAcknowledgedEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/NotificationEventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "eventId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "notification.acknowledged" },
+            "notificationId": { "$ref": "#/$defs/Uuid" },
+            "reminderId": { "$ref": "#/$defs/Uuid" },
+            "status": { "const": "acknowledged" },
+            "notificationVersion": { "type": "integer", "minimum": 1 },
+            "occurredAt": { "$ref": "#/$defs/Timestamp" }
+          }
+        }
+      ]
+    }
+  }
+}

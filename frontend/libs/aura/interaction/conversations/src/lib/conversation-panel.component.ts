@@ -11,6 +11,7 @@ import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
 import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
 import { SafeMarkdownComponent } from './safe-markdown.component';
+import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/approvals';
 
 export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
   return useAgentDefault ? '' : reference?.revisionId ?? '';
@@ -37,6 +38,7 @@ export class ConversationPanelComponent {
   readonly store = inject(ConversationStore);
   readonly agentStore = inject(AgentStore);
   readonly personaStore = inject(PersonaStore);
+  readonly approvalStore = inject(ApprovalStore);
   @ViewChild('composer') private readonly composer?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('optionsButton') private readonly optionsButton?: ElementRef<HTMLButtonElement>;
   @ViewChild('optionsMenu') private readonly optionsMenu?: ElementRef<HTMLElement>;
@@ -69,6 +71,7 @@ export class ConversationPanelComponent {
   }
 
   constructor() {
+    void this.approvalStore.start();
     effect(() => {
       const conversation = this.store.selected();
       if (!conversation.id.startsWith('draft-') || conversation.agent) return;
@@ -110,6 +113,10 @@ export class ConversationPanelComponent {
       }
     });
   }
+
+  conversationApprovals(): ReadonlyArray<ApprovalSummary> { return this.approvalStore.forConversation(this.store.selectedId()); }
+  approvalLabel(status: ApprovalSummary['status']): string { return this.approvalStore.statusLabel(status); }
+  thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
   submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
   retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }
@@ -171,7 +178,7 @@ export class ConversationPanelComponent {
 
   hasNewerAgentRevision(): boolean { return this.agentOptions().some((item) => item.newerRevisionAvailable); }
   hasNewerPersonaRevision(): boolean { return this.personaOptions().some((item) => item.newerRevisionAvailable); }
-  controlsDisabled(): boolean { return this.store.runState() === 'working' || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt); }
+  controlsDisabled(): boolean { return ['working', 'waiting'].includes(this.store.runState()) || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt); }
   stagedConfigurationChanged(): boolean {
     const conversation = this.store.selected();
     return (this.stagedAgent()?.revisionId ?? null) !== (conversation.agent?.revisionId ?? null)
@@ -250,6 +257,9 @@ export class ConversationPanelComponent {
     return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
   }
   sortedRuns(): ReadonlyArray<import('@aura/aura-api-client').Run> { return this.store.selected().runs.slice().sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)); }
+  toolStatuses(runId: string): ReadonlyArray<import('@aura/aura-api-client').ToolStatusData> { return this.store.toolActivitiesForRun(runId); }
+  toolStatusLabel(status: import('@aura/aura-api-client').ToolStatusData['status']): string { return status === 'executing' ? 'Running' : status === 'awaiting_confirmation' ? 'Awaiting confirmation' : status === 'pending' ? 'Queued' : status === 'completed' ? 'Completed' : status === 'denied' ? 'Not allowed' : 'Unavailable'; }
+  toolStatusDetail(activity: import('@aura/aura-api-client').ToolStatusData): string | null { return activity.errorCode ? `${activity.errorClass ? `${activity.errorClass}: ` : ''}${activity.errorCode}` : activity.status === 'completed' && activity.resultCount !== undefined ? `${activity.resultCount} authorized result${activity.resultCount === 1 ? '' : 's'}` : null; }
   safeRunError(run: { readonly error: { readonly code: string; readonly message: string } | null }): string | null {
     return safeRunErrorDisplay(run.error);
   }

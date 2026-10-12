@@ -12,6 +12,10 @@ from aura_core.providers.embeddings.ollama.adapter import (
 from aura_core.providers.models.ollama.adapter import OllamaAdapter, OllamaUnavailable
 from aura_core.runtime.models.ports import (
     ChatMessage,
+    ModelStreamCompleted,
+    ModelTextDelta,
+    ModelThinkingDelta,
+    ModelToolCall,
     ProviderTraceContext,
     StructuredInferenceRequest,
 )
@@ -90,6 +94,158 @@ async def test_ollama_discovery_and_streaming() -> None:
         assert "structured_output" in verified.capabilities
         chunks = [chunk async for chunk in adapter.stream_chat("chat", [])]
         assert chunks == ["Hi"]
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_tool_stream_is_normalized_and_provider_ids_do_not_escape() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "tool-chat",
+                            "digest": "a" * 64,
+                            "modified_at": "tool-chat-rev",
+                            "capabilities": ["chat", "tools"],
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/chat":
+            body = cast(dict[str, object], json.loads(request.content))
+            assert "tools" in body
+            selection = json.dumps(
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "provider-secret",
+                                "function": {
+                                    "name": "memory.search",
+                                    "arguments": {"query": "tea"},
+                                },
+                            }
+                        ],
+                    }
+                }
+            )
+            return httpx.Response(
+                200,
+                content=(
+                    selection
+                    + "\n"
+                    + json.dumps({"message": {"content": "done"}, "done": True})
+                    + "\n"
+                ).encode(),
+            )
+        return httpx.Response(404)
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        models = await adapter.list_models()
+        assert "tool_calling" in models[0].capabilities
+        verified = await adapter.verify_model("tool-chat", "tool_calling")
+        assert verified is not None
+        events = [
+            event
+            async for event in adapter.stream_chat_with_tools(
+                "tool-chat", [ChatMessage("user", "search")], [{"type": "function"}]
+            )
+        ]
+        assert isinstance(events[0], ModelToolCall)
+        assert events[0].name == "memory.search"
+        assert events[0].arguments == {"query": "tea"}
+        assert not hasattr(events[0], "provider_secret")
+        assert isinstance(events[-1], ModelStreamCompleted)
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_tool_stream_rejects_malformed_tool_call() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            content=(json.dumps({"message": {"tool_calls": [{"function": {}}]}}) + "\n").encode(),
+        )
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        with pytest.raises(OllamaUnavailable, match="malformed tool call"):
+            _ = [
+                event
+                async for event in adapter.stream_chat_with_tools(
+                    "tool-chat", [], []
+                )
+            ]
+    finally:
+        httpx.AsyncClient = original  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_ollama_typed_stream_normalizes_thinking_for_plain_and_native_calls() -> None:
+    bodies: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat"
+        body = cast(dict[str, object], json.loads(request.content))
+        bodies.append(body)
+        message: dict[str, object] = {
+            "thinking": "x" * 4_100,
+            "content": "visible",
+        }
+        if "tools" in body:
+            message["tool_calls"] = [
+                {"function": {"name": "memory.search", "arguments": {"query": "tea"}}}
+            ]
+        return httpx.Response(
+            200,
+            content=(
+                json.dumps({"message": message})
+                + "\n"
+                + json.dumps({"done": True})
+                + "\n"
+            ).encode(),
+        )
+
+    adapter = OllamaAdapter("https://ollama.test")
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    httpx.AsyncClient = lambda *args, **kwargs: original(*args, transport=transport, **kwargs)  # type: ignore[method-assign]
+    try:
+        plain = [
+            event
+            async for event in adapter.stream_chat_events("chat", [ChatMessage("user", "hello")])
+        ]
+        native = [
+            event
+            async for event in adapter.stream_chat_with_tools("chat", [], [{"type": "function"}])
+        ]
+        assert [type(item) for item in plain] == [
+            ModelThinkingDelta,
+            ModelThinkingDelta,
+            ModelTextDelta,
+            ModelStreamCompleted,
+        ]
+        assert all(
+            isinstance(item, ModelThinkingDelta) and len(item.text) <= 4096
+            for item in plain[:2]
+        )
+        assert isinstance(native[0], ModelThinkingDelta)
+        assert any(isinstance(item, ModelToolCall) for item in native)
+        assert all(body["think"] is True for body in bodies)
     finally:
         httpx.AsyncClient = original  # type: ignore[method-assign]
 

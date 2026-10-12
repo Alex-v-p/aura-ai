@@ -6,6 +6,7 @@ imports or manipulates another domain's ORM mapping.
 """
 
 import hashlib
+import inspect
 import json
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import timedelta
@@ -40,6 +41,7 @@ from aura_core.domains.interaction.conversations.context import (
 )
 from aura_core.domains.interaction.conversations.public import (
     GENERAL_AGENT,
+    LEGACY_TIME_CLARIFICATION,
     ActiveRunConflict,
     AgentAssignment,
     AgentSwitchConfirmationRequired,
@@ -68,8 +70,11 @@ from aura_core.domains.interaction.conversations.public import (
     decode_cursor,
     encode_cursor,
     filters_fingerprint,
+    needs_legacy_time_clarification,
     now,
     pending_title_for,
+    server_local_time,
+    validate_client_time_zone,
     validate_manual_title,
 )
 from aura_core.domains.interaction.personas.public import (
@@ -83,7 +88,11 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationQueryPort,
     PersonaRevisionQueryPort,
 )
-from aura_core.domains.knowledge.memory.recall import MemoryRecallRequest, MemoryRecallResult
+from aura_core.domains.knowledge.memory.recall import (
+    MemoryRecallPurpose,
+    MemoryRecallRequest,
+    MemoryRecallResult,
+)
 from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
@@ -168,10 +177,109 @@ class SqlConversationStore:
             event_id = row[1] if isinstance(row[1], UUID) else None
             return metadata, event_id
 
+    async def save_run(self, run: Run) -> None:
+        """Persist a mutable execution counter through the run repository."""
+
+        async with self.sessions() as session, session.begin():
+            await self.runs.save(session, run)
+
+    async def increment_tool_calls(self, run_id: UUID, attempt_id: UUID) -> int:
+        """Consume a tool budget only while this worker still owns the run."""
+
+        async with self.sessions() as session, session.begin():
+            return await self.runs.increment_tool_calls(session, run_id, attempt_id)
+
+    async def memory_context_fraction_for_run(self, run: Run) -> float:
+        """Read the pinned memory-policy fraction for explicit tool evidence."""
+
+        if run.memory_policy_revision_id is None:
+            return 0.2
+        revision = self._revision_unchecked(run.agent_revision_id)
+        owner = await self._conversation_owner(run.conversation_id)
+        getter = (
+            getattr(self.agent_store, "get_memory_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(owner[0], owner[1], run.memory_policy_revision_id)
+            policy = await value if inspect.isawaitable(value) else value
+        else:
+            policy = self.agents.get_memory_policy(run.memory_policy_revision_id)
+        del revision
+        return max(0.0, min(0.2, float(getattr(policy, "context_budget_fraction", 0.2))))
+
+    async def tool_policy_for_run(self, run: Run) -> object | None:
+        """Resolve the run-pinned tool policy through the agent public port."""
+
+        policy_id = run.tool_policy_revision_id
+        if policy_id is None:
+            return None
+        revision = self._revision_unchecked(run.agent_revision_id)
+        profile = await self._conversation_owner(run.conversation_id)
+        getter = (
+            getattr(self.agent_store, "get_tool_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(profile[0], profile[1], policy_id)
+            if inspect.isawaitable(value):
+                return await value
+            return value
+        getter = getattr(self.agents, "get_tool_policy", None)
+        if callable(getter):
+            return getter(policy_id)
+        del revision
+        return None
+
+    async def _conversation_owner(self, conversation_id: UUID) -> tuple[str, str]:
+        async with self.sessions() as session:
+            row = await session.execute(
+                text(
+                    "SELECT p.issuer, p.subject FROM conversations c "
+                    "JOIN principals p ON p.id = c.principal_id WHERE c.id = :id"
+                ),
+                {"id": conversation_id},
+            )
+            item = row.first()
+            if item is None:
+                raise ConversationNotFound("conversation not found")
+            return str(item[0]), str(item[1])
+
     @staticmethod
     def _memory_policy_revision(revision: object) -> UUID | None:
         value = getattr(revision, "memory_policy_revision_id", None)
         return value if isinstance(value, UUID) else None
+
+    @staticmethod
+    def _tool_policy_revision(revision: object) -> UUID | None:
+        value = getattr(revision, "tool_policy_revision_id", None)
+        return value if isinstance(value, UUID) else None
+
+    async def _tool_policy_snapshot(
+        self, issuer: str, subject: str, revision: object
+    ) -> tuple[UUID | None, int, int, int]:
+        policy_id = self._tool_policy_revision(revision)
+        if policy_id is None:
+            return None, 0, 30_000, 0
+        getter = (
+            getattr(self.agent_store, "get_tool_policy", None)
+            if self.agent_store is not None
+            else None
+        )
+        if callable(getter):
+            value = getter(issuer, subject, policy_id)
+            policy = await value if inspect.isawaitable(value) else value
+        else:
+            getter = getattr(self.agents, "get_tool_policy", None)
+            policy = getter(policy_id) if callable(getter) else None
+        return (
+            policy_id,
+            int(getattr(policy, "max_calls_per_run", 0)),
+            int(getattr(policy, "timeout_ms", 30_000)),
+            int(getattr(policy, "retry_limit", 0)),
+        )
 
     async def _recall_context(
         self,
@@ -181,6 +289,7 @@ class SqlConversationStore:
         budget: int,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
+        purpose: MemoryRecallPurpose = MemoryRecallPurpose.AUTOMATIC_CONTEXT,
     ) -> tuple[Sequence[object], float]:
         recall = self.memory_recall
         if recall is None or run.memory_policy_revision_id is None:
@@ -211,6 +320,8 @@ class SqlConversationStore:
                     conversation_id=conversation.id,
                     trace_id=trace_id or run.id.hex,
                     parent_span_id=parent_span_id,
+                    tool_policy_revision_id=run.tool_policy_revision_id,
+                    purpose=purpose,
                 )
             ))
             raw_items: Sequence[object] = tuple(result.memories)
@@ -223,48 +334,74 @@ class SqlConversationStore:
                 if isinstance(gate_outcome, str) and gate_outcome.startswith("skipped/")
                 else "degraded" if degraded else "ok"
             )
-            run.memory_recall_metadata = serialize_memory_recall_metadata(
-                items,
-                policy_revision_id=run.memory_policy_revision_id,
-                embedding_generation_id=result.embedding_generation_id,
-                retrieval_version=str(
-                    getattr(result, "retrieval_version", "memory-retrieval-v2")
-                ),
-                outcome=recall_outcome,
-                fallback_used=bool(getattr(result, "fallback_used", False)),
-                degradation_reason=degradation_reason,
-                recall_mode=getattr(getattr(policy, "recall_mode", None), "value", None),
-                gate_outcome=gate_outcome,
-            )
-            run.memory_embedding_generation_id = result.embedding_generation_id
-            async with self.sessions() as session, session.begin():
-                persisted = await self.runs.get(session, run.id, lock=True)
-                if persisted is not None:
-                    persisted.memory_recall_metadata = run.memory_recall_metadata
-                    persisted.memory_embedding_generation_id = (
-                        run.memory_embedding_generation_id
-                    )
-                    await self.runs.save(session, persisted)
-            return items, policy.context_budget_fraction
-        except Exception:
-            run.memory_recall_metadata = serialize_memory_recall_metadata(
-                (),
-                policy_revision_id=run.memory_policy_revision_id,
-                embedding_generation_id=None,
-                retrieval_version="memory-retrieval-v2",
-                outcome="degraded",
-                fallback_used=False,
-                degradation_reason="recall_failed",
-            )
-            try:
+            if purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT:
+                run.memory_recall_metadata = serialize_memory_recall_metadata(
+                    items,
+                    policy_revision_id=run.memory_policy_revision_id,
+                    embedding_generation_id=result.embedding_generation_id,
+                    retrieval_version=str(
+                        getattr(result, "retrieval_version", "memory-retrieval-v2")
+                    ),
+                    outcome=recall_outcome,
+                    fallback_used=bool(getattr(result, "fallback_used", False)),
+                    degradation_reason=degradation_reason,
+                    recall_mode=getattr(getattr(policy, "recall_mode", None), "value", None),
+                    gate_outcome=gate_outcome,
+                )
+                run.memory_embedding_generation_id = result.embedding_generation_id
                 async with self.sessions() as session, session.begin():
                     persisted = await self.runs.get(session, run.id, lock=True)
                     if persisted is not None:
                         persisted.memory_recall_metadata = run.memory_recall_metadata
+                        persisted.memory_embedding_generation_id = (
+                            run.memory_embedding_generation_id
+                        )
                         await self.runs.save(session, persisted)
-            except Exception:
-                pass
+            return items, policy.context_budget_fraction
+        except Exception:
+            if purpose is MemoryRecallPurpose.TOOL_SEARCH:
+                raise
+            if purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT:
+                run.memory_recall_metadata = serialize_memory_recall_metadata(
+                    (),
+                    policy_revision_id=run.memory_policy_revision_id,
+                    embedding_generation_id=None,
+                    retrieval_version="memory-retrieval-v2",
+                    outcome="degraded",
+                    fallback_used=False,
+                    degradation_reason="recall_failed",
+                )
+                try:
+                    async with self.sessions() as session, session.begin():
+                        persisted = await self.runs.get(session, run.id, lock=True)
+                        if persisted is not None:
+                            persisted.memory_recall_metadata = run.memory_recall_metadata
+                            await self.runs.save(session, persisted)
+                except Exception:
+                    pass
             return [], 0.2
+
+    async def recall_for_tool(
+        self,
+        conversation: Conversation,
+        run: Run,
+        query: str,
+        budget: int,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> Sequence[object]:
+        """Search through the same owner-authorized recall use case."""
+
+        items, _ = await self._recall_context(
+            conversation,
+            run,
+            query,
+            budget,
+            trace_id,
+            parent_span_id,
+            purpose=MemoryRecallPurpose.TOOL_SEARCH,
+        )
+        return items
 
     def set_prompt_metrics(self, metrics: PromptMetricsPort) -> None:
         """Attach the application metadata-only prompt telemetry sink."""
@@ -395,6 +532,7 @@ class SqlConversationStore:
             agent_profile_id=row.agent_profile_id,
             agent_revision_id=row.agent_revision_id,
             persona_override_revision_id=row.persona_override_revision_id,
+            client_time_zone=row.client_time_zone,
             model_id=row.model_id,
             version=row.version,
             title_state=row.title_state,
@@ -457,10 +595,13 @@ class SqlConversationStore:
         idempotency_key: str,
         agent_revision_id: UUID | None = None,
         persona_revision_id: UUID | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         self._validate_model(model_id, models)
+        client_time_zone = validate_client_time_zone(client_time_zone)
         fingerprint = _fingerprint(
-            "create", message, model_id, agent_revision_id, persona_revision_id
+            "create", message, model_id, agent_revision_id, persona_revision_id,
+            client_time_zone,
         )
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
@@ -504,6 +645,7 @@ class SqlConversationStore:
                 agent_profile_id=revision.profile_id,
                 agent_revision_id=revision.id,
                 persona_override_revision_id=persona_revision_id,
+                client_time_zone=client_time_zone,
                 model_id=model_id,
                 version=1,
                 title_state=TitleState.PENDING,
@@ -520,6 +662,14 @@ class SqlConversationStore:
                 created_at=created,
                 updated_at=created,
             )
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -530,6 +680,11 @@ class SqlConversationStore:
                 id=run_id,
                 created_at=created,
                 memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
+                client_time_zone=client_time_zone,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1223,12 +1378,11 @@ class SqlConversationStore:
         expected_version: int,
         idempotency_key: str,
         issuer: str | None = None,
+        client_time_zone: str | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if self.agent_store is not None:
             await self.agent_store.refresh()
-        fingerprint = hashlib.sha256(
-            f"run:{conversation_id}:{message}:{expected_version}".encode()
-        ).hexdigest()
+        client_time_zone = validate_client_time_zone(client_time_zone)
         if issuer is None:
             raise ValueError("issuer is required")
         identity_issuer = issuer
@@ -1238,11 +1392,17 @@ class SqlConversationStore:
                 session, identity_issuer, subject, idempotency_key
             )
             if prior is not None:
+                prior_row = await self._row(
+                    session, UUID(prior.response["conversationId"]), subject, issuer
+                )
+                pinned_time_zone = client_time_zone or prior_row.client_time_zone
+                fingerprint = hashlib.sha256(
+                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+                ).hexdigest()
                 if prior.fingerprint != fingerprint:
                     raise IdempotencyConflict
                 response = prior.response
-                row = await self._row(session, UUID(response["conversationId"]), subject, issuer)
-                loaded = await self._load(session, row)
+                loaded = await self._load(session, prior_row)
                 user = next(
                     item for item in loaded.messages if item.id == UUID(response["messageId"])
                 )
@@ -1251,6 +1411,10 @@ class SqlConversationStore:
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
             if row.archived_at is not None:
                 raise ArchivedConversationConflict
+            pinned_time_zone = client_time_zone or row.client_time_zone
+            fingerprint = hashlib.sha256(
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+            ).hexdigest()
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
                 raise VersionConflict if row.version != expected_version else ActiveRunConflict
@@ -1272,6 +1436,14 @@ class SqlConversationStore:
                 created_at=created,
                 updated_at=created,
             )
+            (
+                tool_policy_id,
+                tool_call_limit,
+                tool_timeout_ms,
+                tool_retry_limit,
+            ) = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -1282,6 +1454,11 @@ class SqlConversationStore:
                 id=run_id,
                 created_at=created,
                 memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=tool_call_limit,
+                tool_timeout_ms=tool_timeout_ms,
+                tool_retry_limit=tool_retry_limit,
+                client_time_zone=pinned_time_zone,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1362,6 +1539,11 @@ class SqlConversationStore:
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 run.status = RunStatus.CANCEL_REQUESTED
                 await self.runs.save(session, run)
+            elif run.status is RunStatus.WAITING_FOR_CONFIRMATION:
+                run.status = RunStatus.CANCELED
+                run.finished_at = now()
+                run.lease_expires_at = None
+                await self.runs.save(session, run)
             if prior is None:
                 self.conversations.stage_idempotency(
                     session,
@@ -1441,6 +1623,12 @@ class SqlConversationStore:
                 prompt_bundle_revision_id=prompt_bundle_revision_id,
                 prompt_hash=prompt_hash,
                 memory_policy_revision_id=prior.memory_policy_revision_id,
+                tool_policy_revision_id=prior.tool_policy_revision_id,
+                tool_call_limit=prior.tool_call_limit,
+                tool_calls_used=0,
+                tool_timeout_ms=prior.tool_timeout_ms,
+                tool_retry_limit=prior.tool_retry_limit,
+                client_time_zone=prior.client_time_zone,
             )
             self.runs.stage(session, retried)
             await session.flush()
@@ -1726,6 +1914,21 @@ class SqlConversationStore:
                 acquired = True
             elif (
                 run.status == RunStatus.RUNNING
+                and run.approval_id is not None
+                and run.tool_lifecycle_status in {"approved", "denied", "executing"}
+                and run.lease_expires_at is not None
+                and run.lease_expires_at <= current
+            ):
+                # Recover an interrupted approval-backed mutation. The
+                # shared reminder idempotency key makes replay safe if the
+                # process died before or after the reminder commit.
+                run.started_at = current
+                run.attempt_id = worker_id or uuid4()
+                run.attempt_count += 1
+                run.lease_expires_at = current + timedelta(seconds=lease_seconds)
+                acquired = True
+            elif (
+                run.status == RunStatus.RUNNING
                 and run.lease_expires_at is not None
                 and run.lease_expires_at <= current
             ):
@@ -1759,6 +1962,15 @@ class SqlConversationStore:
         async with self.sessions() as session, session.begin():
             rows = await self.runs.expired(session, now())
             for run in rows:
+                if (
+                    run.approval_id is not None
+                    and run.tool_lifecycle_status in {"approved", "denied", "executing"}
+                ):
+                    # Approval-backed execution is recoverable. Leave the
+                    # expired RUNNING row intact so start_run can reclaim it
+                    # and replay the approval-derived reminder idempotency.
+                    expired.append(run)
+                    continue
                 run.status, run.finished_at = RunStatus.INTERRUPTED, now()
                 run.error = RunError(
                     "WORKER_LEASE_EXPIRED",
@@ -1866,6 +2078,99 @@ class SqlConversationStore:
                 ),
             )
 
+    async def wait_for_confirmation(
+        self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID,
+        *, transaction: object | None = None,
+    ) -> Run:
+        if transaction is not None:
+            if not isinstance(transaction, AsyncSession):
+                raise TypeError("run transaction must be an async database session")
+            run = await self.runs.get(transaction, run_id, lock=True)
+            if run is None or run.status is not RunStatus.RUNNING or run.attempt_id != attempt_id:
+                raise RunClaimLost
+            run.status = RunStatus.WAITING_FOR_CONFIRMATION
+            run.approval_id = approval_id
+            run.pending_tool_call_id = tool_call_id
+            run.tool_lifecycle_status = "awaiting_confirmation"
+            run.lease_expires_at = None
+            run.attempt_id = None
+            await self.runs.save(transaction, run)
+            return run
+
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or run.status is not RunStatus.RUNNING or run.attempt_id != attempt_id:
+                raise RunClaimLost
+            run.status = RunStatus.WAITING_FOR_CONFIRMATION
+            run.approval_id = approval_id
+            run.pending_tool_call_id = tool_call_id
+            run.tool_lifecycle_status = "awaiting_confirmation"
+            run.lease_expires_at = None
+            run.attempt_id = None
+            await self.runs.save(session, run)
+            return run
+
+    async def lock_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        if not isinstance(transaction, AsyncSession):
+            raise TypeError("run transaction must be an async database session")
+        run = await self.runs.get(transaction, run_id, lock=True)
+        if (
+            run is None
+            or run.approval_id != approval_id
+            or run.status is not RunStatus.WAITING_FOR_CONFIRMATION
+        ):
+            raise RunClaimLost
+        return run
+    async def resume_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        transaction: object | None = None,
+    ) -> Run:
+        if transaction is not None:
+            if not isinstance(transaction, AsyncSession):
+                raise TypeError("run transaction must be an async database session")
+            run = await self.runs.get(transaction, run_id, lock=True)
+            if run is None or run.approval_id != approval_id:
+                raise RunClaimLost
+            if run.status is RunStatus.QUEUED:
+                return run
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                raise RunClaimLost
+            run.status = RunStatus.QUEUED
+            run.tool_lifecycle_status = "approved" if approved else "denied"
+            await self.runs.save(transaction, run)
+            return run
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or run.approval_id != approval_id:
+                raise RunClaimLost
+            if run.status is RunStatus.QUEUED:
+                return run
+            if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+                raise RunClaimLost
+            run.status = RunStatus.QUEUED
+            run.tool_lifecycle_status = "approved" if approved else "denied"
+            await self.runs.save(session, run)
+            return run
+
+    async def cancel_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, transaction: object
+    ) -> Run:
+        if not isinstance(transaction, AsyncSession):
+            raise TypeError("run transaction must be an async database session")
+        run = await self.runs.get(transaction, run_id, lock=True)
+        if run is None or run.approval_id != approval_id:
+            raise RunClaimLost
+        if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
+            raise RunClaimLost
+        run.status = RunStatus.CANCELED
+        run.tool_lifecycle_status = "denied"
+        run.lease_expires_at = None
+        run.attempt_id = None
+        await self.runs.save(transaction, run)
+        return run
+
     async def context(
         self,
         conversation_id: UUID,
@@ -1900,6 +2205,13 @@ class SqlConversationStore:
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
+        local_zone = run.client_time_zone if run is not None else conversation.client_time_zone
+        local_now = server_local_time(now(), local_zone)
+        if local_now is not None:
+            prompt = (
+                f"{prompt}\n\nCurrent local date and time (server-derived; zone "
+                f"{local_zone}): {local_now}"
+            )
         query = ""
         if run is not None:
             query = next(
@@ -1912,6 +2224,8 @@ class SqlConversationStore:
                 ),
                 "",
             )
+        if local_now is None and needs_legacy_time_clarification(query):
+            prompt = f"{prompt}\n\n{LEGACY_TIME_CLARIFICATION}"
         memory: Sequence[object]
         memory_fraction = 0.2
         if run:

@@ -1,0 +1,49 @@
+component:
+  id: aura.automation.reminder_scheduler
+  version: 1.0.0
+  owner: automation.reminders
+  category: scheduler
+input:
+  schema: aura-reminder-scan-v1
+  replayable: true
+  replay_reason: PostgreSQL remains authoritative when a polling process restarts.
+output:
+  schema: aura-reminder-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - transactional_outbox
+metrics:
+  - reminder_scheduler_scan_duration_ms
+  - reminder_due_lag_ms
+  - reminder_fired_count
+  - reminder_duplicate_prevention_count
+  - reminder_fire_persistence_outcome
+  - reminder_failure_count
+  - reminder_fire_duration_ms
+metric_semantics:
+  reminder_scheduler_scan_duration_ms: Bounded scheduler scan duration.
+  reminder_due_lag_ms: Time between a due instant and its durable firing.
+  reminder_fired_count: Number of reminders fired in a committed scan.
+  reminder_duplicate_prevention_count: Duplicate notification attempts prevented by persistence.
+  reminder_fire_persistence_outcome: Metadata-only transaction outcome.
+  reminder_failure_count: Database or delivery failures that leave reminders scheduled.
+  reminder_fire_duration_ms: Duration of one durable reminder firing transaction.
+capture_policy: metadata_only
+evaluators:
+  - reminder_firing_exactly_once
+  - reminder_scheduler_database_isolation
+cardinality:
+  metric_attributes: [dependency, outcome, error_class, status]
+  trace_only: [trace_id, span_id, parent_span_id, reminder_id, aggregate_id, aggregate_type, event_type, event_status, event_version, command_id, correlation_id, causation_id, result_count]
+  prohibited: [content, prompt, response, payload, token, credential, owner_subject]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

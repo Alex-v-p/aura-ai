@@ -23,4 +23,13 @@ describe('conversation run detail sanitization', () => {
     expect(safeTraceReference('0123456789abcdef0123456789abcde/')).toBeNull();
     expect(safeTraceReference('0123456789abcdef0123456789abcdef<script>')).toBeNull();
   });
+
+  it('keeps thinking text out of Markdown and raw HTML paths', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const template = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.html'), 'utf8');
+    expect(template).toContain('<pre>{{ thinking.text }}</pre>');
+    expect(template).not.toContain('aura-safe-markdown [content]="thinking.text"');
+    expect(template).not.toContain('[innerHTML]="thinking.text"');
+  });
 });

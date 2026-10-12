@@ -1,0 +1,260 @@
+id: AURA-0053
+title: Add governed read-only tool execution with memory search
+status: integrated
+change_class: repository_governance
+intent: >
+  Introduce the smallest useful Aura-owned tool runtime by allowing an agent
+  with an explicitly attached immutable tool policy to invoke a bounded,
+  read-only memory.search tool through the existing authorized memory-recall
+  use case, with typed contracts, visible lifecycle state, metadata-only audit,
+  and independent evaluation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved native provider tool calls with text-only fallback for models without tool-calling capability
+    - Owner-approved seeded memory.search@1 grant for built-in Aura and deny-by-default policies for custom agents
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AGT-002
+  - AGT-009
+  - AGT-019
+  - RUN-009
+  - RUN-011
+  - RUN-012
+  - RUN-022
+  - RUN-024
+  - MEM-022
+  - MEM-023
+  - TOL-001
+  - TOL-002
+  - TOL-003
+  - TOL-004
+  - TOL-005
+  - TOL-007
+  - TOL-008
+  - TOL-010
+  - TOL-011
+  - TOL-017
+  - TOL-018
+  - TOL-019
+  - TOL-020
+  - CMP-009
+  - CMP-010
+  - CMP-011
+  - CMP-012
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-core.runtime.tools
+  - aura-core.runtime.models
+  - aura-core.execution.runs
+  - aura-core.interaction.agents
+  - aura-core.knowledge.memory
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.platform.telemetry
+  - aura-core.providers.models.ollama
+  - aura-web.api-client
+  - aura-web.interaction.agents
+  - aura-web.interaction.conversations
+  - aura-web.e2e
+  - frontend.storybook
+  - repository.architecture.registry
+  - evaluation.tool-runtime
+allowed_paths:
+  - work-items/active/AURA-0053.yaml
+  - work-items/archived/AURA-0053.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - docs/specifications/agents-and-execution.md
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0013_governed_tool_runtime.py
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/src/aura_core/runtime/models/gateway.py
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/tools.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  - services/aura-core/resources/component-manifests/tool-selection.yaml
+  - services/aura-core/resources/component-manifests/policy-evaluation.yaml
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/memory-retrieval.yaml
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_tool_evaluation.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_memory_recall.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_migration_0013_governed_tool_runtime.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_agents_personas_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web-e2e/src/agents-personas.spec.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/knowledge/world_model/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/providers/home_automation/**
+  - services/aura-core/src/aura_core/providers/search/**
+  - services/aura-core/src/aura_core/providers/calendars/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.agents
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.tool_selection
+    - aura.runtime.policy_evaluation
+    - aura.runtime.tool_execution
+    - aura.execution.run_coordinator
+    - aura.knowledge.memory_retrieval
+  required_metrics:
+    - tool_selection_duration_ms
+    - tool_selection_outcome
+    - tool_argument_validation_outcome
+    - tool_policy_decision
+    - tool_policy_evaluation_duration_ms
+    - tool_execution_duration_ms
+    - tool_execution_outcome
+    - tool_timeout_count
+    - tool_budget_exhaustion_count
+  required_evaluators:
+    - tool_selection_quality
+    - tool_argument_accuracy
+    - tool_permission_enforcement
+    - tool_execution_completion
+    - memory_scope_authorization
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Tool availability and execution must be deny-by-default and pinned to the immutable agent and run policy revisions.
+    - memory.search must reuse the authorized memory-recall use case and may not create a second retrieval or scope-authorization path.
+    - Memory content and model-generated tool arguments must not enter telemetry audit records or ordinary tool lifecycle events.
+    - Tool results are untrusted evidence and may not become policy instructions or widen subsequent tool grants.
+    - The first slice must remain read-only and must not expose shell filesystem network Home Assistant calendar or external-provider access.
+  data_classes:
+    - private_memory_content
+    - private_memory_metadata
+    - owner_and_agent_identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A provider-neutral registry exposes stable versioned tool descriptors with JSON Schema 2020-12 inputs and results read or mutation classification permission scopes timeout bounded retry sensitivity audit and observable-component metadata.
+  - Immutable tool-policy revisions are owned by agent configuration attached through new agent revisions and deny every tool unless the owner explicitly grants its stable identifier and version.
+  - Every run pins its effective tool-policy revision and enforces explicit tool-call count deadline timeout and retry budgets without relying on provider behavior.
+  - The lightweight Aura executor supports a bounded model request tool selection validated execution and response-synthesis cycle without exposing Ollama request types outside the provider adapter or LangGraph concepts in Aura contracts.
+  - The only executable product tool is read-only memory.search and it calls the existing authorized recall service with the pinned principal agent memory policy lifecycle generation fallback and result limits.
+  - memory.search does not introduce on_demand or hybrid recall modes does not disable existing automatic recall and is unavailable to agents without an explicit tool-policy grant.
+  - Invalid unknown prohibited over-budget timed-out and provider-malformed tool requests settle as typed safe outcomes and never execute application behavior.
+  - Ordered run events and Aura Web show pending executing completed denied and failed tool states without including memory text tool arguments raw results prompts responses or hidden reasoning.
+  - Audit and telemetry contain stable tool version policy decision timing bounded counts identifiers and content-free outcome classes only.
+  - Deterministic fixtures measure correct unnecessary missing and prohibited tool selection argument validity permission enforcement timeout behavior and successful memory-backed answers.
+  - Existing conversations retries cancellation streaming automatic recall extraction and memory product behavior remain backward compatible.
+  - No mutating tools confirmations external integrations network fetchers shell filesystem documents automation or Observatory behavior are added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0053.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0053.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0053.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0053.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

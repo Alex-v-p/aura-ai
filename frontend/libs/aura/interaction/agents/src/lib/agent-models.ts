@@ -1,4 +1,7 @@
 import { InjectionToken } from '@angular/core';
+import type { InitialAgentMemoryPolicy, ToolGrant } from '@aura/aura-api-client';
+
+export type { InitialAgentMemoryPolicy, ToolGrant } from '@aura/aura-api-client';
 
 export type AgentStatus = 'active' | 'disabled';
 
@@ -21,6 +24,8 @@ export interface AgentRevision extends AgentReference {
   readonly personaRevisionId: string;
   readonly promptBundleRevisionId: string;
   readonly modelPolicyRevisionId: string;
+  readonly memoryPolicyRevisionId?: string;
+  readonly toolPolicyRevisionId?: string;
   readonly createdAt: string;
 }
 
@@ -42,9 +47,13 @@ export interface AgentDraft {
   readonly purpose: string;
   readonly behavioralInstructions: string;
   readonly personaRevisionId: string;
+  readonly initialToolGrants?: ReadonlyArray<ToolGrant>;
+  readonly initialMemoryPolicy?: InitialAgentMemoryPolicy;
 }
 
+
 export interface AgentApi {
+  clearSession?(): void;
   listAgents(): Promise<ReadonlyArray<AgentProfile>>;
   getAgent(profileId: string): Promise<AgentProfile>;
   createAgent(draft: AgentDraft): Promise<AgentProfile>;
@@ -93,7 +102,7 @@ export class InMemoryAgentApi implements AgentApi {
   }
 
   private seedAura(): AgentProfile {
-    return this.profile(BUILT_IN_AURA_AGENT_PROFILE_ID, { displayName: 'Aura', purpose: 'A steady, practical thinking partner.', behavioralInstructions: 'Be clear, kind, and action-oriented.', personaRevisionId: 'f2f4e37e-3e7b-48c3-b3fb-2d92dfb6a146' }, 1);
+    return this.profile(BUILT_IN_AURA_AGENT_PROFILE_ID, { displayName: 'Aura', purpose: 'A steady, practical thinking partner.', behavioralInstructions: 'Be clear, kind, and action-oriented.', personaRevisionId: '6d4b7f6c-7b25-4866-a1f0-3be2d0b4c7ab' }, 1);
   }
 
   private profile(id: string, draft: AgentDraft, version: number): AgentProfile {
@@ -102,7 +111,7 @@ export class InMemoryAgentApi implements AgentApi {
   }
 
   private revision(profile: Pick<AgentProfile, 'id' | 'displayName' | 'status'>, draft: AgentDraft, revision: number): AgentRevision {
-    return { profileId: profile.id, revisionId: cryptoRandomUuid(), revision, displayName: draft.displayName, status: profile.status, purpose: draft.purpose, behavioralInstructions: draft.behavioralInstructions, personaRevisionId: draft.personaRevisionId, promptBundleRevisionId: cryptoRandomUuid(), modelPolicyRevisionId: 'model-policy-default', createdAt: now() };
+    return { profileId: profile.id, revisionId: cryptoRandomUuid(), revision, displayName: draft.displayName, status: profile.status, purpose: draft.purpose, behavioralInstructions: draft.behavioralInstructions, personaRevisionId: draft.personaRevisionId, promptBundleRevisionId: cryptoRandomUuid(), modelPolicyRevisionId: 'model-policy-default', toolPolicyRevisionId: profile.id === BUILT_IN_AURA_AGENT_PROFILE_ID ? 'aura-tool-policy-r1' : 'deny-tool-policy-r1', createdAt: now() };
   }
 
   private require(id: string): AgentProfile { const profile = this.agents.find((item) => item.id === id); if (!profile) throw new Error('Agent not found.'); return profile; }

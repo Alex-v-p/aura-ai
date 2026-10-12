@@ -8,7 +8,14 @@ import re
 from common import extract_patch_paths, hook_block, hook_input, likely_write_command, norm_path, resolve_work_item, scope_errors, semantic_work_item_errors, validate_document
 
 DESTRUCTIVE = re.compile(r"\b(git\s+reset\s+--hard|git\s+clean\b|git\s+push\s+(?:--force|-f)|rm\s+-(?:rf|fr)\s+(?:/|\.\.)(?:\s|$))", re.I)
-READ_ONLY_ROLES = {"repository_mapper", "general_reviewer", "architecture_guardian", "observability_steward", "security_privacy_reviewer"}
+READ_ONLY_ROLES = {
+    "repository_mapper",
+    "general_reviewer",
+    "architecture_guardian",
+    "observability_steward",
+    "security_privacy_reviewer",
+    "aura_ux_ui_reviewer",
+}
 ACTIVE_WORK_ITEM = re.compile(r"work-items/active/AURA-[0-9]{4,}\.ya?ml")
 
 

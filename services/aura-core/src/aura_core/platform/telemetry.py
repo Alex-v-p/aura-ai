@@ -30,22 +30,53 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.interaction.agent_configuration": "1.1.0",
-    "aura.execution.run_coordinator": "1.4.0",
+    "aura.runtime.tool_selection": "1.2.0",
+    "aura.runtime.policy_evaluation": "1.1.0",
+    "aura.runtime.tool_execution": "1.1.0",
+    "aura.interaction.agent_configuration": "1.2.0",
+    "aura.interaction.persona_preview": "1.0.0",
+    "aura.execution.run_coordinator": "1.7.0",
     "aura.interaction.conversation_persistence": "1.6.0",
-    "aura.runtime.model_inference": "1.4.0",
+    "aura.runtime.model_inference": "1.5.0",
     "aura.runtime.model_routing": "1.2.0",
-    "aura.runtime.prompt_compilation": "1.1.0",
-    "aura.runtime.stream_delivery": "1.2.0",
+    "aura.runtime.prompt_compilation": "1.2.0",
+    "aura.runtime.stream_delivery": "1.4.0",
     "aura.knowledge.memory_persistence": "1.0.0",
     "aura.knowledge.memory_extraction": "1.2.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
-    "aura.knowledge.memory_retrieval": "1.1.0",
+    "aura.knowledge.memory_retrieval": "1.2.0",
+    "aura.automation.reminder_management": "1.1.0",
+    "aura.automation.reminder_scheduler": "1.0.0",
+    "aura.automation.notification_delivery": "1.0.0",
+    "aura.governance.approval_workflow": "1.0.1",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
+    "aura.runtime.tool_selection": frozenset(
+        {
+            "tool_selection_duration_ms",
+            "tool_selection_outcome",
+            "reminder_create_tool_outcome",
+        }
+    ),
+    "aura.runtime.policy_evaluation": frozenset(
+        {
+            "tool_argument_validation_outcome",
+            "tool_policy_decision",
+            "tool_policy_evaluation_duration_ms",
+            "tool_budget_exhaustion_count",
+        }
+    ),
+    "aura.runtime.tool_execution": frozenset(
+        {
+            "tool_execution_duration_ms",
+            "tool_execution_outcome",
+            "tool_timeout_count",
+            "reminder_create_tool_outcome",
+        }
+    ),
     "aura.interaction.agent_configuration": frozenset(
         {
             "configuration_outcome",
@@ -53,6 +84,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "memory_policy_configuration_duration_ms",
             "memory_policy_configuration_outcome",
         }
+    ),
+    "aura.interaction.persona_preview": frozenset(
+        {"persona_preview_duration_ms", "persona_preview_outcome", "errors", "provider_errors"}
     ),
     "aura.execution.run_coordinator": frozenset(
         {
@@ -106,6 +140,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "operation_duration_ms",
             "prompt_compile_duration_ms",
             "prompt_component_count",
+            "client_timezone_validation_outcome",
         }
     ),
     "aura.runtime.stream_delivery": frozenset(
@@ -119,6 +154,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "sse_connections",
             "sse_reconnects",
             "stream_delivery_duration_ms",
+            "thinking_stream_outcome",
         }
     ),
     "aura.knowledge.memory_persistence": frozenset(
@@ -131,6 +167,60 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "memory_operation_outcome",
             "memory_lifecycle_status",
             "memory_scope_type",
+        }
+    ),
+    "aura.automation.reminder_management": frozenset(
+        {
+            "reminder_command_duration_ms",
+            "reminder_command_outcome",
+            "reminder_outbox_dispatched",
+            "reminder_outbox_duplicates",
+            "reminder_version_conflict_count",
+            "reminder_idempotency_conflict_count",
+            "reminder_create_idempotency_outcome",
+        }
+    ),
+    "aura.automation.reminder_scheduler": frozenset(
+        {
+            "reminder_scheduler_scan_duration_ms",
+            "reminder_due_lag_ms",
+            "reminder_fired_count",
+            "reminder_duplicate_prevention_count",
+            "reminder_fire_persistence_outcome",
+            "reminder_failure_count",
+            "reminder_fire_duration_ms",
+        }
+    ),
+    "aura.automation.notification_delivery": frozenset(
+        {
+            "notification_sse_connection_count",
+            "notification_sse_replay_count",
+            "notification_acknowledgement_outcome",
+            "notification_failure_count",
+            "notification_sse_duration_ms",
+            "notification_sse_replay_duration_ms",
+            "notification_acknowledgement_duration_ms",
+        }
+    ),
+    "aura.governance.approval_workflow": frozenset(
+        {
+            "approval_creation_outcome",
+            "approval_decision_outcome",
+            "approval_expiry_outcome",
+            "approval_expiry_count",
+            "approval_wait_duration_ms",
+            "approval_resume_outcome",
+            "approval_sse_connection_count",
+            "approval_sse_replay_count",
+            "approval_sse_duration_ms",
+            "approval_sse_replay_duration_ms",
+            "approval_decision_duration_ms",
+            "approval_resume_duration_ms",
+            "approval_outbox_publish_outcome",
+            "approval_outbox_persistence_outcome",
+            "approval_outbox_dispatch_duration_ms",
+            "approval_outbox_persist_duration_ms",
+            "errors",
         }
     ),
     "aura.knowledge.memory_extraction": frozenset({
@@ -189,7 +279,11 @@ _METRICS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "aura.runtime.tool_selection": frozenset({"tool.select"}),
+    "aura.runtime.policy_evaluation": frozenset({"tool.policy.evaluate"}),
+    "aura.runtime.tool_execution": frozenset({"tool.execute"}),
     "aura.interaction.agent_configuration": frozenset({"agent.configure"}),
+    "aura.interaction.persona_preview": frozenset({"persona.preview"}),
     "aura.execution.run_coordinator": frozenset(
         {
             "consumer.delivery",
@@ -225,6 +319,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "sse.connect",
             "sse.deliver",
             "sse.reconnect",
+            "thinking.publish",
         }
     ),
     "aura.knowledge.memory_persistence": frozenset(
@@ -262,6 +357,37 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "memory.embedding.settle",
         }
     ),
+    "aura.automation.reminder_management": frozenset(
+        {
+            "outbox.dispatch",
+            "outbox.persist",
+            "reminder.create",
+            "reminder.fire",
+            "reminder.get",
+            "reminder.list",
+            "reminder.complete",
+            "reminder.cancel",
+        }
+    ),
+    "aura.automation.reminder_scheduler": frozenset(
+        {"reminder.scan", "reminder.fire", "reminder.persistence"}
+    ),
+    "aura.automation.notification_delivery": frozenset(
+        {"notification.sse.connect", "notification.sse.replay", "notification.acknowledge"}
+    ),
+    "aura.governance.approval_workflow": frozenset(
+        {
+            "approval.create",
+            "approval.decide",
+            "approval.expire",
+            "approval.resume",
+        "approval.sse.connect",
+        "approval.sse.replay",
+        "approval.sse",
+            "outbox.dispatch",
+            "outbox.persist",
+        }
+    ),
     "aura.knowledge.memory_extraction": frozenset({
         "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
         "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
@@ -292,7 +418,11 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
+    "aura.runtime.tool_selection": "tool_selection_duration_ms",
+    "aura.runtime.policy_evaluation": "tool_policy_evaluation_duration_ms",
+    "aura.runtime.tool_execution": "tool_execution_duration_ms",
     "aura.interaction.agent_configuration": "operation_duration_ms",
+    "aura.interaction.persona_preview": "persona_preview_duration_ms",
     "aura.execution.run_coordinator": "operation_duration_ms",
     "aura.interaction.conversation_persistence": "persistence_duration_ms",
     "aura.runtime.model_inference": "inference_duration_ms",
@@ -300,6 +430,10 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.prompt_compilation": "prompt_compile_duration_ms",
     "aura.runtime.stream_delivery": "stream_delivery_duration_ms",
     "aura.knowledge.memory_persistence": "memory_operation_duration_ms",
+    "aura.automation.reminder_management": "reminder_command_duration_ms",
+    "aura.automation.reminder_scheduler": "reminder_scheduler_scan_duration_ms",
+    "aura.automation.notification_delivery": "notification_sse_duration_ms",
+    "aura.governance.approval_workflow": "approval_decision_duration_ms",
     "aura.knowledge.memory_extraction": "operation_duration_ms",
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
     "aura.runtime.structured_inference": "structured_inference_duration_ms",
@@ -340,6 +474,22 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "model_inventory_duration_ms",
     ("aura.runtime.structured_inference", "model.capability.verify"):
         "model_capability_verification_duration_ms",
+    ("aura.automation.reminder_scheduler", "reminder.fire"):
+        "reminder_fire_duration_ms",
+    ("aura.automation.notification_delivery", "notification.sse.replay"):
+        "notification_sse_replay_duration_ms",
+    ("aura.automation.notification_delivery", "notification.acknowledge"):
+        "notification_acknowledgement_duration_ms",
+    ("aura.governance.approval_workflow", "approval.sse.connect"):
+        "approval_sse_duration_ms",
+    ("aura.governance.approval_workflow", "approval.sse.replay"):
+        "approval_sse_replay_duration_ms",
+    ("aura.governance.approval_workflow", "approval.resume"):
+        "approval_resume_duration_ms",
+    ("aura.governance.approval_workflow", "outbox.dispatch"):
+        "approval_outbox_dispatch_duration_ms",
+    ("aura.governance.approval_workflow", "outbox.persist"):
+        "approval_outbox_persist_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -360,6 +510,8 @@ _DIMENSION_KEYS = frozenset(
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
+        "aggregate_id",
+        "aggregate_type",
         "agent_revision_id",
         "agent_revision_number",
         "profile_id",
@@ -394,19 +546,33 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "title_input_size",
         "title_output_size",
         "memory_policy_revision_id",
+        "tool_policy_revision_id",
+        "policy_revision_id",
         "embedding_generation_id",
         "retrieval_version",
         "selection_order",
         "candidate_count",
         "recalled_count",
         "context_tokens",
+        "event_status",
+        "event_type",
+        "event_version",
         "fallback_grant_id",
         "recall_mode",
         "gate_outcome",
+        "reminder_id",
+        "notification_id",
+        "event_id",
+        "approval_id",
+        "proposal_id",
+        "tool_call_id",
+        "approval_version",
+        "idempotency",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
     {
+        "aggregate_id",
         "agent_revision_id",
         "profile_id",
         "persona_revision_id",
@@ -426,8 +592,16 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "run_id",
         "user_message_id",
         "memory_policy_revision_id",
+        "tool_policy_revision_id",
+        "policy_revision_id",
         "embedding_generation_id",
         "fallback_grant_id",
+        "reminder_id",
+        "notification_id",
+        "event_id",
+        "approval_id",
+        "proposal_id",
+        "tool_call_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -446,6 +620,8 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "candidate_count",
         "recalled_count",
         "context_tokens",
+        "event_version",
+        "approval_version",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -464,7 +640,15 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "structured_inference",
             "embedding_provider",
             "query_embedding",
+            "nats_transient",
             "memory_worker",
+            "reminder_store",
+            "approval_store",
+            "approval-replay",
+            "identity_authorization",
+            "transport_validation",
+            "application_validation",
+            "application_unknown",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -480,6 +664,11 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "persistence",
             "provider",
             "generation",
+            "capability",
+            "policy",
+            "provider_protocol",
+            "execution",
+            "cancellation",
             "purged",
             "queue",
             "timeout",
@@ -496,15 +685,24 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "run_not_found",
             "serialization",
             "unknown",
+            "stream_error",
         }
     ),
     "outcome": frozenset(
         {
-            "accepted", "canceled", "duplicate", "error", "fallback", "generated", "ignored",
+            "accepted", "canceled", "conflict", "duplicate", "error", "fallback",
+            "generated", "ignored",
             "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
             "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
             "expired", "unknown",
-            "policy_off", "selected", "rejected", "personal", "explicit_request", "none",
+            "policy_off", "selected", "allowed", "completed", "failed", "rejected",
+            "personal", "explicit_request", "none", "text", "tool_call", "allow", "deny",
+            "invalid", "valid", "capability", "budget_exceeded", "unavailable",
+            "publisher_error", "published", "delivered", "out_of_order",
+            "over_budget", "no_subscriber", "queue_full", "malformed_envelope",
+            "delivery", "transport_error", "transport_published", "offset_unavailable",
+            "created", "pending", "approved", "resumed", "opened", "closed", "omitted",
+            "awaiting_confirmation", "waiting_for_confirmation", "executing",
         }
     ),
     "status": frozenset(
@@ -524,6 +722,13 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "superseded",
             "unknown",
             "retryable",
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "awaiting_confirmation",
+            "waiting_for_confirmation",
+            "executing",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
@@ -989,6 +1194,13 @@ class MetadataMetrics:
                 _SAFE_NAME.fullmatch(value) is None or "://" in value or "@" in value
             ):
                 return None
+            if key == "idempotency" and value not in {
+                "read_only",
+                "idempotent",
+                "non_idempotent",
+                "approval-derived",
+            }:
+                return None
             normalized_trace.append((key, value))
         return tuple(sorted(normalized_dimensions)), tuple(sorted(normalized_trace))
 
@@ -1359,6 +1571,7 @@ def record_memory_retrieval(
     memory_id: str | None = None,
     memory_revision_id: str | None = None,
     memory_policy_revision_id: str | None = None,
+    tool_policy_revision_id: str | None = None,
     generation_id: str | None = None,
     embedding_generation_id: str | None = None,
     run_id: str | None = None,
@@ -1438,6 +1651,7 @@ def record_memory_retrieval(
         "memory_id": memory_id,
         "memory_revision_id": memory_revision_id,
         "memory_policy_revision_id": memory_policy_revision_id,
+        "tool_policy_revision_id": tool_policy_revision_id,
         "generation_id": generation_id,
         "embedding_generation_id": embedding_generation_id,
         "retrieval_version": retrieval_version,

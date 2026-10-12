@@ -74,9 +74,9 @@ export interface ConversationApi {
   listConversations(cursor?: string, filters?: ConversationListFilters): Promise<ConversationPage>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
   updateConversationMetadata?(conversationId: string, metadata: { readonly title?: string; readonly archived?: boolean; readonly version: number }, idempotencyKey: string): Promise<ConversationSummary>;
-  createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string, personaRevisionId?: string): Promise<ConversationRunAccepted>;
+  createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string): Promise<ConversationRunAccepted>;
   updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey: string, agentRevisionId?: string, transcriptSharingConfirmed?: boolean, personaRevisionId?: string, useAgentDefaultPersona?: boolean): Promise<ConversationSummary>;
-  createRun(conversationId: string, message: string, version: number, idempotencyKey: string): Promise<ConversationRunAccepted>;
+  createRun(conversationId: string, message: string, version: number, idempotencyKey: string, clientTimeZone?: string): Promise<ConversationRunAccepted>;
   cancelRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<Run>;
   retryRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<ConversationRunAccepted>;
   getRunMemoryActivity?(runId: string): Promise<RunMemoryActivitySnapshot>;
@@ -131,16 +131,16 @@ export class AuraConversationApi implements ConversationApi {
     return this.client.execute('updateConversationMetadata', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: metadata });
   }
 
-  createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string, personaRevisionId?: string): Promise<ConversationRunAccepted> {
-    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}) } as never });
+  createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string): Promise<ConversationRunAccepted> {
+    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}) } as never });
   }
 
   updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey = randomKey(), agentRevisionId?: string, transcriptSharingConfirmed?: boolean, personaRevisionId?: string, useAgentDefaultPersona?: boolean): Promise<ConversationSummary> {
     return this.client.execute('updateConversation', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { ...(modelId ? { modelId } : {}), version, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}), ...(useAgentDefaultPersona ? { useAgentDefaultPersona: true } : {}), ...(transcriptSharingConfirmed ? { transcriptSharingConfirmed } : {}) } as never });
   }
 
-  createRun(conversationId: string, message: string, version: number, idempotencyKey = randomKey()): Promise<ConversationRunAccepted> {
-    return this.client.execute('createRun', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, conversationVersion: version } });
+  createRun(conversationId: string, message: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string): Promise<ConversationRunAccepted> {
+    return this.client.execute('createRun', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, conversationVersion: version, ...(clientTimeZone ? { clientTimeZone } : {}) } as never });
   }
 
   cancelRun(runId: string, csrfToken = this.csrfToken(), idempotencyKey = randomKey()): Promise<Run> {
@@ -240,7 +240,11 @@ async function readEventStream(url: string, headers: Record<string, string> | un
         // The SSE id is the only authoritative reconnect cursor.  Heartbeats
         // are intentionally emitted without an id by Core and must not inherit
         // or manufacture one from their JSON eventId field.
-        onEvent(event, event.eventType === 'heartbeat' ? undefined : cursor);
+        // Thinking is intentionally ephemeral.  Even if a proxy accidentally
+        // includes an SSE id, never let it advance the durable replay cursor:
+        // reconnects must resume from the last persisted event and must not
+        // fabricate a thinking replay.
+        onEvent(event, event.eventType === 'heartbeat' || event.eventType === 'model.thinking.delta' ? undefined : cursor);
       } catch { onError({ message: 'Aura sent an unreadable live update.', retryable: true }); }
       data = '';
       cursor = undefined;

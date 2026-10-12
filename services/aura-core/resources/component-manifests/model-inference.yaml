@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.model_inference
-  version: 1.4.0
+  version: 1.5.0
   owner: aura-core
   category: inference
 input:
@@ -9,6 +9,7 @@ input:
   replay_reason: Conversation content capture is not authorized by AURA-0015.
 output:
   schema: provider-neutral-text-stream-v1
+  description: Provider-neutral visible text with optional bounded live-only thinking deltas; thinking is never durable output.
   capture:
     content: none
     metadata: allowlisted
@@ -24,6 +25,9 @@ metrics:
   - title_input_size
   - title_output_size
   - errors
+evaluators:
+  - delayed_first_tool_event_preservation
+  - delayed_first_synthesis_event_preservation
 metric_semantics:
   time_to_first_token_ms: Monotonic time from claimed execution start to first provider chunk.
   inference_duration_ms: Full provider stream boundary duration from invocation through completion, cancellation, timeout, or error; never substituted for time_to_first_token_ms.

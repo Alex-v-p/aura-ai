@@ -33,6 +33,10 @@ services:
       AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
       AURA_DEFAULT_MODEL: fixture-chat
 
+  aura-core-scheduler:
+    environment:
+      AURA_ENVIRONMENT: test
+
   authentik-server:
     environment:
       AURA_E2E_CLIENT_ID: aura-e2e

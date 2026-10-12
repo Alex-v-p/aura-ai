@@ -1,0 +1,394 @@
+"""Public approval commands, DTOs, and owner-bound replay contracts."""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Protocol
+from uuid import UUID
+
+from aura_core.domains.automation.reminders.public import ReminderProposal
+
+APPROVAL_COMPONENT = "aura.governance.approval_workflow"
+APPROVAL_TOPIC = "aura.approvals.events.v1"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+
+class ApprovalExecutionStatus(StrEnum):
+    NOT_STARTED = "not_started"
+    QUEUED = "queued"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    DENIED = "denied"
+
+
+@dataclass(frozen=True, slots=True)
+class Approval:
+    id: UUID
+    issuer: str
+    subject: str
+    proposal_id: UUID
+    run_id: UUID
+    conversation_id: UUID
+    tool_call_id: UUID
+    tool_id: str
+    tool_version: int
+    status: ApprovalStatus
+    execution_status: ApprovalExecutionStatus
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDetail:
+    approval: Approval
+    proposal: ReminderProposal
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalCancellation:
+    approval: Approval
+    run: object
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalPage:
+    items: tuple[Approval, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalReplayEvent:
+    id: UUID
+    approval_id: UUID
+    proposal_id: UUID
+    run_id: UUID
+    conversation_id: UUID
+    tool_id: str
+    tool_version: int
+    status: ApprovalStatus
+    execution_status: ApprovalExecutionStatus
+    version: int
+    occurred_at: datetime
+
+    def payload(self) -> dict[str, object]:
+        # This envelope is intentionally content-free and does not expose the
+        # requested due instant.  Clients fetch authorized detail separately.
+        return {
+            "schemaVersion": 1,
+            "eventId": str(self.id),
+            "eventType": f"approval.{self.status.value}",
+            "approvalId": str(self.approval_id),
+            "proposalId": str(self.proposal_id),
+            "runId": str(self.run_id),
+            "conversationId": str(self.conversation_id),
+            "toolId": self.tool_id,
+            "toolVersion": self.tool_version,
+            "status": self.status.value,
+            "executionStatus": self.execution_status.value,
+            "version": self.version,
+            "occurredAt": self.occurred_at.astimezone(UTC).isoformat(),
+        }
+
+
+class ApprovalError(Exception):
+    """Base class for deterministic approval failures."""
+
+
+class ApprovalNotFound(ApprovalError):
+    pass
+
+
+class ApprovalVersionConflict(ApprovalError):
+    pass
+
+
+class ApprovalIdempotencyConflict(ApprovalError):
+    pass
+
+
+class ApprovalTransitionError(ApprovalError):
+    pass
+
+
+class ApprovalRepository(Protocol):
+    async def create_pending(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        content: str,
+        due_at: datetime,
+        run_id: UUID,
+        conversation_id: UUID,
+        tool_call_id: UUID,
+        tool_id: str = "reminder.create",
+        tool_version: int = 1,
+        now: datetime | None = None,
+        execution_port: object | None = None,
+        attempt_id: UUID | None = None,
+    ) -> ApprovalDetail: ...
+
+    async def list(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int,
+        cursor: str | None = None,
+        status: ApprovalStatus | None = None,
+    ) -> ApprovalPage: ...
+
+    async def get(self, issuer: str, subject: str, approval_id: UUID) -> ApprovalDetail: ...
+
+    async def decide(
+        self,
+        issuer: str,
+        subject: str,
+        approval_id: UUID,
+        *,
+        decision: ApprovalStatus,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> Approval: ...
+
+    async def approve(
+        self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str
+    ) -> Approval: ...
+
+    async def reject(
+        self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str
+    ) -> Approval: ...
+
+    async def cancel(self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str) -> Approval: ...
+
+    async def expire_due(self, *, now: datetime | None = None, limit: int = 100) -> tuple[Approval, ...]: ...
+
+    async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[ApprovalReplayEvent, ...]: ...
+
+    async def cursor_is_authorized(self, issuer: str, subject: str, event_id: UUID) -> bool: ...
+
+    async def wait_for_wakeup(self, timeout: float = 15.0) -> bool: ...
+
+    async def notify_wakeup(self, event_id: UUID) -> None: ...
+
+    async def notify_resume_wakeup(self, event_id: UUID) -> None: ...
+
+    async def cancel_waiting_run(
+        self,
+        issuer: str,
+        subject: str,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> ApprovalCancellation: ...
+
+    async def set_execution_status(
+        self,
+        approval_id: UUID,
+        status: ApprovalExecutionStatus,
+        *,
+        issuer: str | None = None,
+        subject: str | None = None,
+        run_id: UUID | None = None,
+        expected_version: int | None = None,
+    ) -> Approval: ...
+
+    async def resume_event(self, event_id: UUID) -> ApprovalReplayEvent | None: ...
+
+
+class ApprovalExecutionPort(Protocol):
+    """Public run seam used while composing the approval transaction."""
+
+    async def wait_for_confirmation(
+        self,
+        run_id: UUID,
+        attempt_id: UUID,
+        approval_id: UUID,
+        tool_call_id: UUID,
+        *,
+        transaction: object | None = None,
+    ) -> object: ...
+
+    async def lock_waiting_run(
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        transaction: object,
+    ) -> object: ...
+
+    async def cancel_waiting_run(
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        transaction: object,
+    ) -> object: ...
+
+    async def resume_waiting_run(
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        approved: bool,
+        transaction: object,
+    ) -> object: ...
+
+
+class ApprovalApplicationService:
+    def __init__(self, repository: ApprovalRepository, *, execution_port: ApprovalExecutionPort | None = None) -> None:
+        self.repository = repository
+        self.execution_port = execution_port
+
+    async def create_pending(self, *args: object, **kwargs: object) -> ApprovalDetail:
+        if self.execution_port is not None:
+            kwargs.setdefault("execution_port", self.execution_port)
+        return await self.repository.create_pending(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def list(self, issuer: str, subject: str, *, limit: int, cursor: str | None = None, status: ApprovalStatus | None = None) -> ApprovalPage:
+        return await self.repository.list(issuer, subject, limit=limit, cursor=cursor, status=status)
+
+    async def get(self, issuer: str, subject: str, approval_id: UUID) -> ApprovalDetail:
+        return await self.repository.get(issuer, subject, approval_id)
+
+    async def approve(self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str) -> Approval:
+        return await self.repository.decide(issuer, subject, approval_id, decision=ApprovalStatus.APPROVED, expected_version=expected_version, idempotency_key=idempotency_key)
+
+    async def reject(self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str) -> Approval:
+        return await self.repository.decide(issuer, subject, approval_id, decision=ApprovalStatus.REJECTED, expected_version=expected_version, idempotency_key=idempotency_key)
+
+    async def cancel(self, issuer: str, subject: str, approval_id: UUID, *, expected_version: int, idempotency_key: str) -> Approval:
+        return await self.repository.cancel(issuer, subject, approval_id, expected_version=expected_version, idempotency_key=idempotency_key)
+
+    async def expire_due(self, *, now: datetime | None = None, limit: int = 100) -> tuple[Approval, ...]:
+        return await self.repository.expire_due(now=now, limit=limit)
+
+    async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[ApprovalReplayEvent, ...]:
+        return await self.repository.replay(issuer, subject, after=after)
+
+    async def cursor_is_authorized(self, issuer: str, subject: str, event_id: UUID) -> bool:
+        return await self.repository.cursor_is_authorized(issuer, subject, event_id)
+
+    async def wait_for_wakeup(self, timeout: float = 15.0) -> bool:
+        return await self.repository.wait_for_wakeup(timeout)
+
+    async def notify_wakeup(self, event_id: UUID) -> None:
+        await self.repository.notify_wakeup(event_id)
+
+    async def notify_resume_wakeup(self, event_id: UUID) -> None:
+        await self.repository.notify_resume_wakeup(event_id)
+
+    async def cancel_waiting_run(
+        self,
+        issuer: str,
+        subject: str,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> ApprovalCancellation:
+        return await self.repository.cancel_waiting_run(
+            issuer,
+            subject,
+            run_id,
+            approval_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+        )
+
+    async def set_execution_status(
+        self,
+        approval_id: UUID,
+        status: ApprovalExecutionStatus | str,
+        *,
+        issuer: str | None = None,
+        subject: str | None = None,
+        run_id: UUID | None = None,
+        expected_version: int | None = None,
+    ) -> Approval:
+        return await self.repository.set_execution_status(
+            approval_id,
+            ApprovalExecutionStatus(status),
+            issuer=issuer,
+            subject=subject,
+            run_id=run_id,
+            expected_version=expected_version,
+        )
+
+    async def resume_event(self, event_id: UUID) -> ApprovalReplayEvent | None:
+        return await self.repository.resume_event(event_id)
+
+
+_CURSOR_SECRET = b"aura-approval-cursor-v1"
+
+
+def encode_cursor(issuer: str, subject: str, stamp: datetime, approval_id: UUID, status: ApprovalStatus | None = None) -> str:
+    body = {"v": 1, "o": hashlib.sha256(f"{issuer}\0{subject}".encode()).hexdigest(), "status": status.value if status else None, "t": stamp.astimezone(UTC).isoformat(), "id": str(approval_id)}
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    body["s"] = hmac.new(_CURSOR_SECRET, raw, hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str, issuer: str, subject: str, status: ApprovalStatus | None = None) -> tuple[datetime, UUID]:
+    try:
+        body = json.loads(base64.urlsafe_b64decode((cursor + "=" * (-len(cursor) % 4)).encode()))
+        signature = str(body.pop("s"))
+        expected = hmac.new(_CURSOR_SECRET, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
+        owner = hashlib.sha256(f"{issuer}\0{subject}".encode()).hexdigest()
+        if not hmac.compare_digest(signature, expected) or body.get("v") != 1 or body.get("o") != owner:
+            raise ValueError
+        if body.get("status") not in ({None} if status is None else {status.value}):
+            raise ValueError
+        return datetime.fromisoformat(str(body["t"])).astimezone(UTC), UUID(str(body["id"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeError) as exc:
+        raise ValueError("invalid approval cursor") from exc
+
+
+def as_payload(item: Approval) -> dict[str, object]:
+    return {
+        "id": str(item.id), "proposalId": str(item.proposal_id), "runId": str(item.run_id),
+        "conversationId": str(item.conversation_id), "toolCallId": str(item.tool_call_id),
+        "toolId": item.tool_id, "toolVersion": item.tool_version, "status": item.status.value,
+        "executionStatus": item.execution_status.value, "version": item.version,
+        "createdAt": item.created_at.astimezone(UTC).isoformat(),
+        "updatedAt": item.updated_at.astimezone(UTC).isoformat(),
+        "expiresAt": item.expires_at.astimezone(UTC).isoformat(),
+        "decidedAt": item.decided_at.astimezone(UTC).isoformat() if item.decided_at else None,
+    }
+
+
+def detail_payload(detail: ApprovalDetail) -> dict[str, object]:
+    payload = as_payload(detail.approval)
+    payload["proposal"] = {"id": str(detail.proposal.id), "content": detail.proposal.content, "dueAt": detail.proposal.due_at.astimezone(UTC).isoformat()}
+    return payload
+
+
+__all__ = [
+    "APPROVAL_COMPONENT", "APPROVAL_TOPIC", "Approval", "ApprovalApplicationService",
+    "ApprovalCancellation", "ApprovalDetail", "ApprovalError", "ApprovalExecutionPort", "ApprovalExecutionStatus", "ApprovalIdempotencyConflict",
+    "ApprovalNotFound", "ApprovalPage", "ApprovalReplayEvent", "ApprovalRepository",
+    "ApprovalStatus", "ApprovalTransitionError", "ApprovalVersionConflict", "as_payload",
+    "decode_cursor", "detail_payload", "encode_cursor",
+]

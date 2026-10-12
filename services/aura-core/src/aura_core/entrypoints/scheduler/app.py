@@ -1,0 +1,208 @@
+"""Thin one-shot reminder scheduler composition root.
+
+The scheduler owns polling only.  Firing, notification creation, audit, replay
+events, and transactional outbox staging are owned by the automation public
+application service and therefore remain one database transaction.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import logging
+from collections.abc import Awaitable, Callable
+from time import monotonic
+from typing import Protocol
+from uuid import uuid4
+
+from aura_core.platform.auth import Settings
+from aura_core.platform.database.engine import make_engine, session_factory
+from aura_core.platform.telemetry import (
+    MetadataMetrics,
+    StructuredContainerLogExporter,
+    TelemetryLifecycle,
+    new_span_id,
+)
+
+LOGGER = logging.getLogger(__name__)
+SCHEDULER_COMPONENT = "aura.automation.reminder_scheduler"
+SCAN_INTERVAL_SECONDS = 1.0
+SCAN_BATCH_SIZE = 100
+
+
+class ReminderDelivery(Protocol):
+    """Public Core use case consumed by the scheduler entrypoint."""
+
+    async def deliver_due(self, *, limit: int) -> object: ...
+
+
+def _delivery_method(delivery: ReminderDelivery) -> Callable[..., object]:
+    """Resolve the versioned delivery verb while keeping test doubles small."""
+
+    method = getattr(delivery, "deliver_due", None)
+    if not callable(method):
+        # ``fire_due`` was the draft name used by the approved scheduler
+        # contract.  Keep this compatibility shim for older in-process
+        # compositions; production composition uses ``deliver_due``.
+        method = getattr(delivery, "fire_due", None)
+    if not callable(method):
+        raise TypeError("reminder delivery use case is missing deliver_due")
+    return method
+
+
+def _result_count(result: object) -> int:
+    """Read only bounded metadata from a delivery result."""
+
+    if type(result) is int:
+        return max(0, result)
+    for name in ("fired_count", "count", "processed"):
+        value = getattr(result, name, None)
+        if type(value) is int:
+            return max(0, value)
+    return 0
+
+
+def _result_lag_ms(result: object) -> float | None:
+    value = getattr(result, "due_lag_ms", None)
+    return float(value) if isinstance(value, (int, float)) and value >= 0 else None
+
+
+async def run_once(
+    delivery: ReminderDelivery,
+    *,
+    metrics: MetadataMetrics | None = None,
+    batch_size: int = SCAN_BATCH_SIZE,
+) -> int:
+    """Run one bounded scan and return the number of reminders fired."""
+
+    if not 1 <= batch_size <= SCAN_BATCH_SIZE:
+        raise ValueError("scheduler batch size must be between 1 and 100")
+    started = monotonic()
+    # Trace roots are 128-bit (32 hexadecimal characters); span IDs remain
+    # the shorter 64-bit values used by the telemetry contract.
+    trace_id = uuid4().hex
+    span_id = new_span_id()
+    try:
+        result = _delivery_method(delivery)(limit=batch_size)
+        if inspect.isawaitable(result):
+            result = await result
+        fired = _result_count(result)
+        if metrics is not None:
+            metrics.observe(
+                SCHEDULER_COMPONENT,
+                "reminder_fired_count",
+                float(fired),
+                outcome="ok",
+            )
+            lag = _result_lag_ms(result)
+            if lag is not None:
+                metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    "reminder_due_lag_ms",
+                    lag,
+                    outcome="ok",
+                )
+            metrics.record_span(
+                SCHEDULER_COMPONENT,
+                "reminder.scan",
+                (monotonic() - started) * 1000,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=None,
+                dependency="postgresql",
+                outcome="ok",
+                result_count=str(fired),
+            )
+        return fired
+    except Exception:
+        if metrics is not None:
+            metrics.increment(
+                SCHEDULER_COMPONENT,
+                "reminder_failure_count",
+                dependency="postgresql",
+                outcome="error",
+                error_class="persistence",
+            )
+            metrics.record_span(
+                SCHEDULER_COMPONENT,
+                "reminder.scan",
+                (monotonic() - started) * 1000,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=None,
+                dependency="postgresql",
+                outcome="error",
+                error_class="persistence",
+            )
+        raise
+
+
+class ReminderScheduler:
+    """Clock-driven scheduler with bounded polling and retry after failures."""
+
+    def __init__(
+        self,
+        delivery: ReminderDelivery,
+        *,
+        metrics: MetadataMetrics | None = None,
+        interval_seconds: float = SCAN_INTERVAL_SECONDS,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("scheduler interval must be positive")
+        self.delivery = delivery
+        self.metrics = metrics
+        self.interval_seconds = interval_seconds
+        self._sleep = sleep
+
+    async def run(self) -> None:
+        while True:
+            started = monotonic()
+            try:
+                await run_once(self.delivery, metrics=self.metrics)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A failed transaction leaves rows scheduled.  Keep the
+                # process alive so the next scan can retry after a database
+                # or transient persistence failure.
+                LOGGER.exception("reminder scheduler scan failed")
+            await self._sleep(max(0.0, self.interval_seconds - (monotonic() - started)))
+
+
+async def run_scheduler(settings: Settings | None = None) -> None:
+    """Compose the database-only production scheduler and run it forever."""
+
+    from aura_core.bootstrap.notification_uow import notification_repository, notification_service
+
+    effective = settings or Settings(role="scheduler")
+    engine = make_engine(effective.database_url)
+    sessions = session_factory(engine)
+    metrics, telemetry = make_scheduler_telemetry()
+    delivery = notification_service(notification_repository(sessions, metrics=metrics))
+    await telemetry.start()
+    try:
+        await ReminderScheduler(delivery, metrics=metrics).run()
+    finally:
+        await telemetry.stop()
+        await engine.dispose()
+
+
+def make_scheduler_telemetry() -> tuple[MetadataMetrics, TelemetryLifecycle]:
+    """Build the production bounded exporter and lifecycle manager."""
+
+    metrics = MetadataMetrics(exporter=StructuredContainerLogExporter())
+    return metrics, TelemetryLifecycle(metrics)
+
+
+def main() -> None:
+    asyncio.run(run_scheduler())
+
+
+__all__ = [
+    "ReminderScheduler",
+    "main",
+    "make_scheduler_telemetry",
+    "run_once",
+    "run_scheduler",
+]

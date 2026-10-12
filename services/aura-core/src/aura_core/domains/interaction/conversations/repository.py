@@ -49,6 +49,7 @@ class ConversationRecord:
     # recent activity is the latest durably accepted user message.
     activity_at: datetime | None = None
     archived_at: datetime | None = None
+    client_time_zone: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,7 @@ class SqlConversationRepository:
             TitleState(row.title_state or TitleState.LEGACY),
             activity_at,
             row.archived_at,
+            row.client_time_zone,
         )
 
     @staticmethod
@@ -251,6 +253,7 @@ class SqlConversationRepository:
                 agent_profile_id=record.agent_profile_id,
                 agent_revision_id=record.agent_revision_id,
                 persona_override_revision_id=record.persona_override_revision_id,
+                client_time_zone=record.client_time_zone,
                 model_id=record.model_id,
                 version=record.version,
                 created_at=record.created_at,
@@ -318,6 +321,7 @@ class SqlConversationRepository:
         row.agent_profile_id = record.agent_profile_id
         row.agent_revision_id = record.agent_revision_id
         row.persona_override_revision_id = record.persona_override_revision_id
+        row.client_time_zone = record.client_time_zone
         row.version = record.version
         row.updated_at = record.updated_at
         row.archived_at = record.archived_at

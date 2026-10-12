@@ -12,12 +12,25 @@ from nats.errors import TimeoutError as NatsTimeoutError
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import MetricsPort, NullMetrics
 from aura_core.platform.outbox.service import (
+    APPROVAL_EVENT_TOPIC,
     RUN_COMMAND_TOPIC,
+    RUN_RESUME_TOPIC,
     OutboxCommand,
     identifier_trace_metadata,
 )
+from aura_core.platform.telemetry import Stopwatch, new_span_id
 
 EventHandler = Callable[[UUID, UUID], Awaitable[None]]
+NotificationEventHandler = Callable[[UUID], Awaitable[None]]
+ApprovalEventHandler = Callable[[UUID], Awaitable[None]]
+ResumptionEventHandler = Callable[[UUID], Awaitable[None]]
+ThinkingEventHandler = Callable[[UUID, UUID, int, str], Awaitable[None]]
+NOTIFICATION_EVENT_SUBJECT = "aura.notifications.events.v1"
+APPROVAL_EVENT_SUBJECT = "aura.approvals.events.v1"
+RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
+# Deliberately plain Core NATS: this subject is live-only and must never be
+# included in a JetStream stream or transactional outbox command.
+THINKING_EVENT_SUBJECT = "aura.runs.thinking.v1"
 
 
 class NatsOutbox:
@@ -26,13 +39,19 @@ class NatsOutbox:
         connection_url: str,
         subject: str = RUN_COMMAND_TOPIC,
         additional_subjects: tuple[str, ...] = (),
+        metrics: MetricsPort | None = None,
     ) -> None:
         self.connection_url = connection_url
         self.subject = subject
         self.additional_subjects = additional_subjects
+        self.metrics = metrics or NullMetrics()
         self._connection: Any = None
         self._jetstream: Any = None
         self._event_subscription: Any = None
+        self._notification_subscription: Any = None
+        self._approval_subscription: Any = None
+        self._resumption_subscription: Any = None
+        self._thinking_subscription: Any = None
         self._readiness_detail: str | None = "not connected"
 
     @property
@@ -43,6 +62,7 @@ class NatsOutbox:
         nats_module: Any = nats
         self._connection = await nats_module.connect(self.connection_url)
         self._jetstream = self._connection.jetstream()
+        await _assert_thinking_subject_unretained(self._jetstream)
         await _ensure_command_stream(self._jetstream, (self.subject, *self.additional_subjects))
         # Stream creation is idempotent but can be rejected for reasons other
         # than an existing stream.  Account info proves JetStream is actually
@@ -64,6 +84,7 @@ class NatsOutbox:
             self._readiness_detail = "connection closed"
             return False, self._readiness_detail
         try:
+            await _assert_thinking_subject_unretained(self._jetstream)
             await self._jetstream.account_info()
             info = await self._jetstream.stream_info("AURA_RUNS")
             subjects = _stream_subjects(info)
@@ -92,7 +113,42 @@ class NatsOutbox:
             command.wire_payload(),
             headers={"Nats-Msg-Id": str(command.id)},
         )
-        return bool(getattr(acknowledgment, "duplicate", False))
+        duplicate = bool(getattr(acknowledgment, "duplicate", False))
+        # A committed reminder firing has a durable PostgreSQL replay event;
+        # this second publish is only a process-local SSE wakeup.  Keep it
+        # outside JetStream and carry no reminder content or owner identity.
+        if (
+            command.aggregate_type == "automation.reminder"
+            and command.identifier("eventType") == "reminder.fired"
+        ):
+            # Core stages the persisted replay-event identifier in the
+            # identifier-only command.  Keep the command id as a compatibility
+            # fallback for older producers; it is still wake-only and never a
+            # replay cursor or source of notification truth.
+            wake_id = command.identifier("eventId") or command.identifier("replayEventId")
+            try:
+                persisted_event_id = UUID(wake_id) if wake_id is not None else command.id
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_notification_event(persisted_event_id)
+        if (
+            command.aggregate_type == "governance.approval"
+            and command.topic == APPROVAL_EVENT_TOPIC
+        ):
+            wake_id = command.identifier("eventId") or command.id
+            try:
+                persisted_event_id = UUID(str(wake_id))
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_approval_event(persisted_event_id)
+        if command.topic == RUN_RESUME_TOPIC:
+            wake_id = command.identifier("eventId") or command.id
+            try:
+                persisted_event_id = UUID(str(wake_id))
+            except ValueError:
+                persisted_event_id = command.id
+            await self.publish_resumption_event(persisted_event_id)
+        return duplicate
 
     async def publish_event(self, event: RunEvent) -> None:
         if self._connection is None:
@@ -106,6 +162,19 @@ class NatsOutbox:
                 {"eventId": str(event.event_id), "runId": str(event.run_id)},
                 separators=(",", ":"),
             ).encode(),
+        )
+
+    async def publish_notification_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral, identifier-only notification wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("notification wakeup requires an event identifier")
+        await self._connection.publish(
+            NOTIFICATION_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
         )
 
     async def subscribe_events(self, handler: EventHandler) -> None:
@@ -134,12 +203,241 @@ class NatsOutbox:
             "aura.runs.events.>", cb=callback
         )
 
+    async def subscribe_notification_events(
+        self, handler: NotificationEventHandler
+    ) -> Any:
+        """Subscribe to notification wakeups after database replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._notification_subscription = await self._connection.subscribe(
+            NOTIFICATION_EVENT_SUBJECT, cb=callback
+        )
+        return self._notification_subscription
+
+    async def publish_approval_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral identifier-only approval wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("approval wakeup requires an event identifier")
+        await self._connection.publish(
+            APPROVAL_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
+        )
+
+    async def publish_resumption_event(self, event_id: UUID | Any) -> None:
+        """Publish an ephemeral identifier-only waiting-run wakeup."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        identifier = event_id if isinstance(event_id, UUID) else getattr(event_id, "id", None)
+        if not isinstance(identifier, UUID):
+            raise ValueError("resumption wakeup requires an event identifier")
+        await self._connection.publish(
+            RESUMPTION_EVENT_SUBJECT,
+            json.dumps({"eventId": str(identifier)}, separators=(",", ":")).encode(),
+        )
+
+    async def publish_thinking_delta(
+        self,
+        *,
+        run_id: UUID,
+        conversation_id: UUID,
+        offset: int,
+        text: str,
+        parent_span_id: str | None = None,
+    ) -> None:
+        """Publish a bounded live-only thinking envelope over plain NATS."""
+
+        timer = Stopwatch()
+        if (
+            not isinstance(cast(object, run_id), UUID)
+            or not isinstance(cast(object, conversation_id), UUID)
+            or type(offset) is not int
+            or offset < 0
+            or not isinstance(cast(object, text), str)
+            or not text
+            or len(text) > 4096
+        ):
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="invalid",
+            )
+            raise ValueError("invalid thinking delta")
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        try:
+            await _assert_thinking_subject_unretained(self._jetstream)
+            await self._connection.publish(
+                THINKING_EVENT_SUBJECT,
+                json.dumps(
+                    {
+                        "runId": str(run_id),
+                        "conversationId": str(conversation_id),
+                        "offset": offset,
+                        "text": text,
+                    },
+                    separators=(",", ":"),
+                ).encode(),
+            )
+        except Exception:
+            self.metrics.record_span(
+                "aura.runtime.stream_delivery",
+                "thinking.publish",
+                timer.elapsed_ms(),
+                trace_id=run_id.hex,
+                span_id=new_span_id(),
+                parent_span_id=parent_span_id,
+                dependency="nats_transient",
+                outcome="error",
+                error_class="delivery",
+                run_id=str(run_id),
+                conversation_id=str(conversation_id),
+            )
+            self.metrics.increment(
+                "aura.runtime.stream_delivery",
+                "thinking_stream_outcome",
+                outcome="transport_error",
+                dependency="nats_transient",
+                run_id=str(run_id),
+                conversation_id=str(conversation_id),
+            )
+            raise
+        self.metrics.record_span(
+            "aura.runtime.stream_delivery",
+            "thinking.publish",
+            timer.elapsed_ms(),
+            trace_id=run_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=parent_span_id,
+            dependency="nats_transient",
+            outcome="ok",
+            run_id=str(run_id),
+            conversation_id=str(conversation_id),
+        )
+        self.metrics.increment(
+            "aura.runtime.stream_delivery",
+            "thinking_stream_outcome",
+            outcome="transport_published",
+            dependency="nats_transient",
+            run_id=str(run_id),
+            conversation_id=str(conversation_id),
+        )
+
+    async def subscribe_thinking_events(self, handler: ThinkingEventHandler) -> Any:
+        """Receive only strict, bounded transient thinking envelopes."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+        await _assert_thinking_subject_unretained(self._jetstream)
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"runId", "conversationId", "offset", "text"}:
+                    raise ValueError("unexpected thinking envelope fields")
+                run_id = UUID(str(payload["runId"]))
+                conversation_id = UUID(str(payload["conversationId"]))
+                offset = payload["offset"]
+                text = payload["text"]
+                if (
+                    type(offset) is not int
+                    or offset < 0
+                    or not isinstance(text, str)
+                    or not text
+                    or len(text) > 4096
+                ):
+                    raise ValueError("invalid thinking envelope")
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                self.metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="malformed_envelope",
+                    dependency="nats_transient",
+                    error_class="validation",
+                )
+                return
+            try:
+                await handler(run_id, conversation_id, offset, text)
+            except Exception:
+                self.metrics.increment(
+                    "aura.runtime.stream_delivery",
+                    "thinking_stream_outcome",
+                    outcome="delivery",
+                    dependency="nats_transient",
+                    error_class="delivery",
+                )
+                return
+
+        self._thinking_subscription = await self._connection.subscribe(
+            THINKING_EVENT_SUBJECT, cb=callback
+        )
+        return self._thinking_subscription
+
+    async def subscribe_approval_events(self, handler: ApprovalEventHandler) -> Any:
+        """Subscribe to approval wakeups after PostgreSQL replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._approval_subscription = await self._connection.subscribe(
+            APPROVAL_EVENT_SUBJECT, cb=callback
+        )
+        return self._approval_subscription
+
+    async def subscribe_resumption_events(self, handler: ResumptionEventHandler) -> Any:
+        """Subscribe to waiting-run wakeups after durable replay."""
+
+        if self._connection is None:
+            raise RuntimeError("NATS transport is not connected")
+
+        async def callback(message: Any) -> None:
+            try:
+                payload = cast(dict[str, Any], json.loads(message.data))
+                if set(payload) != {"eventId"}:
+                    return
+                await handler(UUID(str(payload["eventId"])))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        self._resumption_subscription = await self._connection.subscribe(
+            RESUMPTION_EVENT_SUBJECT, cb=callback
+        )
+        return self._resumption_subscription
+
     async def close(self) -> None:
         if self._connection is not None:
             await self._connection.drain()
             self._connection = None
             self._jetstream = None
             self._event_subscription = None
+            self._notification_subscription = None
+            self._approval_subscription = None
+            self._resumption_subscription = None
+            self._thinking_subscription = None
             self._readiness_detail = "not connected"
 
 
@@ -260,39 +558,18 @@ class NatsRunConsumer:
         self.metrics.increment(
             self.component,
             "consumer_received",
-            trace_id=(command.correlation_id or command.run_id).hex,
-            run_id=str(command.run_id),
-            conversation_id=str(command.conversation_id),
-            command_id=str(command.id),
-            correlation_id=str(command.correlation_id or command.run_id),
-            causation_id=str(command.causation_id or command.run_id),
-            delivery_count=str(delivery_count),
-            **_optional_command_metadata(command),
+            **_command_metric_metadata(command, delivery_count),
         )
         if delivery_count > 1:
             self.metrics.increment(
                 self.component,
                 "consumer_redelivered",
-                trace_id=(command.correlation_id or command.run_id).hex,
-                run_id=str(command.run_id),
-                conversation_id=str(command.conversation_id),
-                command_id=str(command.id),
-                correlation_id=str(command.correlation_id or command.run_id),
-                causation_id=str(command.causation_id or command.run_id),
-                delivery_count=str(delivery_count),
-                **_optional_command_metadata(command),
+                **_command_metric_metadata(command, delivery_count),
             )
             self.metrics.increment(
                 self.component,
                 "outbox_duplicates",
-                trace_id=(command.correlation_id or command.run_id).hex,
-                run_id=str(command.run_id),
-                conversation_id=str(command.conversation_id),
-                command_id=str(command.id),
-                correlation_id=str(command.correlation_id or command.run_id),
-                causation_id=str(command.causation_id or command.run_id),
-                delivery_count=str(delivery_count),
-                **_optional_command_metadata(command),
+                **_command_metric_metadata(command, delivery_count),
             )
         return command
 
@@ -310,11 +587,7 @@ class NatsRunConsumer:
                 await message.ack()
             except Exception:
                 metadata = (
-                    {
-                        "trace_id": (command.correlation_id or command.run_id).hex,
-                        "run_id": str(command.run_id),
-                        "conversation_id": str(command.conversation_id),
-                    }
+                    _command_metric_metadata(command, self._pending_delivery_count)
                     if command is not None
                     else {}
                 )
@@ -329,14 +602,7 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_acknowledged",
-                    trace_id=(command.correlation_id or command.run_id).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
             self._pending_message = None
             self._pending_command = None
@@ -371,15 +637,8 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_nacked",
-                    trace_id=(command.correlation_id or command.run_id).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
                     error_class=error_class,
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
         finally:
             self._clear_pending()
@@ -400,15 +659,8 @@ class NatsRunConsumer:
                 self.metrics.increment(
                     self.component,
                     "consumer_rejected",
-                    trace_id=(command.correlation_id or command.run_id).hex,
-                    run_id=str(command.run_id),
-                    conversation_id=str(command.conversation_id),
-                    command_id=str(command.id),
-                    correlation_id=str(command.correlation_id or command.run_id),
-                    causation_id=str(command.causation_id or command.run_id),
-                    delivery_count=str(self._pending_delivery_count),
                     error_class=error_class,
-                    **_optional_command_metadata(command),
+                    **_command_metric_metadata(command, self._pending_delivery_count),
                 )
         finally:
             self._clear_pending()
@@ -429,7 +681,13 @@ class NatsRunConsumer:
 
 
 class NatsIdentifierConsumer(NatsRunConsumer):
-    """Durable pull consumer for a caller-owned identifier-only command."""
+    """Durable pull consumer for generic identifier-only commands.
+
+    Unlike :class:`NatsRunConsumer`, this path parses the versioned envelope
+    through ``OutboxCommand.from_record``. It accepts both legacy identifier
+    commands (memory) and generic aggregate commands (governance/resumption),
+    without coupling a worker to an adapter-specific payload shape.
+    """
 
     def __init__(
         self,
@@ -449,12 +707,132 @@ class NatsIdentifierConsumer(NatsRunConsumer):
             strict_schema=True,
         )
 
+    async def receive(self) -> OutboxCommand | None:
+        if self._subscription is None:
+            raise RuntimeError("NATS consumer is not connected")
+        try:
+            message = (await self._subscription.fetch(1, timeout=30))[0]
+        except NatsTimeoutError:
+            return None
+        self._pending_message = message
+        metadata = getattr(message, "metadata", None)
+        delivery_count = int(getattr(metadata, "num_delivered", 1) or 1)
+        self._pending_delivery_count = delivery_count
+        try:
+            raw_payload = json.loads(message.data)
+            if not isinstance(raw_payload, dict):
+                raise ValueError("command payload must be an object")
+            payload = cast(dict[str, object], raw_payload)
+            command_id = UUID(str(payload["commandId"]))
+            created_at = datetime.fromisoformat(str(payload["createdAt"]))
+            command = OutboxCommand.from_record(
+                command_id,
+                self.subject,
+                payload,
+                created_at,
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            self.metrics.increment(self.component, "errors", error_class="delivery")
+            raise ValueError("invalid generic command metadata") from None
+        self._pending_command = command
+        self.metrics.increment(
+            self.component,
+            "consumer_received",
+            **_command_metric_metadata(command, delivery_count),
+        )
+        if delivery_count > 1:
+            self.metrics.increment(
+                self.component,
+                "consumer_redelivered",
+                **_command_metric_metadata(command, delivery_count),
+            )
+            self.metrics.increment(
+                self.component,
+                "outbox_duplicates",
+                **_command_metric_metadata(command, delivery_count),
+            )
+        return command
+
 
 def _stream_subjects(info: Any) -> tuple[str, ...]:
     raw: Any = getattr(getattr(info, "config", None), "subjects", None)
     if not isinstance(raw, (list, tuple)):
         return ()
     return tuple(str(value) for value in cast(list[Any] | tuple[Any, ...], raw))
+
+
+async def _configured_stream_subjects(jetstream: Any) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Enumerate every configured JetStream subject without assuming one API shape."""
+
+    stream_infos: Any = getattr(jetstream, "streams_info", None)
+    if callable(stream_infos):
+        result: Any = stream_infos()
+        if hasattr(result, "__aiter__"):
+            entries: list[tuple[str, tuple[str, ...]]] = []
+            async for info in result:
+                config = getattr(info, "config", None)
+                name = str(getattr(config, "name", ""))
+                entries.append((name, _stream_subjects(info)))
+            return tuple(entries)
+        if hasattr(result, "__await__"):
+            result = await result
+        infos: tuple[Any, ...] = (
+            tuple(cast(list[Any] | tuple[Any, ...], result))
+            if isinstance(result, (list, tuple))
+            else (result,)
+        )
+        return tuple(
+            (
+                str(getattr(getattr(info, "config", None), "name", "")),
+                _stream_subjects(info),
+            )
+            for info in infos
+        )
+    stream_names: Any = getattr(jetstream, "stream_names", None)
+    if not callable(stream_names):
+        raise RuntimeError("JetStream stream enumeration unavailable")
+    result: Any = stream_names()
+    if hasattr(result, "__aiter__"):
+        names = [str(name) async for name in result]
+    else:
+        resolved = await result if hasattr(result, "__await__") else result
+        names = [str(name) for name in resolved]
+    entries = []
+    for name in names:
+        info = await jetstream.stream_info(name)
+        entries.append((name, _stream_subjects(info)))
+    return tuple(entries)
+
+
+def _nats_subject_matches(pattern: str, concrete: str) -> bool:
+    """Return whether a NATS wildcard pattern can capture one concrete subject."""
+
+    pattern_tokens = pattern.split(".")
+    concrete_tokens = concrete.split(".")
+    index = 0
+    for token in pattern_tokens:
+        if token == ">":
+            return index < len(concrete_tokens) and token == pattern_tokens[-1]
+        if index >= len(concrete_tokens) or (token != "*" and token != concrete_tokens[index]):
+            return False
+        index += 1
+    return index == len(concrete_tokens)
+
+
+async def _assert_thinking_subject_unretained(jetstream: Any) -> None:
+    """Fail closed if any JetStream stream could retain the live-only subject."""
+
+    if jetstream is None:
+        raise RuntimeError("JetStream is not connected")
+    configured = await _configured_stream_subjects(jetstream)
+    overlaps = [
+        f"{name}:{subject}"
+        for name, subjects in configured
+        for subject in subjects
+        if _nats_subject_matches(subject, THINKING_EVENT_SUBJECT)
+    ]
+    if overlaps:
+        raise RuntimeError("live thinking subject overlaps configured JetStream retention")
 
 
 async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> None:
@@ -475,3 +853,25 @@ async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> N
 
 def _optional_command_metadata(command: OutboxCommand) -> dict[str, str]:
     return identifier_trace_metadata(command)
+
+
+def _command_metric_metadata(
+    command: OutboxCommand,
+    delivery_count: int,
+) -> dict[str, str]:
+    """Build bounded command trace metadata for both legacy and generic envelopes."""
+
+    identity = command.run_id or command.aggregate_id or command.id
+    result = {
+        "trace_id": (command.correlation_id or identity).hex,
+        "command_id": str(command.id),
+        "correlation_id": str(command.correlation_id or identity),
+        "causation_id": str(command.causation_id or identity),
+        "delivery_count": str(delivery_count),
+        **_optional_command_metadata(command),
+    }
+    if command.run_id is not None:
+        result["run_id"] = str(command.run_id)
+    if command.conversation_id is not None:
+        result["conversation_id"] = str(command.conversation_id)
+    return result

@@ -67,6 +67,12 @@ class RunRepository(Protocol):
         *,
         attempt_id: UUID | None = None,
     ) -> tuple[Conversation, Run, Message | None]: ...
+    async def wait_for_confirmation(
+        self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID
+    ) -> Run: ...
+    async def resume_waiting_run(
+        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+    ) -> Run: ...
 
 
 class ChatCompletionPort(Protocol):

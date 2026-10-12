@@ -16,12 +16,49 @@ Aura owns the run lifecycle, budgets, permissions, jobs, events, model policy, p
 
 The Python runtime uses FastAPI/Pydantic at transport and validation edges and shared application use cases below thin API, worker, scheduler, CLI, and evaluation entrypoints. Ollama is the local model default. Cloud providers and judges are explicit opt-in adapters. Exact model inventory, routing policy, graph persistence details, and evaluation calibration remain [open decisions](./open-decisions.md). See [technology stack](../architecture/technology-stack.md) and [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md).
 
+### Governed tool execution v1
+
+Aura implements one bounded native-tool cycle behind provider-neutral runtime contracts. An immutable agent revision pins an immutable tool-policy revision, and run admission snapshots that policy identifier, the Aura-enforced call limit, and usage. A policy grants an exact stable tool identifier and integer version; absence of that grant denies execution. The built-in Aura profile's successor revision grants exactly `memory.search@1` and `reminder.create@1`, while custom profiles remain deny-by-default. Policy creation and attachment are separate owner-scoped, idempotent, optimistic-concurrency commands so historical agent revisions retain their original behavior.
+
+A run with a grant may make at most one tool call. Aura validates the requested identity, version, arguments, permission, budget, and deadline before invoking application behavior. A successful call is followed by one tools-disabled synthesis request. Denied, malformed, over-budget, timed-out, provider-protocol, and execution failures invoke no prohibited behavior and may continue with a content-free tools-disabled synthesis. Models without native tool support continue on the existing text-only path with a visible capability outcome. Native Ollama request and response shapes remain adapter-private and never become Aura API, event, domain, or generated-client contracts.
+
+Tool lifecycle is durable and ordered through `tool.status` run events. These events contain only an Aura-generated call identifier, stable tool identity and version, lifecycle status, bounded error classification/code, and optional result count. They never contain arguments, queries, results, memory text, prompts, responses, credentials, or hidden reasoning.
+
+### Approval-backed reminder mutation
+
+`reminder.create@1` is a typed, idempotent mutation requiring the exact pinned
+`reminders:write` grant and unconditional owner confirmation. Aura validates and
+normalizes its content and offset-aware due instant before creating an
+automation-owned proposal. The proposal keeps private payload in Core's
+PostgreSQL domain; the governance approval references proposal, run,
+conversation, tool, and owner identifiers without duplicating content.
+
+When confirmation is required, the proposal and approval commit before the
+worker lease is released. The run enters `waiting_for_confirmation` and its
+tool lifecycle enters `awaiting_confirmation`; no reminder exists. PostgreSQL
+is authoritative for pending decisions and replay cursors. Approve, reject,
+expiry, and cancellation each lock the approval and use expected versions and
+idempotency so exactly one decision wins. Approval queues a durable resume
+signal; the resumed worker re-reads the decision, invokes the shared reminder
+use case at most once with approval-derived idempotency, and performs one
+tools-disabled synthesis step. Denial, expiry, or cancellation resumes with a
+typed denied result and creates no reminder.
+
+Approval SSE and transactional-outbox/NATS wakeups carry only bounded
+identifiers, statuses, versions, and timestamps. Clients fetch authorized
+details separately, so reconnect, duplicate wakeups, and offline catch-up
+cannot disclose proposal content or cause a second side effect. The optional
+browser IANA timezone is pinned to a new run; prompt compilation derives local
+date/time from the server clock. Legacy runs remain valid and ambiguous times
+must be clarified with an explicit offset rather than guessed.
+
 ## Execution rules
 
 - Independent conversations and agents may run concurrently within resource limits.
 - Mutating work within one conversation is ordered unless an explicit branch exists.
 - Independent read-only tools may run concurrently; conflicting mutations require serialization, locks, version checks, or idempotency.
 - Runs have explicit time, step, token, tool, retry, cost, and resource limits with cancellation and structured failure records.
+- Cancellation propagates through tool selection, execution, and response synthesis; a cancelled attempt settles with metadata-only lifecycle state before the run settles.
 - Prompts are compiled from versioned platform, governance, agent, persona, context, memory, document, tool, task, and output components. Selected context and compiled provenance remain traceable.
 - Agents select capability and workload policies, not concrete GPUs. Scheduling accounts for provider availability and asymmetric resources.
 

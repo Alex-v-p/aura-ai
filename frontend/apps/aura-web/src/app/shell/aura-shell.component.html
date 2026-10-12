@@ -2,72 +2,136 @@
   <div class="app-shell">
     <header class="mobile-header">
       <button #mobileTrigger class="icon-button" type="button" aria-label="Open navigation" aria-controls="primary-navigation" [attr.aria-expanded]="mobileOpen" (click)="mobileOpenChange.emit(true)"><span aria-hidden="true">☰</span></button>
-      <a class="wordmark" href="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span>Aura</a>
-      <span class="mobile-header-spacer"></span>
+      <a class="wordmark" routerLink="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span>Aura</a>
+      <span class="mobile-header-spacer" aria-hidden="true"></span>
     </header>
 
     @if (mobileOpen && isMobileViewport()) { <button class="scrim" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"></button> }
     <nav id="primary-navigation" class="sidebar" [class.is-collapsed]="collapsed && isWideDesktopViewport()" [class.is-mobile-open]="mobileOpen && isMobileViewport()" [cdkTrapFocus]="mobileOpen && isMobileViewport()" [cdkTrapFocusAutoCapture]="mobileOpen && isMobileViewport()" (transitionend)="handleSidebarTransitionEnd($event)" aria-label="Primary navigation">
       <div class="sidebar-top">
-        <a class="wordmark" href="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span><span class="wordmark-text">Aura</span></a>
+        <a class="wordmark" routerLink="/conversation" aria-label="Aura home" (click)="closeMobileNavigation(isMobileViewport())"><span class="wordmark-mark" aria-hidden="true">✦</span><span class="wordmark-text">Aura</span></a>
         @if (isMobileViewport()) {
           <button class="icon-button mobile-close-button" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"><span aria-hidden="true">×</span></button>
         } @else {
-          <button class="icon-button collapse-button" type="button" [attr.aria-label]="collapsed ? 'Expand navigation' : 'Collapse navigation'" (click)="collapseChange.emit(!collapsed)"><span aria-hidden="true">{{ collapsed ? '→' : '←' }}</span></button>
+          <button class="icon-button collapse-button" type="button" [attr.aria-label]="collapsed ? 'Expand navigation' : 'Collapse navigation'" (click)="toggleNavigationCollapse()"><span aria-hidden="true">{{ collapsed ? '→' : '←' }}</span></button>
         }
       </div>
+
       <button class="new-conversation" type="button" aria-label="New conversation" title="New conversation" (click)="startNewConversation()"><span aria-hidden="true">＋</span><span class="label">New conversation</span></button>
+
+      <div class="sidebar-scroll-region">
       <div class="product-nav" aria-label="Aura destinations">
-        <a class="product-link" routerLink="/conversation" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" aria-label="Conversations" title="Conversations" (click)="closeMobileNavigation(isMobileViewport())">
-          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M7.5 10h9M7.5 13h5"/></svg>
-          <span class="label">Conversations</span><span class="product-current-marker" aria-hidden="true">✓</span>
-        </a>
-        <a class="product-link" routerLink="/agents" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Agents" title="Agents" (click)="closeMobileNavigation(isMobileViewport())">
-          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M8 6V4.5h8V6M8 12h.01M16 12h.01M8 16h8M12 2v2.5"/></svg>
-          <span class="label">Agents</span><span class="product-current-marker" aria-hidden="true">✓</span>
-        </a>
-        <a class="product-link" routerLink="/personas" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Personas" title="Personas" (click)="closeMobileNavigation(isMobileViewport())">
-          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a7 7 0 0 1 7 7v2.2a7 7 0 0 1-14 0v-2.2a7 7 0 0 1 7-7Z"/><path d="M8.5 11.5h.01M15.5 11.5h.01M9 15.5c1.8 1.2 4.2 1.2 6 0M5 12.5H3.5a1.5 1.5 0 0 1 0-3H5M19 12.5h1.5a1.5 1.5 0 0 0 0-3H19"/></svg>
-          <span class="label">Personas</span><span class="product-current-marker" aria-hidden="true">✓</span>
-        </a>
-        <a class="product-link" routerLink="/memory" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Memory" title="Memory" (click)="closeMobileNavigation(isMobileViewport())">
-          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4.5h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"/><path d="M8.5 9h7M8.5 12h7M8.5 15h4"/><path d="M9 4.5V3m6 1.5V3"/></svg>
-          <span class="label">Memory</span><span class="product-current-marker" aria-hidden="true">✓</span>
-        </a>
+        <section class="nav-group nav-group-conversations" aria-labelledby="nav-group-conversations">
+          <h2 id="nav-group-conversations" class="nav-group-heading">Conversations</h2>
+          <a class="product-link" routerLink="/conversation" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" aria-label="Conversations" title="Conversations" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M7.5 10h9M7.5 13h5"/></svg>
+            <span class="label">Conversations</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
+
+        <section class="nav-group" aria-labelledby="nav-group-personalize">
+          <h2 id="nav-group-personalize" class="nav-group-heading">Personalize</h2>
+          <a class="product-link" routerLink="/agents" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Agents" title="Agents" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M8 6V4.5h8V6M8 12h.01M16 12h.01M8 16h8M12 2v2.5"/></svg>
+            <span class="label">Agents</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+          <a class="product-link" routerLink="/personas" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Personas" title="Personas" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a7 7 0 0 1 7 7v2.2a7 7 0 0 1-14 0v-2.2a7 7 0 0 1 7-7Z"/><path d="M8.5 11.5h.01M15.5 11.5h.01M9 15.5c1.8 1.2 4.2 1.2 6 0M5 12.5H3.5a1.5 1.5 0 0 1 0-3H5M19 12.5h1.5a1.5 1.5 0 0 0 0-3H19"/></svg>
+            <span class="label">Personas</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+          <a class="product-link" routerLink="/memory" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Memory" title="Memory" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4.5h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"/><path d="M8.5 9h7M8.5 12h7M8.5 15h4"/><path d="M9 4.5V3m6 1.5V3"/></svg>
+            <span class="label">Memory</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
+
+        <section class="nav-group" aria-labelledby="nav-group-automate">
+          <h2 id="nav-group-automate" class="nav-group-heading">Automate</h2>
+          <a class="product-link" routerLink="/reminders" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Reminders" title="Reminders" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3.2 2"/><path d="M8 3.8 6.5 2.5M16 3.8l1.5-1.3"/></svg>
+            <span class="label">Reminders</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
+
+        <section class="nav-group" aria-labelledby="nav-group-activity">
+          <h2 id="nav-group-activity" class="nav-group-heading">Activity</h2>
+          <a class="product-link" routerLink="/approvals" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Approvals" title="Approvals" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3.5h10a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>
+            <span class="label">Approvals</span>@if (!approvals.pendingCountReconciled() || approvals.pendingCount()) { <span class="notification-badge" [attr.aria-label]="!approvals.pendingCountReconciled() ? 'Pending approval count unavailable' : approvals.pendingCountExact() ? approvals.pendingCount() + ' pending approvals' : approvals.pendingCount() + ' or more pending approvals'">{{ !approvals.pendingCountReconciled() ? '…' : approvals.pendingCount() > 99 ? '99+' : approvals.pendingCountExact() ? approvals.pendingCount() : approvals.pendingCount() + '+' }}</span> }<span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+          <a class="product-link" routerLink="/notifications" routerLinkActive="is-active" ariaCurrentWhenActive="page" [attr.aria-label]="notifications.unreadCount() ? 'Notifications, ' + notifications.unreadCount() + ' unread' : 'Notifications'" title="Notifications" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
+            <span class="label">Notifications</span>@if (notifications.unreadCount()) { <span class="notification-badge" [attr.aria-label]="notifications.unreadCount() + ' unread notifications'">{{ notifications.unreadCount() > 99 ? '99+' : notifications.unreadCount() }}</span> }<span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
       </div>
-      @if (!isWideDesktopViewport() || (!collapsed && desktopContentReady())) {
-        <div class="conversation-nav" aria-label="Conversations">
-          <div class="library-heading"><p class="nav-label">Conversation library</p><button #filterTrigger cdkOverlayOrigin #filterOrigin="cdkOverlayOrigin" class="library-filter-toggle" type="button" aria-haspopup="dialog" aria-controls="conversation-filters" [attr.aria-expanded]="filterPanelOpen()" (click)="toggleFilterPanel($event, filterOrigin)">Filter</button></div>
-          <label class="library-search"><span class="sr-only">Search conversation titles</span><span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><input type="search" maxlength="200" placeholder="Search titles" [value]="libraryFilters().q ?? ''" (input)="setQuery($any($event.target).value)" /></label>
-          <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="filterOverlayOrigin()" [cdkConnectedOverlayOpen]="filterPanelOpen()" [cdkConnectedOverlayPositions]="filterOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handleFilterOverlayAttach()" (overlayOutsideClick)="closeFilterPanel()">
-            <div #filterPanel id="conversation-filters" class="conversation-filters" role="dialog" aria-labelledby="conversation-filters-heading" tabindex="-1">
-              <h2 id="conversation-filters-heading" class="sr-only">Conversation filters</h2>
-              <label><span>Agent</span><select [value]="libraryFilters().agentProfileId ?? ''" (change)="setFilter('agentProfileId', $any($event.target).value)"><option value="">All agents</option>@for (agent of agentOptions; track agent.id) { <option [value]="agent.id">{{ agent.label }}</option> }</select></label>
-              <label><span>Model</span><select [value]="libraryFilters().modelId ?? ''" (change)="setFilter('modelId', $any($event.target).value)"><option value="">All models</option>@for (model of modelOptions; track model.id) { <option [value]="model.id">{{ model.label }}</option> }</select></label>
-              <label><span>Latest run</span><select [value]="libraryFilters().runStatus ?? ''" (change)="setFilter('runStatus', $any($event.target).value)"><option value="">Any status</option><option value="queued">Queued</option><option value="running">Running</option><option value="cancel_requested">Cancel requested</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="canceled">Canceled</option><option value="interrupted">Interrupted</option></select></label>
-              <label><span>View</span><select [value]="libraryFilters().archiveState" (change)="setArchiveState($any($event.target).value)"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All conversations</option></select></label>
-              <label><span>Activity from</span><input type="date" [value]="activityFromInput()" (change)="setFilter('activityFrom', $any($event.target).value)" /></label>
-              <label><span>Activity to</span><input type="date" [value]="activityToInput()" (change)="setFilter('activityTo', $any($event.target).value)" /></label>
-              <button class="filter-clear" type="button" (click)="clearFilters()">Clear filters</button>
-            </div>
-          </ng-template>
-          @if (conversations.length === 0) { <p class="nav-empty">Your conversations will appear here.</p> }
-          @for (conversation of conversations; track conversation.id) {
-            <div class="conversation-row" [class.is-archived]="conversation.archived">
-              @if (renamingId() === conversation.id) {
-                <form class="rename-form" (submit)="commitRename(conversation.id, $event)"><label class="sr-only" [for]="'rename-' + conversation.id">Conversation title</label><input [id]="'rename-' + conversation.id" maxlength="255" [value]="renameValue()" (input)="updateRename($any($event.target).value)" /><button type="submit" aria-label="Save conversation name">Save</button><button type="button" aria-label="Cancel rename" (click)="cancelRename()">Cancel</button></form>
-              } @else {
-                <a class="conversation-link" [routerLink]="['/conversation', conversation.id]" routerLinkActive="is-route-active" [routerLinkActiveOptions]="{ exact: true }" ariaCurrentWhenActive="page" [attr.aria-label]="conversation.status ? conversation.title + ', ' + conversation.status : conversation.title" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span>@if (conversation.archived) { <span class="conversation-status" aria-hidden="true">Archived</span> } @else if (conversation.status) { <span class="conversation-status" aria-hidden="true">{{ conversation.status }}</span> }</a>
-                <button class="row-menu-trigger" type="button" [id]="'conversation-actions-' + conversation.id" [attr.aria-label]="'Conversation actions for ' + conversation.title" [attr.aria-expanded]="rowMenuId() === conversation.id" (click)="toggleRowMenu(conversation.id, $event)">•••</button>
-                @if (rowMenuId() === conversation.id) { <div class="row-menu" role="menu">@if (!conversation.archived) { <button type="button" role="menuitem" (click)="beginRename(conversation, $event)">Rename</button> } @if (conversation.archived) { <button type="button" role="menuitem" (click)="rowAction(conversation.id, 'restore', $event)">Restore</button> } @else { <button type="button" role="menuitem" (click)="rowAction(conversation.id, 'archive', $event)">Archive</button> }<button type="button" role="menuitem" (click)="rowAction(conversation.id, 'inspect', $event)">Inspect runs</button></div> }
-              }
-            </div>
-          }
-          @if (hasMoreConversations) { <button class="load-more" type="button" [disabled]="loadingMoreConversations" (click)="loadMore.emit()">{{ loadingMoreConversations ? 'Loading…' : 'Load more conversations' }}</button> }
-        </div>
-        <div class="sidebar-bottom"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
+
+      @if (conversationContext()) {
+        @if (showInlineConversationLibrary()) {
+          <ng-container *ngTemplateOutlet="conversationLibrary" />
+        } @else {
+          <button #libraryTrigger id="conversation-library-trigger" cdkOverlayOrigin #libraryOrigin="cdkOverlayOrigin" class="library-context-trigger" type="button" aria-label="Conversation library" aria-haspopup="dialog" aria-controls="conversation-library-context" [attr.aria-expanded]="libraryPanelOpen()" (click)="toggleLibraryPanel(libraryOrigin)">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/><path d="M7.5 10h9M7.5 13h5"/></svg>
+            <span class="label">Conversation library</span>
+          </button>
+        }
       }
+      </div>
+
+      <div class="sidebar-bottom">
+        <button #preferencesTrigger cdkOverlayOrigin #preferencesOrigin="cdkOverlayOrigin" class="preferences-trigger" type="button" aria-label="Preferences" aria-haspopup="dialog" aria-controls="preferences-panel" [attr.aria-expanded]="preferencesOpen()" (click)="togglePreferences(preferencesOrigin)">
+          <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6 6 18M18 18l-1.4-1.4M7.4 7.4 6 6"/><circle cx="12" cy="12" r="3.5"/></svg>
+          <span class="label">Preferences</span>
+        </button>
+        @if (preferencesOpen() && !isCompactSidebar()) {
+          <div #preferencesPanel id="preferences-panel" class="preferences-panel" role="dialog" aria-label="Preferences"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
+        }
+      </div>
     </nav>
+
+    <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="libraryOverlayOrigin()" [cdkConnectedOverlayOpen]="libraryPanelOpen()" [cdkConnectedOverlayPositions]="libraryOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handleLibraryPanelAttach()" (overlayOutsideClick)="handleLibraryOutsideClick($event)">
+      <div id="conversation-library-context" #libraryPanel class="conversation-library-context" role="dialog" aria-labelledby="conversation-library-context-heading" tabindex="-1">
+        <div class="context-panel-heading"><h2 id="conversation-library-context-heading">Conversation library</h2><button class="icon-button" type="button" aria-label="Close conversation library" (click)="closeLibraryPanel()">×</button></div>
+        <ng-container *ngTemplateOutlet="conversationLibrary" />
+      </div>
+    </ng-template>
+
+    <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="preferencesOverlayOrigin()" [cdkConnectedOverlayOpen]="preferencesOpen() && isCompactSidebar()" [cdkConnectedOverlayPositions]="preferencesOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handlePreferencesAttach()" (overlayOutsideClick)="closePreferences()">
+      <div #preferencesPanel id="preferences-panel" class="preferences-popover" role="dialog" aria-label="Preferences" tabindex="-1"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
+    </ng-template>
+
     <main id="main-content" class="main-content" tabindex="-1"><ng-content /></main>
   </div>
 </aura-adaptive-layout>
+
+<ng-template #conversationLibrary>
+  <div class="conversation-nav" aria-label="Conversations">
+    <div class="library-heading"><p class="nav-label">Conversation library</p><button #filterTrigger cdkOverlayOrigin #filterOrigin="cdkOverlayOrigin" class="library-filter-toggle" type="button" aria-haspopup="dialog" aria-controls="conversation-filters" [attr.aria-expanded]="filterPanelOpen()" (click)="toggleFilterPanel($event, filterOrigin)">Filter</button></div>
+    <label class="library-search"><span class="sr-only">Search conversation titles</span><span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><input type="search" maxlength="200" placeholder="Search titles" [value]="libraryFilters().q ?? ''" (input)="setQuery($any($event.target).value)" /></label>
+    <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="filterOverlayOrigin()" [cdkConnectedOverlayOpen]="filterPanelOpen()" [cdkConnectedOverlayPositions]="filterOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handleFilterOverlayAttach()" (overlayOutsideClick)="closeFilterPanel()">
+      <div #filterPanel id="conversation-filters" class="conversation-filters" role="dialog" aria-labelledby="conversation-filters-heading" tabindex="-1">
+        <h2 id="conversation-filters-heading" class="sr-only">Conversation filters</h2>
+        <label><span>Agent</span><select [value]="libraryFilters().agentProfileId ?? ''" (change)="setFilter('agentProfileId', $any($event.target).value)"><option value="">All agents</option>@for (agent of agentOptions; track agent.id) { <option [value]="agent.id">{{ agent.label }}</option> }</select></label>
+        <label><span>Model</span><select [value]="libraryFilters().modelId ?? ''" (change)="setFilter('modelId', $any($event.target).value)"><option value="">All models</option>@for (model of modelOptions; track model.id) { <option [value]="model.id">{{ model.label }}</option> }</select></label>
+        <label><span>Latest run</span><select [value]="libraryFilters().runStatus ?? ''" (change)="setFilter('runStatus', $any($event.target).value)"><option value="">Any status</option><option value="queued">Queued</option><option value="running">Running</option><option value="cancel_requested">Cancel requested</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="canceled">Canceled</option><option value="interrupted">Interrupted</option></select></label>
+        <label><span>View</span><select [value]="libraryFilters().archiveState" (change)="setArchiveState($any($event.target).value)"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All conversations</option></select></label>
+        <label><span>Activity from</span><input type="date" [value]="activityFromInput()" (change)="setFilter('activityFrom', $any($event.target).value)" /></label>
+        <label><span>Activity to</span><input type="date" [value]="activityToInput()" (change)="setFilter('activityTo', $any($event.target).value)" /></label>
+        <button class="filter-clear" type="button" (click)="clearFilters()">Clear filters</button>
+      </div>
+    </ng-template>
+    @if (conversations.length === 0) { <p class="nav-empty">Your conversations will appear here.</p> }
+    @for (conversation of conversations; track conversation.id) {
+      <div class="conversation-row" [class.is-archived]="conversation.archived">
+        @if (renamingId() === conversation.id) {
+          <form class="rename-form" (submit)="commitRename(conversation.id, $event)"><label class="sr-only" [for]="'rename-' + conversation.id">Conversation title</label><input [id]="'rename-' + conversation.id" maxlength="255" [value]="renameValue()" (input)="updateRename($any($event.target).value)" /><button type="submit" aria-label="Save conversation name">Save</button><button type="button" aria-label="Cancel rename" (click)="cancelRename()">Cancel</button></form>
+        } @else {
+          <a class="conversation-link" [routerLink]="['/conversation', conversation.id]" routerLinkActive="is-route-active" [routerLinkActiveOptions]="{ exact: true }" ariaCurrentWhenActive="page" [attr.aria-label]="conversation.status ? conversation.title + ', ' + conversation.status : conversation.title" [attr.title]="conversation.title" (click)="selectConversation(conversation.id)"><span class="conversation-dot" aria-hidden="true">•</span><span class="label">{{ conversation.title }}</span>@if (conversation.archived) { <span class="conversation-status" aria-hidden="true">Archived</span> } @else if (conversation.status) { <span class="conversation-status" aria-hidden="true">{{ conversation.status }}</span> }</a>
+          <button class="row-menu-trigger" type="button" [id]="'conversation-actions-' + conversation.id" [attr.aria-label]="'Conversation actions for ' + conversation.title" [attr.aria-expanded]="rowMenuId() === conversation.id" aria-haspopup="menu" (click)="toggleRowMenu(conversation.id, $event)">•••</button>
+          @if (rowMenuId() === conversation.id) { <div class="row-menu" role="menu" [attr.aria-labelledby]="'conversation-actions-' + conversation.id" (keydown)="handleRowMenuKeydown($event)">@if (!conversation.archived) { <button type="button" role="menuitem" tabindex="-1" (click)="beginRename(conversation, $event)">Rename</button> } @if (conversation.archived) { <button type="button" role="menuitem" tabindex="-1" (click)="rowAction(conversation.id, 'restore', $event)">Restore</button> } @else { <button type="button" role="menuitem" tabindex="-1" (click)="rowAction(conversation.id, 'archive', $event)">Archive</button> }<button type="button" role="menuitem" tabindex="-1" (click)="rowAction(conversation.id, 'inspect', $event)">Inspect runs</button></div> }
+        }
+      </div>
+    }
+    @if (hasMoreConversations) { <button class="load-more" type="button" [disabled]="loadingMoreConversations" (click)="loadMore.emit()">{{ loadingMoreConversations ? 'Loading…' : 'Load more conversations' }}</button> }
+  </div>
+</ng-template>

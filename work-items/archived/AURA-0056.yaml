@@ -1,0 +1,340 @@
+id: AURA-0056
+title: Add approval-backed reminder creation from conversations
+status: integrated
+change_class: repository_governance
+intent: >
+  Allow the built-in Aura agent to propose a validated one-shot reminder from
+  an owner conversation, pause without creating the reminder, obtain an
+  explicit durable owner decision, and resume exactly once to create or deny
+  the reminder while preserving immutable policy revisions, owner isolation,
+  metadata-only operational signals, and backward compatibility.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved reminder.create@1 mutation with reminders:write exact-version grants unconditional confirmation zero retries bounded timeout and idempotent execution
+    - Owner-approved one-hour approval expiry capped by the requested due instant
+    - Owner-approved durable waiting run release and PostgreSQL-backed resumption after approval rejection expiry or cancellation
+    - Owner-approved built-in Aura successor tool-policy and agent revisions granting memory.search@1 and reminder.create@1 while custom agents remain deny-by-default
+    - Owner-approved browser IANA timezone capture with server-derived local date and time in prompt context
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AGT-002
+  - AGT-009
+  - AGT-019
+  - RUN-008
+  - RUN-009
+  - RUN-010
+  - RUN-012
+  - RUN-013
+  - RUN-021
+  - RUN-023
+  - RUN-024
+  - TOL-001
+  - TOL-002
+  - TOL-003
+  - TOL-004
+  - TOL-005
+  - TOL-006
+  - TOL-007
+  - TOL-008
+  - TOL-009
+  - TOL-010
+  - TOL-011
+  - TOL-017
+  - TOL-018
+  - TOL-019
+  - TOL-020
+  - AUT-002
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+  - AUI-003
+  - AUI-006
+  - AUI-007
+  - AUI-023
+  - AUI-030
+  - GOV-006
+  - GOV-009
+  - GOV-010
+  - GOV-011
+  - GOV-013
+  - GOV-016
+  - GOV-020
+  - EVA-006
+  - EVA-009
+  - EVA-010
+  - EVA-011
+  - EVA-012
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-core.automation.reminder-proposals
+  - aura-core.automation.reminders
+  - aura-core.governance.approvals
+  - aura-core.execution.runs
+  - aura-core.interaction.agents
+  - aura-core.interaction.conversations
+  - aura-core.runtime.tools
+  - aura-core.runtime.prompting
+  - aura-core.runtime.streaming
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - aura-web.governance.approvals
+  - aura-web.interaction.conversations
+  - aura-web.shell
+  - aura-web.e2e
+  - frontend.storybook
+  - repository.architecture.registry
+  - evaluation.approval-backed-tools
+allowed_paths:
+  - work-items/active/AURA-0056.yaml
+  - work-items/archived/AURA-0056.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - docs/specifications/agents-and-execution.md
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0016_approval_backed_reminder_tool.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/**
+  - services/aura-core/src/aura_core/domains/governance/__init__.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/**
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/domains/interaction/agents/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/runtime/prompting/**
+  - services/aura-core/src/aura_core/runtime/streaming/**
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/approval_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/reminder_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/approvals.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/tools.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/resources/component-manifests/agent-configuration.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/policy-evaluation.yaml
+  - services/aura-core/resources/component-manifests/prompt-compilation.yaml
+  - services/aura-core/resources/component-manifests/reminder-management.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/resources/component-manifests/tool-selection.yaml
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_approval_api.py
+  - services/aura-core/tests/test_approval_stream.py
+  - services/aura-core/tests/test_approval_evaluation.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_migration_0016_approval_backed_reminder_tool.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_prompting_runtime.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_tool_evaluation.py
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/system/test_agents_personas_api.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_approval_backed_reminder.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/approval-inbox.stories.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/libs/aura/governance/approvals/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/tsconfig.base.json
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/integrations/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/providers/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: governance.approvals
+observability:
+  applicable: true
+  affected_components:
+    - aura.governance.approval_workflow
+    - aura.runtime.tool_selection
+    - aura.runtime.policy_evaluation
+    - aura.runtime.tool_execution
+    - aura.execution.run_coordinator
+    - aura.runtime.prompt_compilation
+    - aura.runtime.stream_delivery
+    - aura.automation.reminder_management
+  required_metrics:
+    - approval_creation_outcome
+    - approval_decision_outcome
+    - approval_expiry_count
+    - approval_wait_duration_ms
+    - approval_resume_outcome
+    - approval_sse_connection_count
+    - approval_sse_replay_count
+    - reminder_create_tool_outcome
+    - reminder_create_idempotency_outcome
+    - client_timezone_validation_outcome
+  required_evaluators:
+    - reminder_tool_selection_and_arguments
+    - reminder_tool_permission_enforcement
+    - confirmation_side_effect_prevention
+    - approval_owner_authorization
+    - approval_expiry_correctness
+    - approval_race_exactly_once
+    - reminder_creation_exactly_once
+    - approval_reconnect_reconciliation
+    - timezone_interpretation_and_clarification
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - reminder.create is denied unless the run-pinned immutable policy grants exactly reminder.create@1 and the principal has reminders:write.
+    - Every reminder.create request requires durable owner confirmation regardless of model confidence content due time agent or channel and no reminder may exist before approval.
+    - Proposal content is private automation-owned data and may appear only in owner-authorized proposal or approval detail responses and final reminder persistence.
+    - Proposal content requested due time tool arguments and owner subject must never enter SSE NATS outbox run events telemetry ordinary audit metadata logs or error detail.
+    - Approval list detail stream approve reject cancellation and replay cursors must be bound to the authenticated owner and state-changing commands require same-origin CSRF validation UUID idempotency and expected versions.
+    - Approval rejection expiry cancellation approval and run cancellation races must lock authoritative PostgreSQL rows so one terminal decision wins and duplicate deliveries cannot repeat a side effect.
+    - Browser timezone input must be a valid IANA identifier pinned to the new run and server-derived local time must be computed from the server clock rather than trusted model or browser timestamps.
+    - Legacy clients without a timezone remain supported and ambiguous reminder times must produce a clarification request rather than a guessed instant.
+    - Approval-derived reminder idempotency must make resumed and redelivered work exactly-once and the resumed synthesis step must run with tools disabled.
+    - Existing conversations retain their pinned agent and tool-policy revisions and custom agents receive no implicit reminder grant.
+  data_classes:
+    - private_reminder_proposal_content
+    - private_reminder_content
+    - owner_agent_conversation_and_run_identifiers
+    - browser_iana_timezone
+    - approval_tool_and_run_lifecycle_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - New conversation-run admission accepts an optional valid IANA clientTimeZone pins it immutably to the run and remains backward compatible when legacy clients omit it.
+  - Aura Web supplies the browser IANA timezone and prompt compilation adds server-derived current local date time offset and zone provenance without accepting the model or browser as the clock authority.
+  - Without a pinned timezone the reminder tool requires an explicit offset-aware dueAt whenever a requested time is ambiguous and deterministic fixtures cover DST-equivalent instants and ambiguity clarification.
+  - The provider-neutral registry exposes reminder.create@1 with typed content and dueAt input and an identifier status UTC-due-time result as a reminders:write mutation with unconditional confirmation zero retries bounded timeout private sensitivity and idempotent execution.
+  - The existing one-tool-call-per-run limit remains enforced and no model request invokes the shared reminder-create use case before an approval is durably approved.
+  - A built-in Aura successor tool policy grants exactly memory.search@1 and reminder.create@1 and a successor immutable agent revision selects it while existing conversations retain prior pinned revisions and custom agents remain deny-by-default.
+  - A valid tool proposal stores trimmed private content and normalized future UTC due time in an automation-owned reminder proposal while the governance approval references proposal run conversation tool and owner identifiers without duplicating domain payload.
+  - Pending approvals expire at the earlier of one hour after creation or the requested due instant and support pending approved rejected expired and canceled domain states with optimistic versions and immutable terminal outcomes.
+  - Requiring confirmation persists proposal and approval metadata-only lifecycle events releases the worker lease and moves the run to waiting_for_confirmation with its tool lifecycle awaiting_confirmation.
+  - Owner-scoped list detail approve and reject APIs plus approval SSE use additive OpenAPI 1.9.0 contracts and expose proposal content only from an explicitly authorized detail response.
+  - Approval SSE contains identifiers status versions and lifecycle timestamps only and never proposal content or requested due time; it replays owner-authorized persisted events after Last-Event-ID supplies heartbeats and reconciles after duplicate wakeups reconnects and offline periods.
+  - Approval atomically queues the waiting run for resumption and the worker uses approval-derived idempotency to invoke the existing reminder-create application use case exactly once before one tools-disabled synthesis step.
+  - Rejection or expiry resumes the run with a typed denied tool outcome performs one tools-disabled synthesis step and creates no reminder.
+  - Canceling a waiting run cancels its pending approval and approve reject cancel expiry and duplicate-resume races use locking expected versions and idempotency so exactly one valid outcome wins.
+  - The originating conversation displays an accessible durable confirmation card and the global approvals inbox displays pending approved rejected expired canceled executing completed and failed states after refresh or reconnect with safe loading empty error and responsive behavior.
+  - OpenAPI 1.9.0 run status waiting_for_confirmation tool status awaiting_confirmation approval APIs and the run-event JSON Schema are backward-compatible and the generated transport client remains synchronized.
+  - Audit outbox SSE run events NATS and telemetry contain only approved metadata fields while component manifests and runtime instrumentation cover approval creation decision expiry waiting resumption SSE replay reminder idempotency and failures.
+  - No recurrence editing rescheduling reminder deletion multi-approver policy household sharing external notification provider voice Aura Wall calendar Home Assistant shell filesystem network or Observatory behavior is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0056.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0056.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0056.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0056.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - docker compose config --quiet
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

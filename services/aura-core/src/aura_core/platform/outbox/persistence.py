@@ -14,6 +14,7 @@ class OutboxRow(Base):
     __tablename__ = "outbox"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False, default="run")
     aggregate_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

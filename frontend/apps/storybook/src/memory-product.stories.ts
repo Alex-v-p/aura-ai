@@ -15,10 +15,10 @@ const memory: MemorySummary = {
 
 function fixtureStore(): MemoryStore {
   return {
-    memories: signal({ items: [memory], nextCursor: null }), selected: signal(null), candidates: signal([]), candidate: signal(null),
-    modelInventory: signal(null), modelConfiguration: signal(null), modelConfigurationMissing: signal(false), reindex: signal(null), policies: signal([]), attachedPolicyRevisionId: signal(null), agentVersion: signal(1),
+    memories: signal({ items: [memory], nextCursor: null }), selected: signal(null), detailLoading: signal(false), detailError: signal(null), candidates: signal([]), candidate: signal(null), candidateNextCursor: signal(null), candidateLoadingMore: signal(false), candidateListLoadFailed: signal(false), candidateQueueGeneration: signal(0), candidateDetailLoading: signal(false), candidateDetailError: signal(null),
+    modelInventory: signal(null), modelConfiguration: signal(null), modelConfigurationMissing: signal(false), reindex: signal(null), policies: signal([]), policiesLoaded: signal(true), attachedPolicyRevisionId: signal(null), agentVersion: signal(1), createOutcome: signal('idle'), resetEpoch: signal(0),
     filters: signal({}), loading: signal(false), saving: signal(false), notice: signal(null), hasMore: signal(false),
-    load: async () => undefined, loadConfigurationStatus: async () => undefined, loadMore: async () => undefined, loadDetail: async () => undefined, create: async () => true, correct: async () => true, setStatus: async () => true, setPinned: async () => true, purgeSelected: async () => true,
+    load: async () => undefined, loadConfigurationStatus: async () => undefined, loadMore: async () => undefined, loadDetail: async () => undefined, create: async () => true, cancelCreateDraft: () => undefined, correct: async () => true, setStatus: async () => true, setPinned: async () => true, purgeSelected: async () => true,
     loadCandidates: async () => undefined, loadCandidate: async () => undefined, approveCandidate: async () => true, rejectCandidate: async () => true, loadSettings: async () => undefined, saveSettings: async () => true, resumeReindex: async () => true, loadPolicies: async () => undefined, createPolicy: async () => true, attachPolicy: async () => true,
   } as unknown as MemoryStore;
 }
@@ -40,6 +40,12 @@ function recordsStore(filters: Record<string, unknown> = {}, missing = false): M
   store['memories'] = signal({ items: filters['q'] ? [] : [memory], nextCursor: null });
   store['filters'] = signal(filters);
   store['modelConfigurationMissing'] = signal(missing);
+  return store as unknown as MemoryStore;
+}
+
+function selectedRecordsStore(): MemoryStore {
+  const store = fixtureStore() as unknown as Record<string, unknown>;
+  store['selected'] = signal({ ...memory, revisions: [memory.currentRevision], provenance: [], embeddingGenerations: [], embeddings: [], relations: [] });
   return store as unknown as MemoryStore;
 }
 
@@ -87,6 +93,17 @@ const meta: Meta<MemoryPageComponent> = {
 export default meta;
 type Story = StoryObj<MemoryPageComponent>;
 export const Records: Story = { name: 'Records and detail-ready list' };
+export const SelectedRecordDetail: Story = {
+  name: 'Records · selected detail inspector',
+  decorators: [applicationConfig({ providers: [{ provide: MemoryStore, useValue: selectedRecordsStore() }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([]) ] })],
+};
+export const CreateMemory: Story = {
+  name: 'Records · creation form and advanced disclosure',
+  play: async ({ canvasElement }) => {
+    const button = canvasElement.querySelector<HTMLButtonElement>('button.primary-button');
+    button?.click();
+  },
+};
 export const FirstRunSetup: Story = {
   name: 'Settings · guided first run',
   render: () => ({ template: '<aura-memory-settings-page />' }),
@@ -103,5 +120,6 @@ export const ConfiguredSettings: Story = { name: 'Settings · configured', rende
 export const ReindexSettings: Story = { name: 'Settings · reindex progress', render: () => ({ template: '<aura-memory-settings-page />' }), decorators: [moduleMetadata({ imports: [MemorySettingsPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: settingsStore(configured, runningReindex) }, provideRouter([])] })] };
 export const SettingsError: Story = { name: 'Settings · recoverable error', render: () => ({ template: '<aura-memory-settings-page />' }), decorators: [moduleMetadata({ imports: [MemorySettingsPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: settingsStore(null, null, 'Model inventory is temporarily unavailable.') }, provideRouter([])] })] };
 export const MobileDarkRecords: Story = { name: 'Records · mobile dark', parameters: { viewport: { defaultViewport: 'mobile1' }, backgrounds: { default: 'dark' } }, decorators: [darkThemeDecorator, applicationConfig({ providers: [{ provide: MemoryStore, useValue: fixtureStore() }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };
+export const MobileDetail: Story = { name: 'Records · mobile detail', parameters: { viewport: { defaultViewport: 'mobile1' } }, decorators: [applicationConfig({ providers: [{ provide: MemoryStore, useValue: selectedRecordsStore() }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };
 export const AgentPolicyAutomatic: Story = { name: 'Agent policy · automatic recall', render: () => ({ template: '<aura-agent-memory-policy-page />' }), decorators: [moduleMetadata({ imports: [AgentMemoryPolicyPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: policyStore('automatic') }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };
 export const AgentPolicyOff: Story = { name: 'Agent policy · recall off', render: () => ({ template: '<aura-agent-memory-policy-page />' }), decorators: [moduleMetadata({ imports: [AgentMemoryPolicyPageComponent] }), applicationConfig({ providers: [{ provide: MemoryStore, useValue: policyStore('off') }, { provide: AgentStore, useValue: { activeAgents: signal([]) } }, provideRouter([])] })] };

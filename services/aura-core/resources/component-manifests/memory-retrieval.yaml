@@ -1,14 +1,14 @@
 component:
   id: aura.knowledge.memory_retrieval
-  version: 1.1.0
+  version: 1.2.0
   owner: knowledge.memory
   category: retrieval
 input:
-  schema: memory-retrieval-query-v1
+  schema: memory-retrieval-query-v2
   replayable: false
   replay_reason: Retrieval queries private memory and provider/database state; replay requires an owner-authorized evaluation fixture.
 output:
-  schema: memory-retrieval-snapshot-v1
+  schema: memory-retrieval-snapshot-v2
   capture:
     content: none
     metadata: allowlisted
@@ -47,7 +47,7 @@ evaluators:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency, retrieval_stage, scope_type, degradation]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, memory_id, memory_revision_id, memory_policy_revision_id, generation_id, embedding_generation_id, fallback_grant_id, retrieval_version, recall_mode, gate_outcome, selection_order, candidate_count, recalled_count, context_tokens]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, memory_id, memory_revision_id, memory_policy_revision_id, tool_policy_revision_id, generation_id, embedding_generation_id, fallback_grant_id, retrieval_version, recall_mode, gate_outcome, selection_order, candidate_count, recalled_count, context_tokens]
   prohibited: [content, memory_text, evidence, provenance, prompt, response, vector, payload, endpoint, token, credential, owner_subject, owner, subject]
 retention:
   process_buffer: bounded

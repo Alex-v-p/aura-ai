@@ -9,9 +9,12 @@ from aura_core.domains.interaction.agents.persistence import (
     ModelPolicyRevisionRow,
     PromptBundleRevisionRow,
     PromptComponentRevisionRow,
+    ToolPolicyGrantRow,
+    ToolPolicyRevisionRow,
 )
 from aura_core.domains.interaction.agents.public import (
     GENERAL_MEMORY_POLICY_ID,
+    GENERAL_TOOL_POLICY_ID,
     GOVERNANCE_COMPONENT_ID,
     NEUTRAL_PERSONA_REVISION_ID,
     PLATFORM_COMPONENT_ID,
@@ -94,6 +97,25 @@ class SqlAgentSeeder:
                 )
             )
             session.add(
+                ToolPolicyRevisionRow(
+                    id=GENERAL_TOOL_POLICY_ID,
+                    principal_issuer="",
+                    principal_subject="",
+                    agent_profile_id=GENERAL_AGENT.profile_id,
+                    revision=1,
+                    max_calls_per_run=1,
+                    timeout_ms=30000,
+                    retry_limit=0,
+                )
+            )
+            session.add(
+                ToolPolicyGrantRow(
+                    policy_id=GENERAL_TOOL_POLICY_ID,
+                    tool_id="memory.search",
+                    tool_version=1,
+                )
+            )
+            session.add(
                 AgentRevisionRow(
                     id=GENERAL_AGENT.revision_id,
                     agent_profile_id=GENERAL_AGENT.profile_id,
@@ -106,5 +128,6 @@ class SqlAgentSeeder:
                     prompt_bundle_revision_id=PROMPT_BUNDLE_ID,
                     model_policy_revision_id=GENERAL_AGENT.policy_revision_id,
                     memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+                    tool_policy_revision_id=GENERAL_TOOL_POLICY_ID,
                 )
             )

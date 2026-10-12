@@ -1022,9 +1022,9 @@ def memory_recall_service(
     """Compose owner-scoped recall with the configured embedding provider.
 
     The provider is invoked only after recall resolves the owner-selected
-    active generation.  Provider and database failures are converted by the
-    recall service into a degraded empty result, so context assembly remains
-    independent from memory availability.
+    active generation. Automatic context may degrade to an empty result;
+    explicit tool search remains fail-closed so the executor can report an
+    unavailable search rather than implying that no memories matched.
     """
 
     endpoint = str(getattr(settings, "ollama_url", "http://ollama:11434"))
@@ -1061,6 +1061,7 @@ def memory_recall_service(
                         None if event.retrieval_stage == "selection" else event.context_tokens
                     ),
                     memory_policy_revision_id=event.memory_policy_revision_id,
+                    tool_policy_revision_id=event.tool_policy_revision_id,
                     generation_id=event.generation_id,
                     run_id=event.run_id,
                     conversation_id=event.conversation_id,

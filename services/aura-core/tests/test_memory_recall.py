@@ -22,6 +22,7 @@ from aura_core.domains.knowledge.memory.public import (
 )
 from aura_core.domains.knowledge.memory.recall import (
     MemoryQueryEmbedding,
+    MemoryRecallPurpose,
     MemoryRecallRepository,
     MemoryRecallRequest,
     MemoryRecallService,
@@ -197,6 +198,34 @@ async def test_off_policy_skips_generation_embedding_and_storage_lookup() -> Non
     assert events and events[-1].outcome == "skipped"
     assert events[-1].gate_outcome == "policy_off"
     assert events[-1].recall_mode == "off"
+
+
+@pytest.mark.asyncio
+async def test_tool_search_is_independent_from_automatic_recall_off() -> None:
+    store, generation, now = await _memory_store()
+    policy = MemoryPolicy(uuid4(), AGENT, 1, recall_mode=MemoryRecallMode.OFF)
+
+    result = await MemoryRecallService(store).recall(
+        MemoryRecallRequest(
+            ISSUER,
+            SUBJECT,
+            AGENT,
+            "pizza",
+            policy,
+            now=now,
+            purpose=MemoryRecallPurpose.TOOL_SEARCH,
+            query_embedding=MemoryQueryEmbedding(
+                (1.0, 0.0),
+                generation.id,
+                generation.model_id,
+                generation.model_revision,
+                generation.dimension,
+            ),
+        )
+    )
+
+    assert result.candidates
+    assert result.gate_outcome == "selected"
 
 
 @pytest.mark.asyncio

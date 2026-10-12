@@ -1,0 +1,98 @@
+component:
+  id: aura.governance.approval_workflow
+  version: 1.0.1
+  owner: governance.approvals
+  category: governance
+input:
+  schema: aura-approval-command-v1
+  replayable: true
+  replay_reason: Approval state and owner-scoped replay cursors are durable in PostgreSQL; transport wakeups carry identifiers only.
+output:
+  schema: aura-approval-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - transactional_outbox
+  - nats-jetstream
+metrics:
+  - approval_creation_outcome
+  - approval_decision_outcome
+  - approval_expiry_outcome
+  - approval_expiry_count
+  - approval_wait_duration_ms
+  - approval_resume_outcome
+  - approval_sse_connection_count
+  - approval_sse_replay_count
+  - approval_sse_duration_ms
+  - approval_sse_replay_duration_ms
+  - approval_decision_duration_ms
+  - approval_resume_duration_ms
+  - approval_outbox_publish_outcome
+  - approval_outbox_persistence_outcome
+  - approval_outbox_dispatch_duration_ms
+  - approval_outbox_persist_duration_ms
+  - errors
+metric_semantics:
+  approval_creation_outcome: Content-free result of persisting an owner-scoped approval and proposal reference.
+  approval_decision_outcome: Content-free approve, reject, cancel, or conflict result.
+  approval_expiry_outcome: Content-free expiry scan result with expired, empty, or failed outcome.
+  approval_expiry_count: Count of deterministic expiry transitions; no requested due time is emitted.
+  approval_wait_duration_ms: Duration from durable approval creation to its single terminal decision.
+  approval_resume_outcome: Content-free durable waiting-run resumption outcome.
+  approval_sse_connection_count: Owner-authorized approval stream connections.
+  approval_sse_replay_count: Owner-authorized persisted approval events replayed after a cursor.
+  approval_sse_duration_ms: Approval stream connection and delivery duration.
+  approval_sse_replay_duration_ms: PostgreSQL approval replay duration.
+  approval_decision_duration_ms: Approval decision and expiry transition duration.
+  approval_resume_duration_ms: Durable waiting-run resumption duration.
+  approval_outbox_publish_outcome: Classified identifier-only approval/resume publish result.
+  approval_outbox_persistence_outcome: Classified mark-published persistence result.
+  approval_outbox_dispatch_duration_ms: Monotonic approval/resume outbox publish duration.
+  approval_outbox_persist_duration_ms: Monotonic approval/resume mark-published duration.
+capture_policy: metadata_only
+evaluators:
+  - approval_owner_authorization
+  - approval_expiry_correctness
+  - approval_race_exactly_once
+  - approval_reconnect_reconciliation
+  - confirmation_side_effect_prevention
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, status]
+  trace_only:
+    - trace_id
+    - span_id
+    - parent_span_id
+    - approval_id
+    - proposal_id
+    - approval_version
+    - run_id
+    - conversation_id
+    - correlation_id
+    - causation_id
+    - command_id
+    - event_id
+    - event_type
+    - event_status
+    - event_version
+  prohibited:
+    - content
+    - proposal_content
+    - due_at
+    - prompt
+    - response
+    - arguments
+    - payload
+    - owner_subject
+    - endpoint
+    - token
+    - credential
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]
