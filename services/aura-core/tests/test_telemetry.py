@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,16 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import yaml
+from aura_core.domains.automation.notifications.repository import MemoryNotificationRepository
+from aura_core.domains.automation.reminders.public import (
+    RecurrenceFrequency,
+    RecurrenceRule,
+    ReminderSeriesIdempotencyConflict,
+    ReminderSeriesStatus,
+    ReminderSeriesTransitionError,
+    ReminderSeriesVersionConflict,
+)
+from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
 from aura_core.domains.execution.runs.public import (
     ChatMessage,
     RunClaimLost,
@@ -131,6 +142,584 @@ def test_notification_delivery_metrics_are_registered_and_content_free() -> None
     )
     assert all("content" not in repr(item).lower() for item in retained)
     assert metrics.stats().rejected == 0
+
+
+def test_recurring_reminder_metrics_are_registered_and_reject_private_dimensions() -> None:
+    metrics = MetadataMetrics()
+    required = (
+        "reminder_series_command_duration_ms",
+        "reminder_series_command_outcome",
+        "reminder_recurrence_calculation_outcome",
+        "reminder_occurrence_generated_count",
+        "reminder_occurrence_skipped_count",
+        "reminder_occurrence_missed_count",
+        "reminder_series_version_conflict_count",
+        "reminder_series_idempotency_conflict_count",
+        "reminder_series_due_lag_ms",
+    )
+    scheduler_owned = {
+        "reminder_occurrence_generated_count",
+        "reminder_occurrence_skipped_count",
+        "reminder_occurrence_missed_count",
+        "reminder_series_due_lag_ms",
+    }
+    for name in required:
+        component = (
+            "aura.automation.reminder_scheduler"
+            if name in scheduler_owned
+            else "aura.automation.reminder_management"
+        )
+        if name.endswith("duration_ms") or name.endswith("lag_ms"):
+            metrics.observe(
+                component,
+                name,
+                1.0,
+                outcome="ok",
+            )
+        else:
+            metrics.increment(
+                component,
+                name,
+                outcome="ok",
+            )
+    retained = metrics.snapshot()
+    assert {item.metric for item in retained} == set(required)
+    assert all(
+        item.component_id == (
+            "aura.automation.reminder_scheduler"
+            if item.metric in scheduler_owned
+            else "aura.automation.reminder_management"
+        )
+        for item in retained
+    )
+    assert not any(
+        item.component_id == "aura.automation.reminder_management"
+        and item.metric in scheduler_owned
+        for item in retained
+    )
+    for item in retained:
+        attributes = repr((*item.dimensions, *item.trace_attributes)).lower()
+        assert not any(
+            forbidden in attributes
+            for forbidden in ("content", "recurrence", "timezone", "local_time", "due_at", "owner")
+        )
+    assert metrics.stats().rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_recurring_repository_runtime_metrics_cover_success_conflict_error_and_firing(
+) -> None:
+    secret = "private runtime reminder content"
+    clock = [datetime(2026, 1, 1, 12, tzinfo=UTC)]
+    metrics = MetadataMetrics()
+    reminders = MemoryReminderRepository(clock=lambda: clock[0], metrics=metrics)
+    rule = RecurrenceRule(RecurrenceFrequency.DAILY)
+    series = await reminders.create_series(
+        "https://authentik.example",
+        "telemetry-owner",
+        content=secret,
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=rule,
+        idempotency_key="00000000-0000-4000-8000-000000000064",
+    )
+    with pytest.raises(ReminderSeriesIdempotencyConflict):
+        await reminders.create_series(
+            "https://authentik.example",
+            "telemetry-owner",
+            content="changed private content",
+            local_start=datetime(2026, 1, 5, 9, 30),
+            timezone="Europe/Brussels",
+            rule=rule,
+            idempotency_key="00000000-0000-4000-8000-000000000064",
+        )
+    with pytest.raises(ValueError):
+        await reminders.create_series(
+            "https://authentik.example",
+            "telemetry-owner",
+            content=secret,
+            local_start=datetime(2026, 1, 5, 9, 30),
+            timezone="Not/A-Timezone",
+            rule=rule,
+            idempotency_key="00000000-0000-4000-8000-000000000065",
+        )
+    notifications = MemoryNotificationRepository(
+        reminders,
+        clock=lambda: datetime(2026, 1, 5, 10, tzinfo=UTC),
+        metrics=metrics,
+    )
+    result = await notifications.deliver_due(limit=10)
+    assert result.fired_count == 1
+    assert series.next_reminder_id is not None
+
+    names = {item.metric for item in metrics.snapshot()}
+    assert {
+        "reminder_series_command_duration_ms",
+        "reminder_series_command_outcome",
+        "reminder_recurrence_calculation_outcome",
+        "reminder_occurrence_generated_count",
+        "reminder_occurrence_skipped_count",
+        "reminder_occurrence_missed_count",
+        "reminder_series_idempotency_conflict_count",
+        "reminder_fired_count",
+    } <= names
+    rendered = repr(metrics.snapshot()).lower()
+    assert secret not in rendered
+    assert "changed private content" not in rendered
+    private_attributes = repr(
+        [
+            (dict(item.dimensions), dict(item.trace_attributes))
+            for item in metrics.snapshot()
+        ]
+    ).lower()
+    assert all(
+        field not in private_attributes
+        for field in (
+            "content",
+            "recurrence",
+            "timezone",
+            "local_start",
+            "due_at",
+            "owner",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_recurring_command_telemetry_correlates_lifecycle_outcomes_and_terminal_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [datetime(2026, 1, 1, 12, tzinfo=UTC)]
+    metrics = MetadataMetrics()
+    repository = MemoryReminderRepository(clock=lambda: clock[0], metrics=metrics)
+    rule = RecurrenceRule(RecurrenceFrequency.DAILY)
+    key = "00000000-0000-4000-8000-000000000071"
+    series = await repository.create_series(
+        "https://authentik.example",
+        "telemetry-lifecycle-owner",
+        content="private lifecycle content",
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=rule,
+        idempotency_key=key,
+    )
+    with pytest.raises(ReminderSeriesIdempotencyConflict):
+        await repository.create_series(
+            "https://authentik.example",
+            "telemetry-lifecycle-owner",
+            content="different private lifecycle content",
+            local_start=datetime(2026, 1, 5, 9, 30),
+            timezone="Europe/Brussels",
+            rule=rule,
+            idempotency_key=key,
+        )
+    with pytest.raises(ReminderSeriesVersionConflict):
+        await repository.pause_series(
+            "https://authentik.example",
+            "telemetry-lifecycle-owner",
+            series.id,
+            expected_version=999,
+            idempotency_key="00000000-0000-4000-8000-000000000072",
+        )
+    with pytest.raises(ReminderSeriesTransitionError):
+        await repository.resume_series(
+            "https://authentik.example",
+            "telemetry-lifecycle-owner",
+            series.id,
+            expected_version=series.version,
+            idempotency_key="00000000-0000-4000-8000-000000000073",
+        )
+    with pytest.raises(ValueError):
+        await repository.create_series(
+            "https://authentik.example",
+            "telemetry-lifecycle-owner",
+            content="private lifecycle content",
+            local_start=datetime(2026, 1, 5, 9, 30),
+            timezone="Not/A-Timezone",
+            rule=rule,
+            idempotency_key="00000000-0000-4000-8000-000000000074",
+        )
+
+    paused = await repository.pause_series(
+        "https://authentik.example",
+        "telemetry-lifecycle-owner",
+        series.id,
+        expected_version=series.version,
+        idempotency_key="00000000-0000-4000-8000-000000000075",
+    )
+    resumed = await repository.resume_series(
+        "https://authentik.example",
+        "telemetry-lifecycle-owner",
+        series.id,
+        expected_version=paused.version,
+        idempotency_key="00000000-0000-4000-8000-000000000076",
+    )
+    skipped = await repository.skip_next(
+        "https://authentik.example",
+        "telemetry-lifecycle-owner",
+        series.id,
+        expected_version=resumed.version,
+        idempotency_key="00000000-0000-4000-8000-000000000077",
+    )
+    await repository.update_series(
+        "https://authentik.example",
+        "telemetry-lifecycle-owner",
+        series.id,
+        expected_version=skipped.version,
+        content="updated private lifecycle content",
+        idempotency_key="00000000-0000-4000-8000-000000000078",
+    )
+
+    clock[0] = datetime(2026, 1, 10, 12, tzinfo=UTC)
+    notifications = MemoryNotificationRepository(
+        repository,
+        clock=lambda: clock[0],
+        metrics=metrics,
+    )
+    delivery = await notifications.deliver_due(limit=10)
+    assert delivery.fired_count == 1
+
+    terminal_metrics = MetadataMetrics()
+    terminal_repository = MemoryReminderRepository(
+        clock=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC),
+        metrics=terminal_metrics,
+    )
+    terminal = await terminal_repository.create_series(
+        "https://authentik.example",
+        "telemetry-terminal-owner",
+        content="private terminal content",
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(RecurrenceFrequency.DAILY, count=1),
+        idempotency_key="00000000-0000-4000-8000-000000000079",
+    )
+    terminal_delivery = await terminal_repository.fire_due_result(
+        now=datetime(2026, 1, 5, 10, tzinfo=UTC), limit=10
+    )
+    assert terminal_delivery.reminders
+    terminal_stored = await terminal_repository.get_series(
+        "https://authentik.example", "telemetry-terminal-owner", terminal.id
+    )
+    assert terminal_stored.status is ReminderSeriesStatus.COMPLETED
+    assert terminal_stored.next_reminder_id is None
+    assert terminal_delivery.generated_count == 0
+    assert terminal_repository.metrics is terminal_metrics
+
+    outcomes = [
+        item
+        for item in metrics.snapshot()
+        if item.metric
+        in {
+            "reminder_series_command_outcome",
+            "reminder_series_command_duration_ms",
+            "reminder_recurrence_calculation_outcome",
+            "reminder_series_version_conflict_count",
+            "reminder_series_idempotency_conflict_count",
+            "reminder_series_due_lag_ms",
+        }
+    ]
+    assert outcomes
+    assert all(dict(item.dimensions).get("outcome") for item in outcomes)
+    command_outcomes = [
+        item for item in outcomes if item.metric != "reminder_series_due_lag_ms"
+    ]
+    assert all(dict(item.dimensions).get("operation") for item in command_outcomes)
+    operations = {dict(item.dimensions).get("operation") for item in command_outcomes}
+    assert {"create", "pause", "resume", "skip", "update"} <= operations
+    successful_duration_operations = [
+        dict(item.dimensions).get("operation")
+        for item in metrics.snapshot()
+        if item.metric == "reminder_series_command_duration_ms"
+        and dict(item.dimensions).get("outcome") == "ok"
+    ]
+    assert {
+        operation: successful_duration_operations.count(operation)
+        for operation in ("create", "pause", "resume", "skip", "update")
+    } == {operation: 1 for operation in ("create", "pause", "resume", "skip", "update")}
+    advance_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "reminder_fire_duration_ms"
+        and dict(item.trace_attributes).get("operation") == "reminder.series.advance"
+    ]
+    assert advance_spans
+    assert all(item.value > 0 for item in advance_spans)
+    assert all(dict(item.dimensions).get("outcome") == "ok" for item in advance_spans)
+    assert metrics.stats().rejected == 0
+    rendered = repr(
+        [
+            (dict(item.dimensions), dict(item.trace_attributes))
+            for item in outcomes
+        ]
+    ).lower()
+    assert not any(
+        private in rendered
+        for private in (
+            "private lifecycle content",
+            "private terminal content",
+            "timezone",
+            "local_start",
+            "due_at",
+            "owner",
+        )
+    )
+
+    def fail_persistence(*_: object, **__: object) -> None:
+        raise RuntimeError("simulated persistence failure")
+
+    monkeypatch.setattr(repository, "_record_series_event", fail_persistence)
+    with pytest.raises(RuntimeError, match="simulated persistence failure"):
+        await repository.create_series(
+            "https://authentik.example",
+            "telemetry-failure-owner",
+            content="private failure content",
+            local_start=datetime(2026, 1, 15, 9, 30),
+            timezone="Europe/Brussels",
+            rule=rule,
+            idempotency_key="00000000-0000-4000-8000-000000000080",
+        )
+    failure_metrics = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "reminder_series_command_outcome"
+        and dict(item.dimensions).get("outcome") == "error"
+    ]
+    assert failure_metrics
+
+
+@pytest.mark.asyncio
+async def test_recurrence_failure_telemetry_is_emitted_after_failed_advancement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule = RecurrenceRule(RecurrenceFrequency.DAILY)
+
+    invalid_metrics = MetadataMetrics()
+    invalid_repository = MemoryReminderRepository(
+        clock=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC), metrics=invalid_metrics
+    )
+    invalid_series = await invalid_repository.create_series(
+        "https://authentik.example",
+        "telemetry-invalid-owner",
+        content="private invalid content",
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=rule,
+        idempotency_key="00000000-0000-4000-8000-000000000081",
+    )
+    with pytest.raises(ReminderSeriesTransitionError):
+        await invalid_repository.resume_series(
+            "https://authentik.example",
+            "telemetry-invalid-owner",
+            invalid_series.id,
+            expected_version=invalid_series.version,
+            idempotency_key="00000000-0000-4000-8000-000000000082",
+        )
+    with pytest.raises(ValueError):
+        await invalid_repository.update_series(
+            "https://authentik.example",
+            "telemetry-invalid-owner",
+            invalid_series.id,
+            expected_version=invalid_series.version,
+            timezone="Not/A-Timezone",
+            idempotency_key="00000000-0000-4000-8000-000000000083",
+        )
+    invalid_calculations = [
+        item
+        for item in invalid_metrics.snapshot()
+        if item.metric == "reminder_recurrence_calculation_outcome"
+        and dict(item.dimensions).get("outcome") == "error"
+    ]
+    assert {dict(item.dimensions).get("operation") for item in invalid_calculations} >= {
+        "resume",
+        "update",
+    }
+
+    memory_metrics = MetadataMetrics()
+    memory_repository = MemoryReminderRepository(
+        clock=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC), metrics=memory_metrics
+    )
+    await memory_repository.create_series(
+        "https://authentik.example",
+        "telemetry-memory-failure-owner",
+        content="private memory failure content",
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=rule,
+        idempotency_key="00000000-0000-4000-8000-000000000084",
+    )
+
+    async def fail_materialization(*_: object, **__: object) -> object:
+        raise RuntimeError("simulated advancement materialization failure")
+
+    monkeypatch.setattr(memory_repository, "_materialize_memory_occurrence", fail_materialization)
+    with pytest.raises(RuntimeError, match="advancement materialization failure"):
+        await memory_repository.fire_due_result(
+            now=datetime(2026, 1, 5, 10, tzinfo=UTC), limit=10
+        )
+    memory_calculations = [
+        item
+        for item in memory_metrics.snapshot()
+        if item.metric == "reminder_recurrence_calculation_outcome"
+        and dict(item.dimensions).get("operation") == "fire"
+    ]
+    assert memory_calculations
+    assert any(dict(item.dimensions).get("outcome") == "error" for item in memory_calculations)
+    memory_advances = [
+        item
+        for item in memory_metrics.snapshot()
+        if item.metric == "reminder_fire_duration_ms"
+        and dict(item.trace_attributes).get("operation") == "reminder.series.advance"
+    ]
+    assert memory_advances
+    assert all(dict(item.dimensions).get("outcome") == "error" for item in memory_advances)
+
+    persistence_metrics = MetadataMetrics()
+    persistence_repository = MemoryReminderRepository(
+        clock=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC), metrics=persistence_metrics
+    )
+    await persistence_repository.create_series(
+        "https://authentik.example",
+        "telemetry-persistence-failure-owner",
+        content="private persistence failure content",
+        local_start=datetime(2026, 1, 5, 9, 30),
+        timezone="Europe/Brussels",
+        rule=rule,
+        idempotency_key="00000000-0000-4000-8000-000000000085",
+    )
+
+    def fail_event(*_: object, **__: object) -> None:
+        raise RuntimeError("simulated advancement persistence failure")
+
+    monkeypatch.setattr(persistence_repository, "_record_series_event", fail_event)
+    with pytest.raises(RuntimeError, match="advancement persistence failure"):
+        await persistence_repository.fire_due_result(
+            now=datetime(2026, 1, 5, 10, tzinfo=UTC), limit=10
+        )
+    persistence_calculations = [
+        item
+        for item in persistence_metrics.snapshot()
+        if item.metric == "reminder_recurrence_calculation_outcome"
+        and dict(item.dimensions).get("operation") == "fire"
+    ]
+    assert persistence_calculations
+    assert any(
+        dict(item.dimensions).get("outcome") == "error" for item in persistence_calculations
+    )
+    persistence_advances = [
+        item
+        for item in persistence_metrics.snapshot()
+        if item.metric == "reminder_fire_duration_ms"
+        and dict(item.trace_attributes).get("operation") == "reminder.series.advance"
+    ]
+    assert persistence_advances
+    assert all(
+        dict(item.dimensions).get("outcome") == "error" for item in persistence_advances
+    )
+
+
+@pytest.mark.asyncio
+async def test_sql_advancement_outbox_failure_records_one_error_span_and_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.environ.get("AURA_0064_DATABASE_URL")
+    if not database_url:
+        pytest.skip("AURA_0064_DATABASE_URL is required for SQL advancement telemetry coverage")
+    try:
+        from alembic import command
+        from aura_core.domains.automation.notifications.repository import (
+            SqlNotificationRepository,
+        )
+        from aura_core.domains.automation.reminders.repository import SqlReminderRepository
+        from aura_core.entrypoints.cli import alembic_config
+        from aura_core.platform.auth import Settings
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    except ImportError as exc:
+        pytest.skip(f"PostgreSQL migration dependencies unavailable: {exc}")
+
+    try:
+        command.upgrade(alembic_config(Settings(database_url=database_url)), "head")
+    except Exception as exc:
+        message = str(getattr(exc, "orig", exc)).lower()
+        if any(
+            marker in message for marker in ("connection refused", "could not connect", "timed out")
+        ):
+            pytest.skip(f"PostgreSQL unavailable: {type(exc).__name__}")
+        raise
+
+    engine = create_async_engine(database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    clock = [datetime(2026, 1, 1, 12, tzinfo=UTC)]
+    metrics = MetadataMetrics()
+    reminders = SqlReminderRepository(sessions, clock=lambda: clock[0], metrics=metrics)
+    notifications = SqlNotificationRepository(sessions, clock=lambda: clock[0], metrics=metrics)
+    notifications.set_reminder_delivery(reminders)
+    subject = f"series-telemetry-live-{uuid4().hex}"
+    series_id: UUID | None = None
+    try:
+        series = await reminders.create_series(
+            "https://authentik.example",
+            subject,
+            content="private SQL advancement failure content",
+            local_start=datetime(2026, 1, 5, 9, 30),
+            timezone="Europe/Brussels",
+            rule=RecurrenceRule(RecurrenceFrequency.DAILY),
+            idempotency_key=str(uuid4()),
+        )
+        series_id = series.id
+
+        async def fail_stage(*_: object, **__: object) -> None:
+            raise RuntimeError("simulated SQL advancement outbox failure")
+
+        monkeypatch.setattr(reminders, "_stage_series", fail_stage)
+        clock[0] = datetime(2026, 1, 5, 10, tzinfo=UTC)
+        with pytest.raises(RuntimeError, match="SQL advancement outbox failure"):
+            await notifications.deliver_due(limit=10)
+
+        advance_spans = [
+            item
+            for item in metrics.snapshot()
+            if item.metric == "reminder_fire_duration_ms"
+            and dict(item.trace_attributes).get("operation") == "reminder.series.advance"
+        ]
+        assert len(advance_spans) == 1
+        assert dict(advance_spans[0].dimensions).get("outcome") == "error"
+        recurrence_errors = [
+            item
+            for item in metrics.snapshot()
+            if item.metric == "reminder_recurrence_calculation_outcome"
+            and dict(item.dimensions).get("operation") == "fire"
+            and dict(item.dimensions).get("outcome") == "error"
+        ]
+        assert len(recurrence_errors) == 1
+        assert "private SQL advancement failure content" not in repr(metrics.snapshot())
+
+        stored = await reminders.get_series(
+            "https://authentik.example", subject, series_id
+        )
+        assert stored.status.value == "active"
+        history = await reminders.list_occurrences(
+            "https://authentik.example", subject, series_id
+        )
+        assert sum(item.status.value == "scheduled" for item in history) == 1
+        assert sum(item.status.value == "fired" for item in history) == 0
+    finally:
+        async with sessions() as session, session.begin():
+            for statement in (
+                "DELETE FROM notification_events WHERE principal_subject = :subject",
+                "DELETE FROM notifications WHERE principal_subject = :subject",
+                "DELETE FROM outbox WHERE aggregate_id = :series_id",
+                "DELETE FROM reminder_occurrences WHERE series_id = :series_id",
+                "DELETE FROM reminder_series_command_idempotency "
+                "WHERE principal_subject = :subject",
+                "DELETE FROM reminder_series WHERE principal_subject = :subject",
+                "DELETE FROM reminders WHERE principal_subject = :subject",
+            ):
+                await session.execute(
+                    text(statement),
+                    {"subject": subject, "series_id": series_id},
+                )
+        await engine.dispose()
 
 
 def test_scheduler_and_notification_spans_use_duration_metrics_and_valid_trace_links() -> None:

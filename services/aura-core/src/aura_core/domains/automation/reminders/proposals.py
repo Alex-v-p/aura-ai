@@ -130,7 +130,12 @@ class MemoryReminderProposalRepository:
 
 
 class SqlReminderProposalRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], *, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.sessions = sessions
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -162,8 +167,15 @@ class SqlReminderProposalRepository:
         normalized_content = normalize_content(content)
         normalized_due = ensure_due_at_future(due_at, now=created)
         item = ReminderProposal(
-            uuid4(), issuer, subject, normalized_content, normalized_due, run_id,
-            conversation_id, tool_call_id, created,
+            uuid4(),
+            issuer,
+            subject,
+            normalized_content,
+            normalized_due,
+            run_id,
+            conversation_id,
+            tool_call_id,
+            created,
             proposal_expiry(created_at=created, due_at=normalized_due),
         )
         if session is not None:
@@ -184,9 +196,15 @@ class SqlReminderProposalRepository:
             return item
         async with self.sessions() as owned_session, owned_session.begin():
             return await self.create(
-                issuer, subject, content=content, due_at=due_at, run_id=run_id,
-                conversation_id=conversation_id, tool_call_id=tool_call_id,
-                now=created, session=owned_session,
+                issuer,
+                subject,
+                content=content,
+                due_at=due_at,
+                run_id=run_id,
+                conversation_id=conversation_id,
+                tool_call_id=tool_call_id,
+                now=created,
+                session=owned_session,
             )
 
     async def get(self, issuer: str, subject: str, proposal_id: UUID) -> ReminderProposal:

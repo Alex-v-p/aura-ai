@@ -123,3 +123,14 @@ def test_notification_delivery_migration_follows_reminder_foundation() -> None:
     spec.loader.exec_module(module)
     assert module.revision == "0015_notification_delivery"
     assert module.down_revision == "0014_reminder_foundation"
+
+
+def test_recurring_reminder_migration_follows_approval_backed_reminder_tool() -> None:
+    path = MIGRATION_DIR / "0017_recurring_reminders.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0017", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0017_recurring_reminders"
+    assert module.down_revision == "0016_approval_reminder_tool"

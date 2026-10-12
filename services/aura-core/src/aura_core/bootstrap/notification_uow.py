@@ -19,7 +19,7 @@ def notification_repository(
     sessions: async_sessionmaker[AsyncSession] | None,
     *,
     testing: bool = False,
-    reminder_repository: object | None = None,
+    reminder_repository: ReminderDeliveryPort | None = None,
     reminder_delivery: ReminderDeliveryPort | None = None,
     metrics: MetadataMetrics | None = None,
 ) -> NotificationRepository:

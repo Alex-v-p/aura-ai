@@ -89,6 +89,7 @@ modules:
   - services/aura-core/src/aura_core/domains/automation/reminders/public.py
   - services/aura-core/src/aura_core/domains/automation/reminders/persistence.py
   - services/aura-core/src/aura_core/domains/automation/reminders/repository.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/recurrence.py
   dependencies:
   - aura-core.platform.outbox
   - aura-core.domains.governance.audit

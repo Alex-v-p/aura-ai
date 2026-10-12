@@ -76,6 +76,23 @@ def test_generic_aggregate_command_has_no_run_or_conversation_ids() -> None:
     )
 
 
+def test_generic_aggregate_command_accepts_bounded_sequence_metadata() -> None:
+    command = make_aggregate_command(
+        "aura.automation.events.v1",
+        uuid4(),
+        "automation.reminder-series",
+        uuid4(),
+        identifiers=(
+            ("eventType", "reminder.series.advanced"),
+            ("occurrenceSequence", 2),
+            ("skippedCount", 1),
+        ),
+    )
+
+    payload = json.loads(command.wire_payload())
+    assert payload["occurrenceSequence"] == 2
+
+
 def test_generic_aggregate_command_rejects_content_identifiers() -> None:
     with pytest.raises(ValueError, match="content-bearing"):
         make_aggregate_command(
@@ -85,6 +102,48 @@ def test_generic_aggregate_command_rejects_content_identifiers() -> None:
             uuid4(),
             identifiers=(("content", "private-reminder"),),
         )
+
+
+def test_generic_reminder_series_accepts_bounded_sequence_and_rejects_private_time_fields() -> None:
+    aggregate_id = uuid4()
+    command = make_aggregate_command(
+        "aura.automation.reminder-series.v1",
+        uuid4(),
+        "automation.reminder-series",
+        aggregate_id,
+        identifiers=(
+            ("eventType", "reminder.series.advanced"),
+            ("status", "active"),
+            ("version", 2),
+            ("occurrenceSequence", 2_147_483_647),
+            ("occurrenceCount", 2_147_483_647),
+            ("skippedCount", 0),
+            ("missedCount", 0),
+        ),
+    )
+    payload = json.loads(command.wire_payload())
+    assert payload["occurrenceSequence"] == 2_147_483_647
+    assert payload["occurrenceCount"] == 2_147_483_647
+    assert payload["skippedCount"] == 0
+    assert payload["missedCount"] == 0
+
+    for key, value in (
+        ("occurrenceSequence", -1),
+        ("occurrenceSequence", 2_147_483_648),
+        ("content", "private reminder"),
+        ("recurrence", "daily"),
+        ("timezone", "Europe/Brussels"),
+        ("localStart", "2026-01-05T09:30:00"),
+        ("dueAt", "2026-01-05T08:30:00Z"),
+    ):
+        with pytest.raises(ValueError):
+            make_aggregate_command(
+                "aura.automation.reminder-series.v1",
+                uuid4(),
+                "automation.reminder-series",
+                aggregate_id,
+                identifiers=((key, value),),
+            )
 
 
 def test_notification_event_schema_and_outbox_payload_are_identifier_only() -> None:

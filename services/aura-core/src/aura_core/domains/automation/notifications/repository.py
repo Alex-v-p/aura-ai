@@ -14,10 +14,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from time import monotonic
-from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -45,7 +44,6 @@ from aura_core.domains.automation.notifications.public import (
 )
 from aura_core.domains.automation.reminders.public import (
     REMINDER_TOPIC,
-    Reminder,
     ReminderDeliveryPort,
     ReminderStatus,
     event_command_id,
@@ -159,7 +157,7 @@ class MemoryNotificationRepository:
 
     def __init__(
         self,
-        reminder_repository: object | None = None,
+        reminder_repository: ReminderDeliveryPort | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
         metrics: MetadataMetrics | None = None,
@@ -195,10 +193,23 @@ class MemoryNotificationRepository:
             return False
         return True
 
-    async def list(self, issuer: str, subject: str, *, view: NotificationView = NotificationView.ALL, status: NotificationStatus | None = None, limit: int, cursor: str | None = None) -> NotificationPage:
+    async def list(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        view: NotificationView = NotificationView.ALL,
+        status: NotificationStatus | None = None,
+        limit: int,
+        cursor: str | None = None,
+    ) -> NotificationPage:
         issuer, subject = _owner(issuer, subject)
         stamp_id = decode_cursor(cursor, issuer, subject) if cursor else None
-        values = [item for item in self._items.values() if (item.issuer, item.subject) == (issuer, subject)]
+        values = [
+            item
+            for item in self._items.values()
+            if (item.issuer, item.subject) == (issuer, subject)
+        ]
         if view is NotificationView.UNREAD or status is NotificationStatus.DELIVERED:
             values = [item for item in values if item.status is NotificationStatus.DELIVERED]
         elif status is NotificationStatus.ACKNOWLEDGED:
@@ -226,7 +237,15 @@ class MemoryNotificationRepository:
             raise NotificationNotFound("notification not found")
         return item
 
-    async def acknowledge(self, issuer: str, subject: str, notification_id: UUID, *, expected_version: int, idempotency_key: str) -> Notification:
+    async def acknowledge(
+        self,
+        issuer: str,
+        subject: str,
+        notification_id: UUID,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> Notification:
         issuer, subject = _owner(issuer, subject)
         async with self._lock:
             item = await self.get(issuer, subject, notification_id)
@@ -241,9 +260,22 @@ class MemoryNotificationRepository:
             if item.status is NotificationStatus.ACKNOWLEDGED:
                 raise NotificationVersionConflict("notification is already acknowledged")
             now = self._time()
-            updated = Notification(item.id, item.issuer, item.subject, item.reminder_id, NotificationStatus.ACKNOWLEDGED, item.version + 1, item.created_at, now, item.delivered_at, now)
+            updated = Notification(
+                item.id,
+                item.issuer,
+                item.subject,
+                item.reminder_id,
+                NotificationStatus.ACKNOWLEDGED,
+                item.version + 1,
+                item.created_at,
+                now,
+                item.delivered_at,
+                now,
+            )
             self._items[item.id] = updated
-            event = NotificationReplayEvent(uuid4(), updated.id, updated.reminder_id, updated.status, updated.version, now)
+            event = NotificationReplayEvent(
+                uuid4(), updated.id, updated.reminder_id, updated.status, updated.version, now
+            )
             self._events.append(event)
             self._idempotency[(issuer, subject, idempotency_key)] = (fingerprint, updated)
             self._wake.set()
@@ -256,31 +288,49 @@ class MemoryNotificationRepository:
         async with self._lock:
             now = self._time()
             delivery = self.reminder_repository
-            fire_due = getattr(delivery, "fire_due", None)
-            if not callable(fire_due):
+            if delivery is None:
                 raise RuntimeError("reminder delivery port is not configured")
-            fire = cast(
-                Callable[..., Awaitable[tuple[Reminder, ...]]],
-                fire_due,
-            )
-            fired_reminders = tuple(
-                await fire(now=now, limit=limit)
-            )
+            delivery_result = await delivery.fire_due_result(now=now, limit=limit)
+            fired_reminders = delivery_result.reminders
             fired: list[Notification] = []
             duplicates = 0
             for reminder in fired_reminders:
-                existing = next((item for item in self._items.values() if item.reminder_id == reminder.id), None)
+                existing = next(
+                    (item for item in self._items.values() if item.reminder_id == reminder.id), None
+                )
                 if existing is not None:
                     duplicates += 1
                     continue
-                notification = Notification(uuid4(), reminder.issuer, reminder.subject, reminder.id, NotificationStatus.DELIVERED, 1, reminder.created_at, now, now)
+                notification = Notification(
+                    uuid4(),
+                    reminder.issuer,
+                    reminder.subject,
+                    reminder.id,
+                    NotificationStatus.DELIVERED,
+                    1,
+                    reminder.created_at,
+                    now,
+                    now,
+                )
                 self._items[notification.id] = notification
-                self._events.append(NotificationReplayEvent(uuid4(), notification.id, reminder.id, notification.status, notification.version, now))
+                self._events.append(
+                    NotificationReplayEvent(
+                        uuid4(),
+                        notification.id,
+                        reminder.id,
+                        notification.status,
+                        notification.version,
+                        now,
+                    )
+                )
                 fired.append(notification)
             if fired:
                 self._wake.set()
                 self._wake = asyncio.Event()
-            lag = max((max(0.0, (now - item.due_at).total_seconds() * 1000) for item in fired_reminders), default=0.0)
+            lag = max(
+                (max(0.0, (now - item.due_at).total_seconds() * 1000) for item in fired_reminders),
+                default=0.0,
+            )
             if duplicates:
                 if self.metrics is not None:
                     self.metrics.observe(
@@ -289,11 +339,50 @@ class MemoryNotificationRepository:
                         float(duplicates),
                         outcome="duplicate",
                     )
-            return DueDeliveryResult(tuple(fired), len(fired_reminders), duplicates, lag)
+            generated = delivery_result.generated_count
+            skipped = delivery_result.skipped_count
+            missed = delivery_result.missed_count
+            if self.metrics is not None:
+                self.metrics.increment(
+                    SCHEDULER_COMPONENT,
+                    "reminder_fired_count",
+                    outcome="ok",
+                )
+                self.metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    "reminder_occurrence_generated_count",
+                    float(generated),
+                    outcome="ok",
+                )
+                self.metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    "reminder_occurrence_skipped_count",
+                    float(skipped),
+                    outcome="ok",
+                )
+                self.metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    "reminder_occurrence_missed_count",
+                    float(missed),
+                    outcome="ok",
+                )
+            return DueDeliveryResult(
+                tuple(fired), len(fired_reminders), duplicates, lag, generated, skipped, missed
+            )
 
-    async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[NotificationReplayEvent, ...]:
+    async def replay(
+        self, issuer: str, subject: str, *, after: UUID | None = None
+    ) -> tuple[NotificationReplayEvent, ...]:
         issuer, subject = _owner(issuer, subject)
-        events = [event for event in self._events if (self._items[event.notification_id].issuer, self._items[event.notification_id].subject) == (issuer, subject)]
+        events = [
+            event
+            for event in self._events
+            if (
+                self._items[event.notification_id].issuer,
+                self._items[event.notification_id].subject,
+            )
+            == (issuer, subject)
+        ]
         if after is None:
             return tuple(events)
         positions = [index for index, event in enumerate(events) if event.id == after]
@@ -304,9 +393,19 @@ class MemoryNotificationRepository:
 
     async def cursor_is_authorized(self, issuer: str, subject: str, event_id: UUID) -> bool:
         issuer, subject = _owner(issuer, subject)
-        return any(event.id == event_id and (self._items[event.notification_id].issuer, self._items[event.notification_id].subject) == (issuer, subject) for event in self._events)
+        return any(
+            event.id == event_id
+            and (
+                self._items[event.notification_id].issuer,
+                self._items[event.notification_id].subject,
+            )
+            == (issuer, subject)
+            for event in self._events
+        )
 
-    async def stream(self, issuer: str, subject: str, *, after: UUID | None = None) -> AsyncIterator[NotificationReplayEvent]:
+    async def stream(
+        self, issuer: str, subject: str, *, after: UUID | None = None
+    ) -> AsyncIterator[NotificationReplayEvent]:
         cursor = after
         while True:
             events = await self.replay(issuer, subject, after=cursor)
@@ -326,7 +425,13 @@ class MemoryNotificationRepository:
 class SqlNotificationRepository:
     """PostgreSQL adapter for durable inbox delivery and owner replay."""
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], *, metrics: MetadataMetrics | None = None, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        metrics: MetadataMetrics | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.sessions = sessions
         self.metrics = metrics
         self._clock = clock or _now
@@ -392,11 +497,23 @@ class SqlNotificationRepository:
             return False
         return True
 
-    async def list(self, issuer: str, subject: str, *, view: NotificationView = NotificationView.ALL, status: NotificationStatus | None = None, limit: int, cursor: str | None = None) -> NotificationPage:
+    async def list(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        view: NotificationView = NotificationView.ALL,
+        status: NotificationStatus | None = None,
+        limit: int,
+        cursor: str | None = None,
+    ) -> NotificationPage:
         issuer, subject = _owner(issuer, subject)
         stamp_id = decode_cursor(cursor, issuer, subject) if cursor else None
         async with self.sessions() as session:
-            query = select(NotificationRow).where(NotificationRow.principal_issuer == issuer, NotificationRow.principal_subject == subject)
+            query = select(NotificationRow).where(
+                NotificationRow.principal_issuer == issuer,
+                NotificationRow.principal_subject == subject,
+            )
             if view is NotificationView.UNREAD or status is NotificationStatus.DELIVERED:
                 query = query.where(NotificationRow.status == NotificationStatus.DELIVERED.value)
             elif status is NotificationStatus.ACKNOWLEDGED:
@@ -404,7 +521,10 @@ class SqlNotificationRepository:
             query = query.order_by(NotificationRow.created_at.desc(), NotificationRow.id.desc())
             if stamp_id:
                 stamp, item_id = stamp_id
-                query = query.where((NotificationRow.created_at < stamp) | ((NotificationRow.created_at == stamp) & (NotificationRow.id < item_id)))
+                query = query.where(
+                    (NotificationRow.created_at < stamp)
+                    | ((NotificationRow.created_at == stamp) & (NotificationRow.id < item_id))
+                )
             rows = list((await session.execute(query.limit(limit + 1))).scalars().all())
             items = tuple(_notification(row) for row in rows[:limit])
             next_cursor = None
@@ -424,12 +544,28 @@ class SqlNotificationRepository:
     async def get(self, issuer: str, subject: str, notification_id: UUID) -> Notification:
         issuer, subject = _owner(issuer, subject)
         async with self.sessions() as session:
-            row = (await session.execute(select(NotificationRow).where(NotificationRow.id == notification_id, NotificationRow.principal_issuer == issuer, NotificationRow.principal_subject == subject))).scalar_one_or_none()
+            row = (
+                await session.execute(
+                    select(NotificationRow).where(
+                        NotificationRow.id == notification_id,
+                        NotificationRow.principal_issuer == issuer,
+                        NotificationRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
             if row is None:
                 raise NotificationNotFound("notification not found")
             return _notification(row)
 
-    async def acknowledge(self, issuer: str, subject: str, notification_id: UUID, *, expected_version: int, idempotency_key: str) -> Notification:
+    async def acknowledge(
+        self,
+        issuer: str,
+        subject: str,
+        notification_id: UUID,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> Notification:
         issuer, subject = _owner(issuer, subject)
         async with self.sessions() as session, session.begin():
             await session.execute(
@@ -437,12 +573,24 @@ class SqlNotificationRepository:
                 {"lock_key": _idempotency_lock_key(issuer, subject, idempotency_key)},
             )
             fingerprint = _fingerprint("acknowledge", notification_id, expected_version)
-            existing = await session.get(NotificationIdempotencyRow, (issuer, subject, idempotency_key))
+            existing = await session.get(
+                NotificationIdempotencyRow, (issuer, subject, idempotency_key)
+            )
             if existing is not None:
                 if existing.fingerprint != fingerprint:
                     raise NotificationIdempotencyConflict("idempotency key was already used")
                 return _notification_from_response(existing.response, issuer, subject)
-            row = (await session.execute(select(NotificationRow).where(NotificationRow.id == notification_id, NotificationRow.principal_issuer == issuer, NotificationRow.principal_subject == subject).with_for_update())).scalar_one_or_none()
+            row = (
+                await session.execute(
+                    select(NotificationRow)
+                    .where(
+                        NotificationRow.id == notification_id,
+                        NotificationRow.principal_issuer == issuer,
+                        NotificationRow.principal_subject == subject,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
             if row is None:
                 raise NotificationNotFound("notification not found")
             if row.version != expected_version or row.status != NotificationStatus.DELIVERED.value:
@@ -454,15 +602,40 @@ class SqlNotificationRepository:
             row.acknowledged_at = now
             item = _notification(row)
             event_id = uuid4()
-            event = NotificationEventRow(id=event_id, principal_issuer=issuer, principal_subject=subject, notification_id=item.id, reminder_id=item.reminder_id, status=item.status.value, version=item.version, occurred_at=now)
+            event = NotificationEventRow(
+                id=event_id,
+                principal_issuer=issuer,
+                principal_subject=subject,
+                notification_id=item.id,
+                reminder_id=item.reminder_id,
+                status=item.status.value,
+                version=item.version,
+                occurred_at=now,
+            )
             session.add(event)
             principal = await self._identities.resolve(session, issuer, subject)
-            self._audit.stage(session, principal.id, "notification.acknowledge", str(item.id), {"status": item.status.value, "version": item.version})
+            self._audit.stage(
+                session,
+                principal.id,
+                "notification.acknowledge",
+                str(item.id),
+                {"status": item.status.value, "version": item.version},
+            )
             await self._outbox.stage_command(
                 session,
                 command=self._outbox_command(event_id, item),
             )
-            session.add(NotificationIdempotencyRow(principal_issuer=issuer, principal_subject=subject, idempotency_key=idempotency_key, fingerprint=fingerprint, notification_id=item.id, response=as_payload(item), created_at=now))
+            session.add(
+                NotificationIdempotencyRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    idempotency_key=idempotency_key,
+                    fingerprint=fingerprint,
+                    notification_id=item.id,
+                    response=as_payload(item),
+                    created_at=now,
+                )
+            )
             self._wake.set()
             self._wake = asyncio.Event()
             return item
@@ -479,23 +652,77 @@ class SqlNotificationRepository:
             async with self.sessions() as session, session.begin():
                 if self._reminder_delivery is None:
                     raise RuntimeError("reminder delivery port is not configured")
-                fired_reminders = await self._reminder_delivery.fire_due(
+                delivery_result = await self._reminder_delivery.fire_due_result(
                     transaction=session, now=now, limit=limit
                 )
+                fired_reminders = delivery_result.reminders
                 for reminder in fired_reminders:
                     reminder_id = reminder.id
                     max_lag = max(max_lag, max(0.0, (now - reminder.due_at).total_seconds() * 1000))
-                    result = (await session.execute(text("INSERT INTO notifications (id, principal_issuer, principal_subject, reminder_id, status, version, created_at, updated_at, delivered_at) VALUES (:id, :issuer, :subject, :reminder_id, 'delivered', 1, :now, :now, :now) ON CONFLICT (reminder_id) DO NOTHING RETURNING id"), {"id": uuid4(), "issuer": reminder.issuer, "subject": reminder.subject, "reminder_id": reminder_id, "now": now})).first()
+                    result = (
+                        await session.execute(
+                            text(
+                                "INSERT INTO notifications (id, principal_issuer, principal_subject, reminder_id, status, version, created_at, updated_at, delivered_at) VALUES (:id, :issuer, :subject, :reminder_id, 'delivered', 1, :now, :now, :now) ON CONFLICT (reminder_id) DO NOTHING RETURNING id"
+                            ),
+                            {
+                                "id": uuid4(),
+                                "issuer": reminder.issuer,
+                                "subject": reminder.subject,
+                                "reminder_id": reminder_id,
+                                "now": now,
+                            },
+                        )
+                    ).first()
                     if result is None:
                         duplicates += 1
                         continue
                     notification_id = UUID(str(result[0]))
-                    notification = Notification(notification_id, reminder.issuer, reminder.subject, reminder_id, NotificationStatus.DELIVERED, 1, reminder.created_at, now, now)
+                    notification = Notification(
+                        notification_id,
+                        reminder.issuer,
+                        reminder.subject,
+                        reminder_id,
+                        NotificationStatus.DELIVERED,
+                        1,
+                        reminder.created_at,
+                        now,
+                        now,
+                    )
                     event_id = uuid4()
-                    session.add(NotificationEventRow(id=event_id, principal_issuer=notification.issuer, principal_subject=notification.subject, notification_id=notification.id, reminder_id=notification.reminder_id, status=notification.status.value, version=notification.version, occurred_at=now))
-                    principal = await self._identities.resolve(session, notification.issuer, notification.subject)
-                    self._audit.stage(session, principal.id, "notification.delivered", str(notification.id), {"status": notification.status.value, "version": notification.version})
-                    command = make_aggregate_command(REMINDER_TOPIC, event_command_id(reminder_id, ReminderStatus.FIRED, reminder.version), "automation.reminder", reminder_id, identifiers=(("eventType", "reminder.fired"), ("status", "fired"), ("version", reminder.version), ("eventId", event_id)))
+                    session.add(
+                        NotificationEventRow(
+                            id=event_id,
+                            principal_issuer=notification.issuer,
+                            principal_subject=notification.subject,
+                            notification_id=notification.id,
+                            reminder_id=notification.reminder_id,
+                            status=notification.status.value,
+                            version=notification.version,
+                            occurred_at=now,
+                        )
+                    )
+                    principal = await self._identities.resolve(
+                        session, notification.issuer, notification.subject
+                    )
+                    self._audit.stage(
+                        session,
+                        principal.id,
+                        "notification.delivered",
+                        str(notification.id),
+                        {"status": notification.status.value, "version": notification.version},
+                    )
+                    command = make_aggregate_command(
+                        REMINDER_TOPIC,
+                        event_command_id(reminder_id, ReminderStatus.FIRED, reminder.version),
+                        "automation.reminder",
+                        reminder_id,
+                        identifiers=(
+                            ("eventType", "reminder.fired"),
+                            ("status", "fired"),
+                            ("version", reminder.version),
+                            ("eventId", event_id),
+                        ),
+                    )
                     await self._outbox.stage_command(session, command=command)
                     fired.append(notification)
         except Exception:
@@ -509,23 +736,72 @@ class SqlNotificationRepository:
                 float(duplicates),
                 outcome="duplicate",
             )
+        if self.metrics is not None:
+            self.metrics.increment(
+                SCHEDULER_COMPONENT,
+                "reminder_fired_count",
+                outcome="ok",
+            )
+            self.metrics.observe(
+                SCHEDULER_COMPONENT,
+                "reminder_occurrence_generated_count",
+                float(delivery_result.generated_count),
+                outcome="ok",
+            )
+            self.metrics.observe(
+                SCHEDULER_COMPONENT,
+                "reminder_occurrence_skipped_count",
+                float(delivery_result.skipped_count),
+                outcome="ok",
+            )
+            self.metrics.observe(
+                SCHEDULER_COMPONENT,
+                "reminder_occurrence_missed_count",
+                float(delivery_result.missed_count),
+                outcome="ok",
+            )
         if fired:
             self._wake.set()
             self._wake = asyncio.Event()
         self._metric("reminder_fire_persistence_outcome", outcome="ok")
         self._record_fire_span(started, "ok")
-        return DueDeliveryResult(tuple(fired), len(fired_reminders), duplicates, max_lag)
+        return DueDeliveryResult(
+            tuple(fired),
+            len(fired_reminders),
+            duplicates,
+            max_lag,
+            delivery_result.generated_count,
+            skipped_count=delivery_result.skipped_count,
+            missed_count=delivery_result.missed_count,
+        )
 
-    async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[NotificationReplayEvent, ...]:
+    async def replay(
+        self, issuer: str, subject: str, *, after: UUID | None = None
+    ) -> tuple[NotificationReplayEvent, ...]:
         issuer, subject = _owner(issuer, subject)
         async with self.sessions() as session:
-            query = select(NotificationEventRow).where(NotificationEventRow.principal_issuer == issuer, NotificationEventRow.principal_subject == subject).order_by(NotificationEventRow.occurred_at, NotificationEventRow.id)
+            query = (
+                select(NotificationEventRow)
+                .where(
+                    NotificationEventRow.principal_issuer == issuer,
+                    NotificationEventRow.principal_subject == subject,
+                )
+                .order_by(NotificationEventRow.occurred_at, NotificationEventRow.id)
+            )
             if after is not None:
                 cursor = await session.get(NotificationEventRow, after)
-                if cursor is not None and (cursor.principal_issuer != issuer or cursor.principal_subject != subject):
+                if cursor is not None and (
+                    cursor.principal_issuer != issuer or cursor.principal_subject != subject
+                ):
                     return ()
                 if cursor is not None:
-                    query = query.where((NotificationEventRow.occurred_at > cursor.occurred_at) | ((NotificationEventRow.occurred_at == cursor.occurred_at) & (NotificationEventRow.id > cursor.id)))
+                    query = query.where(
+                        (NotificationEventRow.occurred_at > cursor.occurred_at)
+                        | (
+                            (NotificationEventRow.occurred_at == cursor.occurred_at)
+                            & (NotificationEventRow.id > cursor.id)
+                        )
+                    )
             return tuple(_replay(row) for row in (await session.execute(query)).scalars().all())
 
     async def fire_due(self, *, limit: int = 100) -> DueDeliveryResult:
@@ -535,9 +811,15 @@ class SqlNotificationRepository:
         issuer, subject = _owner(issuer, subject)
         async with self.sessions() as session:
             row = await session.get(NotificationEventRow, event_id)
-            return row is not None and row.principal_issuer == issuer and row.principal_subject == subject
+            return (
+                row is not None
+                and row.principal_issuer == issuer
+                and row.principal_subject == subject
+            )
 
-    async def stream(self, issuer: str, subject: str, *, after: UUID | None = None) -> AsyncIterator[NotificationReplayEvent]:
+    async def stream(
+        self, issuer: str, subject: str, *, after: UUID | None = None
+    ) -> AsyncIterator[NotificationReplayEvent]:
         cursor = after
         while True:
             events = await self.replay(issuer, subject, after=cursor)

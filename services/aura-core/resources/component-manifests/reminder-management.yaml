@@ -1,14 +1,19 @@
 component:
   id: aura.automation.reminder_management
-  version: 1.1.0
+  version: 1.2.0
   owner: automation.reminders
   category: persistence
 input:
   schema: aura-reminder-command-v1
+  additional_interfaces:
+    - aura_core.domains.automation.reminders.public.ReminderSeriesRepository
+    - aura_core.domains.automation.reminders.public.ReminderApplicationService
   replayable: true
   replay_reason: Reminder commands are owner-scoped, idempotent, and content is resolved from Core persistence.
 output:
   schema: aura-reminder-events-v1
+  additional_schemas:
+    - contracts/events/automation/v1/reminder-series-events.schema.json
   capture:
     content: none
     metadata: allowlisted
@@ -23,17 +28,35 @@ metrics:
   - reminder_version_conflict_count
   - reminder_idempotency_conflict_count
   - reminder_create_idempotency_outcome
+  - reminder_series_command_duration_ms
+  - reminder_series_command_outcome
+  - reminder_recurrence_calculation_outcome
+  - reminder_occurrence_generated_count
+  - reminder_series_version_conflict_count
+  - reminder_series_idempotency_conflict_count
 metric_semantics:
   reminder_command_duration_ms: Owner-scoped reminder command duration.
   reminder_command_outcome: Metadata-only lifecycle command outcome.
   reminder_version_conflict_count: Optimistic concurrency conflicts.
   reminder_idempotency_conflict_count: Mismatched idempotency-key reuse conflicts.
+  reminder_series_command_duration_ms: Owner-scoped recurring-series command duration.
+  reminder_series_command_outcome: Metadata-only recurring-series lifecycle outcome.
+  reminder_recurrence_calculation_outcome: Bounded recurrence calculation outcome.
+  reminder_occurrence_generated_count: Number of materialized occurrences.
+  reminder_series_version_conflict_count: Optimistic recurring-series version conflicts.
+  reminder_series_idempotency_conflict_count: Mismatched recurring-series idempotency-key reuse conflicts.
 capture_policy: metadata_only
 evaluators:
   - reminder_lifecycle_correctness
   - reminder_owner_authorization
   - reminder_time_normalization
   - reminder_creation_exactly_once
+  - recurring_reminder_rule_correctness
+  - recurring_reminder_timezone_correctness
+  - recurring_reminder_exactly_one_future_occurrence
+  - recurring_reminder_bounded_catch_up
+  - recurring_reminder_race_safety
+  - recurring_reminder_owner_isolation
 cardinality:
   metric_attributes: [operation, outcome, error_class, dependency, status]
   trace_only: [trace_id, span_id, parent_span_id, reminder_id, aggregate_id, aggregate_type, event_type, event_status, event_version, command_id, correlation_id, causation_id]

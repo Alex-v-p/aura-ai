@@ -25,6 +25,7 @@ _IDENTIFIER_SUFFIXES = (
     "class",
     "type",
     "revision",
+    "sequence",
 )
 _CONTENT_KEY_PARTS = (
     "content",

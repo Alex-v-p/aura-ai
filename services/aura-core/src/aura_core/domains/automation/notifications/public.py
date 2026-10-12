@@ -76,6 +76,9 @@ class DueDeliveryResult:
     fired_count: int
     duplicate_count: int
     due_lag_ms: float
+    generated_count: int = 0
+    skipped_count: int = 0
+    missed_count: int = 0
 
 
 class NotificationError(Exception):
@@ -220,9 +223,11 @@ def encode_cursor(issuer: str, subject: str, stamp: datetime, notification_id: U
     }
     raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     body["s"] = hmac.new(_CURSOR_SECRET, raw, hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    ).decode().rstrip("=")
+    return (
+        base64.urlsafe_b64encode(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+        .decode()
+        .rstrip("=")
+    )
 
 
 def decode_cursor(cursor: str, issuer: str, subject: str) -> tuple[datetime, UUID]:

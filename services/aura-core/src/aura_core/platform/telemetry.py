@@ -47,9 +47,9 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.2.0",
-    "aura.automation.reminder_management": "1.1.0",
-    "aura.automation.reminder_scheduler": "1.0.0",
-    "aura.automation.notification_delivery": "1.0.0",
+    "aura.automation.reminder_management": "1.2.0",
+    "aura.automation.reminder_scheduler": "1.1.0",
+    "aura.automation.notification_delivery": "1.1.0",
     "aura.governance.approval_workflow": "1.0.1",
 }
 
@@ -178,6 +178,12 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "reminder_version_conflict_count",
             "reminder_idempotency_conflict_count",
             "reminder_create_idempotency_outcome",
+            "reminder_series_command_duration_ms",
+            "reminder_series_command_outcome",
+            "reminder_recurrence_calculation_outcome",
+            "reminder_occurrence_generated_count",
+            "reminder_series_version_conflict_count",
+            "reminder_series_idempotency_conflict_count",
         }
     ),
     "aura.automation.reminder_scheduler": frozenset(
@@ -189,6 +195,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "reminder_fire_persistence_outcome",
             "reminder_failure_count",
             "reminder_fire_duration_ms",
+            "reminder_occurrence_generated_count",
+            "reminder_occurrence_skipped_count",
+            "reminder_occurrence_missed_count",
+            "reminder_series_due_lag_ms",
         }
     ),
     "aura.automation.notification_delivery": frozenset(
@@ -367,10 +377,16 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "reminder.list",
             "reminder.complete",
             "reminder.cancel",
+            "reminder.series.create",
+            "reminder.series.update",
+            "reminder.series.pause",
+            "reminder.series.resume",
+            "reminder.series.skip",
+            "reminder.series.cancel",
         }
     ),
     "aura.automation.reminder_scheduler": frozenset(
-        {"reminder.scan", "reminder.fire", "reminder.persistence"}
+        {"reminder.scan", "reminder.fire", "reminder.persistence", "reminder.series.advance"}
     ),
     "aura.automation.notification_delivery": frozenset(
         {"notification.sse.connect", "notification.sse.replay", "notification.acknowledge"}
@@ -476,6 +492,20 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "model_capability_verification_duration_ms",
     ("aura.automation.reminder_scheduler", "reminder.fire"):
         "reminder_fire_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.create"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.update"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.pause"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.resume"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.skip"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_management", "reminder.series.cancel"):
+        "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_scheduler", "reminder.series.advance"):
+        "reminder_fire_duration_ms",
     ("aura.automation.notification_delivery", "notification.sse.replay"):
         "notification_sse_replay_duration_ms",
     ("aura.automation.notification_delivery", "notification.acknowledge"):
@@ -506,6 +536,7 @@ _DIMENSION_KEYS = frozenset(
         "scope_type",
         "retrieval_stage",
         "degradation",
+        "operation",
     }
 )
 _TRACE_ATTRIBUTE_KEYS = frozenset(
@@ -703,6 +734,20 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "delivery", "transport_error", "transport_published", "offset_unavailable",
             "created", "pending", "approved", "resumed", "opened", "closed", "omitted",
             "awaiting_confirmation", "waiting_for_confirmation", "executing",
+        }
+    ),
+    "operation": frozenset(
+        {
+            "create",
+            "update",
+            "pause",
+            "resume",
+            "skip",
+            "cancel",
+            "fire",
+            "complete",
+            "acknowledge",
+            "scan",
         }
     ),
     "status": frozenset(
@@ -1018,6 +1063,15 @@ class MetadataMetrics:
         if component == "aura.runtime.prompt_compilation":
             dependency = "prompt_compiler"
         dimensions = {"dependency": dependency, "outcome": outcome}
+        if component == "aura.automation.reminder_management" and operation.startswith(
+            "reminder.series."
+        ):
+            dimensions["operation"] = operation.removeprefix("reminder.series.")
+        elif (
+            component == "aura.automation.reminder_scheduler"
+            and operation == "reminder.series.advance"
+        ):
+            dimensions["operation"] = "fire"
         if error_class is not None:
             dimensions["error_class"] = error_class
         if provider is not None:

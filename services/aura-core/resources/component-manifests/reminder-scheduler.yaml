@@ -1,14 +1,19 @@
 component:
   id: aura.automation.reminder_scheduler
-  version: 1.0.0
+  version: 1.1.0
   owner: automation.reminders
   category: scheduler
 input:
   schema: aura-reminder-scan-v1
+  additional_interfaces:
+    - aura_core.domains.automation.reminders.public.ReminderSeriesRepository
+    - aura_core.domains.automation.reminders.public.ReminderApplicationService
   replayable: true
   replay_reason: PostgreSQL remains authoritative when a polling process restarts.
 output:
   schema: aura-reminder-events-v1
+  additional_schemas:
+    - contracts/events/automation/v1/reminder-series-events.schema.json
   capture:
     content: none
     metadata: allowlisted
@@ -23,6 +28,10 @@ metrics:
   - reminder_fire_persistence_outcome
   - reminder_failure_count
   - reminder_fire_duration_ms
+  - reminder_occurrence_generated_count
+  - reminder_occurrence_skipped_count
+  - reminder_occurrence_missed_count
+  - reminder_series_due_lag_ms
 metric_semantics:
   reminder_scheduler_scan_duration_ms: Bounded scheduler scan duration.
   reminder_due_lag_ms: Time between a due instant and its durable firing.
@@ -31,6 +40,10 @@ metric_semantics:
   reminder_fire_persistence_outcome: Metadata-only transaction outcome.
   reminder_failure_count: Database or delivery failures that leave reminders scheduled.
   reminder_fire_duration_ms: Duration of one durable reminder firing transaction.
+  reminder_occurrence_generated_count: Number of future occurrences materialized by a committed scan.
+  reminder_occurrence_skipped_count: Number of overdue occurrences boundedly skipped during recovery.
+  reminder_occurrence_missed_count: Number of overdue occurrences counted without notification.
+  reminder_series_due_lag_ms: Lag between a recurring occurrence due instant and committed firing.
 capture_policy: metadata_only
 evaluators:
   - reminder_firing_exactly_once

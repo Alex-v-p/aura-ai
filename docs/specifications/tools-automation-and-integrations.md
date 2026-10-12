@@ -1,6 +1,6 @@
 # Tools, automation, and integrations
 
-> **Status:** Architecture baseline with implemented governed tools (`memory.search@1` and approval-backed `reminder.create@1`), plus envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
+> **Status:** Architecture baseline with implemented governed tools (`memory.search@1` and approval-backed `reminder.create@1`), deterministic recurring-reminder foundations, and envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
 
 ## Baseline separation
 
@@ -94,6 +94,46 @@ never completes the reminder.  Live notification SSE replays owner-authorized
 PostgreSQL events before following ephemeral NATS wakeups, so reconnects and
 offline visits recover from the inbox without retaining reminder content in
 transport, telemetry, or ordinary audit metadata.
+
+The recurring-reminder foundation adds owner-scoped reminder series without
+changing the one-shot reminder contract. A series stores private content, a
+structured daily, selected-weekday, weekly, or monthly-by-date recurrence,
+its local wall-clock start and IANA timezone, optional count or end-date
+termination, lifecycle state, optimistic version, missed count, and next due
+instant. Recurrence uses positive intervals, preserves local wall time across
+offset changes, moves a DST-gap value to the first valid instant, emits an
+overlap once at its earlier instant, and uses a short month's final day before
+returning to the requested day in longer months.
+
+Each active series materializes exactly one future ordinary reminder linked
+to an immutable occurrence sequence. Historical occurrences distinguish
+scheduled, fired, completed, skipped, replaced, paused-window, and
+series-canceled outcomes without adding values to the existing reminder
+status contract. Completing a fired occurrence does not complete its series;
+count or end-date exhaustion does. Editing replaces only the pending future
+occurrence, skip-next records and advances it, pausing suppresses occurrences
+without catch-up, resuming continues the original cadence, and canceling a
+series prevents future materialization.
+
+Scheduler recovery delivers at most one overdue occurrence, counts and skips
+additional missed occurrences, and then materializes only the next future
+occurrence. Series commands and scheduler firing serialize through
+PostgreSQL row locks, optimistic versions, UUID idempotency, database
+constraints, and the transactional outbox so retries cannot duplicate an
+occurrence or notification. The scheduler entrypoint remains polling-only;
+recurrence and lifecycle rules stay in the shared reminder application
+domain.
+
+Reminder-series lifecycle events use the separate closed
+[`reminder-series-events` v1 contract](../../contracts/events/automation/v1/reminder-series-events.schema.json).
+They contain only series, occurrence, reminder, command, correlation and
+causation identifiers; bounded statuses, versions and counts; and event time.
+They prohibit private content, recurrence configuration, owner identity,
+timezone, local time and due instants. The existing reminder and notification
+v1 event contracts remain unchanged. The foundation does not add HTTP APIs,
+generated clients, frontend behavior, conversational tools, Web Push, Home
+Assistant, calendars, household sharing, workflows, voice, Observatory, or
+external provider behavior.
 
 ## Home Assistant
 

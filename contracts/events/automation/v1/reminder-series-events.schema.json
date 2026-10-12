@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/automation/v1/reminder-series-events.schema.json",
+  "title": "Aura reminder-series lifecycle events v1",
+  "description": "Closed metadata-only reminder-series lifecycle events carried by the generic transactional outbox. Reminder content, recurrence configuration, owner identity, timezone, local wall-clock values, due instants, prompts, responses, credentials, and other private payloads are prohibited.",
+  "$ref": "#/$defs/EventProperties",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "BoundedCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "ReminderSeriesStatus": {
+      "type": "string",
+      "enum": ["active", "paused", "completed", "canceled"]
+    },
+    "ReminderOccurrenceStatus": {
+      "type": "string",
+      "enum": [
+        "scheduled",
+        "fired",
+        "completed",
+        "skipped",
+        "replaced",
+        "paused-window",
+        "series-canceled"
+      ]
+    },
+    "EventProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "commandId",
+        "aggregateType",
+        "aggregateId",
+        "createdAt",
+        "correlationId",
+        "causationId",
+        "eventType",
+        "status",
+        "version",
+        "occurrenceCount",
+        "skippedCount",
+        "missedCount"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "commandId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "aggregateType": {
+          "const": "automation.reminder-series"
+        },
+        "aggregateId": {
+          "$ref": "#/$defs/Uuid",
+          "description": "The reminder-series identifier."
+        },
+        "occurrenceId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "reminderId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "correlationId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "causationId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "reminder.series.created",
+            "reminder.series.updated",
+            "reminder.series.paused",
+            "reminder.series.resumed",
+            "reminder.series.skipped",
+            "reminder.series.advanced",
+            "reminder.series.completed",
+            "reminder.series.canceled"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ReminderSeriesStatus"
+        },
+        "occurrenceStatus": {
+          "$ref": "#/$defs/ReminderOccurrenceStatus"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "occurrenceSequence": {
+          "$ref": "#/$defs/BoundedCount"
+        },
+        "occurrenceCount": {
+          "$ref": "#/$defs/BoundedCount"
+        },
+        "skippedCount": {
+          "$ref": "#/$defs/BoundedCount"
+        },
+        "missedCount": {
+          "$ref": "#/$defs/BoundedCount"
+        }
+      }
+    }
+  }
+}
