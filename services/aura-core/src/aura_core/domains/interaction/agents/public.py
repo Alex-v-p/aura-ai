@@ -40,6 +40,8 @@ GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID = uuid5(
 GENERAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-1")
 GENERAL_SUCCESSOR_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-2")
 GENERAL_SUCCESSOR_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-2")
+GENERAL_CONVERSATIONAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-3")
+GENERAL_CONVERSATIONAL_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-3")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -162,6 +164,22 @@ class ToolGrant:
             raise ValueError("tool version must be positive")
 
 
+SUPPORTED_TOOL_GRANTS = frozenset(
+    {
+        ToolGrant("memory.search", 1),
+        ToolGrant("reminder.create", 1),
+        ToolGrant("reminder.list", 1),
+        ToolGrant("reminder.inspect", 1),
+        ToolGrant("reminder.series.create", 1),
+        ToolGrant("reminder.reschedule", 1),
+        ToolGrant("reminder.series.update", 1),
+        ToolGrant("reminder.series.pause", 1),
+        ToolGrant("reminder.series.resume", 1),
+        ToolGrant("reminder.cancel", 1),
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolGrantPolicy:
     """Server-derived immutable metadata for one registered tool grant."""
@@ -235,9 +253,7 @@ class ToolPolicy:
             raise ValueError("a granted tool policy must permit one call")
         if not self.grants and self.max_calls_per_run != 0:
             raise ValueError("an empty tool policy must deny calls")
-        if any(
-            ":" not in scope for scope in self.permission_scopes
-        ):
+        if any(":" not in scope for scope in self.permission_scopes):
             raise ValueError("tool permission scopes must be namespaced strings")
 
 
@@ -330,9 +346,7 @@ class AgentConfigurationRepository(Protocol):
         expected_version: int,
         key: str,
     ) -> AgentProfile: ...
-    async def get_tool_policy(
-        self, issuer: str, subject: str, policy_id: UUID
-    ) -> ToolPolicy: ...
+    async def get_tool_policy(self, issuer: str, subject: str, policy_id: UUID) -> ToolPolicy: ...
     async def create_tool_policy(
         self, issuer: str, subject: str, policy: ToolPolicy, key: str | None = None
     ) -> ToolPolicy: ...
@@ -436,6 +450,20 @@ class AgentCatalog:
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
             tool_policy_revision_id=GENERAL_SUCCESSOR_TOOL_POLICY_ID,
         )
+        conversational = AgentRevision(
+            GENERAL_CONVERSATIONAL_REVISION_ID,
+            GENERAL_PROFILE_ID,
+            3,
+            "Aura",
+            "A helpful local-first household assistant.",
+            "You are Aura, a helpful local-first household assistant.",
+            NEUTRAL_PERSONA_REVISION_ID,
+            PROMPT_BUNDLE_ID,
+            GENERAL_POLICY_ID,
+            "You are Aura, a helpful local-first household assistant.",
+            memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+            tool_policy_revision_id=GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
+        )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
             GENERAL_MEMORY_POLICY_ID,
             GENERAL_PROFILE_ID,
@@ -463,13 +491,33 @@ class AgentCatalog:
             timeout_ms=10_000,
             permission_scopes=frozenset({"memory:read", "reminders:write"}),
         )
+        self.tool_policies[GENERAL_CONVERSATIONAL_TOOL_POLICY_ID] = ToolPolicy(
+            GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            3,
+            grants=(
+                ToolGrant("memory.search", 1),
+                ToolGrant("reminder.create", 1),
+                ToolGrant("reminder.list", 1),
+                ToolGrant("reminder.inspect", 1),
+                ToolGrant("reminder.series.create", 1),
+                ToolGrant("reminder.reschedule", 1),
+                ToolGrant("reminder.series.update", 1),
+                ToolGrant("reminder.series.pause", 1),
+                ToolGrant("reminder.series.resume", 1),
+                ToolGrant("reminder.cancel", 1),
+            ),
+            max_calls_per_run=1,
+            timeout_ms=10_000,
+            permission_scopes=frozenset({"memory:read", "reminders:read", "reminders:write"}),
+        )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
                 GENERAL_PROFILE_ID,
                 "general-assistant",
                 "Aura",
-                current_revision_id=successor.id,
-                revisions=[revision, successor],
+                current_revision_id=conversational.id,
+                revisions=[revision, successor, conversational],
             )
         }
 
@@ -527,7 +575,9 @@ class AgentCatalog:
                 "initialToolGrants": [
                     {"toolId": grant.tool_id, "toolVersion": grant.tool_version}
                     for grant in (initial_tool_grants or ())
-                ] if initial_tool_grants is not None else None,
+                ]
+                if initial_tool_grants is not None
+                else None,
             },
         )
         if idempotency_key is not None and idempotency_key in self._idempotency:
@@ -563,7 +613,9 @@ class AgentCatalog:
                     raise ConfigurationNotFound("fallback agent profile not found")
             memory_policy_revision_id = uuid5(NAMESPACE, f"agent-memory-policy:{profile_id}:1")
             self.memory_policies[memory_policy_revision_id] = MemoryPolicy(
-                memory_policy_revision_id, profile_id, 1,
+                memory_policy_revision_id,
+                profile_id,
+                1,
                 shared_user_read=initial_memory_policy.shared_user_read,
                 current_agent_read=initial_memory_policy.current_agent_read,
                 allow_shared_user_promotion=initial_memory_policy.allow_shared_user_promotion,
@@ -590,7 +642,9 @@ class AgentCatalog:
                 raise ValueError("server-derived tool policy is required")
             tool_policy_revision_id = uuid5(NAMESPACE, f"agent-tool-policy:{profile_id}:1")
             self.tool_policies[tool_policy_revision_id] = ToolPolicy(
-                tool_policy_revision_id, profile_id, 1,
+                tool_policy_revision_id,
+                profile_id,
+                1,
                 grants=tuple(initial_tool_grants),
                 max_calls_per_run=initial_tool_policy.max_calls_per_run,
                 timeout_ms=initial_tool_policy.timeout_ms,
@@ -835,18 +889,14 @@ class AgentCatalog:
     ) -> ToolPolicy:
         if agent_profile_id not in self.agents:
             raise ConfigurationNotFound("agent not found")
-        if any(
-            grant not in {ToolGrant("memory.search", 1), ToolGrant("reminder.create", 1)}
-            for grant in grants
-        ):
+        if any(grant not in SUPPORTED_TOOL_GRANTS for grant in grants):
             raise ValueError("unknown tool grant")
         fingerprint = _canonical_fingerprint(
             "tool-policy",
             {
                 "agentProfileId": str(agent_profile_id),
                 "grants": [
-                    {"toolId": grant.tool_id, "toolVersion": grant.tool_version}
-                    for grant in grants
+                    {"toolId": grant.tool_id, "toolVersion": grant.tool_version} for grant in grants
                 ],
             },
         )
@@ -865,6 +915,24 @@ class AgentCatalog:
             next_revision,
             tuple(grants),
             max_calls_per_run=1 if grants else 0,
+            timeout_ms=10_000
+            if any(grant.tool_id.startswith("reminder.") for grant in grants)
+            else 30_000,
+            permission_scopes=frozenset(
+                {
+                    scope
+                    for grant in grants
+                    for scope in (
+                        ("memory:read",)
+                        if grant.tool_id == "memory.search"
+                        else (
+                            ("reminders:read",)
+                            if grant.tool_id in {"reminder.list", "reminder.inspect"}
+                            else ("reminders:write",)
+                        )
+                    )
+                }
+            ),
         )
         self.tool_policies[policy.id] = policy
         if idempotency_key is not None:
@@ -1481,6 +1549,8 @@ __all__ = [
     "GENERAL_TOOL_POLICY_ID",
     "GENERAL_SUCCESSOR_TOOL_POLICY_ID",
     "GENERAL_SUCCESSOR_REVISION_ID",
+    "GENERAL_CONVERSATIONAL_TOOL_POLICY_ID",
+    "GENERAL_CONVERSATIONAL_REVISION_ID",
     "platform_memory_policy_id",
     "is_platform_memory_policy",
     "MemoryPolicy",
@@ -1488,6 +1558,7 @@ __all__ = [
     "MemoryPolicyRevision",
     "MemoryRecallMode",
     "ToolGrant",
+    "SUPPORTED_TOOL_GRANTS",
     "ToolPolicy",
     "ToolPolicyGrant",
     "ToolPolicyRevision",

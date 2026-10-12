@@ -27,6 +27,7 @@ from aura_core.domains.interaction.agents.public import (
 )
 from aura_core.runtime.tools import (
     MemorySearchContext,
+    ReminderReadContext,
     ToolCall,
     ToolExecutionError,
     ToolExecutor,
@@ -34,6 +35,7 @@ from aura_core.runtime.tools import (
     ToolRegistry,
     default_tool_registry,
     validate_tool_arguments,
+    validate_tool_result,
 )
 
 ROOT = Path(__file__).parents[3]
@@ -88,6 +90,200 @@ def test_reminder_create_descriptor_is_exactly_versioned_and_unconditionally_con
     assert descriptor.input_schema["additionalProperties"] is False
     result_properties = cast(dict[str, object], descriptor.result_schema["properties"])
     assert {"reminderId", "status", "dueAt"} <= set(result_properties)
+
+
+def test_conversational_reminder_descriptors_are_bounded_and_confirmation_safe() -> None:
+    """The conversational surface is explicit, versioned, and private by default."""
+
+    registry = default_tool_registry()
+    read_tools = ("reminder.list", "reminder.inspect")
+    mutation_tools = (
+        "reminder.series.create",
+        "reminder.reschedule",
+        "reminder.series.update",
+        "reminder.series.pause",
+        "reminder.series.resume",
+        "reminder.cancel",
+    )
+
+    for tool_id in read_tools:
+        descriptor = registry.get(tool_id, 1)
+        assert descriptor is not None
+        assert (descriptor.classification, descriptor.confirmation) == ("read", "never")
+        assert descriptor.permission_scope == "reminders:read"
+        assert descriptor.idempotency == "read_only"
+        assert descriptor.sensitivity == "private"
+        assert descriptor.input_schema["additionalProperties"] is False
+        assert descriptor.result_schema["additionalProperties"] is False
+        result_properties = cast(dict[str, object], descriptor.result_schema["properties"])
+        items_schema = cast(dict[str, object], result_properties["items"])
+        assert items_schema["maxItems"] == (10 if tool_id == "reminder.list" else 1)
+
+    for tool_id in mutation_tools:
+        descriptor = registry.get(tool_id, 1)
+        assert descriptor is not None
+        assert (descriptor.classification, descriptor.confirmation) == ("mutation", "always")
+        assert descriptor.permission_scope == "reminders:write"
+        assert descriptor.retry_limit == 0
+        assert descriptor.idempotency == "idempotent"
+        assert descriptor.sensitivity == "private"
+        assert descriptor.input_schema["additionalProperties"] is False
+        assert descriptor.result_schema["additionalProperties"] is False
+
+    list_schema = cast(dict[str, object], registry.get("reminder.list", 1).input_schema)  # type: ignore[union-attr]
+    list_properties = cast(dict[str, object], list_schema["properties"])
+    limit_schema = cast(dict[str, object], list_properties["limit"])
+    assert limit_schema["maximum"] == 10
+    cancel_schema = cast(
+        dict[str, object], registry.get("reminder.cancel", 1).input_schema  # type: ignore[union-attr]
+    )
+    cancel_properties = cast(dict[str, object], cancel_schema["properties"])
+    required = cast(list[str], cancel_schema["required"])
+    assert set(required) >= {"target", "scope"}
+    scope_enum = cast(list[str], cast(dict[str, object], cancel_properties["scope"])["enum"])
+    assert set(scope_enum) == {
+        "occurrence",
+        "series",
+    }
+
+
+def test_aura_successor_policy_grants_conversational_reminders_without_mutating_legacy_policy(
+) -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    successor = catalog.get_tool_policy(aura.current_revision.tool_policy_revision_id)
+    successor_grants = {(grant.tool_id, grant.tool_version) for grant in successor.grants}
+    expected = {
+        ("reminder.list", 1),
+        ("reminder.inspect", 1),
+        ("reminder.series.create", 1),
+        ("reminder.reschedule", 1),
+        ("reminder.series.update", 1),
+        ("reminder.series.pause", 1),
+        ("reminder.series.resume", 1),
+        ("reminder.cancel", 1),
+    }
+    assert expected <= successor_grants
+    evaluator = ToolPolicyEvaluator(default_tool_registry())
+    assert (
+        evaluator.decide(successor, ToolCall("reminder.list", {}), calls_used=1).error_code
+        == "TOOL_BUDGET_EXHAUSTED"
+    )
+
+    legacy = catalog.create_tool_policy(
+        aura.id,
+        (ToolGrant("reminder.create", 1),),
+    )
+    assert {(grant.tool_id, grant.tool_version) for grant in legacy.grants} == {
+        ("reminder.create", 1)
+    }
+    denied = evaluator.decide(
+        legacy,
+        ToolCall("reminder.series.pause", {"target": "x", "expectedVersion": 1}),
+    )
+    assert denied.error_code == "TOOL_NOT_GRANTED"
+
+
+def test_conversational_reminder_arguments_are_normalized_and_bounded() -> None:
+    registry = default_tool_registry()
+    descriptor = registry.get("reminder.list", 1)
+    assert descriptor is not None
+    assert validate_tool_arguments(
+        descriptor, {"query": "  dentist  ", "state": "active", "limit": 10}
+    ) == {"query": "dentist", "state": "active", "limit": 10}
+
+    invalid_cases = (
+        ("reminder.list", {"limit": 11}),
+        ("reminder.inspect", {"target": ""}),
+        (
+            "reminder.series.create",
+            {
+                "content": "x",
+                "localStart": "2027-01-11T09:00:00+01:00",
+                "recurrence": {"frequency": "daily"},
+            },
+        ),
+        ("reminder.cancel", {"target": "dentist"}),
+    )
+    for tool_id, arguments in invalid_cases:
+        item = registry.get(tool_id, 1)
+        assert item is not None
+        with pytest.raises(ToolExecutionError, match="TOOL_ARGUMENTS_INVALID"):
+            validate_tool_arguments(item, arguments)
+
+
+def test_approved_mutation_result_is_typed_to_the_resumed_tool() -> None:
+    registry = default_tool_registry()
+    descriptor = registry.get("reminder.series.pause", 1)
+    assert descriptor is not None
+    assert validate_tool_result(
+        descriptor, {"status": "completed", "command": "reminder.series.pause"}
+    ) == {"status": "completed", "command": "reminder.series.pause"}
+    with pytest.raises(ToolExecutionError, match="TOOL_RESULT_INVALID"):
+        validate_tool_result(
+            descriptor, {"status": "completed", "command": "reminder.series.resume"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_tools_use_owner_bound_context_and_mutations_stop_before_side_effect() -> None:
+    registry = default_tool_registry()
+    policy = ToolPolicy(
+        uuid4(),
+        uuid4(),
+        1,
+        grants=(ToolGrant("reminder.list", 1), ToolGrant("reminder.series.pause", 1)),
+        max_calls_per_run=1,
+        permission_scopes=frozenset({"reminders:read", "reminders:write"}),
+    )
+    executor = ToolExecutor(registry)
+    seen: list[tuple[str | None, str | None, int]] = []
+
+    async def list_reminders(query: str | None, state: str | None, limit: int) -> object:
+        seen.append((query, state, limit))
+        return {
+            "outcome": "resolved",
+            "items": [
+                {
+                    "id": str(uuid4()),
+                    "type": "series",
+                    "content": "dentist",
+                    "status": "active",
+                    "version": 1,
+                }
+            ],
+        }
+
+    async def inspect_reminder(target: str) -> object:
+        return {
+            "outcome": "resolved",
+            "items": [
+                {
+                    "id": str(uuid4()),
+                    "type": "series",
+                    "content": target,
+                    "status": "active",
+                    "version": 1,
+                }
+            ],
+        }
+
+    context = ReminderReadContext(list_reminders, inspect_reminder)
+    listed = await executor.execute(
+        policy,
+        ToolCall("reminder.list", {"query": "dentist", "state": "active", "limit": 10}),
+        context,
+    )
+    assert listed.status == "completed"
+    assert seen == [("dentist", "active", 10)]
+
+    mutation = await executor.execute(
+        policy,
+        ToolCall("reminder.series.pause", {"target": "series"}),
+        context,
+        calls_used=0,
+    )
+    assert mutation.status == "awaiting_confirmation"
 
 
 @pytest.mark.parametrize(
@@ -266,19 +462,19 @@ def test_policy_creation_idempotency_and_expected_revision_are_deterministic() -
     grant = (ToolGrant("memory.search", 1),)
 
     first = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=2, idempotency_key="same-request"
+        aura.id, grant, expected_revision=3, idempotency_key="same-request"
     )
     replay = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=2, idempotency_key="same-request"
+        aura.id, grant, expected_revision=3, idempotency_key="same-request"
     )
     assert replay is first
 
     with pytest.raises(ConfigurationIdempotencyConflict):
         catalog.create_tool_policy(
-            aura.id, (), expected_revision=2, idempotency_key="same-request"
+            aura.id, (), expected_revision=3, idempotency_key="same-request"
         )
     with pytest.raises(ConfigurationVersionConflict):
-        catalog.create_tool_policy(aura.id, grant, expected_revision=2)
+        catalog.create_tool_policy(aura.id, grant, expected_revision=3)
 
 
 def test_policy_is_owner_scoped_and_attach_requires_new_agent_revision() -> None:

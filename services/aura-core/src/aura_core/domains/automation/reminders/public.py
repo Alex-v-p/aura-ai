@@ -11,12 +11,13 @@ import base64
 import hashlib
 import hmac
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol, overload
+from typing import Protocol, cast, overload
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from .recurrence import (
     RecurrenceFrequency,
@@ -309,6 +310,38 @@ class ReminderProposal:
     expires_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ReminderCommandProposal:
+    """Immutable, owner-bound arguments for a conversational command.
+
+    ``normalized_arguments`` is the only source used by the approval resume
+    path.  It is intentionally kept in the reminder domain so the governance
+    domain carries only a proposal identifier and lifecycle metadata.
+    """
+
+    id: UUID
+    issuer: str
+    subject: str
+    operation: str
+    tool_id: str
+    tool_version: int
+    target_id: UUID | None
+    expected_version: int | None
+    normalized_arguments: Mapping[str, object]
+    timezone: str | None
+    run_id: UUID
+    conversation_id: UUID
+    tool_call_id: UUID
+    created_at: datetime
+    expires_at: datetime
+    target_type: str | None = None
+
+    @property
+    def arguments(self) -> Mapping[str, object]:
+        """Compatibility spelling for application callers."""
+        return self.normalized_arguments
+
+
 class ReminderProposalPort(Protocol):
     async def create(
         self,
@@ -325,6 +358,30 @@ class ReminderProposalPort(Protocol):
     ) -> ReminderProposal: ...
 
     async def get(self, issuer: str, subject: str, proposal_id: UUID) -> ReminderProposal: ...
+
+    async def create_command(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        operation: str,
+        tool_id: str,
+        tool_version: int,
+        target_id: UUID | None,
+        expected_version: int | None,
+        target_type: str | None = None,
+        normalized_arguments: Mapping[str, object],
+        timezone: str | None,
+        run_id: UUID,
+        conversation_id: UUID,
+        tool_call_id: UUID,
+        now: datetime | None = None,
+        transaction: object | None = None,
+    ) -> ReminderCommandProposal: ...
+
+    async def get_command(
+        self, issuer: str, subject: str, proposal_id: UUID
+    ) -> ReminderCommandProposal: ...
 
 
 class ReminderNotFound(ReminderError):
@@ -404,6 +461,17 @@ class ReminderRepository(ReminderDeliveryPort, ReminderSeriesRepository, Protoco
         idempotency_key: str,
     ) -> Reminder: ...
 
+    async def reschedule(
+        self,
+        issuer: str,
+        subject: str,
+        reminder_id: UUID,
+        *,
+        due_at: datetime,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> Reminder: ...
+
 
 class ReminderApplicationService:
     """Shared reminder use cases consumed by HTTP and future tool/scheduler entrypoints."""
@@ -478,6 +546,25 @@ class ReminderApplicationService:
             issuer,
             subject,
             reminder_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+        )
+
+    async def reschedule(
+        self,
+        issuer: str,
+        subject: str,
+        reminder_id: UUID,
+        *,
+        due_at: datetime,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> Reminder:
+        return await self.repository.reschedule(
+            issuer,
+            subject,
+            reminder_id,
+            due_at=canonical_due_at(due_at),
             expected_version=expected_version,
             idempotency_key=idempotency_key,
         )
@@ -646,6 +733,411 @@ class ReminderApplicationService:
             idempotency_key=idempotency_key,
         )
 
+    async def resolve_target(
+        self,
+        issuer: str,
+        subject: str,
+        target: str,
+        *,
+        kind: str | None = None,
+        limit: int = 10,
+    ) -> ReminderTargetResolution:
+        """Resolve an owner target deterministically without mutation.
+
+        UUIDs are exact identifiers.  Other targets require an exact,
+        case-folded content/subject match; ties are deliberately ambiguous.
+        The bounded result prevents a query from becoming an unbounded data
+        disclosure channel.
+        """
+        if kind is not None and kind not in {"reminder", "series"}:
+            raise ReminderValidationError("target kind is invalid")
+        value = target.strip()
+        if not value:
+            return ReminderTargetResolution("clarification", ())
+        candidates: list[ReminderTarget] = []
+        try:
+            identifier = UUID(value)
+        except ValueError:
+            identifier = None
+        if identifier is not None:
+            try:
+                candidates.append(ReminderTarget("reminder", identifier, None, None))
+                item = await self.get(issuer, subject, identifier)
+                candidates = [
+                    ReminderTarget(
+                        "reminder", item.id, item.version, item.content, item.status.value
+                    )
+                ]
+            except ReminderError:
+                try:
+                    item = await self.get_series(issuer, subject, identifier)
+                    candidates = [
+                        ReminderTarget(
+                            "series", item.id, item.version, item.content, item.status.value
+                        )
+                    ]
+                except ReminderError:
+                    candidates = []
+        else:
+            needle = value.casefold()
+            seen: set[UUID] = set()
+            if kind != "series":
+                for view in (ReminderView.UPCOMING, ReminderView.HISTORY):
+                    cursor: str | None = None
+                    while True:
+                        page = await self.list(issuer, subject, view=view, limit=100, cursor=cursor)
+                        for item in page.items:
+                            if item.id not in seen and item.content.casefold() == needle:
+                                candidates.append(
+                                    ReminderTarget(
+                                        "reminder",
+                                        item.id,
+                                        item.version,
+                                        item.content,
+                                        item.status.value,
+                                    )
+                                )
+                                seen.add(item.id)
+                        if len(candidates) > 1 or page.next_cursor is None:
+                            break
+                        cursor = page.next_cursor
+                    if len(candidates) > 1:
+                        break
+            if len(candidates) <= 1 and kind != "reminder":
+                cursor = None
+                while True:
+                    series_page = await self.list_series(issuer, subject, limit=100, cursor=cursor)
+                    for item in series_page.items:
+                        if item.content.casefold() == needle:
+                            candidates.append(
+                                ReminderTarget(
+                                    "series",
+                                    item.id,
+                                    item.version,
+                                    item.content,
+                                    item.status.value,
+                                )
+                            )
+                    if len(candidates) > 1 or series_page.next_cursor is None:
+                        break
+                    cursor = series_page.next_cursor
+        if kind is not None:
+            candidates = [item for item in candidates if item.kind == kind]
+        if len(candidates) == 1:
+            return ReminderTargetResolution("resolved", tuple(candidates))
+        return ReminderTargetResolution("clarification", tuple(candidates[:limit]))
+
+    async def list_for_owner(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        query: str | None = None,
+        state: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, object]:
+        """Return bounded, owner-authorized summaries for conversational reads."""
+        bounded = max(1, min(limit, 10))
+        needle = query.casefold() if query else None
+        items: list[dict[str, object]] = []
+        seen: set[str] = set()
+
+        # Apply the conversational filters while walking each owner-scoped
+        # source.  The repository pages are bounded for transport, but the
+        # first page is not the complete set of records: a matching historical
+        # item may be beyond it.  Exhaust pages until the requested result
+        # bound is satisfied (or the source is exhausted), then cap the
+        # private result below.
+        series_cursor: str | None = None
+        while len(items) < bounded:
+            series_page = await self.list_series(issuer, subject, limit=100, cursor=series_cursor)
+            for item in series_page.items:
+                identifier = str(item.id)
+                if identifier in seen:
+                    continue
+                if state and item.status.value != state:
+                    continue
+                if needle and needle not in item.content.casefold():
+                    continue
+                items.append(
+                    {
+                        "id": identifier,
+                        "type": "series",
+                        "content": item.content,
+                        "status": item.status.value,
+                        "version": item.version,
+                    }
+                )
+                seen.add(identifier)
+                if len(items) >= bounded:
+                    break
+            if len(items) >= bounded or series_page.next_cursor is None:
+                break
+            series_cursor = series_page.next_cursor
+
+        for view in (ReminderView.UPCOMING, ReminderView.HISTORY):
+            if len(items) >= bounded:
+                break
+            cursor: str | None = None
+            while len(items) < bounded:
+                page = await self.list(issuer, subject, view=view, limit=100, cursor=cursor)
+                for item in page.items:
+                    identifier = str(item.id)
+                    if identifier in seen:
+                        continue
+                    if state and item.status.value != state:
+                        continue
+                    if needle and needle not in item.content.casefold():
+                        continue
+                    items.append(
+                        {
+                            "id": identifier,
+                            "type": "reminder",
+                            "content": item.content,
+                            "status": item.status.value,
+                            "version": item.version,
+                        }
+                    )
+                    seen.add(identifier)
+                    if len(items) >= bounded:
+                        break
+                if len(items) >= bounded or page.next_cursor is None:
+                    break
+                cursor = page.next_cursor
+        return {"outcome": "resolved", "items": items[:bounded]}
+
+    async def inspect_for_owner(
+        self,
+        issuer: str,
+        subject: str,
+        target: str,
+        *,
+        resolver: Callable[..., object] | None = None,
+    ) -> dict[str, object]:
+        """Inspect one uniquely resolved owner record without guessing."""
+        resolve = resolver or self.resolve_target
+        resolution = await cast(
+            "Awaitable[ReminderTargetResolution]", resolve(issuer, subject, target)
+        )
+        if resolution.status != "resolved" or len(resolution.matches) != 1:
+            return {"outcome": "clarification", "items": []}
+        match = resolution.matches[0]
+        return {
+            "outcome": "resolved",
+            "items": [
+                {
+                    "id": str(match.id),
+                    "type": match.kind,
+                    "content": match.content,
+                    "status": match.status,
+                    "version": match.version,
+                }
+            ],
+        }
+
+    async def prepare_command(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        tool_id: str,
+        arguments: Mapping[str, object],
+        timezone: str | None,
+    ) -> ReminderCommandPreparation:
+        """Resolve and canonicalize a conversational command before proposal creation."""
+        if tool_id in {"reminder.series.create", "reminder.reschedule"}:
+            if not timezone:
+                return ReminderCommandPreparation("clarification", {}, None, None, None, None)
+            try:
+                validate_timezone(timezone)
+            except RecurrenceValidationError, ValueError:
+                return ReminderCommandPreparation("validation", {}, None, None, None, None)
+        normalized = dict(arguments)
+
+        def local_wall(name: str) -> str:
+            value = datetime.fromisoformat(str(normalized[name]).replace("Z", "+00:00"))
+            if value.tzinfo is not None and value.utcoffset() is not None:
+                raise ReminderValidationError(f"{name} must be a local wall-clock value")
+            return value.isoformat()
+
+        try:
+            if tool_id == "reminder.series.create":
+                normalized["localStart"] = local_wall("localStart")
+                rule = RecurrenceRule.from_payload(
+                    cast(dict[str, object], normalized["recurrence"])
+                )
+                normalized["recurrence"] = rule.to_payload()
+                return ReminderCommandPreparation(
+                    "resolved", normalized, None, None, "series", timezone
+                )
+            if tool_id == "reminder.series.update":
+                if "localStart" in normalized:
+                    normalized["localStart"] = local_wall("localStart")
+                if "recurrence" in normalized:
+                    rule = RecurrenceRule.from_payload(
+                        cast(dict[str, object], normalized["recurrence"])
+                    )
+                    normalized["recurrence"] = rule.to_payload()
+                kind = "series"
+            elif tool_id == "reminder.cancel":
+                kind = "series" if normalized.get("scope") == "series" else "reminder"
+            else:
+                kind = "reminder" if tool_id == "reminder.reschedule" else "series"
+                if tool_id == "reminder.reschedule":
+                    normalized["dueAt"] = local_wall("dueAt")
+            resolution = await self.resolve_target(
+                issuer, subject, str(normalized.get("target", "")), kind=kind
+            )
+            if resolution.status != "resolved" or len(resolution.matches) != 1:
+                return ReminderCommandPreparation("clarification", {}, None, None, None, timezone)
+            match = resolution.matches[0]
+            if match.version is None:
+                return ReminderCommandPreparation("clarification", {}, None, None, None, timezone)
+            normalized["target"] = str(match.id)
+            normalized["expectedVersion"] = match.version
+            return ReminderCommandPreparation(
+                "resolved", normalized, match.id, match.version, match.kind, timezone
+            )
+        except (
+            RecurrenceValidationError,
+            ReminderValidationError,
+            TypeError,
+            ValueError,
+            KeyError,
+        ):
+            return ReminderCommandPreparation("validation", {}, None, None, None, timezone)
+
+    async def execute_command(
+        self,
+        issuer: str,
+        subject: str,
+        proposal: ReminderCommandProposal,
+        *,
+        idempotency_key: str,
+    ) -> object:
+        """Execute one already-approved typed command through public APIs."""
+        args = dict(proposal.normalized_arguments)
+        operation = proposal.operation
+        target = proposal.target_id
+        version = proposal.expected_version
+
+        def local_start(value: object) -> datetime:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=None)
+
+        def due_in_zone(value: object) -> datetime:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                if not proposal.timezone:
+                    raise ReminderValidationError("approved reminder command timezone is missing")
+                parsed = parsed.replace(tzinfo=ZoneInfo(proposal.timezone))
+            return parsed.astimezone(UTC)
+
+        if operation == "series.create":
+            return await self.create_series(
+                issuer,
+                subject,
+                content=str(args["content"]),
+                local_start=local_start(args["localStart"]),
+                timezone=str(proposal.timezone or args["timezone"]),
+                rule=RecurrenceRule.from_payload(cast(dict[str, object], args["recurrence"])),
+                idempotency_key=idempotency_key,
+            )
+        if target is None or version is None:
+            raise ReminderValidationError("approved reminder command target is incomplete")
+        if operation == "series.update":
+            return await self.update_series(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+                content=str(args["content"]) if args.get("content") is not None else None,
+                local_start=local_start(args["localStart"]) if args.get("localStart") else None,
+                timezone=(str(args["timezone"]) if args.get("timezone") else None),
+                rule=(
+                    RecurrenceRule.from_payload(cast(dict[str, object], args["recurrence"]))
+                    if args.get("recurrence")
+                    else None
+                ),
+            )
+        if operation == "series.pause":
+            return await self.pause_series(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+            )
+        if operation == "series.resume":
+            return await self.resume_series(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+            )
+        if operation == "cancel" and args.get("scope") == "series":
+            return await self.cancel_series(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+            )
+        if operation == "cancel" and args.get("scope") == "occurrence":
+            return await self.cancel(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+            )
+        if operation == "reschedule":
+            if proposal.target_type == "occurrence":
+                return await self.reschedule(
+                    issuer,
+                    subject,
+                    target,
+                    due_at=due_in_zone(args["dueAt"]),
+                    expected_version=version,
+                    idempotency_key=idempotency_key,
+                )
+            return await self.update_series(
+                issuer,
+                subject,
+                target,
+                expected_version=version,
+                idempotency_key=idempotency_key,
+                local_start=local_start(args.get("localStart", args.get("dueAt"))),
+            )
+        raise ReminderValidationError("unsupported approved reminder command")
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderTarget:
+    kind: str
+    id: UUID
+    version: int | None
+    content: str | None
+    status: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderTargetResolution:
+    status: str
+    matches: tuple[ReminderTarget, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderCommandPreparation:
+    outcome: str
+    arguments: Mapping[str, object]
+    target_id: UUID | None
+    expected_version: int | None
+    target_type: str | None
+    timezone: str | None
+
 
 def normalize_content(value: str) -> str:
     content = value.strip()
@@ -769,6 +1261,8 @@ __all__ = [
     "REMINDER_COMPONENT",
     "REMINDER_TOPIC",
     "Reminder",
+    "ReminderCommandProposal",
+    "ReminderCommandPreparation",
     "ReminderApplicationService",
     "ReminderOccurrence",
     "ReminderOccurrencePage",
@@ -786,6 +1280,8 @@ __all__ = [
     "ReminderIdempotencyConflict",
     "ReminderNotFound",
     "ReminderPage",
+    "ReminderTarget",
+    "ReminderTargetResolution",
     "ReminderRepository",
     "ReminderDeliveryPort",
     "ReminderDeliveryResult",

@@ -17,7 +17,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from aura_core.domains.automation.reminders.public import ReminderProposal, ReminderProposalPort
+from aura_core.domains.automation.reminders.public import (
+    ReminderProposal,
+    ReminderProposalPort,
+)
 from aura_core.domains.governance.approvals.persistence import (
     ApprovalEventRow,
     ApprovalIdempotencyRow,
@@ -70,10 +73,15 @@ def _decision_telemetry(
     outcome: str,
     approval_id: UUID | None = None,
     error_class: str | None = None,
+    tool_id: str | None = None,
 ) -> None:
     if metrics is None:
         return
     metrics.increment(APPROVAL_COMPONENT, "approval_decision_outcome", outcome=outcome)
+    if tool_id is not None and tool_id != "reminder.create":
+        metrics.increment(
+            APPROVAL_COMPONENT, "reminder_command_approval_outcome", outcome=outcome
+        )
     metrics.observe(APPROVAL_COMPONENT, "approval_decision_duration_ms", (monotonic() - started) * 1000.0, outcome=outcome)
     _span(metrics, "approval.decide", started, outcome=outcome, approval_id=approval_id, error_class=error_class)
 
@@ -168,6 +176,47 @@ class MemoryApprovalRepository:
                 self.metrics.increment(APPROVAL_COMPONENT, "approval_creation_outcome", outcome="ok")
             return ApprovalDetail(approval, proposal)
 
+    async def create_command_pending(
+        self, issuer: str, subject: str, *, operation: str, tool_id: str,
+        tool_version: int, target_id: UUID | None, expected_version: int | None,
+        normalized_arguments: dict[str, object], timezone: str | None,
+        target_type: str | None = None,
+        run_id: UUID, conversation_id: UUID, tool_call_id: UUID,
+        now: datetime | None = None, execution_port: object | None = None,
+        attempt_id: UUID | None = None,
+    ) -> ApprovalDetail:
+        issuer, subject = _owner(issuer, subject)
+        created = (now or self._time()).astimezone(UTC)
+        async with self._lock:
+            proposal = await self.proposals.create_command(
+                issuer, subject, operation=operation, tool_id=tool_id,
+                tool_version=tool_version, target_id=target_id,
+                expected_version=expected_version,
+                normalized_arguments=normalized_arguments, timezone=timezone,
+                target_type=target_type,
+                run_id=run_id, conversation_id=conversation_id,
+                tool_call_id=tool_call_id, now=created,
+            )
+            approval = Approval(
+                uuid4(), issuer, subject, proposal.id, run_id, conversation_id,
+                tool_call_id, tool_id, tool_version, ApprovalStatus.PENDING,
+                ApprovalExecutionStatus.NOT_STARTED, 1, created, created,
+                proposal.expires_at,
+            )
+            self._proposals[proposal.id] = proposal  # type: ignore[assignment]
+            self._items[approval.id] = approval
+            self._append_event(approval, created)
+            waiter_port = execution_port or self.execution_port
+            if waiter_port is not None and attempt_id is not None:
+                waiter = getattr(waiter_port, "wait_for_confirmation", None)
+                if callable(waiter):
+                    await cast(Awaitable[object], waiter(run_id, attempt_id, approval.id, tool_call_id, transaction=None))
+            if self.metrics is not None:
+                self.metrics.increment(
+                    APPROVAL_COMPONENT, "reminder_command_approval_outcome", outcome="pending"
+                )
+            return ApprovalDetail(approval, proposal)
+
     def _append_event(self, item: Approval, occurred_at: datetime) -> None:
         self._events.append(ApprovalReplayEvent(uuid4(), item.id, item.proposal_id, item.run_id, item.conversation_id, item.tool_id, item.tool_version, item.status, item.execution_status, item.version, occurred_at))
         self._wake.set()
@@ -195,7 +244,10 @@ class MemoryApprovalRepository:
             item = self._items.get(approval_id)
             if item is None or (item.issuer, item.subject) != (issuer, subject):
                 raise ApprovalNotFound("approval not found")
-            proposal = self._proposals.get(item.proposal_id) or await self.proposals.get(issuer, subject, item.proposal_id)
+            if item.tool_id == "reminder.create":
+                proposal = self._proposals.get(item.proposal_id) or await self.proposals.get(issuer, subject, item.proposal_id)
+            else:
+                proposal = await self.proposals.get_command(issuer, subject, item.proposal_id)
             return ApprovalDetail(item, proposal)
 
     async def _decide_transaction(self, issuer: str, subject: str, approval_id: UUID, *, decision: ApprovalStatus, expected_version: int, idempotency_key: str) -> tuple[Approval, bool]:
@@ -232,12 +284,13 @@ class MemoryApprovalRepository:
         try:
             result, replayed = await self._decide_transaction(issuer, subject, approval_id, decision=decision, expected_version=expected_version, idempotency_key=idempotency_key)
         except ApprovalIdempotencyConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency", tool_id=getattr(current, "tool_id", None))
             raise
         except ApprovalVersionConflict:
             current = self._items.get(approval_id)
             expired = current is not None and current.status is ApprovalStatus.EXPIRED
-            _decision_telemetry(self.metrics, started, outcome="expired" if expired else "conflict", approval_id=approval_id, error_class=None if expired else "conflict")
+            _decision_telemetry(self.metrics, started, outcome="expired" if expired else "conflict", approval_id=approval_id, error_class=None if expired else "conflict", tool_id=getattr(current, "tool_id", None))
             if expired and current is not None:
                 _wait_metric(self.metrics, current, outcome="expired")
             raise
@@ -245,12 +298,14 @@ class MemoryApprovalRepository:
             _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found")
             raise
         except ApprovalTransitionError:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle", tool_id=getattr(current, "tool_id", None))
             raise
         except Exception:
-            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database", tool_id=getattr(current, "tool_id", None))
             raise
-        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else result.status.value, approval_id=result.id)
+        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else result.status.value, approval_id=result.id, tool_id=result.tool_id)
         return result
 
     async def decide(self, issuer: str, subject: str, approval_id: UUID, *, decision: ApprovalStatus, expected_version: int, idempotency_key: str) -> Approval:
@@ -288,18 +343,21 @@ class MemoryApprovalRepository:
         try:
             result, replayed = await self._cancel_transaction(issuer, subject, approval_id, expected_version=expected_version, idempotency_key=idempotency_key)
         except ApprovalIdempotencyConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency", tool_id=getattr(current, "tool_id", None))
             raise
         except ApprovalVersionConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict", tool_id=getattr(current, "tool_id", None))
             raise
         except ApprovalNotFound:
             _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found")
             raise
         except Exception:
-            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database", tool_id=getattr(current, "tool_id", None))
             raise
-        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.id)
+        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.id, tool_id=result.tool_id)
         return result
 
     async def _cancel_waiting_transaction(
@@ -343,21 +401,25 @@ class MemoryApprovalRepository:
         try:
             result, replayed = await self._cancel_waiting_transaction(issuer, subject, run_id, approval_id, expected_version=expected_version, idempotency_key=idempotency_key)
         except ApprovalIdempotencyConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency", tool_id=getattr(current, "tool_id", None))
             raise
         except ApprovalVersionConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict", tool_id=getattr(current, "tool_id", None))
             raise
         except ApprovalNotFound:
             _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found")
             raise
         except ApprovalTransitionError:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle", tool_id=getattr(current, "tool_id", None))
             raise
         except Exception:
-            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database")
+            current = self._items.get(approval_id)
+            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database", tool_id=getattr(current, "tool_id", None))
             raise
-        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.approval.id)
+        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.approval.id, tool_id=result.approval.tool_id)
         return result
 
     async def expire_due(self, *, now: datetime | None = None, limit: int = 100) -> tuple[Approval, ...]:
@@ -380,6 +442,12 @@ class MemoryApprovalRepository:
                 self.metrics.observe(APPROVAL_COMPONENT, "approval_expiry_count", float(len(expired)), outcome="expired")
                 for item in expired:
                     _wait_metric(self.metrics, item, outcome="expired")
+                    if item.tool_id != "reminder.create":
+                        self.metrics.increment(
+                            APPROVAL_COMPONENT,
+                            "reminder_command_approval_outcome",
+                            outcome="expired",
+                        )
             result = tuple(expired)
         _span(self.metrics, "approval.expire", started, outcome="ok", dependency="postgresql")
         return result
@@ -457,6 +525,16 @@ class SqlApprovalRepository:
         value = self._clock()
         return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
 
+    async def _tool_id_for(self, approval_id: UUID) -> str | None:
+        """Read only the non-sensitive tool identifier for conflict telemetry."""
+        try:
+            async with self.sessions() as session:
+                return await session.scalar(
+                    select(ApprovalRow.tool_id).where(ApprovalRow.id == approval_id)
+                )
+        except Exception:
+            return None
+
     async def create_pending(self, issuer: str, subject: str, *, content: str, due_at: datetime, run_id: UUID, conversation_id: UUID, tool_call_id: UUID, tool_id: str = "reminder.create", tool_version: int = 1, now: datetime | None = None, execution_port: object | None = None, attempt_id: UUID | None = None) -> ApprovalDetail:
         issuer, subject = _owner(issuer, subject)
         started = monotonic()
@@ -475,6 +553,58 @@ class SqlApprovalRepository:
             result = ApprovalDetail(item, proposal)
         if self.metrics is not None:
             self.metrics.increment(APPROVAL_COMPONENT, "approval_creation_outcome", outcome="ok")
+        _span(self.metrics, "approval.create", started, outcome="ok", approval_id=result.approval.id)
+        return result
+
+    async def create_command_pending(
+        self, issuer: str, subject: str, *, operation: str, tool_id: str,
+        tool_version: int, target_id: UUID | None, expected_version: int | None,
+        normalized_arguments: dict[str, object], timezone: str | None,
+        target_type: str | None = None,
+        run_id: UUID, conversation_id: UUID, tool_call_id: UUID,
+        now: datetime | None = None, execution_port: object | None = None,
+        attempt_id: UUID | None = None,
+    ) -> ApprovalDetail:
+        issuer, subject = _owner(issuer, subject)
+        started = monotonic()
+        created = (now or self._time()).astimezone(UTC)
+        async with self.sessions() as session, session.begin():
+            proposal = await self.proposals.create_command(
+                issuer, subject, operation=operation, tool_id=tool_id,
+                tool_version=tool_version, target_id=target_id,
+                expected_version=expected_version,
+                normalized_arguments=normalized_arguments, timezone=timezone,
+                target_type=target_type,
+                run_id=run_id, conversation_id=conversation_id,
+                tool_call_id=tool_call_id, now=created, transaction=session,
+            )
+            item = Approval(
+                uuid4(), issuer, subject, proposal.id, run_id, conversation_id,
+                tool_call_id, tool_id, tool_version, ApprovalStatus.PENDING,
+                ApprovalExecutionStatus.NOT_STARTED, 1, created, created,
+                proposal.expires_at,
+            )
+            session.add(ApprovalRow(
+                id=item.id, principal_issuer=issuer, principal_subject=subject,
+                proposal_id=item.proposal_id, run_id=run_id, conversation_id=conversation_id,
+                tool_call_id=tool_call_id, tool_id=tool_id, tool_version=tool_version,
+                status=item.status.value, execution_status=item.execution_status.value,
+                version=item.version, created_at=created, updated_at=created,
+                expires_at=item.expires_at,
+            ))
+            await self._stage(session, item, created)
+            waiter_port = execution_port or self.execution_port
+            if waiter_port is not None and attempt_id is not None:
+                waiter = getattr(waiter_port, "wait_for_confirmation", None)
+                if not callable(waiter):
+                    raise TypeError("approval execution port is invalid")
+                await cast(Awaitable[object], waiter(run_id, attempt_id, item.id, tool_call_id, transaction=session))
+            result = ApprovalDetail(item, proposal)
+        if self.metrics is not None:
+            self.metrics.increment(APPROVAL_COMPONENT, "approval_creation_outcome", outcome="ok")
+            self.metrics.increment(
+                APPROVAL_COMPONENT, "reminder_command_approval_outcome", outcome="pending"
+            )
         _span(self.metrics, "approval.create", started, outcome="ok", approval_id=result.approval.id)
         return result
 
@@ -545,7 +675,10 @@ class SqlApprovalRepository:
             row = (await session.execute(select(ApprovalRow).where(ApprovalRow.id == approval_id, ApprovalRow.principal_issuer == issuer, ApprovalRow.principal_subject == subject))).scalar_one_or_none()
             if row is None:
                 raise ApprovalNotFound("approval not found")
-            proposal = await self.proposals.get(issuer, subject, row.proposal_id)
+            if row.tool_id == "reminder.create":
+                proposal = await self.proposals.get(issuer, subject, row.proposal_id)
+            else:
+                proposal = await self.proposals.get_command(issuer, subject, row.proposal_id)
             return ApprovalDetail(_approval(row), proposal)
 
     async def _decide_transaction(self, issuer: str, subject: str, approval_id: UUID, *, decision: ApprovalStatus, expected_version: int, idempotency_key: str) -> _DecisionResult:
@@ -614,28 +747,28 @@ class SqlApprovalRepository:
         try:
             decision_result = await self._decide_transaction(issuer, subject, approval_id, decision=decision, expected_version=expected_version, idempotency_key=idempotency_key)
         except ApprovalIdempotencyConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalVersionConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalNotFound:
-            _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found")
+            _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalTransitionError:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle", tool_id=await self._tool_id_for(approval_id))
             raise
         except Exception:
-            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database")
+            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database", tool_id=await self._tool_id_for(approval_id))
             raise
         if decision_result.replayed:
-            _decision_telemetry(self.metrics, started, outcome="duplicate", approval_id=decision_result.approval.id)
+            _decision_telemetry(self.metrics, started, outcome="duplicate", approval_id=decision_result.approval.id, tool_id=decision_result.approval.tool_id)
             return decision_result.approval
         if decision_result.expired:
-            _decision_telemetry(self.metrics, started, outcome="expired", approval_id=approval_id)
+            _decision_telemetry(self.metrics, started, outcome="expired", approval_id=approval_id, tool_id=decision_result.approval.tool_id)
             _wait_metric(self.metrics, decision_result.approval, outcome="expired")
             raise ApprovalVersionConflict("approval expired before the decision")
-        _decision_telemetry(self.metrics, started, outcome=decision_result.approval.status.value, approval_id=decision_result.approval.id)
+        _decision_telemetry(self.metrics, started, outcome=decision_result.approval.status.value, approval_id=decision_result.approval.id, tool_id=decision_result.approval.tool_id)
         _wait_metric(self.metrics, decision_result.approval, outcome=decision_result.approval.status.value)
         return decision_result.approval
 
@@ -696,21 +829,21 @@ class SqlApprovalRepository:
         try:
             result, replayed = await self._cancel_waiting_transaction(issuer, subject, run_id, approval_id, expected_version=expected_version, idempotency_key=idempotency_key)
         except ApprovalIdempotencyConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="idempotency", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalVersionConflict:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="conflict", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalNotFound:
-            _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found")
+            _decision_telemetry(self.metrics, started, outcome="not_found", approval_id=approval_id, error_class="not_found", tool_id=await self._tool_id_for(approval_id))
             raise
         except ApprovalTransitionError:
-            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle")
+            _decision_telemetry(self.metrics, started, outcome="conflict", approval_id=approval_id, error_class="lifecycle", tool_id=await self._tool_id_for(approval_id))
             raise
         except Exception:
-            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database")
+            _decision_telemetry(self.metrics, started, outcome="error", approval_id=approval_id, error_class="database", tool_id=await self._tool_id_for(approval_id))
             raise
-        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.approval.id)
+        _decision_telemetry(self.metrics, started, outcome="duplicate" if replayed else "canceled", approval_id=result.approval.id, tool_id=result.approval.tool_id)
         return result
 
     async def expire_due(self, *, now: datetime | None = None, limit: int = 100) -> tuple[Approval, ...]:
@@ -760,6 +893,12 @@ class SqlApprovalRepository:
             self.metrics.observe(APPROVAL_COMPONENT, "approval_expiry_count", float(len(result)), outcome="expired")
             for item in result:
                 _wait_metric(self.metrics, item, outcome="expired")
+                if item.tool_id != "reminder.create":
+                    self.metrics.increment(
+                        APPROVAL_COMPONENT,
+                        "reminder_command_approval_outcome",
+                        outcome="expired",
+                    )
         return result
 
     async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[ApprovalReplayEvent, ...]:

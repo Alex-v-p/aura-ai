@@ -54,6 +54,7 @@ from aura_core.runtime.tools import (
     MEMORY_SEARCH_TOOL_ID,
     REMINDER_CREATE_TOOL_ID,
     MemorySearchContext,
+    ReminderReadContext,
     ToolCall,
     ToolExecutionError,
     ToolExecutionResult,
@@ -61,6 +62,7 @@ from aura_core.runtime.tools import (
     ToolRegistry,
     default_tool_registry,
     validate_tool_arguments,
+    validate_tool_result,
 )
 
 
@@ -895,6 +897,9 @@ class RunCoordinator:
         approval_status = getattr(approval_status, "value", approval_status)
         execution_status = getattr(approval, "execution_status", "not_started")
         execution_status = getattr(execution_status, "value", execution_status)
+        resumed_tool_id = str(getattr(approval, "tool_id", REMINDER_CREATE_TOOL_ID))
+        resumed_tool_version = int(getattr(approval, "tool_version", 1))
+        is_command_proposal = isinstance(getattr(proposal, "normalized_arguments", None), Mapping)
         approved = (
             run.tool_lifecycle_status in {"approved", "executing"}
             and approval_status == "approved"
@@ -907,7 +912,7 @@ class RunCoordinator:
         )
         self.metrics.increment(
             "aura.runtime.tool_execution",
-            "reminder_create_tool_outcome",
+            "reminder_command_execution_outcome" if is_command_proposal else "reminder_create_tool_outcome",
             outcome="approved" if approved else "denied",
             **self._metadata(run),
         )
@@ -938,34 +943,52 @@ class RunCoordinator:
                 if asyncio.iscoroutine(result):
                     await result
             await self._publish_tool_status(
-                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "executing"
+                conversation, run, call_id, resumed_tool_id, resumed_tool_version, "executing"
             )
-            creator = getattr(self.reminder_service, "create", None)
-            if not callable(creator):
-                raise RunExecutionFailure("persistence")
-            reminder = await creator(
-                conversation.principal_issuer,
-                conversation.principal_subject,
-                content=proposal.content,
-                due_at=proposal.due_at,
-                idempotency_key=f"approval:{run.approval_id}",
-            )
-            result_value = {
-                "reminderId": str(reminder.id),
-                "status": reminder.status.value,
-                "dueAt": reminder.due_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-            }
+            if is_command_proposal:
+                executor = getattr(self.reminder_service, "execute_command", None)
+                if not callable(executor):
+                    raise RunExecutionFailure("persistence")
+                await executor(
+                    conversation.principal_issuer,
+                    conversation.principal_subject,
+                    proposal,
+                    idempotency_key=f"approval:{run.approval_id}",
+                )
+                descriptor = self.tool_registry.get(resumed_tool_id, resumed_tool_version)
+                if descriptor is None:
+                    raise RunExecutionFailure("persistence")
+                result_value = validate_tool_result(
+                    descriptor,
+                    {"status": "completed", "command": resumed_tool_id},
+                )
+            else:
+                creator = getattr(self.reminder_service, "create", None)
+                if not callable(creator):
+                    raise RunExecutionFailure("persistence")
+                reminder = await creator(
+                    conversation.principal_issuer,
+                    conversation.principal_subject,
+                    content=proposal.content,
+                    due_at=proposal.due_at,
+                    idempotency_key=f"approval:{run.approval_id}",
+                )
+                result_value = {
+                    "reminderId": str(reminder.id),
+                    "status": reminder.status.value,
+                    "dueAt": reminder.due_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                }
             evidence = _render_tool_evidence(result_value)
         else:
             await self._publish_tool_status(
-                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "denied",
+                conversation, run, call_id, resumed_tool_id, resumed_tool_version, "denied",
                 error_class="policy", error_code="TOOL_NOT_APPROVED",
             )
             if execution_status != "denied":
                 await self._update_approval_execution(run.approval_id, "denied")
             self.metrics.increment(
                 "aura.runtime.tool_execution",
-                "reminder_create_tool_outcome",
+                "reminder_command_execution_outcome" if is_command_proposal else "reminder_create_tool_outcome",
                 outcome="denied",
                 **self._metadata(run),
             )
@@ -1019,13 +1042,13 @@ class RunCoordinator:
             # synthesis failure therefore settles through the normal failed
             # path instead of attempting COMPLETED -> FAILED.
             await self._publish_tool_status(
-                conversation, finished, call_id, REMINDER_CREATE_TOOL_ID, 1, "completed"
+                conversation, finished, call_id, resumed_tool_id, resumed_tool_version, "completed"
             )
             if execution_status != "completed":
                 await self._update_approval_execution(run.approval_id, "completed")
             self.metrics.increment(
                 "aura.runtime.tool_execution",
-                "reminder_create_tool_outcome",
+                "reminder_command_execution_outcome" if is_command_proposal else "reminder_create_tool_outcome",
                 outcome="completed",
                 **self._metadata(finished),
             )
@@ -1055,6 +1078,29 @@ class RunCoordinator:
         """Apply the same terminal failure settlement as ordinary runs."""
 
         del error
+        tool_id = REMINDER_CREATE_TOOL_ID
+        tool_version = 1
+        is_command_proposal = False
+        if self.approval_service is not None and run.approval_id is not None:
+            getter = getattr(self.approval_service, "get", None)
+            if callable(getter):
+                try:
+                    detail = await getter(
+                        conversation.principal_issuer,
+                        conversation.principal_subject,
+                        run.approval_id,
+                    )
+                    approval = getattr(detail, "approval", detail)
+                    tool_id = str(getattr(approval, "tool_id", tool_id))
+                    tool_version = int(getattr(approval, "tool_version", tool_version))
+                    is_command_proposal = isinstance(
+                        getattr(getattr(detail, "proposal", None), "normalized_arguments", None),
+                        Mapping,
+                    )
+                except Exception:
+                    # Failure settlement must remain terminal even if the
+                    # optional approval read is temporarily unavailable.
+                    pass
         await self._update_approval_execution(run.approval_id, "failed")
         self.metrics.increment(
             "aura.governance.approval_workflow",
@@ -1064,7 +1110,9 @@ class RunCoordinator:
         )
         self.metrics.increment(
             "aura.runtime.tool_execution",
-            "reminder_create_tool_outcome",
+            "reminder_command_execution_outcome"
+            if is_command_proposal
+            else "reminder_create_tool_outcome",
             outcome="failed",
             **self._metadata(run),
         )
@@ -1086,8 +1134,8 @@ class RunCoordinator:
                 conversation,
                 run,
                 run.pending_tool_call_id or UUID(int=0),
-                REMINDER_CREATE_TOOL_ID,
-                1,
+                tool_id,
+                tool_version,
                 "failed",
                 error_class="execution",
                 error_code="TOOL_EXECUTION_FAILED",
@@ -1141,6 +1189,12 @@ class RunCoordinator:
             approval_id,
         )
         approval = getattr(detail, "approval", detail)
+        proposal = getattr(detail, "proposal", None)
+        is_command_proposal = isinstance(
+            getattr(proposal, "normalized_arguments", None), Mapping
+        )
+        resumed_tool_id = str(getattr(approval, "tool_id", REMINDER_CREATE_TOOL_ID))
+        resumed_tool_version = int(getattr(approval, "tool_version", 1))
         approval_status = getattr(getattr(approval, "status", None), "value", None)
         execution_status = getattr(
             getattr(approval, "execution_status", None), "value", None
@@ -1161,12 +1215,14 @@ class RunCoordinator:
         )
         if not already_published:
             await self._publish_tool_status(
-                conversation, run, call_id, REMINDER_CREATE_TOOL_ID, 1, "completed"
+                conversation, run, call_id, resumed_tool_id, resumed_tool_version, "completed"
             )
         await self._update_approval_execution(approval_id, "completed")
         self.metrics.increment(
             "aura.runtime.tool_execution",
-            "reminder_create_tool_outcome",
+            "reminder_command_execution_outcome"
+            if is_command_proposal
+            else "reminder_create_tool_outcome",
             outcome="completed",
             **self._metadata(run),
         )
@@ -1382,6 +1438,13 @@ class RunCoordinator:
             self.metrics.increment(
                 "aura.runtime.tool_selection", "tool_selection_outcome", outcome="selected", **self._metadata(run)
             )
+            if call.name.startswith("reminder."):
+                self.metrics.increment(
+                    "aura.runtime.tool_selection",
+                    "reminder_tool_selection_outcome",
+                    outcome="selected",
+                    **self._metadata(run),
+                )
             if call.name == REMINDER_CREATE_TOOL_ID:
                 self.metrics.increment(
                     "aura.runtime.tool_selection",
@@ -1465,21 +1528,80 @@ class RunCoordinator:
                     raise RunExecutionFailure("persistence")
                 try:
                     arguments = validate_tool_arguments(descriptor, call.arguments)
-                    due_at = datetime.fromisoformat(str(arguments["dueAt"]).replace("Z", "+00:00"))
                     run.tool_calls_used = await self._claim_tool_call(run, attempt_id)
-                    creator = getattr(self.approval_service, "create_pending", None)
-                    if not callable(creator):
-                        raise RunExecutionFailure("persistence")
-                    detail = await creator(
-                        conversation.principal_issuer,
-                        conversation.principal_subject,
-                        content=str(arguments["content"]),
-                        due_at=due_at,
-                        run_id=run.id,
-                        conversation_id=conversation.id,
-                        tool_call_id=call.call_id,
-                        attempt_id=attempt_id,
-                    )
+                    if descriptor.id == REMINDER_CREATE_TOOL_ID:
+                        due_at = datetime.fromisoformat(str(arguments["dueAt"]).replace("Z", "+00:00"))
+                        creator = getattr(self.approval_service, "create_pending", None)
+                        if not callable(creator):
+                            raise RunExecutionFailure("persistence")
+                        detail = await creator(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            content=str(arguments["content"]),
+                            due_at=due_at,
+                            run_id=run.id,
+                            conversation_id=conversation.id,
+                            tool_call_id=call.call_id,
+                            attempt_id=attempt_id,
+                        )
+                    else:
+                        creator = getattr(self.approval_service, "create_command_pending", None)
+                        if not callable(creator):
+                            raise RunExecutionFailure("persistence")
+                        preparer = getattr(self.reminder_service, "prepare_command", None)
+                        if not callable(preparer):
+                            raise RunExecutionFailure("persistence")
+                        prepared = await preparer(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            tool_id=descriptor.id,
+                            arguments=arguments,
+                            timezone=run.client_time_zone,
+                        )
+                        preparation_outcome = getattr(prepared, "outcome", "validation")
+                        if preparation_outcome != "resolved":
+                            if descriptor.id != "reminder.series.create":
+                                self.metrics.increment(
+                                    "aura.runtime.tool_execution",
+                                    "reminder_tool_resolution_outcome",
+                                    outcome=preparation_outcome,
+                                    **self._metadata(run),
+                                )
+                            await self._publish_tool_status(
+                                conversation, run, call.call_id, descriptor.id,
+                                descriptor.version, "completed", result_count=0,
+                            )
+                            message = (
+                                "[The reminder command needs clarification; no command was proposed.]"
+                                if preparation_outcome == "clarification"
+                                else "[The reminder command was invalid; no command was proposed.]"
+                            )
+                            synthesis = _bounded_synthesis_messages(
+                                messages, message, self.context_token_budget, memory_context_fraction
+                            )
+                            return await self._consume_synthesis(
+                                conversation, run, attempt_id, provider, synthesis,
+                                output_characters, started, worker_span_id,
+                            )
+                        arguments = dict(prepared.arguments)
+                        target_id = prepared.target_id
+                        expected_version = prepared.expected_version
+                        detail = await creator(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            operation=descriptor.id.removeprefix("reminder."),
+                            tool_id=descriptor.id,
+                            tool_version=descriptor.version,
+                            target_id=target_id,
+                            expected_version=expected_version,
+                            normalized_arguments=dict(arguments),
+                            timezone=run.client_time_zone,
+                            target_type=prepared.target_type,
+                            run_id=run.id,
+                            conversation_id=conversation.id,
+                            tool_call_id=call.call_id,
+                            attempt_id=attempt_id,
+                        )
                     approval = getattr(detail, "approval", None)
                     approval_id = getattr(approval, "id", None)
                     if not isinstance(approval_id, UUID):
@@ -1564,6 +1686,67 @@ class RunCoordinator:
                 "execution_span_id": execution_span_id,
                 "parent_span_id": policy_span_id,
             }
+            tool_context: object = MemorySearchContext(search)
+            if call.name in {"reminder.list", "reminder.inspect"}:
+                async def list_reminders(query: str | None, state: str | None, limit: int) -> object:
+                    service = self.reminder_service
+                    if service is None:
+                        raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+                    reader = getattr(service, "list_for_owner", None)
+                    if not callable(reader):
+                        raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+                    return await reader(
+                        conversation.principal_issuer,
+                        conversation.principal_subject,
+                        query=query,
+                        state=state,
+                        limit=limit,
+                    )
+
+                async def inspect_reminder(target: str) -> object:
+                    service = self.reminder_service
+                    if service is None:
+                        raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+                    inspector = getattr(service, "inspect_for_owner", None)
+                    if not callable(inspector):
+                        raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+                    resolver = getattr(service, "resolve_target", None)
+                    try:
+                        result = await inspector(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            target,
+                            resolver=resolver if callable(resolver) else None,
+                        )
+                    except Exception as exc:
+                        self.metrics.increment(
+                            "aura.runtime.tool_execution",
+                            "reminder_tool_resolution_outcome",
+                            outcome="failure",
+                            **self._metadata(run),
+                        )
+                        raise ToolExecutionError(
+                            "execution", "REMINDER_RESOLUTION_FAILED"
+                        ) from exc
+                    if not isinstance(result, Mapping):
+                        raise ToolExecutionError("execution", "REMINDER_INSPECTION_FAILED")
+                    if result.get("outcome") != "resolved":
+                        self.metrics.increment(
+                            "aura.runtime.tool_execution",
+                            "reminder_tool_resolution_outcome",
+                            outcome="clarification",
+                            **self._metadata(run),
+                        )
+                        return {"outcome": "clarification", "items": []}
+                    self.metrics.increment(
+                        "aura.runtime.tool_execution",
+                        "reminder_tool_resolution_outcome",
+                        outcome="resolved",
+                        **self._metadata(run),
+                    )
+                    return result
+
+                tool_context = ReminderReadContext(list_reminders, inspect_reminder)
             result = await self._execute_tool_with_cancellation(
                 conversation,
                 run,
@@ -1571,7 +1754,7 @@ class RunCoordinator:
                 executor,
                 policy,
                 call,
-                MemorySearchContext(search),
+                tool_context,
             )
             if result is None:
                 self._record_tool_execution(
@@ -1936,7 +2119,7 @@ class RunCoordinator:
         executor: ToolExecutor,
         policy: object,
         call: ToolCall,
-        context: MemorySearchContext,
+        context: object,
     ) -> ToolExecutionResult | None:
         execution = asyncio.create_task(
             executor.execute(

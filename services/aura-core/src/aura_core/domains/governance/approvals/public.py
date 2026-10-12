@@ -8,13 +8,17 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
-from aura_core.domains.automation.reminders.public import ReminderProposal
+from aura_core.domains.automation.reminders.public import (
+    ReminderCommandProposal,
+    ReminderProposal,
+)
 
 APPROVAL_COMPONENT = "aura.governance.approval_workflow"
 APPROVAL_TOPIC = "aura.approvals.events.v1"
@@ -60,7 +64,7 @@ class Approval:
 @dataclass(frozen=True, slots=True)
 class ApprovalDetail:
     approval: Approval
-    proposal: ReminderProposal
+    proposal: ReminderProposal | ReminderCommandProposal
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,27 @@ class ApprovalRepository(Protocol):
         tool_call_id: UUID,
         tool_id: str = "reminder.create",
         tool_version: int = 1,
+        now: datetime | None = None,
+        execution_port: object | None = None,
+        attempt_id: UUID | None = None,
+    ) -> ApprovalDetail: ...
+
+    async def create_command_pending(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        operation: str,
+        tool_id: str,
+        tool_version: int,
+        target_id: UUID | None,
+        expected_version: int | None,
+        normalized_arguments: dict[str, object],
+        target_type: str | None = None,
+        timezone: str | None,
+        run_id: UUID,
+        conversation_id: UUID,
+        tool_call_id: UUID,
         now: datetime | None = None,
         execution_port: object | None = None,
         attempt_id: UUID | None = None,
@@ -266,6 +291,15 @@ class ApprovalApplicationService:
             kwargs.setdefault("execution_port", self.execution_port)
         return await self.repository.create_pending(*args, **kwargs)  # type: ignore[arg-type]
 
+    async def create_command_pending(self, *args: object, **kwargs: object) -> ApprovalDetail:
+        if self.execution_port is not None:
+            kwargs.setdefault("execution_port", self.execution_port)
+        creator = getattr(self.repository, "create_command_pending", None)
+        if not callable(creator):
+            raise ApprovalTransitionError("typed reminder command proposals are unavailable")
+        typed_creator = cast(Callable[..., Awaitable[ApprovalDetail]], creator)
+        return await typed_creator(*args, **kwargs)
+
     async def list(self, issuer: str, subject: str, *, limit: int, cursor: str | None = None, status: ApprovalStatus | None = None) -> ApprovalPage:
         return await self.repository.list(issuer, subject, limit=limit, cursor=cursor, status=status)
 
@@ -381,7 +415,19 @@ def as_payload(item: Approval) -> dict[str, object]:
 
 def detail_payload(detail: ApprovalDetail) -> dict[str, object]:
     payload = as_payload(detail.approval)
-    payload["proposal"] = {"id": str(detail.proposal.id), "content": detail.proposal.content, "dueAt": detail.proposal.due_at.astimezone(UTC).isoformat()}
+    if isinstance(detail.proposal, ReminderCommandProposal):
+        payload["proposal"] = {
+            "id": str(detail.proposal.id),
+            "operation": detail.proposal.operation,
+            "targetType": detail.proposal.target_type,
+            "targetId": str(detail.proposal.target_id) if detail.proposal.target_id else None,
+        }
+    else:
+        payload["proposal"] = {
+            "id": str(detail.proposal.id),
+            "content": detail.proposal.content,
+            "dueAt": detail.proposal.due_at.astimezone(UTC).isoformat(),
+        }
     return payload
 
 

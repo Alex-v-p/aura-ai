@@ -22,6 +22,7 @@ from aura_core.domains.automation.reminders.proposals import (
     SqlReminderProposalRepository,
     proposal_expiry,
 )
+from aura_core.domains.automation.reminders.public import ReminderProposal
 from aura_core.domains.automation.reminders.repository import SqlReminderRepository
 from aura_core.domains.governance.approvals.persistence import ApprovalRow
 from aura_core.domains.governance.approvals.public import (
@@ -208,6 +209,7 @@ async def test_memory_approval_requires_explicit_decision_and_replays_idempotent
     )
     assert detail.approval.status is ApprovalStatus.PENDING
     assert detail.approval.execution_status is ApprovalExecutionStatus.NOT_STARTED
+    assert isinstance(detail.proposal, ReminderProposal)
     assert detail.proposal.content == "create the private reminder"
     with pytest.raises(ApprovalNotFound):
         await repository.get(ISSUER, OTHER_OWNER, detail.approval.id)

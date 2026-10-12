@@ -25,6 +25,7 @@ from aura_core.domains.interaction.agents.persistence import (
     ToolPolicyRevisionRow,
 )
 from aura_core.domains.interaction.agents.public import (
+    GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
     GENERAL_MEMORY_POLICY_ID,
     GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
@@ -34,6 +35,7 @@ from aura_core.domains.interaction.agents.public import (
     NAMESPACE,
     NEUTRAL_PERSONA_REVISION_ID,
     PROMPT_BUNDLE_ID,
+    SUPPORTED_TOOL_GRANTS,
     AgentCatalog,
     AgentProfile,
     AgentRevision,
@@ -116,6 +118,7 @@ def _tool_policy_owner_matches(row: ToolPolicyRevisionRow, issuer: str, subject:
         and (
             row.id == GENERAL_TOOL_POLICY_ID
             or row.id == GENERAL_SUCCESSOR_TOOL_POLICY_ID
+            or row.id == GENERAL_CONVERSATIONAL_TOOL_POLICY_ID
             or row.id == uuid5(NAMESPACE, f"agent-tool-policy:{row.agent_profile_id}:1")
         )
     )
@@ -245,9 +248,9 @@ class SqlAgentStore:
                 ),
                 max_calls_per_run=item.max_calls_per_run,
                 timeout_ms=item.timeout_ms,
-            retry_limit=item.retry_limit,
-            permission_scopes=frozenset(item.permission_scopes or ()),
-            created_at=item.created_at or datetime.now(UTC),
+                retry_limit=item.retry_limit,
+                permission_scopes=frozenset(item.permission_scopes or ()),
+                created_at=item.created_at or datetime.now(UTC),
             )
             for item in tool_policies
         }
@@ -293,38 +296,62 @@ class SqlAgentStore:
             if prior is None:
                 await self._require_active_persona_in_transaction(session, persona_revision_id)
                 identifier, revision_id, created = uuid4(), uuid4(), datetime.now(UTC)
-                if initial_memory_policy is not None and memory_policy_revision_id != GENERAL_MEMORY_POLICY_ID:
-                    raise ValueError("initial memory policy cannot be combined with a policy revision")
-                if initial_tool_grants is not None and tool_policy_revision_id != GENERAL_TOOL_POLICY_ID:
-                    raise ValueError("initial tool grants cannot be combined with a policy revision")
+                if (
+                    initial_memory_policy is not None
+                    and memory_policy_revision_id != GENERAL_MEMORY_POLICY_ID
+                ):
+                    raise ValueError(
+                        "initial memory policy cannot be combined with a policy revision"
+                    )
+                if (
+                    initial_tool_grants is not None
+                    and tool_policy_revision_id != GENERAL_TOOL_POLICY_ID
+                ):
+                    raise ValueError(
+                        "initial tool grants cannot be combined with a policy revision"
+                    )
                 selected_memory_policy = memory_policy_revision_id
                 selected_tool_policy = tool_policy_revision_id
                 if initial_memory_policy is not None:
                     fallback_ids = tuple(initial_memory_policy.fallback_agent_profile_ids)
                     if len(set(fallback_ids)) != len(fallback_ids) or identifier in fallback_ids:
-                        raise ValueError("fallback grants must be unique and cannot include the new agent")
+                        raise ValueError(
+                            "fallback grants must be unique and cannot include the new agent"
+                        )
                     for fallback_id in fallback_ids:
                         fallback_profile = await session.get(AgentProfileRow, fallback_id)
-                        if fallback_profile is None or fallback_profile.status != ConfigurationStatus.ACTIVE.value:
+                        if (
+                            fallback_profile is None
+                            or fallback_profile.status != ConfigurationStatus.ACTIVE.value
+                        ):
                             raise ConfigurationNotFound("fallback agent profile not found")
                         fallback_policy = (
                             await session.execute(
-                                select(MemoryPolicyRevisionRow.id).where(
+                                select(MemoryPolicyRevisionRow.id)
+                                .where(
                                     MemoryPolicyRevisionRow.agent_profile_id == fallback_id,
                                     MemoryPolicyRevisionRow.principal_issuer == issuer,
                                     MemoryPolicyRevisionRow.principal_subject == subject,
-                                ).limit(1)
+                                )
+                                .limit(1)
                             )
                         ).scalar_one_or_none()
                         if fallback_policy is None:
                             raise ConfigurationNotFound("fallback agent profile not found")
                     selected_memory_policy = uuid5(NAMESPACE, f"agent-memory-policy:{identifier}:1")
-                if initial_memory_policy is not None or selected_memory_policy == GENERAL_MEMORY_POLICY_ID:
+                if (
+                    initial_memory_policy is not None
+                    or selected_memory_policy == GENERAL_MEMORY_POLICY_ID
+                ):
                     policy_values = initial_memory_policy
-                    fallback_ids = tuple(policy_values.fallback_agent_profile_ids) if policy_values else ()
+                    fallback_ids = (
+                        tuple(policy_values.fallback_agent_profile_ids) if policy_values else ()
+                    )
                     selected_memory_policy = platform_memory_policy_id(identifier)
                     if policy_values is not None:
-                        selected_memory_policy = uuid5(NAMESPACE, f"agent-memory-policy:{identifier}:1")
+                        selected_memory_policy = uuid5(
+                            NAMESPACE, f"agent-memory-policy:{identifier}:1"
+                        )
                     session.add(
                         MemoryPolicyRevisionRow(
                             id=selected_memory_policy,
@@ -332,14 +359,26 @@ class SqlAgentStore:
                             principal_subject=subject,
                             agent_profile_id=identifier,
                             revision=1,
-                            shared_user_read=policy_values.shared_user_read if policy_values else True,
-                            current_agent_read=policy_values.current_agent_read if policy_values else True,
-                            allow_shared_user_promotion=policy_values.allow_shared_user_promotion if policy_values else False,
-                            fallback_relevance_threshold=policy_values.fallback_relevance_threshold if policy_values else 0.5,
+                            shared_user_read=policy_values.shared_user_read
+                            if policy_values
+                            else True,
+                            current_agent_read=policy_values.current_agent_read
+                            if policy_values
+                            else True,
+                            allow_shared_user_promotion=policy_values.allow_shared_user_promotion
+                            if policy_values
+                            else False,
+                            fallback_relevance_threshold=policy_values.fallback_relevance_threshold
+                            if policy_values
+                            else 0.5,
                             max_memories=policy_values.max_memories if policy_values else 2,
-                            context_budget_fraction=policy_values.context_budget_fraction if policy_values else 0.05,
+                            context_budget_fraction=policy_values.context_budget_fraction
+                            if policy_values
+                            else 0.05,
                             recall_mode=policy_values.recall_mode.value if policy_values else "off",
-                            automatic_recall_threshold=policy_values.automatic_recall_threshold if policy_values else 0.7,
+                            automatic_recall_threshold=policy_values.automatic_recall_threshold
+                            if policy_values
+                            else 0.7,
                         )
                     )
                     for fallback_id in fallback_ids:
@@ -362,7 +401,10 @@ class SqlAgentStore:
                         raise ValueError("tool grants must be unique")
                     if initial_tool_policy is None:
                         raise ValueError("server-derived tool policy is required")
-                    if tuple(item.grant for item in initial_tool_policy.grants) != initial_tool_grants:
+                    if (
+                        tuple(item.grant for item in initial_tool_policy.grants)
+                        != initial_tool_grants
+                    ):
                         raise ValueError("tool policy grant snapshot does not match request")
                     selected_tool_policy = uuid5(NAMESPACE, f"agent-tool-policy:{identifier}:1")
                     session.add(
@@ -379,11 +421,13 @@ class SqlAgentStore:
                         )
                     )
                     for grant in initial_tool_grants:
-                        session.add(ToolPolicyGrantRow(
-                            policy_id=selected_tool_policy,
-                            tool_id=grant.tool_id,
-                            tool_version=grant.tool_version,
-                        ))
+                        session.add(
+                            ToolPolicyGrantRow(
+                                policy_id=selected_tool_policy,
+                                tool_id=grant.tool_id,
+                                tool_version=grant.tool_version,
+                            )
+                        )
                 elif selected_tool_policy == GENERAL_TOOL_POLICY_ID:
                     selected_tool_policy = uuid5(NAMESPACE, f"agent-tool-policy:{identifier}:1")
                     session.add(
@@ -687,8 +731,7 @@ class SqlAgentStore:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
                 {
                     "lock_key": (
-                        f"memory-policy-revision:{issuer}:{subject}:"
-                        f"{policy.agent_profile_id}"
+                        f"memory-policy-revision:{issuer}:{subject}:{policy.agent_profile_id}"
                     )
                 },
             )
@@ -728,17 +771,16 @@ class SqlAgentStore:
                 *[
                     item
                     for item in migrated_defaults
-                    if _is_deterministic_platform_policy(
-                        item.id, item.agent_profile_id
-                    )
+                    if _is_deterministic_platform_policy(item.id, item.agent_profile_id)
                 ],
             ]
             same_agent_policies = [
-                item
-                for item in policies
-                if item.agent_profile_id == policy.agent_profile_id
+                item for item in policies if item.agent_profile_id == policy.agent_profile_id
             ]
-            if policy.revision != max((item.revision for item in same_agent_policies), default=0) + 1:
+            if (
+                policy.revision
+                != max((item.revision for item in same_agent_policies), default=0) + 1
+            ):
                 raise ConfigurationVersionConflict("memory policy revision conflict")
             policy_ids = [item.id for item in policies]
             grants = (
@@ -906,10 +948,14 @@ class SqlAgentStore:
         session: AsyncSession, row: ToolPolicyRevisionRow
     ) -> ToolPolicy:
         grants = (
-            await session.execute(
-                select(ToolPolicyGrantRow).where(ToolPolicyGrantRow.policy_id == row.id)
+            (
+                await session.execute(
+                    select(ToolPolicyGrantRow).where(ToolPolicyGrantRow.policy_id == row.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return ToolPolicy(
             id=row.id,
             agent_profile_id=row.agent_profile_id,
@@ -927,10 +973,7 @@ class SqlAgentStore:
     ) -> ToolPolicy:
         if not issuer or not subject:
             raise ConfigurationNotFound("tool policy owner is required")
-        if any(
-            item not in {ToolGrant("memory.search", 1), ToolGrant("reminder.create", 1)}
-            for item in policy.grants
-        ):
+        if any(item not in SUPPORTED_TOOL_GRANTS for item in policy.grants):
             raise ValueError("unknown tool grant")
         fingerprint = self._fingerprint(
             "tool-policy",
@@ -953,14 +996,18 @@ class SqlAgentStore:
             if await session.get(AgentProfileRow, policy.agent_profile_id) is None:
                 raise ConfigurationNotFound("agent not found")
             prior = (
-                await session.execute(
-                    select(ToolPolicyRevisionRow).where(
-                        ToolPolicyRevisionRow.principal_issuer == issuer,
-                        ToolPolicyRevisionRow.principal_subject == subject,
-                        ToolPolicyRevisionRow.agent_profile_id == policy.agent_profile_id,
+                (
+                    await session.execute(
+                        select(ToolPolicyRevisionRow).where(
+                            ToolPolicyRevisionRow.principal_issuer == issuer,
+                            ToolPolicyRevisionRow.principal_subject == subject,
+                            ToolPolicyRevisionRow.agent_profile_id == policy.agent_profile_id,
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             if policy.revision != max((item.revision for item in prior), default=0) + 1:
                 raise ConfigurationVersionConflict("tool policy revision conflict")
             row = ToolPolicyRevisionRow(
@@ -992,12 +1039,16 @@ class SqlAgentStore:
     ) -> list[ToolPolicy]:
         async with self.sessions() as session:
             rows = (
-                await session.execute(
-                    select(ToolPolicyRevisionRow).where(
-                        ToolPolicyRevisionRow.agent_profile_id == agent_profile_id
+                (
+                    await session.execute(
+                        select(ToolPolicyRevisionRow).where(
+                            ToolPolicyRevisionRow.agent_profile_id == agent_profile_id
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             result = [
                 await self._tool_policy_from_row(session, row)
                 for row in rows

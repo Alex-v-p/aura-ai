@@ -25,9 +25,9 @@ from aura_core.domains.execution.runs.dto import (
     RunStatus,
 )
 from aura_core.domains.interaction.agents.public import (
+    GENERAL_CONVERSATIONAL_REVISION_ID,
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
-    GENERAL_SUCCESSOR_REVISION_ID,
     AgentCatalog,
     AgentRevision,
     ConfigurationDisabled,
@@ -76,7 +76,7 @@ NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 type CommandResult = tuple[Conversation, Message, Run]
 GENERAL_AGENT = SeededAgent(
     profile_id=GENERAL_PROFILE_ID,
-    revision_id=GENERAL_SUCCESSOR_REVISION_ID,
+    revision_id=GENERAL_CONVERSATIONAL_REVISION_ID,
     policy_revision_id=GENERAL_POLICY_ID,
     system_prompt="You are Aura, a helpful local-first household assistant.",
 )

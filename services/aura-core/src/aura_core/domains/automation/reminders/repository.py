@@ -728,6 +728,31 @@ class MemoryReminderRepository:
             target=ReminderStatus.CANCELED,
         )
 
+    async def reschedule(
+        self, issuer: str, subject: str, reminder_id: UUID, *, due_at: datetime,
+        expected_version: int, idempotency_key: str,
+    ) -> Reminder:
+        issuer, subject = _owner(issuer, subject)
+        due = ensure_due_at_future(due_at, now=self._time())
+        async with self._lock:
+            item = self._items.get(reminder_id)
+            if item is None or (item.issuer, item.subject) != (issuer, subject):
+                raise ReminderNotFound("reminder not found")
+            fingerprint = command_fingerprint("reschedule", reminder_id, dueAt=due.isoformat(), expectedVersion=expected_version)
+            existing = self._idempotency.get((issuer, subject, idempotency_key))
+            if existing:
+                if existing[0] != fingerprint:
+                    raise ReminderIdempotencyConflict("idempotency key was already used")
+                return existing[1]
+            if item.version != expected_version:
+                raise ReminderVersionConflict("reminder version does not match")
+            if item.status is not ReminderStatus.SCHEDULED:
+                raise ReminderTransitionError("only scheduled reminders can be rescheduled")
+            now = self._time()
+            updated = replace(item, due_at=due, version=item.version + 1, updated_at=now)
+            self._items[reminder_id] = updated
+            return self._record(issuer, subject, idempotency_key, fingerprint, updated, "rescheduled")
+
     async def fire_due(
         self,
         *,
@@ -2568,6 +2593,34 @@ class SqlReminderRepository:
             idempotency_key=idempotency_key,
             target=ReminderStatus.CANCELED,
         )
+
+    async def reschedule(
+        self, issuer: str, subject: str, reminder_id: UUID, *, due_at: datetime,
+        expected_version: int, idempotency_key: str,
+    ) -> Reminder:
+        issuer, subject = _owner(issuer, subject)
+        due = ensure_due_at_future(due_at, now=self._time())
+        async with self.sessions() as session, session.begin():
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": _idempotency_lock_key(issuer, subject, idempotency_key)})
+            fingerprint = command_fingerprint("reschedule", reminder_id, dueAt=due.isoformat(), expectedVersion=expected_version)
+            existing = await session.get(ReminderIdempotencyRow, (issuer, subject, idempotency_key))
+            if existing is not None:
+                if existing.fingerprint != fingerprint:
+                    raise ReminderIdempotencyConflict("idempotency key was already used")
+                return from_payload(existing.response, issuer=issuer, subject=subject)
+            row = (await session.execute(select(ReminderRow).where(ReminderRow.id == reminder_id, ReminderRow.principal_issuer == issuer, ReminderRow.principal_subject == subject).with_for_update())).scalar_one_or_none()
+            if row is None:
+                raise ReminderNotFound("reminder not found")
+            if row.version != expected_version:
+                raise ReminderVersionConflict("reminder version does not match")
+            if row.status != ReminderStatus.SCHEDULED.value:
+                raise ReminderTransitionError("only scheduled reminders can be rescheduled")
+            now = self._time()
+            row.due_at, row.version, row.updated_at = due, row.version + 1, now
+            item = _item(row)
+            await self._stage(session, item, "rescheduled", issuer, subject)
+            session.add(ReminderIdempotencyRow(principal_issuer=issuer, principal_subject=subject, idempotency_key=idempotency_key, fingerprint=fingerprint, reminder_id=item.id, response=as_payload(item), created_at=now))
+            return item
 
     async def create_series(
         self,

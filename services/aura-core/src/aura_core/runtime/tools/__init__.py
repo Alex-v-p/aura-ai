@@ -1,17 +1,36 @@
 """Aura-owned, provider-neutral tool execution primitives.
 
 The runtime deliberately contains no provider or persistence adapters.  A
-composition root supplies the small application callbacks used by executable
-tools (currently only ``memory.search``).
+composition root supplies the small owner-bound application callbacks used by
+executable read tools.
 """
 
 from aura_core.runtime.tools.public import (
     MEMORY_SEARCH_TOOL_ID,
     MEMORY_SEARCH_TOOL_VERSION,
+    REMINDER_CANCEL_TOOL_ID,
+    REMINDER_CANCEL_TOOL_VERSION,
     REMINDER_CREATE_TOOL_ID,
     REMINDER_CREATE_TOOL_VERSION,
+    REMINDER_INSPECT_TOOL_ID,
+    REMINDER_INSPECT_TOOL_VERSION,
+    REMINDER_LIST_TOOL_ID,
+    REMINDER_LIST_TOOL_VERSION,
+    REMINDER_MUTATION_TOOL_IDS,
+    REMINDER_RESCHEDULE_TOOL_ID,
+    REMINDER_RESCHEDULE_TOOL_VERSION,
+    REMINDER_SERIES_CREATE_TOOL_ID,
+    REMINDER_SERIES_CREATE_TOOL_VERSION,
+    REMINDER_SERIES_PAUSE_TOOL_ID,
+    REMINDER_SERIES_PAUSE_TOOL_VERSION,
+    REMINDER_SERIES_RESUME_TOOL_ID,
+    REMINDER_SERIES_RESUME_TOOL_VERSION,
+    REMINDER_SERIES_UPDATE_TOOL_ID,
+    REMINDER_SERIES_UPDATE_TOOL_VERSION,
+    REMINDER_TOOL_IDS,
     MemorySearchContext,
     ReminderCreateContext,
+    ReminderReadContext,
     ToolCall,
     ToolDescriptor,
     ToolExecutionError,
@@ -28,10 +47,29 @@ from aura_core.runtime.tools.public import (
 __all__ = [
     "MEMORY_SEARCH_TOOL_ID",
     "MEMORY_SEARCH_TOOL_VERSION",
+    "REMINDER_CANCEL_TOOL_ID",
+    "REMINDER_CANCEL_TOOL_VERSION",
     "REMINDER_CREATE_TOOL_ID",
     "REMINDER_CREATE_TOOL_VERSION",
+    "REMINDER_INSPECT_TOOL_ID",
+    "REMINDER_INSPECT_TOOL_VERSION",
+    "REMINDER_LIST_TOOL_ID",
+    "REMINDER_LIST_TOOL_VERSION",
+    "REMINDER_MUTATION_TOOL_IDS",
+    "REMINDER_RESCHEDULE_TOOL_ID",
+    "REMINDER_RESCHEDULE_TOOL_VERSION",
+    "REMINDER_SERIES_CREATE_TOOL_ID",
+    "REMINDER_SERIES_CREATE_TOOL_VERSION",
+    "REMINDER_SERIES_PAUSE_TOOL_ID",
+    "REMINDER_SERIES_PAUSE_TOOL_VERSION",
+    "REMINDER_SERIES_RESUME_TOOL_ID",
+    "REMINDER_SERIES_RESUME_TOOL_VERSION",
+    "REMINDER_SERIES_UPDATE_TOOL_ID",
+    "REMINDER_SERIES_UPDATE_TOOL_VERSION",
+    "REMINDER_TOOL_IDS",
     "MemorySearchContext",
     "ReminderCreateContext",
+    "ReminderReadContext",
     "ToolCall",
     "ToolDescriptor",
     "ToolExecutionError",

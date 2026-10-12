@@ -467,7 +467,18 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         catalog = await client.get("/api/v1/tools")
         assert catalog.status_code == 200
         tools = catalog.json()["items"]
-        assert [item["id"] for item in tools] == ["memory.search", "reminder.create"]
+        assert [item["id"] for item in tools] == [
+            "memory.search",
+            "reminder.create",
+            "reminder.list",
+            "reminder.inspect",
+            "reminder.series.create",
+            "reminder.reschedule",
+            "reminder.series.update",
+            "reminder.series.pause",
+            "reminder.series.resume",
+            "reminder.cancel",
+        ]
         assert tools[0]["version"] == 1
         assert "handler" not in tools[0]
         assert "schema" not in tools[0]
@@ -480,6 +491,14 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         assert aura_policy["items"][-1]["grants"] == [
             {"toolId": "memory.search", "toolVersion": 1},
             {"toolId": "reminder.create", "toolVersion": 1},
+            {"toolId": "reminder.list", "toolVersion": 1},
+            {"toolId": "reminder.inspect", "toolVersion": 1},
+            {"toolId": "reminder.series.create", "toolVersion": 1},
+            {"toolId": "reminder.reschedule", "toolVersion": 1},
+            {"toolId": "reminder.series.update", "toolVersion": 1},
+            {"toolId": "reminder.series.pause", "toolVersion": 1},
+            {"toolId": "reminder.series.resume", "toolVersion": 1},
+            {"toolId": "reminder.cancel", "toolVersion": 1},
         ]
         assert aura_policy["items"][0]["maxCallsPerRun"] == 1
 

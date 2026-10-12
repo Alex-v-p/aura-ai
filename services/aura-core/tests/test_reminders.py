@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,8 +21,12 @@ from zoneinfo import ZoneInfo
 import pytest
 from aura_core.domains.automation.reminders.public import (
     REMINDER_TOPIC,
+    ReminderApplicationService,
+    ReminderCommandProposal,
     ReminderIdempotencyConflict,
     ReminderNotFound,
+    ReminderSeries,
+    ReminderSeriesVersionConflict,
     ReminderStatus,
     ReminderTransitionError,
     ReminderValidationError,
@@ -33,6 +37,10 @@ from aura_core.domains.automation.reminders.public import (
     from_payload,
     normalize_content,
     normalize_due_at,
+)
+from aura_core.domains.automation.reminders.recurrence import (
+    RecurrenceFrequency,
+    RecurrenceRule,
 )
 from aura_core.domains.automation.reminders.repository import (
     MemoryReminderRepository,
@@ -91,6 +99,313 @@ async def test_idempotency_projection_rehydrates_authenticated_owner() -> None:
 
     assert replay == reminder
     assert "issuer" not in projection and "subject" not in projection
+
+
+@pytest.mark.asyncio
+async def test_conversational_target_resolution_is_owner_scoped_and_exact() -> None:
+    repository = _repo()
+    service = ReminderApplicationService(repository, clock=lambda: NOW)
+    reminder = await _create(repository, content="call the dentist", key="target-one")
+
+    resolved = await service.resolve_target(OWNER_ISSUER, OWNER, "call the dentist")
+    assert resolved.status == "resolved"
+    assert len(resolved.matches) == 1
+    assert resolved.matches[0].id == reminder.id
+    assert resolved.matches[0].version == reminder.version
+
+    # A different owner receives no existence signal for the matching content.
+    foreign = await service.resolve_target(OWNER_ISSUER, OTHER_OWNER, "call the dentist")
+    assert foreign.status == "clarification"
+    assert foreign.matches == ()
+
+
+@pytest.mark.asyncio
+async def test_conversational_target_resolution_clarifies_zero_and_multiple_matches() -> None:
+    repository = _repo()
+    service = ReminderApplicationService(repository, clock=lambda: NOW)
+    zero = await service.resolve_target(OWNER_ISSUER, OWNER, "no such reminder")
+    assert zero.status == "clarification"
+    assert zero.matches == ()
+
+    await _create(repository, content="water plants", key="target-a")
+    await _create(repository, content="water plants", key="target-b")
+    multiple = await service.resolve_target(OWNER_ISSUER, OWNER, "WATER PLANTS")
+    assert multiple.status == "clarification"
+    assert len(multiple.matches) == 2
+
+
+@pytest.mark.asyncio
+async def test_conversational_target_resolution_includes_owner_series() -> None:
+    repository = _repo()
+    service = ReminderApplicationService(repository, clock=lambda: NOW)
+    series = await service.create_series(
+        OWNER_ISSUER,
+        OWNER,
+        content="take vitamins",
+        local_start=datetime(2026, 1, 2, 9, 0),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    resolved = await service.resolve_target(OWNER_ISSUER, OWNER, str(series.id))
+    assert resolved.status == "resolved"
+    assert resolved.matches[0].kind == "series"
+    assert resolved.matches[0].id == series.id
+
+
+@pytest.mark.asyncio
+async def test_conversational_uuid_resolution_handles_owner_and_bounded_ambiguity() -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    repository = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(repository, clock=lambda: now)
+    owned = await repository.create(
+        OWNER_ISSUER,
+        OWNER,
+        content="owned UUID target",
+        due_at=now.replace(hour=14),
+        idempotency_key="uuid-owned",
+    )
+    owned_resolution = await service.resolve_target(OWNER_ISSUER, OWNER, str(owned.id))
+    assert owned_resolution.status == "resolved"
+    assert owned_resolution.matches[0].id == owned.id
+
+    foreign_resolution = await service.resolve_target(
+        OWNER_ISSUER, OTHER_OWNER, str(owned.id)
+    )
+    assert foreign_resolution.status == "clarification"
+    assert foreign_resolution.matches == ()
+    unknown_resolution = await service.resolve_target(
+        OWNER_ISSUER, OWNER, str(uuid4())
+    )
+    assert unknown_resolution.status == "clarification"
+    assert unknown_resolution.matches == ()
+
+    for index in range(11):
+        await repository.create(
+            OWNER_ISSUER,
+            OWNER,
+            content="bounded ambiguous target",
+            due_at=now.replace(hour=15, minute=index),
+            idempotency_key=f"uuid-ambiguous-{index}",
+        )
+    ambiguous = await service.resolve_target(
+        OWNER_ISSUER, OWNER, "bounded ambiguous target"
+    )
+    assert ambiguous.status == "clarification"
+    assert len(ambiguous.matches) == 10
+
+
+@pytest.mark.asyncio
+async def test_conversational_timezone_is_pinned_and_update_preserves_existing_zone() -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    repository = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(repository, clock=lambda: now)
+    series = await service.create_series(
+        OWNER_ISSUER,
+        OWNER,
+        content="timezone-preserving series",
+        local_start=datetime(2027, 1, 11, 9),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    offset_reschedule = await service.prepare_command(
+        OWNER_ISSUER,
+        OWNER,
+        tool_id="reminder.reschedule",
+        arguments={"target": str(series.id), "dueAt": "2027-01-12T09:00:00+09:00"},
+        timezone="Europe/Brussels",
+    )
+    assert offset_reschedule.outcome == "validation"
+    update = await service.prepare_command(
+        OWNER_ISSUER,
+        OWNER,
+        tool_id="reminder.series.update",
+        arguments={"target": str(series.id), "content": "updated series"},
+        timezone="America/New_York",
+    )
+    assert update.outcome == "resolved"
+    proposal = ReminderCommandProposal(
+        id=uuid4(),
+        issuer=OWNER_ISSUER,
+        subject=OWNER,
+        operation="series.update",
+        tool_id="reminder.series.update",
+        tool_version=1,
+        target_id=series.id,
+        expected_version=series.version,
+        target_type="series",
+        normalized_arguments=dict(update.arguments),
+        timezone=None,
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        created_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    updated = cast(
+        ReminderSeries,
+        await service.execute_command(
+            OWNER_ISSUER, OWNER, proposal, idempotency_key=str(uuid4())
+        ),
+    )
+    assert updated.timezone == "Europe/Brussels"
+
+
+@pytest.mark.asyncio
+async def test_invalid_conversational_recurrence_never_becomes_a_command_proposal() -> None:
+    service = ReminderApplicationService(_repo(), clock=lambda: NOW)
+    invalid_rules = (
+        {"frequency": "hourly"},
+        {"frequency": "weekly"},
+        {"frequency": "monthly", "monthDay": 31, "weekdays": [1]},
+        {"frequency": "daily", "count": 2, "endDate": "2027-02-01"},
+    )
+    for recurrence in invalid_rules:
+        prepared = await service.prepare_command(
+            OWNER_ISSUER,
+            OWNER,
+            tool_id="reminder.series.create",
+            arguments={
+                "content": "invalid recurrence",
+                "localStart": "2027-01-11T09:00:00",
+                "recurrence": recurrence,
+            },
+            timezone="Europe/Brussels",
+        )
+        assert prepared.outcome == "validation"
+        assert prepared.target_id is None
+        assert prepared.arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_owner_list_query_and_state_scan_past_first_page_into_history() -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    repository = MemoryReminderRepository(clock=lambda: now)
+    service = ReminderApplicationService(repository, clock=lambda: now)
+    target = await repository.create(
+        OWNER_ISSUER,
+        OWNER,
+        content="historical target beyond page",
+        due_at=now + timedelta(hours=1),
+        idempotency_key=str(uuid4()),
+    )
+    await service.cancel(
+        OWNER_ISSUER,
+        OWNER,
+        target.id,
+        expected_version=target.version,
+        idempotency_key=str(uuid4()),
+    )
+    for index in range(10):
+        filler = await repository.create(
+            OWNER_ISSUER,
+            OWNER,
+            content=f"historical filler {index}",
+            due_at=now + timedelta(hours=2 + index),
+            idempotency_key=str(uuid4()),
+        )
+        await service.cancel(
+            OWNER_ISSUER,
+            OWNER,
+            filler.id,
+            expected_version=filler.version,
+            idempotency_key=str(uuid4()),
+        )
+    result = await service.list_for_owner(
+        OWNER_ISSUER,
+        OWNER,
+        query="historical target beyond page",
+        state="canceled",
+        limit=10,
+    )
+    assert result["outcome"] == "resolved"
+    items = cast(list[dict[str, object]], result["items"])
+    assert [item["id"] for item in items] == [str(target.id)]
+
+
+@pytest.mark.asyncio
+async def test_approved_typed_series_command_uses_pinned_target_and_version() -> None:
+    repository = _repo()
+    service = ReminderApplicationService(repository, clock=lambda: NOW)
+    series = await service.create_series(
+        OWNER_ISSUER,
+        OWNER,
+        content="take vitamins",
+        local_start=datetime(2026, 1, 2, 9, 0),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    proposal = ReminderCommandProposal(
+        id=uuid4(),
+        issuer=OWNER_ISSUER,
+        subject=OWNER,
+        operation="series.pause",
+        tool_id="reminder.series.pause",
+        tool_version=1,
+        target_id=series.id,
+        expected_version=series.version,
+        target_type="series",
+        normalized_arguments={},
+        timezone="Europe/Brussels",
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        created_at=NOW,
+        expires_at=datetime(2026, 1, 1, 13, 0, tzinfo=UTC),
+    )
+    paused = cast(ReminderSeries, await service.execute_command(
+        OWNER_ISSUER,
+        OWNER,
+        proposal,
+        idempotency_key=str(uuid4()),
+    ))
+    assert paused.status.value == "paused"
+    assert paused.id == series.id
+
+
+@pytest.mark.asyncio
+async def test_typed_series_command_rejects_stale_pinned_version_without_side_effect() -> None:
+    repository = _repo()
+    service = ReminderApplicationService(repository, clock=lambda: NOW)
+    series = await service.create_series(
+        OWNER_ISSUER,
+        OWNER,
+        content="read a book",
+        local_start=datetime(2026, 1, 2, 9, 0),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    proposal = ReminderCommandProposal(
+        id=uuid4(),
+        issuer=OWNER_ISSUER,
+        subject=OWNER,
+        operation="series.pause",
+        tool_id="reminder.series.pause",
+        tool_version=1,
+        target_id=series.id,
+        expected_version=series.version + 1,
+        target_type="series",
+        normalized_arguments={},
+        timezone="Europe/Brussels",
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        created_at=NOW,
+        expires_at=datetime(2026, 1, 1, 13, 0, tzinfo=UTC),
+    )
+    with pytest.raises(ReminderSeriesVersionConflict):
+        await service.execute_command(
+            OWNER_ISSUER,
+            OWNER,
+            proposal,
+            idempotency_key=str(uuid4()),
+        )
+    current = await service.get_series(OWNER_ISSUER, OWNER, series.id)
+    assert current.status.value == "active"
+    assert current.version == series.version
 
 
 def test_offset_and_dst_equivalent_instants_are_normalized_to_the_same_utc_value() -> None:

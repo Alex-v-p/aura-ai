@@ -70,6 +70,52 @@ This slice does not authorize shell or filesystem access, network fetching,
 Home Assistant, calendars, documents, recurring or edited reminders, external
 providers, or Observatory product behavior.
 
+## Conversational reminder management v1
+
+The immutable conversational-reminder registry adds the private read tools
+`reminder.list@1` and `reminder.inspect@1`, plus the always-confirmed mutation
+tools `reminder.series.create@1`, `reminder.reschedule@1`,
+`reminder.series.update@1`, `reminder.series.pause@1`,
+`reminder.series.resume@1`, and `reminder.cancel@1`. The established
+`reminder.create@1` descriptor and behavior are unchanged. List reads are
+owner-authorized and bounded to ten results; inspect and mutations resolve a
+natural-language target deterministically against owner records. Zero or
+multiple exact-enough matches return clarification and create no proposal or
+approval. Cancel requires explicit occurrence or series scope.
+
+Conversational series creation and rescheduling use only the validated IANA
+timezone pinned on the run. A missing timezone returns clarification and never
+falls back to the server zone. Tool contracts accept user intent, while the
+reminder application owns recurrence validation, target matching, optimistic
+version selection, and lifecycle behavior. The model cannot provide an owner,
+resolved target identifier, authoritative version, or timezone.
+
+Each accepted mutation becomes one private typed reminder-command proposal.
+Before approval it immutably pins the operation, normalized arguments, resolved
+target identifier and type where applicable, authoritative expected version,
+and run timezone. The existing approval and durable resume path executes the
+shared reminder application command only after approval. One approval governs
+the requested command; subsequently scheduled occurrences require no further
+approval. Rejection, expiry, cancellation, duplicate wakeups, and approval
+races yield one terminal result and no unapproved side effect. The one-tool-call
+run budget remains unchanged; clarification continues in a later user turn.
+
+The built-in Aura profile advances to immutable tool-policy revision 3, which
+grants the two reads and six mutations alongside its historical grants. Policy
+revisions 1 and 2 and their agent revisions are never modified, so existing
+conversations retain pinned behavior. Custom agents remain deny-by-default and
+receive no migration grant.
+
+The producer is Aura Core's provider-neutral tool runtime and the consumers are
+the owner-bound reminder application and approval executor. No external or
+generated transport output changes. Private arguments, target queries, content,
+recurrence, timezone values, due values, owner identity, and raw results remain
+absent from run events, approval replay/SSE, NATS, ordinary audit metadata,
+logs, traces, and metrics. Only the protected owner-authorized approval detail
+may expose the private command summary. Rollout is additive through migration
+0018: it creates private typed proposal storage and installs the built-in
+successor policy/revision without rewriting historical rows.
+
 ## Deterministic automation
 
 Timers, reminders, schedules, workflow state, approvals, notification delivery, and calendar mutations are deterministic domain functions. Models may interpret intent or assist with ambiguous steps, but they do not simulate durable scheduling, permissions, state transitions, or delivery state.

@@ -10,16 +10,19 @@ the approval domain stores only an identifier and lifecycle metadata.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, String, Text, func, select
+from sqlalchemy import DateTime, Integer, String, Text, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aura_core.domains.automation.reminders.public import (
+    ReminderCommandProposal,
     ReminderProposal,
     ReminderProposalPort,
     canonical_due_at,
@@ -63,6 +66,29 @@ def _proposal(row: ReminderProposalRow) -> ReminderProposal:
     )
 
 
+def _command(row: ReminderCommandProposalRow) -> ReminderCommandProposal:
+    if not row.operation:
+        raise ReminderProposalNotFound("reminder command proposal not found")
+    return ReminderCommandProposal(
+        id=row.id,
+        issuer=row.principal_issuer,
+        subject=row.principal_subject,
+        operation=row.operation,
+        tool_id=row.tool_id or row.operation,
+        tool_version=row.tool_version or 1,
+        target_id=row.target_id,
+        expected_version=row.expected_version,
+        target_type=row.target_type,
+        normalized_arguments=dict(row.normalized_arguments),
+        timezone=row.client_time_zone,
+        run_id=row.run_id,
+        conversation_id=row.conversation_id,
+        tool_call_id=row.tool_call_id,
+        created_at=row.created_at.astimezone(UTC),
+        expires_at=row.expires_at.astimezone(UTC),
+    )
+
+
 class ReminderProposalRow(Base):
     __tablename__ = "reminder_proposals"
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
@@ -77,10 +103,32 @@ class ReminderProposalRow(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ReminderCommandProposalRow(Base):
+    __tablename__ = "reminder_command_proposals"
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+    principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    expected_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    normalized_arguments: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    client_time_zone: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    private_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    tool_call_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class MemoryReminderProposalRepository:
     def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._items: dict[UUID, ReminderProposal] = {}
+        self._commands: dict[UUID, ReminderCommandProposal] = {}
         self._lock = asyncio.Lock()
 
     def _now(self) -> datetime:
@@ -126,6 +174,37 @@ class MemoryReminderProposalRepository:
         item = self._items.get(proposal_id)
         if item is None or (item.issuer, item.subject) != (issuer, subject):
             raise ReminderProposalNotFound("reminder proposal not found")
+        return item
+
+    async def create_command(
+        self, issuer: str, subject: str, *, operation: str, tool_id: str,
+        tool_version: int, target_id: UUID | None, expected_version: int | None,
+        normalized_arguments: Mapping[str, object], timezone: str | None,
+        target_type: str | None = None,
+        run_id: UUID, conversation_id: UUID, tool_call_id: UUID,
+        now: datetime | None = None, transaction: object | None = None,
+    ) -> ReminderCommandProposal:
+        del transaction
+        if not issuer or not subject or not operation or not tool_id:
+            raise ValueError("authenticated owner and command identity are required")
+        created = (now or self._now()).astimezone(UTC)
+        item = ReminderCommandProposal(
+            id=uuid4(), issuer=issuer, subject=subject, operation=operation,
+            tool_id=tool_id, tool_version=tool_version, target_id=target_id,
+            expected_version=expected_version,
+            target_type=target_type or (("series" if operation.startswith("series.") or normalized_arguments.get("scope") == "series" else "occurrence") if target_id is not None else None),
+            normalized_arguments=MappingProxyType(dict(normalized_arguments)), timezone=timezone,
+            run_id=run_id, conversation_id=conversation_id, tool_call_id=tool_call_id,
+            created_at=created, expires_at=created + PROPOSAL_EXPIRY,
+        )
+        async with self._lock:
+            self._commands[item.id] = item
+        return item
+
+    async def get_command(self, issuer: str, subject: str, proposal_id: UUID) -> ReminderCommandProposal:
+        item = self._commands.get(proposal_id)
+        if item is None or (item.issuer, item.subject) != (issuer, subject):
+            raise ReminderProposalNotFound("reminder command proposal not found")
         return item
 
 
@@ -222,15 +301,78 @@ class SqlReminderProposalRepository:
                 raise ReminderProposalNotFound("reminder proposal not found")
             return _proposal(row)
 
+    async def create_command(
+        self, issuer: str, subject: str, *, operation: str, tool_id: str,
+        tool_version: int, target_id: UUID | None, expected_version: int | None,
+        normalized_arguments: Mapping[str, object], timezone: str | None,
+        target_type: str | None = None,
+        run_id: UUID, conversation_id: UUID, tool_call_id: UUID,
+        now: datetime | None = None, transaction: object | None = None,
+    ) -> ReminderCommandProposal:
+        if transaction is not None:
+            if not isinstance(transaction, AsyncSession):
+                raise TypeError("proposal transaction must be an async database session")
+            session = transaction
+        else:
+            session = None
+        if not issuer or not subject or not operation or not tool_id:
+            raise ValueError("authenticated owner and command identity are required")
+        created = (now or self._now()).astimezone(UTC)
+        item = ReminderCommandProposal(
+            id=uuid4(), issuer=issuer, subject=subject, operation=operation,
+            tool_id=tool_id, tool_version=tool_version, target_id=target_id,
+            expected_version=expected_version,
+            target_type=target_type or (("series" if operation.startswith("series.") or normalized_arguments.get("scope") == "series" else "occurrence") if target_id is not None else None),
+            normalized_arguments=dict(normalized_arguments), timezone=timezone,
+            run_id=run_id, conversation_id=conversation_id, tool_call_id=tool_call_id,
+            created_at=created, expires_at=created + PROPOSAL_EXPIRY,
+        )
+        row = ReminderCommandProposalRow(
+            id=item.id, principal_issuer=issuer, principal_subject=subject,
+            operation=operation, tool_id=tool_id, tool_version=tool_version,
+            target_type=item.target_type, target_id=target_id, expected_version=expected_version,
+            normalized_arguments=dict(normalized_arguments), client_time_zone=timezone,
+            private_summary=None, run_id=run_id, conversation_id=conversation_id,
+            tool_call_id=tool_call_id, created_at=created, expires_at=item.expires_at,
+        )
+        if session is not None:
+            session.add(row)
+            return item
+        async with self.sessions() as owned_session, owned_session.begin():
+            return await self.create_command(
+                issuer, subject, operation=operation, tool_id=tool_id,
+                tool_version=tool_version, target_id=target_id,
+                expected_version=expected_version, normalized_arguments=normalized_arguments,
+                timezone=timezone, target_type=target_type, run_id=run_id, conversation_id=conversation_id,
+                tool_call_id=tool_call_id, now=created, transaction=owned_session,
+            )
+
+    async def get_command(self, issuer: str, subject: str, proposal_id: UUID) -> ReminderCommandProposal:
+        async with self.sessions() as session:
+            row = (
+                await session.execute(
+                    select(ReminderCommandProposalRow).where(
+                        ReminderCommandProposalRow.id == proposal_id,
+                        ReminderCommandProposalRow.principal_issuer == issuer,
+                        ReminderCommandProposalRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise ReminderProposalNotFound("reminder command proposal not found")
+            return _command(row)
+
 
 __all__ = [
     "MemoryReminderProposalRepository",
     "PROPOSAL_EXPIRY",
     "ReminderProposal",
+    "ReminderCommandProposal",
     "ReminderProposalError",
     "ReminderProposalNotFound",
     "ReminderProposalRepository",
     "ReminderProposalRow",
+    "ReminderCommandProposalRow",
     "SqlReminderProposalRepository",
     "proposal_expiry",
 ]

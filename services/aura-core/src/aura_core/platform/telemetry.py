@@ -30,12 +30,12 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.runtime.tool_selection": "1.2.0",
+    "aura.runtime.tool_selection": "1.3.0",
     "aura.runtime.policy_evaluation": "1.1.0",
-    "aura.runtime.tool_execution": "1.1.0",
+    "aura.runtime.tool_execution": "1.2.0",
     "aura.interaction.agent_configuration": "1.2.0",
     "aura.interaction.persona_preview": "1.0.0",
-    "aura.execution.run_coordinator": "1.7.0",
+    "aura.execution.run_coordinator": "1.8.0",
     "aura.interaction.conversation_persistence": "1.6.0",
     "aura.runtime.model_inference": "1.5.0",
     "aura.runtime.model_routing": "1.2.0",
@@ -50,7 +50,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
-    "aura.governance.approval_workflow": "1.0.1",
+    "aura.governance.approval_workflow": "1.1.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -59,6 +59,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "tool_selection_duration_ms",
             "tool_selection_outcome",
             "reminder_create_tool_outcome",
+            "reminder_tool_selection_outcome",
         }
     ),
     "aura.runtime.policy_evaluation": frozenset(
@@ -75,6 +76,8 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "tool_execution_outcome",
             "tool_timeout_count",
             "reminder_create_tool_outcome",
+            "reminder_tool_resolution_outcome",
+            "reminder_command_execution_outcome",
         }
     ),
     "aura.interaction.agent_configuration": frozenset(
@@ -230,6 +233,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "approval_outbox_persistence_outcome",
             "approval_outbox_dispatch_duration_ms",
             "approval_outbox_persist_duration_ms",
+            "reminder_command_approval_outcome",
             "errors",
         }
     ),
@@ -734,6 +738,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "delivery", "transport_error", "transport_published", "offset_unavailable",
             "created", "pending", "approved", "resumed", "opened", "closed", "omitted",
             "awaiting_confirmation", "waiting_for_confirmation", "executing",
+            "resolved", "clarification", "failure", "validation",
         }
     ),
     "operation": frozenset(

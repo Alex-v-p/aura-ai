@@ -1,6 +1,6 @@
 component:
   id: aura.execution.run_coordinator
-  version: 1.7.0
+  version: 1.8.0
   owner: aura-core
   category: execution
 input:
@@ -38,6 +38,8 @@ metrics:
   - errors
 evaluators:
   - approval_race_exactly_once
+  - conversational_reminder_approval_before_side_effect
+  - conversational_reminder_metadata_only_capture
 metric_semantics:
   queue_wait_ms: Persisted run started_at minus persisted run created_at.
   run_duration_ms: Monotonic elapsed execution time tagged with terminal status.
@@ -47,7 +49,7 @@ capture_policy: metadata_only
 cardinality:
   metric_attributes: [status, error_class, provider, dependency, outcome]
   trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id]
-  prohibited: [prompt, response, payload, endpoint, token, credential]
+  prohibited: [prompt, response, arguments, query, target_query, content, recurrence, timezone, due_at, owner_identity, raw_result, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded
   overflow: drop_oldest_and_count

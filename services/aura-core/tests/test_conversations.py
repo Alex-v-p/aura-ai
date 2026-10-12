@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -14,8 +14,10 @@ from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.domains.automation.reminders.proposals import MemoryReminderProposalRepository
 from aura_core.domains.automation.reminders.public import (
     ReminderApplicationService,
+    ReminderCommandProposal,
     ReminderView,
 )
+from aura_core.domains.automation.reminders.recurrence import RecurrenceFrequency, RecurrenceRule
 from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
 from aura_core.domains.execution.runs.ports import ChatCompletionPort
 from aura_core.domains.execution.runs.public import (
@@ -34,6 +36,10 @@ from aura_core.domains.governance.approvals.public import (
     ApprovalExecutionStatus,
 )
 from aura_core.domains.governance.approvals.repository import MemoryApprovalRepository
+from aura_core.domains.interaction.agents.public import (
+    GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
+    ToolPolicy,
+)
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     ConversationStore,
@@ -266,6 +272,34 @@ class _BlockingReminderService:
         )
 
 
+class _FailingCommandReminderService:
+    """Delegate reads while forcing the approved typed command to fail."""
+
+    def __init__(self, inner: ReminderApplicationService) -> None:
+        self.inner = inner
+
+    async def execute_command(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("forced command execution failure")
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
+class _FailingResolutionReminderService:
+    """Expose the read seam while forcing target resolution to fail."""
+
+    def __init__(self, inner: ReminderApplicationService) -> None:
+        self.inner = inner
+
+    async def resolve_target(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("forced target resolution failure")
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
 class _CrashAfterClaimStore:
     """Lose a worker after durable claim and before handler dispatch."""
 
@@ -409,12 +443,12 @@ async def test_waiting_transition_releases_attempt_and_duplicate_resume_is_idemp
 @pytest.mark.asyncio
 async def test_approved_reminder_resumption_is_exactly_once_and_synthesis_has_tools_disabled(
 ) -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _NativeToolProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "private reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "private reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -473,13 +507,327 @@ async def test_approved_reminder_resumption_is_exactly_once_and_synthesis_has_to
 
 
 @pytest.mark.asyncio
+async def test_recurring_command_without_pinned_timezone_clarifies_without_approval() -> None:
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.series.create",
+                {
+                    "content": "private recurring command",
+                    "localStart": "2027-01-11T09:00:00",
+                    "recurrence": {"frequency": "daily", "interval": 1},
+                },
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Create recurring reminder", "tool-model", models, str(uuid4())
+    )
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approvals,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, finished = await store.find_run_any(run.id)
+    assert finished.status is RunStatus.COMPLETED
+    assert (await approvals.list("https://issuer", "owner", limit=10)).items == ()
+    assert (await reminders.list_series("https://issuer", "owner")).items == ()
+
+
+@pytest.mark.asyncio
+async def test_default_aura_runs_pin_the_conversational_tool_policy_successor() -> None:
+    provider = FakeChatModel()
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "List reminders", "fake", models, str(uuid4())
+    )
+    assert run.tool_policy_revision_id == GENERAL_CONVERSATIONAL_TOOL_POLICY_ID
+    policy = cast(ToolPolicy, await store.tool_policy_for_run(run))
+    assert policy is not None
+    assert any(grant.tool_id == "reminder.list" for grant in policy.grants)
+
+
+@pytest.mark.asyncio
+async def test_recurring_mutation_pins_resolved_target_and_expected_version_before_approval(
+) -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    series = await reminders.create_series(
+        "https://issuer",
+        "owner",
+        content="take vitamins",
+        local_start=datetime(2027, 1, 11, 9, 0),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall("reminder.series.pause", {"target": "take vitamins"}),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer",
+        "owner",
+        "Pause vitamins",
+        "tool-model",
+        models,
+        str(uuid4()),
+        client_time_zone="Europe/Brussels",
+    )
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        approval_service=approvals,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    proposal = cast(ReminderCommandProposal, detail.proposal)
+    assert proposal.operation == "series.pause"
+    assert proposal.target_id == series.id
+    assert proposal.expected_version == series.version
+    assert proposal.timezone == "Europe/Brussels"
+    assert (
+        await reminders.get_series("https://issuer", "owner", series.id)
+    ).status.value == "active"
+
+
+@pytest.mark.asyncio
+async def test_approved_typed_command_failure_is_versioned_and_metadata_only() -> None:
+    """A forced command failure keeps the typed tool identity and private data out."""
+
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall("reminder.series.pause", {"target": "take vitamins"}),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer",
+        "owner",
+        "Force command failure",
+        "tool-model",
+        models,
+        str(uuid4()),
+        client_time_zone="Europe/Brussels",
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    await reminders.create_series(
+        "https://issuer",
+        "owner",
+        content="take vitamins",
+        local_start=datetime(2027, 1, 11, 9, 0),
+        timezone="Europe/Brussels",
+        rule=RecurrenceRule(frequency=RecurrenceFrequency.DAILY),
+        idempotency_key=str(uuid4()),
+    )
+    metrics = MetadataMetrics()
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    publisher = EventPublisher()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        publisher,
+        InMemoryOutbox(),
+        metrics=metrics,
+        approval_service=approvals,
+        reminder_service=_FailingCommandReminderService(
+            ReminderApplicationService(reminders, clock=lambda: now)
+        ),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key="forced-command-failure",
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+    await coordinator.execute(run.id, provider)
+
+    _, failed = await store.find_run_any(run.id)
+    assert failed.status is RunStatus.FAILED
+    detail = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    execution_status = getattr(
+        detail.approval.execution_status, "value", detail.approval.execution_status
+    )
+    assert execution_status == "failed"
+    command_failures = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "reminder_command_execution_outcome"
+        and dict(item.dimensions).get("outcome") == "failed"
+    ]
+    assert command_failures
+    for item in command_failures:
+        encoded = repr((item.dimensions, item.trace_attributes))
+        assert "take vitamins" not in encoded
+        assert "Europe/Brussels" not in encoded
+    statuses = [
+        event.data
+        for event in await publisher.history(run.id)
+        if event.event_type == "tool.status"
+    ]
+    assert any(
+        status.get("toolId") == "reminder.series.pause"
+        and status.get("toolVersion") == 1
+        and status.get("status") == "failed"
+        for status in statuses
+    )
+    assert "take vitamins" not in repr(statuses)
+    assert "Europe/Brussels" not in repr(statuses)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "expected_outcome"),
+    [
+        ("unique", "resolved"),
+        ("zero", "clarification"),
+        ("multiple", "clarification"),
+        ("error", "failure"),
+    ],
+)
+async def test_reminder_inspect_resolution_outcomes_are_bounded_and_metadata_only(
+    case: str, expected_outcome: str
+) -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    if case in {"unique", "multiple"}:
+        count = 1 if case == "unique" else 2
+        for index in range(count):
+            await reminders.create(
+                "https://issuer",
+                "owner",
+                content="inspect target",
+                due_at=now + timedelta(hours=2 + index),
+                idempotency_key=f"inspect-{case}-{index}",
+            )
+    service = ReminderApplicationService(reminders, clock=lambda: now)
+    if case == "error":
+        service = _FailingResolutionReminderService(service)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.inspect",
+                {"target": "inspect target" if case != "zero" else "missing target"},
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "Inspect reminder", "tool-model", models, str(uuid4())
+    )
+    metrics = MetadataMetrics()
+    publisher = EventPublisher()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        publisher,
+        InMemoryOutbox(),
+        metrics=metrics,
+        reminder_service=cast(ReminderApplicationService, service),
+    )
+    await coordinator.execute(run.id, provider)
+    outcomes = [
+        dict(item.dimensions).get("outcome")
+        for item in metrics.snapshot()
+        if item.metric == "reminder_tool_resolution_outcome"
+    ]
+    _, finished = await store.find_run_any(run.id)
+    assert expected_outcome in outcomes, (
+        finished.status,
+        [item.metric for item in metrics.snapshot() if "resolution" in item.metric],
+    )
+    encoded = repr(metrics.snapshot())
+    assert "inspect target" not in encoded
+    assert "missing target" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_reminder_list_ten_results_keeps_run_event_result_count_at_eight_or_less() -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    for index in range(10):
+        await reminders.create(
+            "https://issuer",
+            "owner",
+            content=f"bounded list item {index}",
+            due_at=now + timedelta(hours=2 + index),
+            idempotency_key=str(uuid4()),
+        )
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall("reminder.list", {"limit": 10}),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer", "owner", "List reminders", "tool-model", models, str(uuid4())
+    )
+    publisher = EventPublisher()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        publisher,
+        InMemoryOutbox(),
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+    await coordinator.execute(run.id, provider)
+    statuses = [
+        event.data
+        for event in await publisher.history(run.id)
+        if event.event_type == "tool.status" and event.data.get("status") == "completed"
+    ]
+    assert statuses
+    assert all(int(status.get("resultCount", 0)) <= 8 for status in statuses)
+
+
+@pytest.mark.asyncio
 async def test_reminder_commit_then_synthesis_failure_settles_once_and_replays_safely() -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _SynthesisFailureProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "committed reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "committed reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -554,12 +902,12 @@ async def test_reminder_commit_then_synthesis_failure_settles_once_and_replays_s
 
 @pytest.mark.asyncio
 async def test_terminal_finish_crash_replays_without_duplicate_reminder_or_synthesis() -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _NativeToolProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "terminal crash reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "terminal crash reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -719,12 +1067,12 @@ async def test_terminal_finish_crash_replays_without_duplicate_reminder_or_synth
 async def test_reminder_resume_recovers_worker_crash_before_or_after_commit(
     after_commit: bool,
 ) -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _NativeToolProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "crash-safe reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "crash-safe reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -784,12 +1132,12 @@ async def test_reminder_resume_recovers_worker_crash_before_or_after_commit(
 
 @pytest.mark.asyncio
 async def test_executing_resume_redelivery_before_lease_expiry_is_not_reclaimed() -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _NativeToolProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "lease-safe reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "lease-safe reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -847,12 +1195,12 @@ async def test_executing_resume_redelivery_before_lease_expiry_is_not_reclaimed(
 async def test_post_claim_crash_retries_approval_outcomes_and_reconciles_once(
     approved: bool,
 ) -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
     provider = _NativeToolProvider(
         selection_events=(
             ModelToolCall(
                 "reminder.create",
-                {"content": "post-claim reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "post-claim reminder", "dueAt": "2027-01-11T12:00:00Z"},
             ),
             ModelStreamCompleted(),
         )
@@ -1973,7 +2321,7 @@ async def test_native_selection_and_tools_disabled_synthesis_publish_thinking_se
 
 @pytest.mark.asyncio
 async def test_approval_wait_resume_preserves_thinking_offset_and_clears_after_settlement() -> None:
-    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
 
     class ApprovalThinkingProvider(_NativeToolProvider):
         async def stream_chat_with_tools(
@@ -1983,7 +2331,7 @@ async def test_approval_wait_resume_preserves_thinking_offset_and_clears_after_s
             yield ModelThinkingDelta("before approval")
             yield ModelToolCall(
                 "reminder.create",
-                {"content": "approval reminder", "dueAt": "2026-10-11T12:00:00Z"},
+                {"content": "approval reminder", "dueAt": "2027-01-11T12:00:00Z"},
             )
             yield ModelStreamCompleted()
 

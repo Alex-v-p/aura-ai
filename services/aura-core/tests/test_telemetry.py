@@ -937,9 +937,9 @@ def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> 
     assert all("arguments" not in dict(item.trace_attributes) for item in measurements)
     assert all("result" not in dict(item.trace_attributes) for item in measurements)
     assert metrics.stats().rejected >= 3
-    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.2.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.3.0"
     assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.1.0"
-    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.1.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.2.0"
 
 
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:

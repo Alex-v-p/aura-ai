@@ -1,6 +1,6 @@
 component:
   id: aura.governance.approval_workflow
-  version: 1.0.1
+  version: 1.1.0
   owner: governance.approvals
   category: governance
 input:
@@ -34,6 +34,7 @@ metrics:
   - approval_outbox_dispatch_duration_ms
   - approval_outbox_persist_duration_ms
   - errors
+  - reminder_command_approval_outcome
 metric_semantics:
   approval_creation_outcome: Content-free result of persisting an owner-scoped approval and proposal reference.
   approval_decision_outcome: Content-free approve, reject, cancel, or conflict result.
@@ -51,6 +52,7 @@ metric_semantics:
   approval_outbox_persistence_outcome: Classified mark-published persistence result.
   approval_outbox_dispatch_duration_ms: Monotonic approval/resume outbox publish duration.
   approval_outbox_persist_duration_ms: Monotonic approval/resume mark-published duration.
+  reminder_command_approval_outcome: Content-free pending, approved, rejected, expired, canceled, or conflict outcome for a reminder command.
 capture_policy: metadata_only
 evaluators:
   - approval_owner_authorization
@@ -58,6 +60,8 @@ evaluators:
   - approval_race_exactly_once
   - approval_reconnect_reconciliation
   - confirmation_side_effect_prevention
+  - conversational_reminder_approval_before_side_effect
+  - conversational_reminder_metadata_only_capture
 cardinality:
   metric_attributes: [outcome, error_class, dependency, status]
   trace_only:
@@ -80,6 +84,12 @@ cardinality:
     - content
     - proposal_content
     - due_at
+    - recurrence
+    - normalized_arguments
+    - target_query
+    - timezone
+    - owner_identity
+    - raw_result
     - prompt
     - response
     - arguments

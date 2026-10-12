@@ -5,16 +5,20 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
 import httpx
 import pytest
-from aura_core.domains.automation.reminders.proposals import MemoryReminderProposalRepository
+from aura_core.domains.automation.reminders.proposals import (
+    MemoryReminderProposalRepository,
+    ReminderProposalNotFound,
+)
 from aura_core.domains.automation.reminders.public import (
     ReminderApplicationService,
+    ReminderCommandProposal,
     ReminderView,
 )
 from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
@@ -54,10 +58,10 @@ from aura_core.runtime.tools import (
 )
 from starlette.requests import Request
 
-NOW = datetime(2026, 10, 10, 12, tzinfo=UTC)
+NOW = datetime(2027, 1, 10, 12, tzinfo=UTC)
 ISSUER = "https://authentik.example"
 OWNER = "owner"
-FIXTURE_REVISION = "aura-0056-approval-eval-v1"
+FIXTURE_REVISION = "aura-0066-conversational-reminders-v1"
 REQUIRED_EVALUATORS = frozenset(
     {
         "reminder_tool_selection_and_arguments",
@@ -69,6 +73,9 @@ REQUIRED_EVALUATORS = frozenset(
         "reminder_creation_exactly_once",
         "approval_reconnect_reconciliation",
         "timezone_interpretation_and_clarification",
+        "conversational_reminder_owner_isolation",
+        "conversational_reminder_approval_before_side_effect",
+        "conversational_reminder_metadata_only_capture",
     }
 )
 
@@ -138,6 +145,18 @@ EVALUATOR_COMPONENTS = {
         "aura.runtime.prompt_compilation",
         COMPONENT_VERSIONS["aura.runtime.prompt_compilation"],
     ),
+    "conversational_reminder_owner_isolation": (
+        "aura.automation.reminder_management",
+        COMPONENT_VERSIONS["aura.automation.reminder_management"],
+    ),
+    "conversational_reminder_approval_before_side_effect": (
+        APPROVAL_COMPONENT,
+        COMPONENT_VERSIONS[APPROVAL_COMPONENT],
+    ),
+    "conversational_reminder_metadata_only_capture": (
+        "aura.runtime.tool_execution",
+        COMPONENT_VERSIONS["aura.runtime.tool_execution"],
+    ),
 }
 
 
@@ -181,7 +200,7 @@ class _ApprovalRunProvider:
         self.selection_calls += 1
         yield ModelToolCall(
             "reminder.create",
-            {"content": "private proposal", "dueAt": "2026-10-11T12:00:00Z"},
+            {"content": "private proposal", "dueAt": "2027-01-11T12:00:00Z"},
         )
         yield ModelStreamCompleted()
 
@@ -466,7 +485,7 @@ async def _results() -> tuple[EvaluationResult, ...]:
     evaluator = ToolPolicyEvaluator(registry)
     valid_call = ToolCall(
         "reminder.create",
-        {"content": "private", "dueAt": "2026-10-11T12:00:00Z"},
+        {"content": "private", "dueAt": "2027-01-11T12:00:00Z"},
     )
     selection = evaluator.decide(policy, valid_call)
     try:
@@ -587,6 +606,36 @@ async def _results() -> tuple[EvaluationResult, ...]:
         datetime(2026, 3, 29, 1, 30, tzinfo=UTC), "Europe/Brussels"
     ) == "2026-03-29T03:30:00+02:00"
     legacy_ambiguity_is_explicit = "RFC3339" in LEGACY_TIME_CLARIFICATION
+    scoped_reminders = MemoryReminderRepository(clock=lambda: NOW)
+    await scoped_reminders.create(
+        ISSUER,
+        OWNER,
+        content="owner scoped fixture",
+        due_at=NOW + timedelta(hours=2),
+        idempotency_key="owner-scoped-fixture",
+    )
+    scoped_service = ReminderApplicationService(scoped_reminders, clock=lambda: NOW)
+    owned = await scoped_service.resolve_target(ISSUER, OWNER, "owner scoped fixture")
+    foreign = await scoped_service.resolve_target(
+        ISSUER, "other-owner", "owner scoped fixture"
+    )
+    owner_isolation = (
+        getattr(owned, "status", None) == "resolved"
+        and len(getattr(owned, "matches", ())) == 1
+        and getattr(foreign, "status", None) != "resolved"
+        and not getattr(foreign, "matches", ())
+    )
+    metadata_values = [
+        repr((measurement.dimensions, measurement.trace_attributes))
+        for measurement in measurements
+    ]
+    metadata_only_capture = all(
+        not any(
+            forbidden in value.casefold()
+            for forbidden in ("private proposal", "failed reminder", "2027-01-11", "arguments")
+        )
+        for value in metadata_values
+    ) and runtime_metrics.stats().rejected == 0
     return (
         _result("reminder_tool_selection_and_arguments", selection.allowed and arguments_valid),
         _result("reminder_tool_permission_enforcement", not denied.allowed),
@@ -610,6 +659,24 @@ async def _results() -> tuple[EvaluationResult, ...]:
             and invalid_timezone_rejected
             and dst_equivalent
             and legacy_ambiguity_is_explicit,
+        ),
+        _result(
+            "conversational_reminder_owner_isolation",
+            owner_isolation,
+            unique_match="true" if owner_isolation else "false",
+            foreign_match="none" if not getattr(foreign, "matches", ()) else "unexpected",
+        ),
+        _result(
+            "conversational_reminder_approval_before_side_effect",
+            run_no_preapproval,
+            pending="true" if run_no_preapproval else "false",
+            mutation="after_approval",
+        ),
+        _result(
+            "conversational_reminder_metadata_only_capture",
+            metadata_only_capture,
+            telemetry="metadata_only",
+            rejected=str(runtime_metrics.stats().rejected),
         ),
     )
 
@@ -641,3 +708,77 @@ async def test_approval_evaluators_are_replayable_and_content_free() -> None:
             forbidden in repr(payload["metadata"]).lower()
             for forbidden in ("private", "content", "dueat", "arguments", "prompt", "response")
         )
+
+
+@pytest.mark.asyncio
+async def test_typed_reminder_command_proposals_pin_target_version_operation_and_timezone() -> None:
+    repository = MemoryReminderProposalRepository(clock=lambda: NOW)
+    target_id = uuid4()
+    arguments = {
+        "content": "private command content",
+        "recurrence": {"frequency": "daily", "interval": 1},
+    }
+    proposal = await repository.create_command(
+        ISSUER,
+        OWNER,
+        operation="series.update",
+        tool_id="reminder.series.update",
+        tool_version=1,
+        target_id=target_id,
+        expected_version=7,
+        normalized_arguments=arguments,
+        timezone="Europe/Brussels",
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        now=NOW,
+    )
+    assert proposal.operation == "series.update"
+    assert proposal.tool_id == "reminder.series.update"
+    assert proposal.tool_version == 1
+    assert proposal.target_id == target_id
+    assert proposal.expected_version == 7
+    assert proposal.target_type == "series"
+    assert proposal.timezone == "Europe/Brussels"
+    assert proposal.normalized_arguments == arguments
+    with pytest.raises(FrozenInstanceError):
+        proposal.expected_version = 8  # type: ignore[misc]
+
+    replay = await repository.get_command(ISSUER, OWNER, proposal.id)
+    assert replay == proposal
+    with pytest.raises(ReminderProposalNotFound):
+        await repository.get_command(ISSUER, "other-owner", proposal.id)
+
+
+@pytest.mark.asyncio
+async def test_typed_command_approval_replay_is_owner_scoped_and_metadata_only() -> None:
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: NOW), clock=lambda: NOW
+    )
+    detail = await approvals.create_command_pending(
+        ISSUER,
+        OWNER,
+        operation="series.pause",
+        tool_id="reminder.series.pause",
+        tool_version=1,
+        target_id=uuid4(),
+        expected_version=3,
+        normalized_arguments={"target": "private reminder"},
+        timezone="Europe/Brussels",
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        now=NOW,
+    )
+    assert detail.approval.status.value == "pending"
+    command = cast(ReminderCommandProposal, detail.proposal)
+    assert command.operation == "series.pause"
+    with pytest.raises(ApprovalNotFound):
+        await approvals.get(ISSUER, "other-owner", detail.approval.id)
+
+    events = await approvals.replay(ISSUER, OWNER)
+    assert len(events) == 1
+    payload = events[0].payload()
+    assert "private reminder" not in repr(payload)
+    assert "Europe/Brussels" not in repr(payload)
+    assert "target" not in repr(payload)
