@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 3b125c90fc5c7f1cf94a21d52fde4b7010dff75873af23bdd1fc84d3e9e99706
+// Contract SHA-256: ed0636b2da233674d74cdcd9431c44626394fdeea4dc74f5979b520df9631036
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -277,6 +277,30 @@ export type CreateReminderRequest = { readonly "content": string; readonly "dueA
 
 export type ReminderTransitionRequest = { readonly "expectedVersion": number; };
 
+export type RecurrenceFrequency = "daily" | "selected_weekday" | "weekly" | "monthly";
+
+export type RecurrenceRule = { readonly "frequency": "daily" | "selected_weekday" | "weekly" | "monthly"; readonly "interval": number; readonly "weekdays"?: ReadonlyArray<number>; readonly "monthDay"?: number | null; };
+
+export type ReminderSeriesRecurrence = { readonly "frequency": "daily" | "selected_weekday" | "weekly" | "monthly"; readonly "interval": number; readonly "weekdays": ReadonlyArray<number>; readonly "monthDay": number | null; readonly "localStart": string; readonly "timeZone": ClientTimeZone; readonly "count": number | null; readonly "endDate": string | null; };
+
+export type ReminderSeriesStatus = "active" | "paused" | "completed" | "canceled";
+
+export type ReminderOccurrenceStatus = "scheduled" | "fired" | "completed" | "skipped" | "replaced" | "paused-window" | "series-canceled";
+
+export type ReminderSeries = { readonly "id": string; readonly "content": string; readonly "recurrence": ReminderSeriesRecurrence; readonly "timeZone": ClientTimeZone; readonly "localStart": string; readonly "status": ReminderSeriesStatus; readonly "version": number; readonly "readableRule": string; readonly "nextOccurrence": string | null; readonly "nextReminderId": string | null; readonly "missedCount": number; readonly "occurrenceCount": number; readonly "count": number | null; readonly "endDate": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "pausedAt": string | null; readonly "completedAt": string | null; readonly "canceledAt": string | null; };
+
+export type ReminderSeriesPage = { readonly "items": ReadonlyArray<ReminderSeries>; readonly "nextCursor": string | null; };
+
+export type ReminderOccurrence = { readonly "id": string; readonly "seriesId": string; readonly "reminderId": string; readonly "sequence": number; readonly "outcome": "scheduled" | "fired" | "completed" | "skipped" | "replaced" | "paused-window" | "series-canceled"; readonly "localDueAt": string; readonly "dueAt": string; readonly "occurredAt": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "skippedAt": string | null; readonly "firedAt": string | null; readonly "completedAt": string | null; };
+
+export type ReminderOccurrencePage = { readonly "items": ReadonlyArray<ReminderOccurrence>; readonly "nextCursor": string | null; };
+
+export type CreateReminderSeriesRequest = { readonly "content": string; readonly "recurrence": ReminderSeriesRecurrence; };
+
+export type UpdateReminderSeriesRequest = { readonly "expectedVersion": number; readonly "content"?: string; readonly "recurrence"?: ReminderSeriesRecurrence; };
+
+export type ReminderSeriesTransitionRequest = { readonly "expectedVersion": number; };
+
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "canceled";
 
 export type ApprovalExecutionStatus = "not_started" | "queued" | "executing" | "completed" | "failed" | "denied";
@@ -377,6 +401,15 @@ export interface AuraApiOperations {
   readonly getReminder: { readonly response: Reminder; readonly body: never; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly completeReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly cancelReminder: { readonly response: Reminder; readonly body: ReminderTransitionRequest; readonly path: { readonly "reminder_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listReminderSeries: { readonly response: ReminderSeriesPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createReminderSeries: { readonly response: ReminderSeries; readonly body: CreateReminderSeriesRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getReminderSeries: { readonly response: ReminderSeries; readonly body: never; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listReminderSeriesOccurrences: { readonly response: ReminderOccurrencePage; readonly body: never; readonly path: { readonly "series_id": string; }; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly updateReminderSeries: { readonly response: ReminderSeries; readonly body: UpdateReminderSeriesRequest; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly pauseReminderSeries: { readonly response: ReminderSeries; readonly body: ReminderSeriesTransitionRequest; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly resumeReminderSeries: { readonly response: ReminderSeries; readonly body: ReminderSeriesTransitionRequest; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly skipNextReminderSeriesOccurrence: { readonly response: ReminderSeries; readonly body: ReminderSeriesTransitionRequest; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly cancelReminderSeries: { readonly response: ReminderSeries; readonly body: ReminderSeriesTransitionRequest; readonly path: { readonly "series_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly listApprovals: { readonly response: ApprovalPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: ApprovalStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getApproval: { readonly response: ApprovalDetail; readonly body: never; readonly path: { readonly "approval_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly approveApproval: { readonly response: Approval; readonly body: ApprovalDecisionRequest; readonly path: { readonly "approval_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
@@ -461,6 +494,15 @@ export const AURA_API_OPERATIONS = {
   getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', responseMode: 'json' },
   completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', responseMode: 'json' },
   cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', responseMode: 'json' },
+  listReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series', responseMode: 'json' },
+  createReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series', responseMode: 'json' },
+  getReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}', responseMode: 'json' },
+  listReminderSeriesOccurrences: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}/occurrences', responseMode: 'json' },
+  updateReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/update', responseMode: 'json' },
+  pauseReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/pause', responseMode: 'json' },
+  resumeReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/resume', responseMode: 'json' },
+  skipNextReminderSeriesOccurrence: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/skip-next', responseMode: 'json' },
+  cancelReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/cancel', responseMode: 'json' },
   listApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals', responseMode: 'json' },
   getApproval: { method: 'GET', pathTemplate: '/api/v1/approvals/{approval_id}', responseMode: 'json' },
   approveApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/approve', responseMode: 'json' },

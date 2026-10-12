@@ -272,6 +272,52 @@ async def test_create_materializes_exactly_one_future_occurrence_and_is_replayab
 
 
 @pytest.mark.asyncio
+async def test_series_and_occurrence_cursors_reach_rows_beyond_first_hundred() -> None:
+    repository = _repo()
+    for index in range(101):
+        await _create_series(repository, key=f"pagination-series-{index}")
+
+    first_series = await repository.list_series(OWNER_ISSUER, OWNER, limit=100)
+    assert len(first_series.items) == 100
+    assert first_series.next_cursor is not None
+    second_series = await repository.list_series(
+        OWNER_ISSUER, OWNER, limit=100, cursor=first_series.next_cursor
+    )
+    assert len(second_series.items) == 1
+    assert {item.id for item in first_series.items}.isdisjoint(
+        item.id for item in second_series.items
+    )
+    assert second_series.next_cursor is None
+
+    paged_series = await _create_series(repository, key="pagination-occurrences")
+    current = paged_series
+    for index in range(100):
+        current = await repository.skip_next(
+            OWNER_ISSUER,
+            OWNER,
+            paged_series.id,
+            expected_version=current.version,
+            idempotency_key=_series_key(f"pagination-skip-{index}"),
+        )
+    first_occurrences = await repository.list_occurrences(
+        OWNER_ISSUER, OWNER, paged_series.id, limit=30
+    )
+    assert len(first_occurrences.items) == 30
+    assert first_occurrences.items[0].sequence == 101
+    assert first_occurrences.next_cursor is not None
+    second_occurrences = await repository.list_occurrences(
+        OWNER_ISSUER,
+        OWNER,
+        paged_series.id,
+        limit=30,
+        cursor=first_occurrences.next_cursor,
+    )
+    assert len(second_occurrences.items) == 30
+    assert second_occurrences.items[0].sequence == 71
+    assert second_occurrences.items[-1].sequence == 42
+
+
+@pytest.mark.asyncio
 async def test_every_series_command_has_exact_replay_and_conflicting_key_semantics() -> None:
     # Update includes its normalized arguments in the idempotency fingerprint;
     # a key reused with a different rule or content must never become a second

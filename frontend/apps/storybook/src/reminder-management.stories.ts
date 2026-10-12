@@ -1,7 +1,7 @@
 import { applicationConfig } from '@storybook/angular';
 import type { Meta, StoryObj } from '@storybook/angular';
 import { signal } from '@angular/core';
-import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter, withDisabledInitialNavigation } from '@angular/router';
 import { of } from 'rxjs';
 import type { Reminder } from '@aura/aura-api-client';
 import { RemindersPageComponent } from '@aura/aura/automation/reminders';
@@ -27,8 +27,8 @@ function fixtureStore(items = true, options: FixtureOptions = {}): ReminderStore
   const historyItems = options.history ?? (items ? [history] : []);
   const selected = signal<Reminder | null>(options.selected ?? null);
   return {
-    upcoming: signal({ items: upcomingItems, nextCursor: null }), history: signal({ items: historyItems, nextCursor: null }), selected, loading: signal(options.loading ?? false), loadingMore: signal(false), detailLoading: signal(options.detailLoading ?? false), detailError: signal(options.detailError ?? null), saving: signal(false), notice: signal(options.notice ?? null), errorStatus: signal(options.errorStatus ?? null), createOutcome: signal<'idle' | 'pending' | 'confirmed' | 'failed' | 'unconfirmed'>('idle'), resetEpoch: signal(0),
-    load: async () => undefined, loadMore: async () => undefined, inspect: async (id: string) => { const match = selected() ?? [...upcomingItems, ...historyItems].find((item) => item.id === id) ?? null; selected.set(match); return match; }, clearDetail: () => selected.set(null), create: async () => true, markCreateDraftChanged: () => undefined, clearCreateDraft: () => undefined, complete: async () => true, cancel: async () => true, clearNotice: () => undefined, registerSessionResetHandler: () => undefined, resetSessionState: () => undefined,
+    upcoming: signal({ items: upcomingItems, nextCursor: null }), history: signal({ items: historyItems, nextCursor: null }), selected, series: signal({ items: [], nextCursor: null }), selectedSeries: signal(null), occurrences: signal({ items: [], nextCursor: null }), seriesDetailLoading: signal(false), seriesDetailError: signal(null), seriesMutationOutcome: signal<'idle' | 'pending' | 'confirmed' | 'failed' | 'unconfirmed'>('idle'), seriesRecovery: signal<'idle' | 'validation' | 'conflict' | 'offline' | 'permission' | 'unknown'>('idle'), canReconcileRecurringCreate: signal(false), loading: signal(options.loading ?? false), loadingMore: signal(false), detailLoading: signal(options.detailLoading ?? false), detailError: signal(options.detailError ?? null), saving: signal(false), notice: signal(options.notice ?? null), errorStatus: signal(options.errorStatus ?? null), createOutcome: signal<'idle' | 'pending' | 'confirmed' | 'failed' | 'unconfirmed'>('idle'), resetEpoch: signal(0),
+    load: async () => undefined, loadMoreSeries: async () => undefined, inspectSeries: async () => null, createRecurring: async () => true, updateSeries: async () => true, pauseSeries: async () => true, resumeSeries: async () => true, skipNextSeriesOccurrence: async () => true, cancelSeries: async () => true, reconcileRecurringCreate: async () => false, loadMore: async () => undefined, inspect: async (id: string) => { const match = selected() ?? [...upcomingItems, ...historyItems].find((item) => item.id === id) ?? null; selected.set(match); return match; }, clearDetail: () => selected.set(null), create: async () => true, markCreateDraftChanged: () => undefined, clearCreateDraft: () => undefined, complete: async () => true, cancel: async () => true, clearNotice: () => undefined, registerSessionResetHandler: () => undefined, resetSessionState: () => undefined,
   } as unknown as ReminderStore;
 }
 
@@ -36,7 +36,7 @@ function detailRoute(id: string): ActivatedRoute {
   return { paramMap: of(convertToParamMap({ id })) } as unknown as ActivatedRoute;
 }
 
-const meta: Meta<RemindersPageComponent> = { title: 'Aura/Reminders product', component: RemindersPageComponent, parameters: { layout: 'fullscreen' }, decorators: [applicationConfig({ providers: [provideRouter([]), { provide: ReminderStore, useValue: fixtureStore() }] })] };
+const meta: Meta<RemindersPageComponent> = { title: 'Aura/Reminders product', component: RemindersPageComponent, parameters: { layout: 'fullscreen' }, decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), { provide: ReminderStore, useValue: fixtureStore() }] })] };
 export default meta;
 type Story = StoryObj<RemindersPageComponent>;
 export const Workspace: Story = { name: 'Upcoming and history' };

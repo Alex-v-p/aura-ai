@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, overload
 from uuid import UUID
 
 from .recurrence import (
@@ -150,6 +150,31 @@ class ReminderSeriesPage:
 
 
 @dataclass(frozen=True, slots=True)
+class ReminderOccurrencePage:
+    items: tuple[ReminderOccurrence, ...]
+    next_cursor: str | None = None
+
+    # Keep the pre-pagination tuple-like read API for existing scheduler and
+    # domain callers while exposing the cursor to transport callers.
+    def __iter__(self):
+        return iter(self.items)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    @overload
+    def __getitem__(self, index: int) -> ReminderOccurrence: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[ReminderOccurrence, ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> ReminderOccurrence | tuple[ReminderOccurrence, ...]:
+        return self.items[index]
+
+
+@dataclass(frozen=True, slots=True)
 class ReminderDeliveryResult:
     reminders: tuple[Reminder, ...]
     generated_count: int = 0
@@ -193,12 +218,23 @@ class ReminderSeriesRepository(Protocol):
     async def get_series(self, issuer: str, subject: str, series_id: UUID) -> ReminderSeries: ...
 
     async def list_series(
-        self, issuer: str, subject: str, *, limit: int = 100
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> ReminderSeriesPage: ...
 
     async def list_occurrences(
-        self, issuer: str, subject: str, series_id: UUID, *, limit: int = 100
-    ) -> tuple[ReminderOccurrence, ...]: ...
+        self,
+        issuer: str,
+        subject: str,
+        series_id: UUID,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ReminderOccurrencePage: ...
 
     async def update_series(
         self,
@@ -474,14 +510,27 @@ class ReminderApplicationService:
         return await self.repository.get_series(issuer, subject, series_id)
 
     async def list_series(
-        self, issuer: str, subject: str, *, limit: int = 100
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> ReminderSeriesPage:
-        return await self.repository.list_series(issuer, subject, limit=limit)
+        return await self.repository.list_series(issuer, subject, limit=limit, cursor=cursor)
 
     async def list_occurrences(
-        self, issuer: str, subject: str, series_id: UUID, *, limit: int = 100
-    ) -> tuple[ReminderOccurrence, ...]:
-        return await self.repository.list_occurrences(issuer, subject, series_id, limit=limit)
+        self,
+        issuer: str,
+        subject: str,
+        series_id: UUID,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ReminderOccurrencePage:
+        return await self.repository.list_occurrences(
+            issuer, subject, series_id, limit=limit, cursor=cursor
+        )
 
     async def update_series(
         self,
@@ -722,6 +771,7 @@ __all__ = [
     "Reminder",
     "ReminderApplicationService",
     "ReminderOccurrence",
+    "ReminderOccurrencePage",
     "ReminderOccurrenceStatus",
     "ReminderSeries",
     "ReminderSeriesError",

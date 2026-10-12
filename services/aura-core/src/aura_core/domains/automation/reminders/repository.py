@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -15,7 +18,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.automation.reminders.persistence import (
@@ -34,6 +37,7 @@ from aura_core.domains.automation.reminders.public import (
     ReminderIdempotencyConflict,
     ReminderNotFound,
     ReminderOccurrence,
+    ReminderOccurrencePage,
     ReminderOccurrenceStatus,
     ReminderPage,
     ReminderSeries,
@@ -73,6 +77,97 @@ def _owner(issuer: str, subject: str) -> tuple[str, str]:
     if not issuer or not subject:
         raise ReminderValidationError("authenticated owner is required")
     return issuer, subject
+
+
+_SERIES_CURSOR_SECRET = b"aura-reminder-series-cursor-v1"
+
+
+def _cursor_owner(issuer: str, subject: str, series_id: UUID | None = None) -> str:
+    suffix = f"\0{series_id}" if series_id is not None else ""
+    return hashlib.sha256(f"{issuer}\0{subject}{suffix}".encode()).hexdigest()
+
+
+def _encode_series_cursor(
+    issuer: str, subject: str, item: ReminderSeries
+) -> str:
+    body: dict[str, object] = {
+        "v": 1,
+        "k": "series",
+        "o": _cursor_owner(issuer, subject),
+        "d": item.next_due_at.isoformat() if item.next_due_at else None,
+        "i": str(item.id),
+    }
+    return _sign_cursor(body)
+
+
+def _encode_occurrence_cursor(
+    issuer: str, subject: str, series_id: UUID, item: ReminderOccurrence
+) -> str:
+    body: dict[str, object] = {
+        "v": 1,
+        "k": "occurrence",
+        "o": _cursor_owner(issuer, subject, series_id),
+        "s": str(series_id),
+        "q": item.sequence,
+        "i": str(item.id),
+    }
+    return _sign_cursor(body)
+
+
+def _sign_cursor(body: dict[str, object]) -> str:
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    signed = dict(body)
+    signed["sig"] = hmac.new(_SERIES_CURSOR_SECRET, raw, hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(
+        json.dumps(signed, sort_keys=True, separators=(",", ":")).encode()
+    ).decode().rstrip("=")
+
+
+def _decode_cursor(
+    cursor: str,
+    issuer: str,
+    subject: str,
+    kind: str,
+    series_id: UUID | None = None,
+) -> dict[str, object]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        signed = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        signature = signed.pop("sig")
+        raw = json.dumps(signed, sort_keys=True, separators=(",", ":")).encode()
+        expected = hmac.new(_SERIES_CURSOR_SECRET, raw, hashlib.sha256).hexdigest()
+        if (
+            not isinstance(signature, str)
+            or not hmac.compare_digest(signature, expected)
+            or signed.get("v") != 1
+            or signed.get("k") != kind
+            or signed.get("o") != _cursor_owner(issuer, subject, series_id)
+        ):
+            raise ValueError
+        if kind == "series":
+            UUID(str(signed["i"]))
+            due = signed.get("d")
+            if due is not None and not isinstance(due, str):
+                raise ValueError
+            if due is not None:
+                datetime.fromisoformat(due)
+        else:
+            if UUID(str(signed["s"])) != series_id:
+                raise ValueError
+            UUID(str(signed["i"]))
+            if type(signed.get("q")) is not int or int(str(signed["q"])) < 1:
+                raise ValueError
+        return cast(dict[str, object], signed)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeError) as exc:
+        raise ReminderValidationError("invalid reminder pagination cursor") from exc
+
+
+def _series_sort_key(item: ReminderSeries) -> tuple[bool, datetime, int]:
+    return (
+        item.next_due_at is None,
+        item.next_due_at or datetime.max.replace(tzinfo=UTC),
+        item.id.int,
+    )
 
 
 def _validate_series_idempotency_key(value: str) -> str:
@@ -1106,30 +1201,79 @@ class MemoryReminderRepository:
         return item
 
     async def list_series(
-        self, issuer: str, subject: str, *, limit: int = 100
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> ReminderSeriesPage:
         issuer, subject = _owner(issuer, subject)
         if not 1 <= limit <= 100:
             raise ReminderValidationError("series limit must be between 1 and 100")
         values = sorted(
             (s for s in self._series.values() if (s.issuer, s.subject) == (issuer, subject)),
-            key=lambda s: (s.updated_at, s.id),
-            reverse=True,
+            key=_series_sort_key,
         )
-        return ReminderSeriesPage(tuple(values[:limit]), None)
+        if cursor:
+            token = _decode_cursor(cursor, issuer, subject, "series")
+            cursor_due = token.get("d")
+            cursor_id = UUID(str(token["i"]))
+            due = datetime.fromisoformat(str(cursor_due)) if cursor_due is not None else None
+            values = [
+                item
+                for item in values
+                if (
+                    (due is None and item.next_due_at is None and item.id.int > cursor_id.int)
+                    or (
+                        due is not None
+                        and item.next_due_at is not None
+                        and (item.next_due_at, item.id.int) > (due, cursor_id.int)
+                    )
+                    or (due is not None and item.next_due_at is None)
+                )
+            ]
+        page_values = values[: limit + 1]
+        has_more = len(page_values) > limit
+        page_items = tuple(page_values[:limit])
+        next_cursor = _encode_series_cursor(issuer, subject, page_items[-1]) if has_more else None
+        return ReminderSeriesPage(page_items, next_cursor)
 
     async def list_occurrences(
-        self, issuer: str, subject: str, series_id: UUID, *, limit: int = 100
-    ) -> tuple[ReminderOccurrence, ...]:
+        self,
+        issuer: str,
+        subject: str,
+        series_id: UUID,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ReminderOccurrencePage:
         await self.get_series(issuer, subject, series_id)
         if not 1 <= limit <= 100:
             raise ReminderValidationError("occurrence limit must be between 1 and 100")
-        return tuple(
-            sorted(
-                (o for o in self._occurrences.values() if o.series_id == series_id),
-                key=lambda o: o.sequence,
-            )[:limit]
+        values = sorted(
+            (o for o in self._occurrences.values() if o.series_id == series_id),
+            key=lambda item: (item.sequence, item.id.int),
+            reverse=True,
         )
+        if cursor:
+            token = _decode_cursor(cursor, issuer, subject, "occurrence", series_id)
+            sequence = int(str(token["q"]))
+            occurrence_id = UUID(str(token["i"]))
+            values = [
+                item
+                for item in values
+                if (item.sequence, item.id.int) < (sequence, occurrence_id.int)
+            ]
+        page_values = values[: limit + 1]
+        has_more = len(page_values) > limit
+        page_items = tuple(page_values[:limit])
+        next_cursor = (
+            _encode_occurrence_cursor(issuer, subject, series_id, page_items[-1])
+            if has_more
+            else None
+        )
+        return ReminderOccurrencePage(page_items, next_cursor)
 
     async def _series_command(
         self,
@@ -2609,45 +2753,108 @@ class SqlReminderRepository:
             return _series_item(row)
 
     async def list_series(
-        self, issuer: str, subject: str, *, limit: int = 100
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
     ) -> ReminderSeriesPage:
         issuer, subject = _owner(issuer, subject)
+        if not 1 <= limit <= 100:
+            raise ReminderValidationError("series limit must be between 1 and 100")
+        token = _decode_cursor(cursor, issuer, subject, "series") if cursor else None
         async with self.sessions() as session:
+            conditions = [
+                ReminderSeriesRow.principal_issuer == issuer,
+                ReminderSeriesRow.principal_subject == subject,
+            ]
+            if token:
+                cursor_id = UUID(str(token["i"]))
+                cursor_due = token.get("d")
+                if cursor_due is None:
+                    conditions.append(ReminderSeriesRow.next_due_at.is_(None))
+                    conditions.append(ReminderSeriesRow.id > cursor_id)
+                else:
+                    due = datetime.fromisoformat(str(cursor_due))
+                    conditions.append(
+                        or_(
+                            ReminderSeriesRow.next_due_at > due,
+                            and_(
+                                ReminderSeriesRow.next_due_at == due,
+                                ReminderSeriesRow.id > cursor_id,
+                            ),
+                            ReminderSeriesRow.next_due_at.is_(None),
+                        )
+                    )
             rows = (
                 (
                     await session.execute(
                         select(ReminderSeriesRow)
-                        .where(
-                            ReminderSeriesRow.principal_issuer == issuer,
-                            ReminderSeriesRow.principal_subject == subject,
+                        .where(*conditions)
+                        .order_by(
+                            ReminderSeriesRow.next_due_at.asc().nulls_last(),
+                            ReminderSeriesRow.id.asc(),
                         )
-                        .order_by(ReminderSeriesRow.updated_at.desc())
-                        .limit(limit)
+                        .limit(limit + 1)
                     )
                 )
                 .scalars()
                 .all()
             )
-            return ReminderSeriesPage(tuple(_series_item(row) for row in rows), None)
+            items = tuple(_series_item(row) for row in rows[:limit])
+            next_cursor = _encode_series_cursor(issuer, subject, items[-1]) if len(rows) > limit else None
+            return ReminderSeriesPage(items, next_cursor)
 
     async def list_occurrences(
-        self, issuer: str, subject: str, series_id: UUID, *, limit: int = 100
-    ) -> tuple[ReminderOccurrence, ...]:
+        self,
+        issuer: str,
+        subject: str,
+        series_id: UUID,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ReminderOccurrencePage:
         await self.get_series(issuer, subject, series_id)
+        if not 1 <= limit <= 100:
+            raise ReminderValidationError("occurrence limit must be between 1 and 100")
+        token = _decode_cursor(cursor, issuer, subject, "occurrence", series_id) if cursor else None
         async with self.sessions() as session:
+            conditions = [ReminderOccurrenceRow.series_id == series_id]
+            if token:
+                sequence = int(str(token["q"]))
+                occurrence_id = UUID(str(token["i"]))
+                conditions.append(
+                    or_(
+                        ReminderOccurrenceRow.occurrence_sequence < sequence,
+                        and_(
+                            ReminderOccurrenceRow.occurrence_sequence == sequence,
+                            ReminderOccurrenceRow.id < occurrence_id,
+                        ),
+                    )
+                )
             rows = (
                 (
                     await session.execute(
                         select(ReminderOccurrenceRow)
-                        .where(ReminderOccurrenceRow.series_id == series_id)
-                        .order_by(ReminderOccurrenceRow.occurrence_sequence)
-                        .limit(limit)
+                        .where(*conditions)
+                        .order_by(
+                            ReminderOccurrenceRow.occurrence_sequence.desc(),
+                            ReminderOccurrenceRow.id.desc(),
+                        )
+                        .limit(limit + 1)
                     )
                 )
                 .scalars()
                 .all()
             )
-            return tuple(_occurrence_item(row) for row in rows)
+            items = tuple(_occurrence_item(row) for row in rows[:limit])
+            next_cursor = (
+                _encode_occurrence_cursor(issuer, subject, series_id, items[-1])
+                if len(rows) > limit
+                else None
+            )
+            return ReminderOccurrencePage(items, next_cursor)
 
     async def _series_command(
         self,

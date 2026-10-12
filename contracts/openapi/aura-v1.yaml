@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.11.0",
+    "version": "1.12.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -859,6 +859,130 @@
         }
       }
     },
+    "/api/v1/reminder-series": {
+      "get": {
+        "operationId": "listReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder-series page ordered by next due instant with series ID as the tie-breaker", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeriesPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      },
+      "post": {
+        "operationId": "createReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReminderSeriesRequest" } } } },
+        "responses": {
+          "201": { "description": "Recurring owner-scoped reminder series and its first scheduled occurrence created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }],
+      "get": {
+        "operationId": "getReminderSeries",
+        "tags": ["Reminders"],
+        "responses": {
+          "200": { "description": "Owner-scoped reminder-series detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/occurrences": {
+      "get": {
+        "operationId": "listReminderSeriesOccurrences",
+        "tags": ["Reminders"],
+        "parameters": [
+          { "$ref": "#/components/parameters/ReminderSeriesId" },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and series-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped immutable occurrence history ordered by sequence descending", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderOccurrencePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/update": {
+      "post": {
+        "operationId": "updateReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateReminderSeriesRequest" } } } },
+        "responses": {
+          "200": { "description": "Future occurrences updated; immutable occurrence history is unchanged", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/pause": {
+      "post": {
+        "operationId": "pauseReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeriesTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Reminder series paused and future occurrences suppressed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/resume": {
+      "post": {
+        "operationId": "resumeReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeriesTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Reminder series resumed on its original cadence at the next future occurrence", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/skip-next": {
+      "post": {
+        "operationId": "skipNextReminderSeriesOccurrence",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeriesTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Next occurrence recorded as skipped and the following occurrence scheduled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/reminder-series/{series_id}/cancel": {
+      "post": {
+        "operationId": "cancelReminderSeries",
+        "tags": ["Reminders"],
+        "parameters": [{ "$ref": "#/components/parameters/ReminderSeriesId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeriesTransitionRequest" } } } },
+        "responses": {
+          "200": { "description": "Reminder series canceled; committed history is unchanged", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReminderSeries" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/approvals": {
       "get": {
         "operationId": "listApprovals",
@@ -1042,6 +1166,7 @@
       "MemoryPolicyRevisionId": { "name": "policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ToolPolicyRevisionId": { "name": "tool_policy_revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ReminderSeriesId": { "name": "series_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
@@ -2251,6 +2376,133 @@
         }
       },
       "ReminderTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "RecurrenceFrequency": { "type": "string", "enum": ["daily", "selected_weekday", "weekly", "monthly"] },
+      "RecurrenceRule": {
+        "type": "object", "additionalProperties": false,
+        "description": "Structured local-calendar cadence. Core calculates occurrences; clients must not calculate lifecycle or scheduling results.",
+        "required": ["frequency", "interval"],
+        "properties": {
+          "frequency": { "type": "string", "enum": ["daily", "selected_weekday", "weekly", "monthly"] },
+          "interval": { "type": "integer", "minimum": 1, "maximum": 365 },
+          "weekdays": { "type": "array", "maxItems": 7, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 7 }, "description": "ISO weekdays, Monday=1 through Sunday=7." },
+          "monthDay": { "type": ["integer", "null"], "minimum": 1, "maximum": 31, "description": "Requested local day of month. Core uses the month's final day when this date does not exist." }
+        },
+        "oneOf": [
+          { "required": ["frequency"], "properties": { "frequency": { "const": "daily" }, "weekdays": { "maxItems": 0 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "weekdays"], "properties": { "frequency": { "const": "selected_weekday" }, "weekdays": { "minItems": 1 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "weekdays"], "properties": { "frequency": { "const": "weekly" }, "weekdays": { "minItems": 1 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "monthDay"], "properties": { "frequency": { "const": "monthly" }, "weekdays": { "maxItems": 0 }, "monthDay": { "type": "integer" } } }
+        ]
+      },
+      "ReminderSeriesRecurrence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Complete recurring schedule in local wall-clock terms. Core validates IANA database membership and calculates instants.",
+        "required": ["frequency", "interval", "weekdays", "monthDay", "localStart", "timeZone", "count", "endDate"],
+        "properties": {
+          "frequency": { "type": "string", "enum": ["daily", "selected_weekday", "weekly", "monthly"] },
+          "interval": { "type": "integer", "minimum": 1, "maximum": 365 },
+          "weekdays": { "type": "array", "maxItems": 7, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 7 }, "description": "ISO weekdays, Monday=1 through Sunday=7." },
+          "monthDay": { "type": ["integer", "null"], "minimum": 1, "maximum": 31 },
+          "localStart": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?$", "description": "Local wall-clock start without an offset." },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "count": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000 },
+          "endDate": { "type": ["string", "null"], "format": "date", "description": "Inclusive local calendar end date." }
+        },
+        "oneOf": [
+          { "required": ["frequency"], "properties": { "frequency": { "const": "daily" }, "weekdays": { "maxItems": 0 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "weekdays"], "properties": { "frequency": { "const": "selected_weekday" }, "weekdays": { "minItems": 1 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "weekdays"], "properties": { "frequency": { "const": "weekly" }, "weekdays": { "minItems": 1 }, "monthDay": { "type": "null" } } },
+          { "required": ["frequency", "monthDay"], "properties": { "frequency": { "const": "monthly" }, "weekdays": { "maxItems": 0 }, "monthDay": { "type": "integer" } } }
+        ],
+        "not": { "required": ["count", "endDate"], "properties": { "count": { "type": "integer" }, "endDate": { "type": "string" } } }
+      },
+      "ReminderSeriesStatus": { "type": "string", "enum": ["active", "paused", "completed", "canceled"] },
+      "ReminderOccurrenceStatus": { "type": "string", "enum": ["scheduled", "fired", "completed", "skipped", "replaced", "paused-window", "series-canceled"] },
+      "ReminderSeries": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private owner-authorized recurring reminder series. nextReminderId links its generated ordinary reminder for agenda deduplication without changing the Reminder contract.",
+        "required": ["id", "content", "recurrence", "timeZone", "localStart", "status", "version", "readableRule", "nextOccurrence", "nextReminderId", "missedCount", "occurrenceCount", "count", "endDate", "createdAt", "updatedAt", "pausedAt", "completedAt", "canceledAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "recurrence": { "$ref": "#/components/schemas/ReminderSeriesRecurrence" },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "localStart": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?$", "description": "Local wall-clock start without an offset. The timezone field supplies the IANA zone." },
+          "status": { "$ref": "#/components/schemas/ReminderSeriesStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "readableRule": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "nextOccurrence": { "type": ["string", "null"], "format": "date-time", "description": "Next scheduled instant in UTC, or null when no future occurrence is scheduled." },
+          "nextReminderId": { "type": ["string", "null"], "format": "uuid", "description": "Generated ordinary reminder to merge and deduplicate in the unified agenda." },
+          "missedCount": { "type": "integer", "minimum": 0 },
+          "occurrenceCount": { "type": "integer", "minimum": 0 },
+          "count": { "type": ["integer", "null"], "minimum": 1, "maximum": 10000 },
+          "endDate": { "type": ["string", "null"], "format": "date" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "pausedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "canceledAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderSeriesPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ReminderSeries" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "ReminderOccurrence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Immutable owner-authorized occurrence history linked to its ordinary reminder.",
+        "required": ["id", "seriesId", "reminderId", "sequence", "outcome", "localDueAt", "dueAt", "occurredAt", "createdAt", "updatedAt", "skippedAt", "firedAt", "completedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "seriesId": { "type": "string", "format": "uuid" },
+          "reminderId": { "type": "string", "format": "uuid" },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "outcome": { "type": "string", "enum": ["scheduled", "fired", "completed", "skipped", "replaced", "paused-window", "series-canceled"] },
+          "localDueAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?$", "description": "Resolved local wall-clock occurrence without an offset." },
+          "dueAt": { "type": "string", "format": "date-time", "description": "Resolved UTC instant." },
+          "occurredAt": { "type": ["string", "null"], "format": "date-time", "description": "Terminal outcome timestamp when applicable." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "skippedAt": { "type": ["string", "null"], "format": "date-time" },
+          "firedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReminderOccurrencePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ReminderOccurrence" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "CreateReminderSeriesRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["content", "recurrence"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000, "description": "Core trims leading and trailing whitespace before validation and persistence." },
+          "recurrence": { "$ref": "#/components/schemas/ReminderSeriesRecurrence" }
+        }
+      },
+      "UpdateReminderSeriesRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": {
+          "expectedVersion": { "type": "integer", "minimum": 1 },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "recurrence": { "$ref": "#/components/schemas/ReminderSeriesRecurrence" }
+        },
+        "anyOf": [{ "required": ["content"] }, { "required": ["recurrence"] }]
+      },
+      "ReminderSeriesTransitionRequest": {
         "type": "object", "additionalProperties": false,
         "required": ["expectedVersion"],
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }

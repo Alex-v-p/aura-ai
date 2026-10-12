@@ -19,7 +19,9 @@ function typeExpression(schema) {
   if (schema.$ref) return refName(schema.$ref);
   if (schema.const !== undefined) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
-  if (schema.oneOf) return schema.oneOf.map(typeExpression).join(' | ');
+  // An object-level oneOf can constrain combinations of its declared fields
+  // without replacing the transport shape those fields define.
+  if (schema.oneOf && schema.type !== 'object') return schema.oneOf.map(typeExpression).join(' | ');
   if (schema.allOf) return schema.allOf.map(typeExpression).join(' & ');
   if (Array.isArray(schema.type)) return schema.type.map((value) => typeExpression({ ...schema, type: value })).join(' | ');
   if (schema.type === 'array') return `ReadonlyArray<${typeExpression(schema.items)}>`;

@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { AuraApiClient, type AuraOperationDescriptor, type AuraOperationId, type AuraOperationInput, type AuraOperationResponse } from '@aura/aura-api-client';
 import type { CreateReminderRequest, Reminder, ReminderPage, ReminderTransitionRequest } from '@aura/aura-api-client';
-import type { ReminderView, RemindersApi } from './reminder-models';
+import type { RecurrenceInput, ReminderSeries, ReminderSeriesCommandInput, ReminderSeriesPage, ReminderOccurrencePage, ReminderSeriesUpdateInput, ReminderView, RemindersApi } from './reminder-models';
 import { ReminderSessionHydrator } from './reminder-session-hydration';
 
 type Input = { path: Record<string, string>; query: Record<string, unknown>; headers: Record<string, string>; body: unknown };
@@ -54,6 +54,54 @@ export class AuraRemindersApi implements RemindersApi {
     await this.ensureSession();
     const body: ReminderTransitionRequest = { expectedVersion };
     return this.client.execute('cancelReminder', { ...emptyInput(), path: { reminder_id: id }, headers: this.mutationHeaders(), body });
+  }
+
+  async listSeries(cursor?: string): Promise<ReminderSeriesPage> {
+    await this.ensureSession();
+    return this.client.execute('listReminderSeries', { ...emptyInput(), query: { limit: 50, ...(cursor ? { cursor } : {}) } });
+  }
+
+  async createSeries(content: string, recurrence: RecurrenceInput, requestId = idempotencyKey()): Promise<ReminderSeries> {
+    await this.ensureSession();
+    return this.client.execute('createReminderSeries', { ...emptyInput(), headers: this.mutationHeaders(requestId), body: { content, recurrence } });
+  }
+
+  async getSeries(id: string): Promise<ReminderSeries> {
+    await this.ensureSession();
+    return this.client.execute('getReminderSeries', { ...emptyInput(), path: { series_id: id } });
+  }
+
+  async listOccurrences(id: string, cursor?: string): Promise<ReminderOccurrencePage> {
+    await this.ensureSession();
+    return this.client.execute('listReminderSeriesOccurrences', { ...emptyInput(), path: { series_id: id }, query: { limit: 50, ...(cursor ? { cursor } : {}) } });
+  }
+
+  async updateSeries(id: string, input: ReminderSeriesUpdateInput): Promise<ReminderSeries> {
+    await this.ensureSession();
+    const { expectedVersion, idempotencyKey, content, recurrence } = input;
+    return this.client.execute('updateReminderSeries', { ...emptyInput(), path: { series_id: id }, headers: this.mutationHeaders(idempotencyKey), body: { expectedVersion, ...(content === undefined ? {} : { content }), ...(recurrence === undefined ? {} : { recurrence }) } });
+  }
+
+  async pauseSeries(id: string, input: ReminderSeriesCommandInput): Promise<ReminderSeries> {
+    return this.command('pauseReminderSeries', id, input);
+  }
+
+  async resumeSeries(id: string, input: ReminderSeriesCommandInput): Promise<ReminderSeries> {
+    return this.command('resumeReminderSeries', id, input);
+  }
+
+  async skipNextSeriesOccurrence(id: string, input: ReminderSeriesCommandInput): Promise<ReminderSeries> {
+    return this.command('skipNextReminderSeriesOccurrence', id, input);
+  }
+
+  async cancelSeries(id: string, input: ReminderSeriesCommandInput): Promise<ReminderSeries> {
+    return this.command('cancelReminderSeries', id, input);
+  }
+
+  private async command(operation: string, id: string, input: ReminderSeriesCommandInput): Promise<ReminderSeries> {
+    await this.ensureSession();
+    const descriptor = operation as 'pauseReminderSeries' | 'resumeReminderSeries' | 'skipNextReminderSeriesOccurrence' | 'cancelReminderSeries';
+    return this.client.execute(descriptor, { ...emptyInput(), path: { series_id: id }, headers: this.mutationHeaders(input.idempotencyKey), body: { expectedVersion: input.expectedVersion } });
   }
 
   private async ensureSession(): Promise<void> {

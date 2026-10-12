@@ -23,6 +23,7 @@ export const routes: Routes = [
   { path: 'memory/settings', component: MemorySettingsPageComponent },
   { path: 'memory/:id', component: MemoryPageComponent },
   { path: 'reminders', component: RemindersPageComponent },
+  { path: 'reminders/series/:seriesId', component: RemindersPageComponent },
   { path: 'reminders/:id', component: RemindersPageComponent },
   { path: 'notifications', component: NotificationsPageComponent },
   { path: 'notifications/:id', component: NotificationsPageComponent },

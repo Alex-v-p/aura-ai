@@ -1,0 +1,225 @@
+id: AURA-0065
+title: Add recurring reminder API and Aura Web experience
+status: integrated
+change_class: contract
+intent: >
+  Expose the recurring reminder-series foundation through additive owner-scoped
+  Aura v1 HTTP resources and a generated transport client, then add recurring
+  creation, unified-agenda presentation, route-backed series detail, lifecycle
+  commands, accessible responsive behavior, and honest recovery in Aura Web
+  without changing one-shot reminder contracts or moving recurrence rules into
+  Angular.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved additive Aura OpenAPI minor version 1.12.0 with reminder-series list create detail occurrence-history update pause resume skip-next and cancel resources
+    - Owner-approved owner authorization on every series query with CSRF and same-origin enforcement on every mutation
+    - Owner-approved UUID idempotency keys and expected versions for recurring lifecycle commands
+    - Owner-approved unchanged one-shot reminder request and response payloads with nextReminderId linking generated occurrences for client-side agenda deduplication
+    - Owner-approved unified agenda with a repeat badge and /reminders/series/:seriesId detail route rather than a separate schedules destination
+    - Owner-approved recurring composer presets interval weekdays monthly date IANA timezone and optional count or end-date controls
+    - Recurrence calculation lifecycle transitions and cadence validation remain in the Core reminder application API and never move into Angular
+    - Consequential commands are never automatically retried and unknown outcomes require authoritative reconciliation
+    - Existing responsive drawer/full-page focus keyboard reduced-motion zoom and session-reset patterns remain authoritative
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/reminder-series-events.schema.json
+feature_references:
+  - AUT-002
+  - AUT-003
+  - AUT-004
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+  - AUI-001
+  - AUI-006
+  - AUI-023
+  - AUI-030
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - aura-api-client.generated
+  - aura-core.entrypoints.api.reminders
+  - aura-core.automation-reminders.public-api
+  - aura-core.automation-reminders.repository
+  - aura-web.automation-reminders
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.e2e
+  - frontend.storybook
+  - evaluation.automation-reminders
+allowed_paths:
+  - work-items/active/AURA-0065.yaml
+  - work-items/archived/AURA-0065.yaml
+  - contracts/openapi/aura-v1.yaml
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/src/aura_core/entrypoints/api/routes/reminders.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/public.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/bootstrap/reminder_uow.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_reminder_series.py
+  - services/aura-core/tests/system/test_recurring_reminder_delivery.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/platform/aura-api-client/src/lib/aura-api-client.ts
+  - frontend/libs/platform/aura-api-client/src/index.ts
+  - frontend/libs/platform/aura-api-client/README.md
+  - frontend/libs/aura/automation/reminders/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web-e2e/src/reminders.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/reminders.stories.ts
+  - frontend/apps/storybook/src/reminder-management.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/events/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-observatory/**
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: automation.reminders
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.reminder_management
+  required_metrics:
+    - reminder_series_command_duration_ms
+    - reminder_series_command_outcome
+    - reminder_series_version_conflict_count
+    - reminder_series_idempotency_conflict_count
+  required_evaluators:
+    - recurring_reminder_owner_isolation
+    - recurring_reminder_exactly_one_future_occurrence
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every list detail occurrence-history and command request is owner-scoped and cross-owner identifiers resolve as not found without leaking record existence.
+    - Every mutation requires accepted-session CSRF same-origin UUID idempotency and an exact expected version; replay returns the committed response and conflicting reuse or stale versions remain explicit.
+    - Private reminder content recurrence configuration timezone local wall time due instants and owner identity remain absent from SSE outbox audit metadata logs telemetry and ordinary errors.
+    - One-shot /api/v1/reminders payloads statuses pagination and behavior remain wire-compatible and generated series occurrences are merged only through the additive nextReminderId field on series responses.
+    - Angular never calculates recurrence or lifecycle transitions and never stores session credentials private reminders or CSRF data durably in the browser.
+    - Session or principal changes clear recurring drafts detail occurrence history pending mutations idempotency state cached CSRF and stale request generations.
+    - Consequential lifecycle commands are not automatically retried after timeout disconnect or unknown completion and require an owner-authorized reconciliation read.
+  data_classes:
+    - private_reminder_content
+    - private_recurrence_configuration
+    - owner_scoped_series_and_occurrence_records
+    - lifecycle_versions_and_idempotency_keys
+    - private_timezone_and_due_values
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura OpenAPI version 1.12.0 additively defines GET and POST /api/v1/reminder-series GET /api/v1/reminder-series/{series_id} GET /api/v1/reminder-series/{series_id}/occurrences and idempotent update pause resume skip-next and cancel command endpoints while every existing /api/v1/reminders schema and operation remains unchanged.
+  - Structured recurrence DTOs cover frequency positive interval selected weekdays or monthly date local wall-clock start validated IANA timezone and optional count or end-date termination with mutually valid field combinations.
+  - Series DTOs expose status version readable rule next occurrence nextReminderId accumulated missed count lifecycle timestamps and private detail only to the authorized owner; occurrence DTOs expose scheduled fired completed skipped replaced paused-window and series-canceled without expanding ReminderStatus.
+  - Series and occurrence queries are owner-scoped use bounded opaque pagination where collections can grow and expose cross-owner identifiers only as not found.
+  - Mutations enforce same-origin CSRF UUID idempotency expected-version optimistic concurrency exact replay conflicting-key detection validation errors permission errors and explicit unknown-outcome semantics through the existing HTTP error model.
+  - The generated TypeScript transport client is synchronized from OpenAPI and contains transport types and methods only; it contains no recurrence lifecycle or presentation logic.
+  - The Reminders composer offers one-shot and recurring creation with plain-language presets plus interval weekday monthly-date timezone and optional count or end-date controls and preserves valid draft input after recoverable validation conflict offline or unknown-outcome failures.
+  - Recurrence field combinations timezone identifiers start values and termination controls receive accessible inline validation before submission while Core remains authoritative and backend validation is rendered without private diagnostics.
+  - The agenda remains one unified owner-scoped list deduplicates a series next occurrence against its generated ordinary Reminder by nextReminderId and marks recurring entries with a readable repeat badge.
+  - Selecting a recurring agenda entry navigates to /reminders/series/:seriesId and presents a focus-managed desktop drawer or mobile full-page detail with readable recurrence timezone next occurrence status history and explicit edit pause or resume skip-next and cancel actions.
+  - Consequential commands use fresh UUID idempotency and expected versions disable duplicate submission are never automatically retried and distinguish validation stale-version offline permission and unknown completion with authoritative reconciliation before another command.
+  - Authentication and principal changes clear recurring collections detail histories private drafts mutation state cached CSRF and stale request generations so obsolete responses cannot repopulate the accepted session.
+  - Drawer and full-page behavior supports keyboard operation Escape and explicit close or Back focus restoration semantic headings visible focus reduced motion 200 percent zoom reflow and screen-reader status announcements.
+  - Light and dark Storybook stories cover recurring composer agenda detail history loading empty validation conflict offline permission unknown-outcome paused completed and canceled states using approved semantic tokens.
+  - Automated frontend coverage includes unified-agenda deduplication composer validation detail and history lifecycle commands draft preservation conflict and session recovery keyboard focus responsive layouts reduced motion zoom and axe checks.
+  - No recurrence calculation duplicate domain state new destination Web Push Home Assistant calendar household sharing workflow conversational tool approval voice Observatory migration service framework or package is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0065.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0065.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0065.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0065.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0065.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_reminder_api.py services/aura-core/tests/test_reminder_series.py services/aura-core/tests/system/test_recurring_reminder_delivery.py
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx lint aura-api-client
+  - pnpm --dir frontend exec nx test aura-reminders
+  - pnpm --dir frontend exec nx lint aura-reminders
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/reminders.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

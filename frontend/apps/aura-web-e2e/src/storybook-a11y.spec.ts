@@ -7,6 +7,10 @@ const themes = ['light', 'dark'] as const;
 const memoryStories = ['records', 'selected-record-detail', 'create-memory', 'first-run-setup', 'review-queue', 'empty-records', 'filtered-empty-records', 'configured-settings', 'reindex-settings', 'settings-error', 'mobile-dark-records', 'mobile-detail', 'agent-policy-automatic', 'agent-policy-off'] as const;
 const managementStories = ['agent-library', 'agent-builder', 'persona-library', 'persona-builder', 'persona-detail'] as const;
 const reminderStories = ['workspace', 'history', 'composer', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
+// These IDs mirror the named exports in apps/storybook/src/reminders.stories.ts.
+// Keep this list explicit: a typo here silently turns accessibility coverage
+// into a 404 page instead of exercising the recurring-reminder states.
+const recurringReminderStories = ['recurring-composer', 'series-detail', 'series-history', 'paused', 'completed', 'canceled', 'dark', 'error-recovery', 'conflict', 'offline', 'unknown-outcome'] as const;
 const notificationStories = ['inbox', 'history', 'detail', 'loading', 'empty', 'recovery', 'mobile'] as const;
 const approvalStories = ['pending', 'history', 'detail', 'terminal-detail', 'loading', 'empty', 'authentication-error', 'permission-error', 'conflict', 'unknown-outcome', 'unavailable-stream', 'recovery', 'mobile'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
@@ -24,7 +28,17 @@ const applyAndSettleStoryTheme = async (page: import('@playwright/test').Page, t
     const styles = getComputedStyle(root);
     return styles.getPropertyValue('--canvas').trim() !== '' && styles.getPropertyValue('--text').trim() !== '';
   });
+  const motion = await page.locator('body').evaluate((element) => ({ reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, scrollBehavior: getComputedStyle(element).scrollBehavior, transitionDuration: getComputedStyle(element).transitionDuration }));
+  expect(motion.reduced).toBe(true);
+  expect(motion.scrollBehavior).toBe('auto');
+  expect(Number.parseFloat(motion.transitionDuration.replace('s', ''))).toBeLessThan(0.001);
   await page.waitForTimeout(50);
+};
+const watchRuntimeErrors = (page: import('@playwright/test').Page): (() => void) => {
+  const errors: string[] = [];
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('pageerror', (error) => errors.push(error.message));
+  return () => expect(errors).toEqual([]);
 };
 
 for (const story of stories) {
@@ -84,6 +98,7 @@ for (const story of reminderStories) {
   for (const theme of themes) {
     test(`Reminder Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
       test.skip(testInfo.project.name !== 'desktop', 'Storybook axe coverage runs once in the desktop project.');
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
       await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-reminders-product--${story}&viewMode=story`);
       await expect(page.locator('.reminders-page').first()).toBeVisible();
       await applyAndSettleStoryTheme(page, theme);
@@ -112,6 +127,32 @@ for (const story of reminderStories) {
       if (story === 'recovery') await expect(page.getByRole('alert').filter({ hasText: 'temporarily unavailable' })).toBeVisible();
       const results = await new AxeBuilder({ page }).include('.reminders-page').analyze();
       expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
+    });
+  }
+}
+
+for (const story of recurringReminderStories) {
+  for (const theme of themes) {
+    test(`Recurring reminder Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Storybook axe coverage runs once in the desktop project.');
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-reminders-recurring-experience--${story}&viewMode=story`);
+      await expect(page.locator('.reminders-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'recurring-composer' || story === 'series-detail' || story === 'series-history') {
+        await expect(page.getByRole('heading', { name: /reminder|repeat/i }).first()).toBeVisible();
+      }
+      if (story === 'recurring-composer') {
+        await page.getByRole('button', { name: 'New reminder', exact: true }).click();
+        await expect(page.getByLabel('Repeat schedule', { exact: true })).toBeVisible();
+      }
+      if (story === 'error-recovery' || story === 'unknown-outcome') await expect(page.getByRole('alert').filter({ hasText: /unknown|reconcile/i })).toBeVisible();
+      if (story === 'conflict') await expect(page.getByRole('alert').filter({ hasText: /conflict|changed/i })).toBeVisible();
+      if (story === 'offline') await expect(page.getByRole('alert').filter({ hasText: /offline|unavailable/i })).toBeVisible();
+      const results = await new AxeBuilder({ page }).include('.reminders-page').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
     });
   }
 }
