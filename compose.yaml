@@ -427,10 +427,22 @@ networks:
   # the only normal-stack client on this network.
   aura-document-parser:
     internal: true
+    # Keep this private network outside the common 192.168.0.0/24 home LAN.
+    # Operators can override the value for hosts with a conflicting VPN or
+    # Docker route; the network remains internal and parser-only regardless.
+    ipam:
+      config:
+        - subnet: ${AURA_DOCUMENT_PARSER_SUBNET:-10.254.240.16/28}
   # Garage has no host/browser attachment. Only Core API/worker and its
   # one-shot bootstrap job join this private object-storage network.
   aura-object-storage:
     internal: true
+    # Four normal-stack members currently use this network (API, worker,
+    # Garage, and bootstrap). A /28 leaves room for future private clients
+    # while preventing Docker from choosing a LAN-overlapping subnet.
+    ipam:
+      config:
+        - subnet: ${AURA_OBJECT_STORAGE_SUBNET:-10.254.240.0/28}
   # Intentionally non-internal: API reaches the configured OIDC discovery/JWKS
   # endpoint and API/worker reach their configured Ollama provider. No service
   # on this network publishes a host port.

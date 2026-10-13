@@ -1,5 +1,7 @@
 """Static deployment topology checks that require no secrets or Docker daemon."""
 
+import ipaddress
+import json
 import os
 import stat
 import subprocess
@@ -322,6 +324,132 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("healthz", parser)
         self.assertIn("aura-document-parser", worker)
         self.assertIn("AURA_DOCUMENT_PARSER_URL: http://aura-document-parser:8080", worker)
+
+    def test_private_parser_and_object_storage_networks_have_deterministic_ipam(self) -> None:
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        network_section = self.compose.split("\nnetworks:\n", 1)[1]
+
+        expected = {
+            "aura-document-parser": (
+                "AURA_DOCUMENT_PARSER_SUBNET",
+                "10.254.240.16/28",
+            ),
+            "aura-object-storage": (
+                "AURA_OBJECT_STORAGE_SUBNET",
+                "10.254.240.0/28",
+            ),
+        }
+        for network, (setting, subnet) in expected.items():
+            lines = network_section.splitlines()
+            start = lines.index(f"  {network}:") + 1
+            end = start
+            while end < len(lines) and not (
+                lines[end].startswith("  ") and not lines[end].startswith("    ")
+            ):
+                end += 1
+            network_block = "\n".join(lines[start:end])
+            self.assertIn("internal: true", network_block)
+            self.assertIn(
+                f"- subnet: ${{{setting}:-{subnet}}}",
+                network_block,
+            )
+            self.assertIn(f"{setting}={subnet}", environment)
+
+        self.assertNotEqual(
+            expected["aura-document-parser"][1],
+            expected["aura-object-storage"][1],
+        )
+        lan = ipaddress.ip_network("192.168.0.0/24")
+        parsed_subnets = {
+            network: ipaddress.ip_network(subnet)
+            for network, (_, subnet) in expected.items()
+        }
+        for subnet in parsed_subnets.values():
+            self.assertFalse(subnet.overlaps(lan))
+        self.assertFalse(
+            parsed_subnets["aura-document-parser"].overlaps(
+                parsed_subnets["aura-object-storage"]
+            )
+        )
+
+        rendered = self._render_compose_config()
+        rendered_networks = rendered["networks"]
+        for network, subnet in parsed_subnets.items():
+            self.assertEqual(
+                rendered_networks[network]["ipam"]["config"][0]["subnet"],
+                str(subnet),
+            )
+
+        expected_membership = {
+            "aura-object-storage": {
+                "aura-core-api",
+                "aura-core-worker",
+                "aura-garage",
+                "aura-garage-bootstrap",
+            },
+            "aura-document-parser": {
+                "aura-core-worker",
+                "aura-document-parser",
+            },
+        }
+        actual_membership = {
+            network: {
+                service
+                for service, definition in rendered["services"].items()
+                if network in definition.get("networks", {})
+            }
+            for network in expected_membership
+        }
+        self.assertEqual(actual_membership, expected_membership)
+
+    def _render_compose_config(self) -> dict[str, object]:
+        """Render the base file without requiring a Docker daemon or secrets."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_root = root / "state"
+            state_root.mkdir()
+            env_lines = {
+                "AURA_STATE_ROOT": str(state_root),
+                "AURA_PUBLIC_ORIGIN": "https://aura.example.invalid",
+                "AURA_OIDC_ISSUER": "https://authentik.example.invalid",
+                "AURA_OIDC_REDIRECT_URI": "https://aura.example.invalid/api/v1/auth/callback",
+                "AURA_OWNER_SUBJECT": "topology-test-owner",
+            }
+            for name in (
+                "AURA_CORE_DATABASE_PASSWORD_FILE",
+                "AURA_OIDC_CLIENT_SECRET_FILE",
+                "AURA_NATS_PASSWORD_FILE",
+                "AURA_VALKEY_PASSWORD_FILE",
+                "AURA_GARAGE_RPC_SECRET_FILE",
+                "AURA_GARAGE_ACCESS_KEY_FILE",
+                "AURA_GARAGE_SECRET_KEY_FILE",
+            ):
+                secret = root / name
+                secret.write_text("topology-test-secret\n", encoding="utf-8")
+                env_lines[name] = str(secret)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(f"{name}={value}" for name, value in env_lines.items()) + "\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "--project-directory",
+                    str(ROOT),
+                    "--env-file",
+                    str(env_file),
+                    "config",
+                    "--format",
+                    "json",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(result.stdout)
 
     def test_full_stack_runner_uses_the_pinned_garage_default(self) -> None:
         runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(encoding="utf-8")
