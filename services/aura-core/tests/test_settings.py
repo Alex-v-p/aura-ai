@@ -18,6 +18,26 @@ def test_document_embedding_dimension_is_bounded() -> None:
             Settings(**cast(Any, {"document_embedding_dimension": value}))
 
 
+def test_document_embedding_dimension_accepts_string_environment_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AURA_DOCUMENT_EMBEDDING_DIMENSION", "768")
+
+    settings = Settings()
+
+    assert settings.document_embedding_dimension == 768
+    assert isinstance(settings.document_embedding_dimension, int)
+
+
+def test_document_embedding_dimension_rejects_incompatible_string_environment_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AURA_DOCUMENT_EMBEDDING_DIMENSION", "1024")
+
+    with pytest.raises(ValueError, match="exactly 768"):
+        Settings()
+
+
 def test_document_embedding_dimension_cannot_silently_diverge_from_vector_index() -> None:
     """The document index is vector(768), so other valid Ollama widths fail closed."""
 

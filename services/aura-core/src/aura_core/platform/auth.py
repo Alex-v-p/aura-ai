@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aura_core.domains.governance.identity.models import (
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         default="qwen3-embedding:4b",
         validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_MODEL"),
     )
-    document_embedding_dimension: Literal[768] = Field(
+    document_embedding_dimension: int = Field(
         default=768,
         validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_DIMENSION"),
     )
@@ -122,6 +122,13 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("AURA_SESSION_COOKIE_SECURE", "AURA_SECURE_COOKIES"),
     )
+
+    @field_validator("document_embedding_dimension")
+    @classmethod
+    def validate_document_embedding_dimension(cls, value: int) -> int:
+        if value != 768:
+            raise ValueError("document embedding dimension must be exactly 768")
+        return value
 
     @property
     def session_cookie(self) -> SessionCookiePolicy:
