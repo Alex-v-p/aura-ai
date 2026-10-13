@@ -1,0 +1,10 @@
+agent: general_reviewer
+work_item: AURA-0075
+verdict: PASS
+checked:
+  - The synthesis evidence renderer emits citation instructions only for completed document.search results containing complete UUID-backed evidence metadata.
+  - The protocol requires one same-run [[document:<evidenceId>]] marker per cited result and explicitly separates protocol metadata from untrusted document names, locators, and excerpts.
+  - Empty and failed searches retain the existing unavailable/no-evidence behavior and do not receive a citation protocol.
+  - Existing marker settlement and validation paths remain responsible for discarding malformed, invented, duplicate, and stale markers.
+  - The focused conversation suite passed with 71 tests, pyright reported 0 errors and 0 warnings, ruff passed, and git diff --check passed.
+findings: []
