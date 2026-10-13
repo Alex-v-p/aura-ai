@@ -13,6 +13,7 @@ from aura_core.domains.interaction.conversations.dto import (
     AssignmentReason,
     ConversationArchiveState,
     ConversationListFilters,
+    DocumentCitation,
     Message,
     MessageRole,
     MessageState,
@@ -82,6 +83,15 @@ class SqlConversationRepository:
 
     @staticmethod
     def _message(row: MessageRow) -> Message:
+        citations = tuple(
+            DocumentCitation(
+                UUID(str(item["documentId"])),
+                "Document source",
+                str(item["locator"]),
+            )
+            for item in (row.citations or [])
+            if {"documentId", "locator"} <= set(item)
+        )
         return Message(
             row.conversation_id,
             MessageRole(row.role),
@@ -91,6 +101,7 @@ class SqlConversationRepository:
             row.id,
             row.created_at or now(),
             row.updated_at or now(),
+            citations,
         )
 
     async def exists(self, session: AsyncSession, conversation_id: UUID) -> bool:
@@ -272,6 +283,13 @@ class SqlConversationRepository:
                 role=message.role.value,
                 content=message.content,
                 state=message.state.value,
+                citations=[
+                    {
+                        "documentId": str(item.document_id),
+                        "locator": item.locator,
+                    }
+                    for item in message.citations
+                ],
                 created_at=message.created_at,
                 updated_at=message.updated_at,
             )
@@ -372,6 +390,29 @@ class SqlConversationRepository:
         row = await session.get(MessageRow, message_id, with_for_update=True)
         if row is not None:
             row.state = state.value
+            row.updated_at = now()
+
+    async def set_message_citations(
+        self,
+        session: AsyncSession,
+        message_id: UUID,
+        citations: tuple[DocumentCitation, ...],
+        *,
+        content: str | None = None,
+    ) -> None:
+        """Atomically settle citations and sanitized assistant content."""
+
+        row = await session.get(MessageRow, message_id, with_for_update=True)
+        if row is not None:
+            row.citations = [
+                {
+                    "documentId": str(item.document_id),
+                    "locator": item.locator,
+                }
+                for item in citations
+            ]
+            if content is not None:
+                row.content = content
             row.updated_at = now()
 
     async def idempotency(

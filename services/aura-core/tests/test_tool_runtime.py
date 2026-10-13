@@ -26,6 +26,7 @@ from aura_core.domains.interaction.agents.public import (
     ToolPolicy,
 )
 from aura_core.runtime.tools import (
+    DocumentSearchContext,
     MemorySearchContext,
     ReminderReadContext,
     ToolCall,
@@ -347,6 +348,62 @@ def test_memory_search_arguments_are_strictly_bounded_and_normalized() -> None:
             validate_tool_arguments(descriptor, arguments)
 
 
+def test_document_search_is_closed_query_only_and_preserves_one_call_budget() -> None:
+    registry = default_tool_registry()
+    descriptor = registry.get("document.search", 1)
+    assert descriptor is not None
+    assert descriptor.classification == "read"
+    assert descriptor.permission_scope == "documents:read"
+    assert descriptor.input_schema["additionalProperties"] is False
+    assert descriptor.result_schema["additionalProperties"] is False
+    assert validate_tool_arguments(descriptor, '{"query":"  handbook  "}') == {
+        "query": "handbook"
+    }
+    for arguments in (
+        {},
+        {"query": "handbook", "limit": 100},
+        {"query": "handbook", "owner": "other-owner"},
+        {"query": ""},
+        {"query": "x" * 501},
+    ):
+        with pytest.raises(ToolExecutionError, match="TOOL_ARGUMENTS_INVALID"):
+            validate_tool_arguments(descriptor, arguments)
+
+    catalog = AgentCatalog()
+    policy = catalog.get_tool_policy(
+        catalog.list_agents()[0].current_revision.tool_policy_revision_id
+    )
+    evaluator = ToolPolicyEvaluator(registry)
+    assert evaluator.decide(policy, ToolCall("document.search", {"query": "handbook"})).allowed
+    exhausted = evaluator.decide(
+        policy, ToolCall("document.search", {"query": "handbook"}), calls_used=1
+    )
+    assert exhausted.error_code == "TOOL_BUDGET_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_document_search_binds_callback_owner_and_never_accepts_model_scope() -> None:
+    owner = ("https://issuer.example", "owner-a")
+    observed: list[tuple[tuple[str, str], str]] = []
+
+    async def owner_search(query: str) -> list[dict[str, object]]:
+        observed.append((owner, query))
+        return []
+
+    catalog = AgentCatalog()
+    policy = catalog.get_tool_policy(
+        catalog.list_agents()[0].current_revision.tool_policy_revision_id
+    )
+    result = await ToolExecutor(default_tool_registry()).execute(
+        policy,
+        ToolCall("document.search", {"query": "private policy"}),
+        DocumentSearchContext(owner_search),
+    )
+    assert result.status == "completed"
+    assert result.result == {"items": [], "truncated": False}
+    assert observed == [(owner, "private policy")]
+
+
 @pytest.mark.asyncio
 async def test_executor_success_timeout_and_cancellation_are_typed_and_fail_closed() -> None:
     registry = default_tool_registry()
@@ -462,19 +519,19 @@ def test_policy_creation_idempotency_and_expected_revision_are_deterministic() -
     grant = (ToolGrant("memory.search", 1),)
 
     first = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=3, idempotency_key="same-request"
+        aura.id, grant, expected_revision=4, idempotency_key="same-request"
     )
     replay = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=3, idempotency_key="same-request"
+        aura.id, grant, expected_revision=4, idempotency_key="same-request"
     )
     assert replay is first
 
     with pytest.raises(ConfigurationIdempotencyConflict):
         catalog.create_tool_policy(
-            aura.id, (), expected_revision=3, idempotency_key="same-request"
+            aura.id, (), expected_revision=4, idempotency_key="same-request"
         )
     with pytest.raises(ConfigurationVersionConflict):
-        catalog.create_tool_policy(aura.id, grant, expected_revision=3)
+        catalog.create_tool_policy(aura.id, grant, expected_revision=4)
 
 
 def test_policy_is_owner_scoped_and_attach_requires_new_agent_revision() -> None:

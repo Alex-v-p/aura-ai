@@ -5,7 +5,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
 import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -121,6 +121,17 @@ export class ConversationPanelComponent {
   submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
   retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }
   defaultAgentReady(): boolean { const conversation = this.store.selected(); return !conversation.id.startsWith('draft-') || Boolean(conversation.agent) || this.store.defaultDraftAgentResolution() === 'resolved'; }
+  /**
+   * Signals that asynchronous bootstrap has settled before the composer is
+   * used.  The draft value is intentionally not part of this signal: callers
+   * can wait for the form to be ready before filling it without having their
+   * input replaced by model or agent hydration.
+   */
+  conversationReady(): boolean {
+    const modelHydrated = this.store.models().some((model) => model.selectable);
+    const agentHydrated = !this.agentStore.loading() && this.defaultAgentReady();
+    return this.store.authState() === 'authenticated' && !this.store.loading() && modelHydrated && agentHydrated;
+  }
   handleKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.submit(event); } }
   chooseAgent(revisionId: string): void {
     if (this.controlsDisabled()) return;
@@ -251,6 +262,20 @@ export class ConversationPanelComponent {
     return record.kind === 'memory' ? `Memory ${record.detail.id} · revision ${record.detail.currentRevision?.id ?? 'unavailable'}` : `Candidate ${record.detail.id}`;
   }
   memoryActivityIsProcessing(activity: import('@aura/aura-api-client').MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
+  citationLocator(citation: DocumentCitation): string { const [kind, ordinal] = citation.locator.split(':', 2); return `${kind === 'page' ? 'Page' : 'Section'} ${ordinal}`; }
+  citationAccessibleLabel(citation: DocumentCitation): string { return `Open source ${citation.displayLabel}, ${this.citationLocator(citation)}`; }
+  /** Route activation can replace this panel before the browser picks a new focus target. */
+  focusCitationDestination(): void {
+    if (typeof document === 'undefined') return;
+    const focus = (): void => {
+      const target = document.getElementById('detail-heading') ?? document.getElementById('main-content');
+      if (!(target instanceof HTMLElement)) return;
+      if (target.id === 'detail-heading') target.tabIndex = -1;
+      target.focus();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focus);
+    else setTimeout(focus, 0);
+  }
   runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {
     if (!run.startedAt || !run.finishedAt) return '—';
     const milliseconds = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt));

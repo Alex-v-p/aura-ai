@@ -128,15 +128,16 @@ REQUIRED_EVALUATOR_IDS = frozenset(
 )
 FIXTURE_REVISION = "aura-0053-v1"
 EVALUATOR_COMPONENTS = {
-    "tool_selection_quality": ("aura.runtime.tool_selection", "1.0.0"),
-    "tool_argument_accuracy": ("aura.runtime.policy_evaluation", "1.0.0"),
-    "tool_permission_enforcement": ("aura.runtime.policy_evaluation", "1.0.0"),
-    "tool_execution_completion": ("aura.runtime.tool_execution", "1.0.0"),
-    "memory_scope_authorization": ("aura.runtime.tool_execution", "1.0.0"),
+    "tool_selection_quality": ("aura.runtime.tool_selection", "1.4.0"),
+    "tool_argument_accuracy": ("aura.runtime.policy_evaluation", "1.1.0"),
+    "tool_permission_enforcement": ("aura.runtime.policy_evaluation", "1.1.0"),
+    "tool_execution_completion": ("aura.runtime.tool_execution", "1.3.0"),
+    "memory_scope_authorization": ("aura.runtime.tool_execution", "1.3.0"),
 }
 CONTENT_FIELDS = frozenset(
     {"query", "arguments", "result", "content", "prompt", "response", "memoryId"}
 )
+DOCUMENT_QUERY_SENTINEL = "document-library-private-query"
 
 
 def _result(
@@ -192,9 +193,24 @@ class _EvaluationSelectionProvider:
         _tools: Sequence[Mapping[str, object]],
     ) -> AsyncIterator[object]:
         async def events() -> AsyncIterator[object]:
-            if self.scenario in {"correct", "prohibited"}:
-                name = "shell.exec" if self.scenario == "prohibited" else "memory.search"
-                yield ModelToolCall(name, {"query": "fixture"})
+            if self.scenario in {
+                "correct",
+                "prohibited",
+                "document-selected",
+                "document-denied",
+            }:
+                if self.scenario == "prohibited":
+                    name = "shell.exec"
+                elif self.scenario in {"document-selected", "document-denied"}:
+                    name = "document.search"
+                else:
+                    name = "memory.search"
+                query = (
+                    DOCUMENT_QUERY_SENTINEL
+                    if name == "document.search"
+                    else "fixture"
+                )
+                yield ModelToolCall(name, {"query": query})
             yield ModelStreamCompleted()
 
         return events()
@@ -314,9 +330,24 @@ async def test_selection_fixtures_score_provider_boundary_call_observations() ->
             _tools: Sequence[Mapping[str, object]],
         ) -> AsyncIterator[object]:
             async def events() -> AsyncIterator[object]:
-                if self.scenario in {"correct", "prohibited"}:
-                    name = "shell.exec" if self.scenario == "prohibited" else "memory.search"
-                    yield ModelToolCall(name, {"query": "tea"})
+                if self.scenario in {
+                    "correct",
+                    "prohibited",
+                    "document-selected",
+                    "document-denied",
+                }:
+                    if self.scenario == "prohibited":
+                        name = "shell.exec"
+                    elif self.scenario in {"document-selected", "document-denied"}:
+                        name = "document.search"
+                    else:
+                        name = "memory.search"
+                    query = (
+                        DOCUMENT_QUERY_SENTINEL
+                        if name == "document.search"
+                        else "tea"
+                    )
+                    yield ModelToolCall(name, {"query": query})
                 yield ModelStreamCompleted()
 
             return events()
@@ -331,6 +362,12 @@ async def test_selection_fixtures_score_provider_boundary_call_observations() ->
         ProviderSelectionFixture("eval.unnecessary.v1", "unnecessary", False, False, None),
         ProviderSelectionFixture("eval.missing.v1", "missing", True, False, None),
         ProviderSelectionFixture("eval.prohibited.v1", "prohibited", False, True, False),
+        ProviderSelectionFixture(
+            "eval.document-selected.v1", "document-selected", True, True, True
+        ),
+        ProviderSelectionFixture(
+            "eval.document-denied.v1", "document-denied", False, True, False
+        ),
     )
     results: list[SelectionEvaluation] = []
     for fixture in fixtures:
@@ -343,7 +380,11 @@ async def test_selection_fixtures_score_provider_boundary_call_observations() ->
         execution_allowed: bool | None = None
         if calls:
             call = ToolCall(calls[0].name, calls[0].arguments)
-            policy = granted if fixture.name != "prohibited" else denied
+            policy = (
+                denied
+                if fixture.name in {"prohibited", "document-denied"}
+                else granted
+            )
             execution_allowed = evaluator.decide(policy, call).allowed
             if fixture.expected_execution is not None:
                 assert execution_allowed is fixture.expected_execution, fixture.name
@@ -363,6 +404,8 @@ async def test_selection_fixtures_score_provider_boundary_call_observations() ->
         "unnecessary",
         "missing",
         "prohibited",
+        "document-selected",
+        "document-denied",
     }
     assert (
         next(result for result in results if result.fixture_name == "missing").selection_score
@@ -374,6 +417,8 @@ async def test_selection_fixtures_score_provider_boundary_call_observations() ->
         "eval.unnecessary.v1",
         "eval.missing.v1",
         "eval.prohibited.v1",
+        "eval.document-selected.v1",
+        "eval.document-denied.v1",
     ]
 
 
@@ -409,6 +454,8 @@ async def _selection_results() -> list[EvaluatorResult]:
         ("unnecessary", False, False, granted),
         ("missing", True, False, granted),
         ("prohibited", False, True, denied),
+        ("document-selected", True, True, granted),
+        ("document-denied", False, True, denied),
     )
     results: list[EvaluatorResult] = []
     for case_id, required_call, expected_call, policy in fixtures:
@@ -417,6 +464,8 @@ async def _selection_results() -> list[EvaluatorResult]:
         )
         calls = [event async for event in stream if isinstance(event, ModelToolCall)]
         observed_call = bool(calls)
+        if case_id in {"document-selected", "document-denied"}:
+            assert calls and calls[0].name == "document.search", case_id
         allowed: bool | None = None
         if calls:
             allowed = evaluator.decide(
@@ -438,6 +487,35 @@ async def _selection_results() -> list[EvaluatorResult]:
             )
         )
     return results
+
+
+@pytest.mark.asyncio
+async def test_document_selection_evaluations_are_versioned_and_content_free() -> None:
+    results = await _selection_results()
+    document_results = {
+        item.case_id.rsplit(".", 2)[1]: item
+        for item in results
+        if item.case_id.startswith("selection.document-")
+    }
+
+    assert set(document_results) == {"document-selected", "document-denied"}
+    selected = document_results["document-selected"]
+    denied = document_results["document-denied"]
+    assert selected.score is True
+    assert denied.score is False
+    for result in document_results.values():
+        assert (result.component_id, result.component_version) == (
+            "aura.runtime.tool_selection",
+            "1.4.0",
+        )
+        assert result.payload()["metadata"] == {
+            "expectedCall": "true",
+            "observedCall": "true",
+            "policyDecision": "allow"
+            if result is selected
+            else "deny",
+        }
+        assert DOCUMENT_QUERY_SENTINEL not in repr(result.payload())
 
 
 def _argument_results() -> list[EvaluatorResult]:

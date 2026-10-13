@@ -30,9 +30,9 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.runtime.tool_selection": "1.3.0",
+    "aura.runtime.tool_selection": "1.4.0",
     "aura.runtime.policy_evaluation": "1.1.0",
-    "aura.runtime.tool_execution": "1.2.1",
+    "aura.runtime.tool_execution": "1.3.0",
     "aura.interaction.agent_configuration": "1.2.0",
     "aura.interaction.persona_preview": "1.0.0",
     "aura.execution.run_coordinator": "1.8.0",
@@ -49,7 +49,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.memory_retrieval": "1.2.0",
     "aura.knowledge.document_upload": "1.0.0",
     "aura.knowledge.document_processing": "1.0.0",
-    "aura.knowledge.document_retrieval": "1.1.0",
+    "aura.knowledge.document_retrieval": "1.2.0",
     "aura.knowledge.document_deletion": "1.0.0",
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
@@ -64,6 +64,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "tool_selection_outcome",
             "reminder_create_tool_outcome",
             "reminder_tool_selection_outcome",
+            "document_search_tool_selection",
         }
     ),
     "aura.runtime.policy_evaluation": frozenset(
@@ -82,6 +83,8 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "reminder_create_tool_outcome",
             "reminder_tool_resolution_outcome",
             "reminder_command_execution_outcome",
+            "document_search_tool_outcome",
+            "document_citation_validation_outcome",
         }
     ),
     "aura.interaction.agent_configuration": frozenset(
@@ -477,7 +480,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     }),
     "aura.knowledge.document_upload": frozenset({"document.upload"}),
     "aura.knowledge.document_processing": frozenset({"document.process", "document.retry"}),
-    "aura.knowledge.document_retrieval": frozenset({"document.search", "document.preview"}),
+    "aura.knowledge.document_retrieval": frozenset(
+        {"document.search", "document.preview", "document.detail"}
+    ),
     "aura.knowledge.document_deletion": frozenset({"document.delete"}),
 }
 

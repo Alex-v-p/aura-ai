@@ -72,6 +72,21 @@ class MessageState(StrEnum):
     FAILED = "failed"
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentCitation:
+    """Metadata-only citation persisted from same-run document evidence."""
+
+    document_id: UUID
+    display_label: str
+    locator: str
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.display_label) <= 120:
+            raise ValueError("citation display label must be bounded")
+        if not 1 <= len(self.locator) <= 255:
+            raise ValueError("citation locator must be bounded")
+
+
 class TitleState(StrEnum):
     """Internal lifecycle for model-derived conversation titles."""
 
@@ -133,6 +148,7 @@ class Message:
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=now)
     updated_at: datetime = field(default_factory=now)
+    citations: tuple[DocumentCitation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

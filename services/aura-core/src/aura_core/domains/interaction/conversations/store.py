@@ -25,7 +25,7 @@ from aura_core.domains.execution.runs.dto import (
     RunStatus,
 )
 from aura_core.domains.interaction.agents.public import (
-    GENERAL_CONVERSATIONAL_REVISION_ID,
+    GENERAL_DOCUMENT_REVISION_ID,
     GENERAL_POLICY_ID,
     GENERAL_PROFILE_ID,
     AgentCatalog,
@@ -45,6 +45,7 @@ from aura_core.domains.interaction.conversations.dto import (
     Conversation,
     ConversationArchiveState,
     ConversationListFilters,
+    DocumentCitation,
     Message,
     MessageRole,
     MessageState,
@@ -76,7 +77,7 @@ NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 type CommandResult = tuple[Conversation, Message, Run]
 GENERAL_AGENT = SeededAgent(
     profile_id=GENERAL_PROFILE_ID,
-    revision_id=GENERAL_CONVERSATIONAL_REVISION_ID,
+    revision_id=GENERAL_DOCUMENT_REVISION_ID,
     policy_revision_id=GENERAL_POLICY_ID,
     system_prompt="You are Aura, a helpful local-first household assistant.",
 )
@@ -1310,6 +1311,41 @@ class ConversationStore:
         conversation.updated_at = now()
         return assistant
 
+    async def set_assistant_citations(
+        self,
+        run_id: UUID,
+        citations: tuple[DocumentCitation, ...],
+        *,
+        content: str | None = None,
+        attempt_id: UUID | None = None,
+    ) -> None:
+        conversation, run = await self._find_run_any(run_id)
+        if attempt_id is not None and (
+            run.status != RunStatus.RUNNING or run.attempt_id != attempt_id
+        ):
+            raise RunClaimLost
+        run.citations = citations
+        run.document_search_used = True
+        if run.assistant_message_id is not None:
+            assistant = next(
+                item for item in conversation.messages if item.id == run.assistant_message_id
+            )
+            assistant.citations = citations
+            if content is not None:
+                assistant.content = content
+            assistant.updated_at = now()
+
+    async def mark_document_search_used(
+        self, run_id: UUID, *, attempt_id: UUID | None = None
+    ) -> None:
+        conversation, run = await self._find_run_any(run_id)
+        del conversation
+        if attempt_id is not None and (
+            run.status != RunStatus.RUNNING or run.attempt_id != attempt_id
+        ):
+            raise RunClaimLost
+        run.document_search_used = True
+
     async def finish_run(
         self,
         run_id: UUID,
@@ -1341,7 +1377,7 @@ class ConversationStore:
             assistant.updated_at = now()
         conversation.updated_at = now()
         if status == RunStatus.COMPLETED and assistant is not None:
-            if self.memory_command_factory is not None:
+            if self.memory_command_factory is not None and not run.document_search_used:
                 command = self.memory_command_factory(conversation, run, assistant)
                 publish = getattr(self.memory_outbox, "publish", None)
                 if callable(publish):

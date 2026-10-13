@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from aura_core.domains.knowledge.documents.evaluation import (
     COMPONENT_VERSION,
     DELETION_COMPONENT_ID,
     DOCUMENT_COMPONENT_VERSIONS,
+    EVALUATOR_COMPONENTS,
     EVALUATOR_VERSIONS,
     PROCESSING_COMPONENT_ID,
     RETRIEVAL_COMPONENT_ID,
+    TOOL_EXECUTION_COMPONENT_ID,
+    TOOL_EXECUTION_COMPONENT_VERSION,
     UPLOAD_COMPONENT_ID,
+    DocumentEvaluationResult,
     DocumentReplayAdapter,
     evaluate_deletion_completion,
+    evaluate_document_chunk_recall,
+    evaluate_document_citation_validity,
+    evaluate_document_irrelevant_context_rate,
+    evaluate_document_prompt_injection_resistance,
+    evaluate_document_recall,
+    evaluate_document_retrieval_ranking,
     evaluate_format_validation,
     evaluate_owner_isolation,
     evaluate_preview_boundedness,
@@ -26,6 +38,7 @@ from aura_core.domains.knowledge.documents.public import (
     MemoryDocumentRepository,
 )
 from aura_core.runtime.models.ports import EmbeddingResult, ProviderTraceContext
+from fixtures.documents.runner import execute_labelled_retrieval, retained_payload_json
 
 OWNER = ("https://issuer.example", "retrieval-owner")
 INVALID_PREVIEW_CASES: tuple[tuple[int, int, bool, int], ...] = (
@@ -46,7 +59,7 @@ def test_document_preview_boundedness_evaluator_passes_without_content_capture()
 
     assert result.outcome == "pass"
     assert result.score == 1.0
-    assert result.component_version == COMPONENT_VERSION == "1.1.0"
+    assert result.component_version == COMPONENT_VERSION
     assert result.evaluator_version == EVALUATOR_VERSIONS["document_preview_boundedness"]
     assert result.metadata == {
         "preview_characters": "20000",
@@ -95,6 +108,89 @@ def test_document_preview_boundedness_replay_key_is_deterministic() -> None:
     assert first.replay_key == second.replay_key
 
 
+@pytest.mark.asyncio
+async def test_labelled_document_quality_runner_executes_formats_and_retains_metadata_only(
+) -> None:
+    results, sensitive_values = await execute_labelled_retrieval()
+
+    assert all(result.outcome == "pass" for result in results)
+    assert {result.evaluator_id for result in results} == {
+        "document_recall",
+        "document_chunk_recall",
+        "document_retrieval_ranking",
+        "document_citation_validity",
+        "document_irrelevant_context_rate",
+        "document_prompt_injection_resistance",
+    }
+    assert all(
+        result.component_id == EVALUATOR_COMPONENTS[result.evaluator_id]
+        for result in results
+    )
+    component_versions = dict(DOCUMENT_COMPONENT_VERSIONS)
+    component_versions[TOOL_EXECUTION_COMPONENT_ID] = TOOL_EXECUTION_COMPONENT_VERSION
+    assert all(
+        result.component_version == component_versions[result.component_id]
+        for result in results
+    )
+    assert all(result.replay_key for result in results)
+    retained = retained_payload_json(results)
+    assert not any(value in retained for value in sensitive_values)
+    assert not {
+        "text",
+        "excerpt",
+        "filename",
+        "query",
+        "owner",
+        "prompt",
+        "response",
+        "content",
+    }.intersection(retained)
+
+
+@pytest.mark.parametrize(
+    ("evaluator", "kwargs"),
+    [
+        (
+            evaluate_document_recall,
+            {"relevant_document_count": 2, "retrieved_relevant_count": 1},
+        ),
+        (
+            evaluate_document_chunk_recall,
+            {"relevant_chunk_count": 2, "retrieved_relevant_chunk_count": 1},
+        ),
+        (evaluate_document_retrieval_ranking, {"relevant_rank": 4}),
+        (
+            evaluate_document_citation_validity,
+            {"citation_count": 2, "valid_citation_count": 1, "invented_citation_count": 1},
+        ),
+        (
+            evaluate_document_irrelevant_context_rate,
+            {"irrelevant_result_count": 3, "result_count": 4},
+        ),
+        (
+            evaluate_document_prompt_injection_resistance,
+            {"injection_attempt_count": 2, "blocked_attempt_count": 1},
+        ),
+    ],
+)
+def test_document_quality_evaluators_fail_bounded_regressions(
+    evaluator: Callable[..., DocumentEvaluationResult], kwargs: dict[str, object]
+) -> None:
+    result = evaluator(**kwargs)
+    assert result.outcome == "fail"
+    assert result.score == 0.0
+
+
+def test_document_quality_evaluator_replay_keys_are_stable() -> None:
+    first = evaluate_document_citation_validity(
+        citation_count=1, valid_citation_count=1
+    )
+    second = evaluate_document_citation_validity(
+        citation_count=1, valid_citation_count=1
+    )
+    assert first.replay_key == second.replay_key
+
+
 def test_non_retrieval_evaluators_use_manifest_component_attribution() -> None:
     format_upload = evaluate_format_validation(accepted=True, expected=True)
     format_processing = evaluate_format_validation(
@@ -111,7 +207,7 @@ def test_non_retrieval_evaluators_use_manifest_component_attribution() -> None:
     deletion = evaluate_deletion_completion(searchable_results=0, object_deleted=True)
     retrieval = evaluate_retrieval_relevance(relevant_rank=1, result_count=1)
 
-    assert {
+    observed_versions = {
         result.component_id: result.component_version
         for result in (
             format_upload,
@@ -122,7 +218,8 @@ def test_non_retrieval_evaluators_use_manifest_component_attribution() -> None:
             deletion,
             retrieval,
         )
-    } == DOCUMENT_COMPONENT_VERSIONS
+    }
+    assert observed_versions.items() <= DOCUMENT_COMPONENT_VERSIONS.items()
     assert format_upload.payload()["componentId"] == UPLOAD_COMPONENT_ID
     assert owner_deletion.payload()["componentId"] == DELETION_COMPONENT_ID
     assert retrieval.component_id == RETRIEVAL_COMPONENT_ID

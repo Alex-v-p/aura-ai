@@ -30,7 +30,7 @@ def _contract() -> dict[str, Any]:
 
 def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_schemas() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.15.0"
+    assert contract["info"]["version"] == "1.16.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected = {
         "/api/v1/documents/uploads",
@@ -110,6 +110,21 @@ def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_sch
         assert not {"objectKey", "bucket", "credential", "embedding", "vector"} & set(
             schemas[name]["properties"]
         )
+
+    citation = schemas["DocumentCitation"]
+    assert citation["additionalProperties"] is False
+    assert set(citation["required"]) == {"documentId", "displayLabel", "locator"}
+    assert citation["properties"]["displayLabel"]["maxLength"] == 120
+    assert citation["properties"]["locator"]["maxLength"] == 255
+    assert not {
+        "evidenceId",
+        "excerpt",
+        "filename",
+        "objectKey",
+        "url",
+    } & set(citation["properties"])
+    assert "citations" in schemas["Message"]["properties"]
+    assert "citations" in schemas["Run"]["properties"]
 
 
 def test_document_lifecycle_event_contract_is_metadata_only_and_versioned() -> None:
@@ -209,6 +224,11 @@ def test_document_component_manifests_allow_only_metadata_observation() -> None:
                     "id": "document.preview",
                     "input_schema": "document-preview-request-v1",
                     "output_schema": "document-preview-v1",
+                },
+                "document.detail": {
+                    "id": "document.detail",
+                    "input_schema": "document-detail-request-v1",
+                    "output_schema": "document-detail-v1",
                 },
             }
     assert required_metrics <= found_metrics

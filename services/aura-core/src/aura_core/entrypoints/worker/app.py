@@ -895,6 +895,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             tool_registry=default_tool_registry(),
             approval_service=approval_service_instance,
             reminder_service=reminder_service_instance,
+            document_service=document_worker.service,
             thinking_publisher=event_transport,
         )
         # Approval/resumption wakeups are identifier-only; the worker always

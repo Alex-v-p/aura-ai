@@ -12,7 +12,33 @@ export type TurnRole = 'user' | 'assistant';
 export type RunState = 'idle' | 'working' | 'waiting' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; }
+/** Metadata-only source reference accepted by Core for this run. */
+export interface DocumentCitation { readonly documentId: string; readonly displayLabel: string; readonly locator: string; }
+const citationIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const citationText = (value: unknown, maxLength: number): string | null => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength || [...value].some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; })) return null;
+  return value;
+};
+/** Normalize additive API data before it reaches the transcript template. */
+export function normalizeDocumentCitations(value: unknown): ReadonlyArray<DocumentCitation> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>(); const result: DocumentCitation[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const item = candidate as Record<string, unknown>;
+    const documentId = citationText(item['documentId'], 128);
+    const displayLabel = citationText(item['displayLabel'] ?? item['displayName'], 120);
+    const locator = citationText(item['locator'], 255);
+    if (!documentId || !citationIdPattern.test(documentId) || !displayLabel || !locator || !/^(?:page|section):[1-9][0-9]{0,6}$/u.test(locator)) continue;
+    const key = `${documentId}\u0000${locator}`;
+    if (seen.has(key)) continue;
+    seen.add(key); result.push({ documentId, displayLabel, locator });
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; }
 export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: MemoryDetail } | { readonly kind: 'candidate'; readonly detail: MemoryCandidateDetail };
 export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): { readonly recalled: boolean; readonly updated: boolean } {
   return { recalled: items.some((item) => item.action === 'recalled'), updated: items.some((item) => item.action !== 'recalled') };
@@ -924,7 +950,7 @@ export class ConversationStore {
   private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
-  private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
+  private fromMessage(message: Message): ConversationTurn { const citations = normalizeDocumentCitations((message as Message & { readonly citations?: unknown }).citations); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
       if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;

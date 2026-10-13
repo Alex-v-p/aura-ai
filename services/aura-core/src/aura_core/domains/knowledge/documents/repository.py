@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -34,6 +34,33 @@ from aura_core.domains.knowledge.documents.public import (
     DocumentUploadSession,
     DocumentVersionConflict,
 )
+
+
+def _decode_embedding(value: object) -> tuple[float, ...] | None:
+    """Normalize psycopg's textual pgvector result and test doubles.
+
+    ``VectorType`` is intentionally a small Core-owned SQL type rather than a
+    dependency on a provider-specific pgvector package. Psycopg therefore
+    returns a vector column as its canonical ``[0.1,0.2]`` text form unless a
+    result codec is registered. Writes still use the same pgvector literal
+    adaptation, while reads must accept both that text form and list/tuple
+    values supplied by in-memory SQL test doubles.
+    """
+
+    if value is None:
+        return None
+    raw_values: tuple[object, ...]
+    if isinstance(value, str):
+        encoded = value.strip()
+        if len(encoded) < 2 or encoded[0] != "[" or encoded[-1] != "]":
+            raise ValueError("invalid pgvector value")
+        body = encoded[1:-1].strip()
+        raw_values = () if not body else tuple(body.split(","))
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        raw_values = tuple(cast(Sequence[object], value))
+    else:
+        raise ValueError("invalid pgvector value")
+    return tuple(float(cast(Any, item)) for item in raw_values)
 
 
 class SqlDocumentRepository:
@@ -70,7 +97,7 @@ class SqlDocumentRepository:
 
     @staticmethod
     def _chunk(row: DocumentChunkRow) -> DocumentChunk:
-        vector = tuple(float(item) for item in row.embedding) if row.embedding is not None else None
+        vector = _decode_embedding(row.embedding)
         return DocumentChunk(
             row.id,
             row.document_id,

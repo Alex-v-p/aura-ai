@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, normalizeDocumentCitations, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
 
 const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
 function hydrateDefaultAgent(store: ConversationStore): void { store.setDefaultDraftAgent(hydratedDefaultAgent); }
@@ -71,6 +71,10 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('normalizes citations to owner-safe internal-link data and drops malformed or duplicate markers', () => {
+    expect(normalizeDocumentCitations([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4', excerpt: 'private' }, { documentId: 'doc-a', displayLabel: 'Duplicate', locator: 'page:4' }, { documentId: 'https://attacker.test', displayLabel: 'Remote', locator: 'page:1' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }, { documentId: 'doc-c', displayLabel: 'Bad', locator: 'page:0' }])).toEqual([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }]);
+  });
+
   it('clears management state synchronously before awaiting logout', async () => {
     const management = managementPort();
     const api = fakeApi();

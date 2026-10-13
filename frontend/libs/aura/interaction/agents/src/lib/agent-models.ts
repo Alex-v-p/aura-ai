@@ -111,7 +111,7 @@ export class InMemoryAgentApi implements AgentApi {
   }
 
   private revision(profile: Pick<AgentProfile, 'id' | 'displayName' | 'status'>, draft: AgentDraft, revision: number): AgentRevision {
-    return { profileId: profile.id, revisionId: cryptoRandomUuid(), revision, displayName: draft.displayName, status: profile.status, purpose: draft.purpose, behavioralInstructions: draft.behavioralInstructions, personaRevisionId: draft.personaRevisionId, promptBundleRevisionId: cryptoRandomUuid(), modelPolicyRevisionId: 'model-policy-default', toolPolicyRevisionId: profile.id === BUILT_IN_AURA_AGENT_PROFILE_ID ? 'aura-tool-policy-r1' : 'deny-tool-policy-r1', createdAt: now() };
+    return { profileId: profile.id, revisionId: cryptoRandomUuid(), revision, displayName: draft.displayName, status: profile.status, purpose: draft.purpose, behavioralInstructions: draft.behavioralInstructions, personaRevisionId: draft.personaRevisionId, promptBundleRevisionId: cryptoRandomUuid(), modelPolicyRevisionId: 'model-policy-default', toolPolicyRevisionId: profile.id === BUILT_IN_AURA_AGENT_PROFILE_ID ? 'aura-tool-policy-r2' : 'deny-tool-policy-r1', createdAt: now() };
   }
 
   private require(id: string): AgentProfile { const profile = this.agents.find((item) => item.id === id); if (!profile) throw new Error('Agent not found.'); return profile; }

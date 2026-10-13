@@ -52,6 +52,7 @@ from aura_core.domains.interaction.conversations.public import (
     ConversationListFilters,
     ConversationNotFound,
     ConversationRecord,
+    DocumentCitation,
     IdempotencyConflict,
     InvalidConversationCursor,
     InvalidConversationMetadata,
@@ -2026,6 +2027,44 @@ class SqlConversationStore:
                     message = updated
             return message
 
+    async def set_assistant_citations(
+        self,
+        run_id: UUID,
+        citations: tuple[DocumentCitation, ...],
+        *,
+        content: str | None = None,
+        attempt_id: UUID | None = None,
+    ) -> None:
+        """Persist only validated document identity and locator metadata."""
+
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or (attempt_id is not None and run.attempt_id != attempt_id):
+                raise RunClaimLost
+            if run.assistant_message_id is None:
+                return
+            run.citations = citations
+            # A document-backed run must never enter the automatic memory
+            # extraction path, even when no citation marker survived model
+            # validation.
+            run.document_search_used = True
+            await self.conversations.set_message_citations(
+                session, run.assistant_message_id, citations, content=content
+            )
+            await self.runs.save(session, run)
+
+    async def mark_document_search_used(
+        self, run_id: UUID, *, attempt_id: UUID | None = None
+    ) -> None:
+        """Durably fence document-backed runs out of memory extraction."""
+
+        async with self.sessions() as session, session.begin():
+            run = await self.runs.get(session, run_id, lock=True)
+            if run is None or (attempt_id is not None and run.attempt_id != attempt_id):
+                raise RunClaimLost
+            run.document_search_used = True
+            await self.runs.save(session, run)
+
     async def finish_run(
         self,
         run_id: UUID,
@@ -2066,7 +2105,7 @@ class SqlConversationStore:
                 None,
             )
             if status == RunStatus.COMPLETED and assistant is not None:
-                if self.memory_command_factory is not None:
+                if self.memory_command_factory is not None and not run.document_search_used:
                     command = self.memory_command_factory(conversation, run, assistant)
                     await self.outbox.stage_command(session, command=command)
             return (

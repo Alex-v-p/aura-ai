@@ -277,7 +277,9 @@ services:
       dockerfile: deploy/docker/aura-worker.Dockerfile
       target: document-parser
     init: true
-    entrypoint: [/usr/local/bin/document-parser-service.py]
+    # The runtime dependencies are installed in the uv-managed virtualenv;
+    # invoke the parser with that interpreter rather than the base image Python.
+    entrypoint: [/app/.venv/bin/python, /usr/local/bin/document-parser-service.py]
     expose: ["8080"]
     # The parser receives hostile document bytes. Keep it on a private,
     # single-purpose network with no database, broker, cache, object-store,

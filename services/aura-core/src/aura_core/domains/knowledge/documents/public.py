@@ -1371,10 +1371,83 @@ class DocumentService:
         return DocumentLifecycleEvent.document_for_event(event_id)
 
     async def get(self, issuer: str, subject: str, document_id: UUID) -> Document:
-        item = await self.repository.get(self._owner(issuer, subject), document_id)
+        started = monotonic()
+        context = _library_context("document-detail")
+        owner = self._owner(issuer, subject)
+        try:
+            item = await self.repository.get(owner, document_id)
+        except DocumentRepositoryUnavailable:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.detail",
+                started,
+                outcome="unavailable",
+                dependency="postgresql",
+                document_id=document_id,
+                error_class="persistence",
+                context=context,
+            )
+            raise
+        except Exception:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.detail",
+                started,
+                outcome="error",
+                dependency="postgresql",
+                document_id=document_id,
+                error_class="persistence",
+                context=context,
+            )
+            raise
         if item is None:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.detail",
+                started,
+                outcome="not_found",
+                dependency="postgresql",
+                document_id=document_id,
+                error_class="not_found",
+                context=context,
+            )
             raise DocumentNotFound("document not found")
-        chunks = await self.repository.chunks(document_id)
+        try:
+            chunks = await self.repository.chunks(document_id)
+        except DocumentRepositoryUnavailable:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.detail",
+                started,
+                outcome="unavailable",
+                dependency="postgresql",
+                document_id=document_id,
+                error_class="persistence",
+                context=context,
+            )
+            raise
+        except Exception:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.detail",
+                started,
+                outcome="error",
+                dependency="postgresql",
+                document_id=document_id,
+                error_class="persistence",
+                context=context,
+            )
+            raise
+        self._record_metric(
+            "aura.knowledge.document_retrieval",
+            "document.detail",
+            started,
+            outcome="ok",
+            dependency="postgresql",
+            document_id=document_id,
+            candidates=len(chunks),
+            context=context,
+        )
         return replace(item, chunk_count=len(chunks))  # type: ignore[arg-type]
 
     async def preview(
@@ -1546,20 +1619,44 @@ class DocumentService:
         }
         if offset:
             kwargs["offset"] = offset
-        result = [
-            item
-            for item in await repository.search(self._owner(issuer, subject), query, **kwargs)
-        ]  # type: ignore[misc]
+        request_context = context or _library_context("document-search")
+        try:
+            result = [
+                item
+                for item in await repository.search(self._owner(issuer, subject), query, **kwargs)
+            ]  # type: ignore[misc]
+        except DocumentRepositoryUnavailable:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.search",
+                started,
+                outcome="unavailable",
+                dependency="postgresql",
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
+        except Exception:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.search",
+                started,
+                outcome="error",
+                dependency="postgresql",
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
         self._record_metric(
             "aura.knowledge.document_retrieval",
             "document.search",
             started,
-            outcome="degraded" if embedding_degraded else "ok",
+            outcome=("empty" if not result else "degraded" if embedding_degraded else "ok"),
             dependency="embedding_provider" if embedding_degraded else "postgresql",
             error_class="embedding_unavailable" if embedding_degraded else None,
             degradation="embedding_unavailable" if embedding_degraded else None,
             candidates=len(result),
-            context=context or _library_context("document-search"),
+            context=request_context,
         )
         return result
 

@@ -6,6 +6,8 @@ executable read tools.
 """
 
 from aura_core.runtime.tools.public import (
+    DOCUMENT_SEARCH_TOOL_ID,
+    DOCUMENT_SEARCH_TOOL_VERSION,
     MEMORY_SEARCH_TOOL_ID,
     MEMORY_SEARCH_TOOL_VERSION,
     REMINDER_CANCEL_TOOL_ID,
@@ -28,6 +30,7 @@ from aura_core.runtime.tools.public import (
     REMINDER_SERIES_UPDATE_TOOL_ID,
     REMINDER_SERIES_UPDATE_TOOL_VERSION,
     REMINDER_TOOL_IDS,
+    DocumentSearchContext,
     MemorySearchContext,
     ReminderCreateContext,
     ReminderReadContext,
@@ -45,6 +48,8 @@ from aura_core.runtime.tools.public import (
 )
 
 __all__ = [
+    "DOCUMENT_SEARCH_TOOL_ID",
+    "DOCUMENT_SEARCH_TOOL_VERSION",
     "MEMORY_SEARCH_TOOL_ID",
     "MEMORY_SEARCH_TOOL_VERSION",
     "REMINDER_CANCEL_TOOL_ID",
@@ -68,6 +73,7 @@ __all__ = [
     "REMINDER_SERIES_UPDATE_TOOL_VERSION",
     "REMINDER_TOOL_IDS",
     "MemorySearchContext",
+    "DocumentSearchContext",
     "ReminderCreateContext",
     "ReminderReadContext",
     "ToolCall",

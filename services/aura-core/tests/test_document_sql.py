@@ -50,6 +50,25 @@ def _document() -> Document:
     )
 
 
+def test_sql_repository_decodes_psycopg_textual_pgvector_results() -> None:
+    row = SimpleNamespace(
+        id=uuid4(),
+        document_id=uuid4(),
+        ordinal=0,
+        text="private marker",
+        locator="section:1",
+        digest="a" * 64,
+        embedding="[0.1,-0.2,3.0]",
+        model_id="nomic-embed-text",
+        model_revision="fixture-embedding-v1",
+        model_digest="b" * 64,
+    )
+
+    chunk = SqlDocumentRepository._chunk(row)  # type: ignore[arg-type]
+
+    assert chunk.embedding == (0.1, -0.2, 3.0)
+
+
 class _Session:
     def __init__(self) -> None:
         self.pending: list[object] = []

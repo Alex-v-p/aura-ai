@@ -35,6 +35,8 @@ class RunRow(Base):
     approval_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
     pending_tool_call_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     tool_lifecycle_status: Mapped[str | None] = mapped_column(String(32))
+    citations: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
+    document_search_used: Mapped[bool] = mapped_column(default=False, nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     retry_of_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

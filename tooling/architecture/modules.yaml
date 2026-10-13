@@ -322,7 +322,6 @@ modules:
   - aura-core.domains.interaction.agents
   - aura-core.domains.interaction.agents.persistence
   - aura-core.domains.interaction.conversations
-  - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.database.base
   - aura-core.platform.outbox
@@ -416,7 +415,6 @@ modules:
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
-  - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.conversations.repository
   - aura-core.domains.interaction.conversations.store
   - aura-core.platform.outbox

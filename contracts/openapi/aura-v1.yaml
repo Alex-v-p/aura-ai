@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.15.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, content hashes, and embedding vectors are never exposed by this API."
+    "version": "1.16.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -1393,6 +1393,7 @@
       },
       "ToolCatalog": {
         "type": "object", "additionalProperties": false,
+        "description": "Safe provider-neutral descriptors for exact-version policy configuration. The additive catalog includes the owner-bound read-only document.search@1 tool; its query and evidence result remain private runtime values and are never returned by this catalog.",
         "required": ["items"],
         "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDescriptorSummary" } } }
       },
@@ -1908,6 +1909,7 @@
       },
       "ToolGrant": {
         "type": "object", "additionalProperties": false,
+        "description": "Exact immutable tool identity and version. The built-in Aura successor policy may grant document.search@1; historical policies remain unchanged and custom policies remain deny-by-default unless an owner explicitly creates a new grant policy.",
         "required": ["toolId", "toolVersion"],
         "properties": {
           "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
@@ -2334,6 +2336,7 @@
           "content": { "type": "string" },
           "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
           "runId": { "type": ["string", "null"], "format": "uuid" },
+          "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are excluded." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
@@ -2356,6 +2359,7 @@
           "approvalId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
           "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
           "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
+          "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run. Historical runs and runs without validated document evidence may omit this property." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -2971,6 +2975,16 @@
       "DocumentLocator": {
         "oneOf": [{ "$ref": "#/components/schemas/DocumentPageLocator" }, { "$ref": "#/components/schemas/DocumentSectionLocator" }],
         "discriminator": { "propertyName": "kind" }
+      },
+      "DocumentCitation": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free validated source reference. Core accepts only evidence returned during the same run and persists document identity plus locator; displayLabel is a bounded server-generated non-filename label for the owner-authorized response and is never a client- or model-provided URL.",
+        "required": ["documentId", "displayLabel", "locator"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "displayLabel": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Server-generated accessible source label that does not contain a document filename or content." },
+          "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
+        }
       },
       "DocumentSearchResult": {
         "type": "object", "additionalProperties": false,

@@ -18,11 +18,32 @@ The Python runtime uses FastAPI/Pydantic at transport and validation edges and s
 
 ### Governed tool execution v1
 
-Aura implements one bounded native-tool cycle behind provider-neutral runtime contracts. An immutable agent revision pins an immutable tool-policy revision, and run admission snapshots that policy identifier, the Aura-enforced call limit, and usage. A policy grants an exact stable tool identifier and integer version; absence of that grant denies execution. The built-in Aura profile's successor revision grants exactly `memory.search@1` and `reminder.create@1`, while custom profiles remain deny-by-default. Policy creation and attachment are separate owner-scoped, idempotent, optimistic-concurrency commands so historical agent revisions retain their original behavior.
+Aura implements one bounded native-tool cycle behind provider-neutral runtime contracts. An immutable agent revision pins an immutable tool-policy revision, and run admission snapshots that policy identifier, the Aura-enforced call limit, and usage. A policy grants an exact stable tool identifier and integer version; absence of that grant denies execution. The built-in Aura profile advances through immutable successor revisions as governed tools are approved; its document-library successor adds exactly `document.search@1` to the previously granted tools, while historical revisions are unchanged and custom profiles remain deny-by-default. Policy creation and attachment are separate owner-scoped, idempotent, optimistic-concurrency commands so historical agent revisions retain their original behavior.
 
 A run with a grant may make at most one tool call. Aura validates the requested identity, version, arguments, permission, budget, and deadline before invoking application behavior. A successful call is followed by one tools-disabled synthesis request. Denied, malformed, over-budget, timed-out, provider-protocol, and execution failures invoke no prohibited behavior and may continue with a content-free tools-disabled synthesis. Models without native tool support continue on the existing text-only path with a visible capability outcome. Native Ollama request and response shapes remain adapter-private and never become Aura API, event, domain, or generated-client contracts.
 
 Tool lifecycle is durable and ordered through `tool.status` run events. These events contain only an Aura-generated call identifier, stable tool identity and version, lifecycle status, bounded error classification/code, and optional result count. They never contain arguments, queries, results, memory text, prompts, responses, credentials, or hidden reasoning.
+
+### Governed document retrieval and citations
+
+`document.search@1` is a read-only, owner-bound search over the admitted
+principal's entire ready document library. Its closed input contains only a
+bounded query; Core fixes hybrid retrieval, result, excerpt, and context limits
+and excludes failed, deleting, deleted, and other-owner records. The tool cannot
+select a document or owner, fetch a raw object, or alter lifecycle and policy.
+Document text is explicitly delimited untrusted evidence: embedded instructions
+cannot grant tools, change permissions or system behavior, trigger a second
+tool call, or create long-term memory.
+
+The model may cite only opaque evidence identifiers returned by that tool during
+the same run. Core discards malformed, invented, stale, and duplicate markers
+before persistence. Valid assistant-message and run responses may include an
+optional bounded citation list containing only document identity, an
+owner-authorized display label, and a page-or-section locator. Evidence
+identifiers, excerpts, queries, filenames as independent persisted fields,
+object keys, and model-provided URLs are excluded. Clients construct accessible
+internal links to the authorized document detail route from the document
+identifier; authorization is re-evaluated when the target is opened.
 
 ### Approval-backed reminder mutation
 

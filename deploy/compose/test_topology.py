@@ -161,7 +161,10 @@ class ComposeTopologyTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("entrypoint: [/usr/local/bin/document-parser-service.py]", parser)
+        self.assertIn(
+            "entrypoint: [/app/.venv/bin/python, /usr/local/bin/document-parser-service.py]",
+            parser,
+        )
         self.assertIn(
             "COPY --chmod=0555 deploy/docker/document_parser_service.py "
             "/usr/local/bin/document-parser-service.py",

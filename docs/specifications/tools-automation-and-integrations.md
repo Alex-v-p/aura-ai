@@ -1,6 +1,6 @@
 # Tools, automation, and integrations
 
-> **Status:** Architecture baseline with implemented governed tools (`memory.search@1` and approval-backed `reminder.create@1`), deterministic recurring-reminder foundations, and envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
+> **Status:** Architecture baseline with implemented governed memory, document, and reminder tools, deterministic recurring-reminder foundations, and envisioned capabilities. Sources: [architecture handover §§9 and 13](../architecture/aura-ai-architecture-handover.md#9-tool-and-integration-architecture), [ADR-0014](../adr/0014-aura-owned-execution-langgraph-backend.md), and catalogue groups [`TOL`](./aura-ai-envisioned-feature-catalogue.md#11-tool-runtime-and-integrations), [`HOM`](./aura-ai-envisioned-feature-catalogue.md#12-home-assistant-and-household-control), [`AUT`](./aura-ai-envisioned-feature-catalogue.md#13-timers-reminders-schedules-workflows-and-notifications), and [`INT`](./aura-ai-envisioned-feature-catalogue.md#24-envisioned-integration-targets).
 
 ## Baseline separation
 
@@ -32,6 +32,42 @@ The built-in Aura agent has an explicit seeded grant; custom agents are deny-by-
 Aura uses provider-native tool calls through a provider-neutral runtime interface. Unsupported models retain normal text chat and emit a content-free capability outcome. Unknown, ungranted, invalid, multiple, late, over-budget, timed-out, or provider-malformed requests execute nothing. Successful execution produces one tools-disabled synthesis step; unsuccessful attempts may do the same with only a typed content-free failure statement. Tool results never become policy, system instructions, or authority for additional grants.
 
 The authenticated catalog and policy APIs, additive agent/run policy identifiers and counters, and metadata-only `tool.status` event are authoritative in `contracts/openapi/aura-v1.yaml` version 1.6.0 and `contracts/events/runs/v1/run-events.schema.json`. Provider-native call identifiers and payloads, tool arguments, queries, raw results, memory content, prompts, responses, credentials, and hidden reasoning are excluded from these public contracts.
+
+## Governed document search v1
+
+The additive `document.search@1` registry entry is read-only, private, requires
+the exact `documents:read` grant, never requires confirmation, allows no
+retries, and preserves the maximum of one admitted tool call per run. Its
+closed JSON Schema 2020-12 input contains only a bounded trimmed `query`. Core
+binds the owner from the admitted run and fixes hybrid lexical/vector retrieval,
+ready-only lifecycle filters, result count, excerpt size, and context budget.
+The model cannot choose an owner or document, request a raw object, include
+failed or deleting content, or raise a limit.
+
+The bounded result contains ranked untrusted excerpts, opaque run-scoped
+evidence identifiers, document identifiers, display names, and page-or-section
+locators. Arguments, queries, excerpts, display names, embeddings, object keys,
+owner identity, and raw results remain absent from tool lifecycle events,
+ordinary audit metadata, logs, traces, metrics, and evaluation capture. The
+result can influence only the tools-disabled synthesis step; document text
+cannot change system instructions, policy, grants, permissions, or memory.
+
+A new immutable built-in Aura policy and agent revision add the exact
+`document.search@1` grant while retaining the prior grants. Historical policies,
+agent revisions, and conversations are not rewritten. Custom agents receive no
+automatic grant. Rollout is additive through the Core-owned migration and the
+safe authenticated tool catalog; no raw result schema becomes a browser policy
+contract.
+
+OpenAPI contract `aura-v1` version 1.16.0 and run-events contract
+`runs/v1` add optional bounded structured citations to run and assistant-message
+snapshots. Only same-run evidence markers may produce citations. The public
+citation contains document identity, the owner-authorized display label, and a
+page-or-section locator; it contains no evidence identifier, excerpt, query,
+object key, or URL. The producer is Aura Core's run coordinator and the
+consumers are owner-authorized conversation clients through the regenerated
+transport-only Aura API client. Older producers and consumers may omit or
+ignore the optional property.
 
 ## Approval-backed reminder creation v1
 

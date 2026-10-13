@@ -20,6 +20,17 @@
     "Timestamp": { "type": "string", "format": "date-time" },
     "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
     "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier validated by the producer against its deployed timezone database." },
+    "DocumentCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-free validated source reference. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are prohibited.",
+      "required": ["documentId", "displayLabel", "locator"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/Uuid" },
+        "displayLabel": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Server-generated accessible source label that does not contain a document filename or content." },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
+      }
+    },
     "BaseProperties": {
       "type": "object",
       "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"],
@@ -52,6 +63,7 @@
         "approvalId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
         "pendingToolCallId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
         "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/$defs/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
+        "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run." },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
@@ -72,6 +84,7 @@
         "content": { "type": "string" },
         "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
         "runId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property." },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "updatedAt": { "$ref": "#/$defs/Timestamp" }
       }

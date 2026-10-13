@@ -482,6 +482,7 @@ class AppState:
             tool_registry=self.tool_registry,
             approval_service=getattr(self, "approval_service", None),
             reminder_service=self.reminder_service,
+            document_service=self.document_service,
             thinking_publisher=thinking_publisher,
         )
 

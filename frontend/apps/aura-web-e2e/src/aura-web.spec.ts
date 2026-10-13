@@ -722,6 +722,17 @@ async function installApiFake(
         runId: run?.['id'] ?? 'run',
         createdAt: now(),
         updatedAt: now(),
+        ...(page.url().includes('fixture=citations')
+          ? {
+              citations: [
+                {
+                  documentId: '11111111-1111-4111-8111-111111111111',
+                  displayLabel: 'Document source',
+                  locator: 'page:2',
+                },
+              ],
+            }
+          : {}),
       };
       if (failNextStream) {
         failNextStream = false;
@@ -1892,6 +1903,101 @@ test('renders a completed local reply', async ({ page }) => {
   await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText(
     'A completed local thought',
   );
+});
+
+test('renders validated document citations as accessible authorized links', async ({ page }) => {
+  const documentId = '11111111-1111-4111-8111-111111111111';
+  const fixtureDocument = {
+    id: documentId,
+    filename: 'Document source',
+    mediaType: 'text/plain',
+    byteCount: 42,
+    status: 'ready',
+    version: 1,
+    failure: null,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    extractedTextLength: 42,
+    chunkCount: 1,
+  };
+  await page.route('**/api/v1/documents**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== 'GET') return route.continue();
+    if (url.pathname === `/api/v1/documents/${documentId}`)
+      return route.fulfill({ json: fixtureDocument });
+    if (url.pathname === `/api/v1/documents/${documentId}/preview`)
+      return route.fulfill({
+        json: {
+          documentId,
+          text: 'Authorized source preview.',
+          truncated: false,
+          totalCharacters: 26,
+        },
+      });
+    if (url.pathname === '/api/v1/documents')
+      return route.fulfill({ json: { items: [fixtureDocument], nextCursor: null } });
+    return route.continue();
+  });
+
+  const expectDocumentDestination = async (): Promise<void> => {
+    await expect(page).toHaveURL(new RegExp(`/documents/${documentId}$`));
+    await expect(page.getByRole('heading', { level: 2, name: 'Document source', exact: true })).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id ?? ''))
+      .toMatch(/^(detail-heading|main-content)$/);
+  };
+
+  const openCitationFixture = async (url: string): Promise<void> => {
+    await page.goto(url);
+    const composerForm = page.locator('form.composer-wrap');
+    await expect(composerForm).toHaveAttribute('data-conversation-ready', 'true');
+    await expect(composerForm).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeEditable();
+  };
+
+  await openCitationFixture('/?fixture=citations');
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('A grounded document question');
+  await expect(composer).toHaveValue('A grounded document question');
+  const firstSend = page.getByRole('button', { name: 'Send' });
+  await expect(firstSend).toBeEnabled();
+  await firstSend.click();
+
+  const citation = page.getByRole('link', {
+    name: 'Open source Document source, Page 2',
+  });
+  await expect(citation).toBeVisible();
+  await expect(citation).toHaveAttribute(
+    'href',
+    `/documents/${documentId}`,
+  );
+  await citation.focus();
+  await expect(citation).toBeFocused();
+  await expect(citation).toHaveText(/Document source/);
+
+  await citation.press('Enter');
+  await expectDocumentDestination();
+
+  // Use a distinct fixture URL for the click pass so the browser performs a
+  // fresh conversation bootstrap after returning from the document detail.
+  await openCitationFixture('/?fixture=citations&round=click');
+  const secondComposer = page.getByRole('textbox', { name: 'Message Aura' });
+  await secondComposer.fill('A grounded document question');
+  await expect(secondComposer).toHaveValue('A grounded document question');
+  const secondSend = page.getByRole('button', { name: 'Send' });
+  // Returning from the document route recreates the draft conversation. Wait
+  // for agent/model hydration before submitting the second interaction; a
+  // click alone can otherwise race the disabled draft send state on narrow
+  // viewports.
+  await expect(secondSend).toBeEnabled();
+  await secondSend.click();
+  const clickableCitation = page.getByRole('link', {
+    name: 'Open source Document source, Page 2',
+  });
+  await expect(clickableCitation).toBeVisible();
+  await clickableCitation.click();
+  await expectDocumentDestination();
 });
 
 test('shows incompatible models as disabled and persists a conversation model change', async ({
