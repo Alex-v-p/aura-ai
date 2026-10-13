@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 041a22fd63326a1dba5b7307125110fcb469652f098402f06a05a116b8e0c7c6
+// Contract SHA-256: 031cddbadc3e88a78fd4ad0d776c7e4cd43fb6940eac16e5cbcd9ab6aa0a75b7
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -364,6 +364,8 @@ export type DocumentSummary = { readonly "id": string; readonly "filename": stri
 
 export type DocumentDetail = { readonly "id": string; readonly "filename": string; readonly "mediaType": DocumentMediaType; readonly "byteCount": number; readonly "status": DocumentStatus; readonly "failure": DocumentFailure | null; readonly "version": number; readonly "extractedTextLength": number; readonly "chunkCount": number; readonly "createdAt": string; readonly "updatedAt": string; };
 
+export type DocumentPreview = { readonly "documentId": string; readonly "text": string; readonly "truncated": boolean; readonly "totalCharacters": number; };
+
 export type DocumentUploadReceipt = { readonly "document": DocumentDetail; readonly "duplicate": boolean; };
 
 export type SearchDocumentsRequest = { readonly "query": string; readonly "cursor"?: string; readonly "limit"?: number; readonly "mediaType"?: DocumentMediaType; };
@@ -473,6 +475,7 @@ export interface AuraApiOperations {
   readonly getDocument: { readonly response: DocumentDetail; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly deleteDocument: { readonly response: DocumentDeletionReceipt; readonly body: DocumentTransitionRequest; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly downloadDocument: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly getDocumentPreview: { readonly response: DocumentPreview; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly retryDocumentProcessing: { readonly response: DocumentDetail; readonly body: DocumentTransitionRequest; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -575,6 +578,7 @@ export const AURA_API_OPERATIONS = {
   getDocument: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}', requestMode: 'none', responseMode: 'json' },
   deleteDocument: { method: 'DELETE', pathTemplate: '/api/v1/documents/{document_id}', requestMode: 'json', responseMode: 'json' },
   downloadDocument: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/content', requestMode: 'none', responseMode: 'binary' },
+  getDocumentPreview: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/preview', requestMode: 'none', responseMode: 'json' },
   retryDocumentProcessing: { method: 'POST', pathTemplate: '/api/v1/documents/{document_id}/retry', requestMode: 'json', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', requestMode: 'none', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', requestMode: 'none', responseMode: 'json' },

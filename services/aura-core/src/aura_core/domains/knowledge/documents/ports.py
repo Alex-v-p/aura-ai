@@ -24,6 +24,10 @@ class DocumentObjectStoreError(RuntimeError):
     """Content-free dependency failure exposed by an object-store adapter."""
 
 
+class DocumentRepositoryUnavailable(RuntimeError):
+    """Content-free database dependency failure exposed by a repository adapter."""
+
+
 class DocumentObjectStore(Protocol):
     async def put_stream(
         self, key: str, stream: AsyncIterable[bytes], *, content_type: str
@@ -140,6 +144,10 @@ class DocumentRepository(Protocol):
     async def replace_chunks(self, document_id: UUID, chunks: list[DocumentChunk]) -> None: ...
 
     async def chunks(self, document_id: UUID) -> list[DocumentChunk]: ...
+
+    async def preview_chunks(
+        self, owner: tuple[str, str], document_id: UUID
+    ) -> list[DocumentChunk]: ...
 
     async def delete_chunks(self, document_id: UUID) -> None: ...
 

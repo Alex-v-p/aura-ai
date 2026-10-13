@@ -7,8 +7,10 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from aura_core.domains.knowledge.documents.ports import DocumentRepositoryUnavailable
 from aura_core.domains.knowledge.documents.public import (
     Document,
+    DocumentChunk,
     DocumentCommandSink,
     DocumentService,
     DocumentStatus,
@@ -200,6 +202,85 @@ async def test_document_upload_process_search_download_and_owner_isolation(
     finally:
         await client.aclose()
         await other.aclose()
+
+
+@pytest.mark.asyncio
+async def test_document_preview_is_ready_only_bounded_and_not_cached(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        service = api_app.state.aura.document_service
+        document = await service.upload(
+            session.principal.issuer,
+            session.principal.subject,
+            filename="preview-api.txt",
+            media_type="text/plain",
+            stream=b"preview marker " * 2_000,
+        )
+        not_ready = await client.get(f"/api/v1/documents/{document.id}/preview")
+        assert not_ready.status_code == 409
+        ready = await service.process(document.id)
+        before_preview = len(api_app.state.aura.metrics.snapshot())
+        response = await client.get(f"/api/v1/documents/{ready.id}/preview")
+        replay = await client.get(f"/api/v1/documents/{ready.id}/preview")
+        assert response.status_code == 200
+        assert replay.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        payload = response.json()
+        assert set(payload) == {"documentId", "text", "truncated", "totalCharacters"}
+        assert payload["documentId"] == str(ready.id)
+        assert len(payload["text"]) <= 20_000
+        assert payload["truncated"] is True
+        assert payload["totalCharacters"] == ready.extracted_text_length
+        preview_spans = [
+            record
+            for record in api_app.state.aura.metrics.snapshot()[before_preview:]
+            if record.kind == "span"
+            and record.component_id == "aura.knowledge.document_retrieval"
+            and dict(record.trace_attributes).get("operation") == "document.preview"
+        ]
+        assert len(preview_spans) == 2
+        assert len({record.trace_id for record in preview_spans}) == 2
+        assert all("preview marker" not in repr(record) for record in preview_spans)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_document_preview_repository_unavailability_is_safe_503_and_not_cached(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        class UnavailablePreviewRepository(MemoryDocumentRepository):
+            async def preview_chunks(
+                self, owner: tuple[str, str], document_id: UUID
+            ) -> list[DocumentChunk]:
+                del owner, document_id
+                raise DocumentRepositoryUnavailable("private database detail")
+
+        service = DocumentService(
+            UnavailablePreviewRepository(), MemoryDocumentObjectStore()
+        )
+        api_app.state.aura.document_service = service
+        document = await service.upload(
+            session.principal.issuer,
+            session.principal.subject,
+            filename="unavailable.txt",
+            media_type="text/plain",
+            stream=b"private preview",
+        )
+        await service.process(document.id)
+        response = await client.get(f"/api/v1/documents/{document.id}/preview")
+        assert response.status_code == 503
+        assert response.headers["cache-control"] == "no-store"
+        envelope = response.json()
+        assert envelope["status"] == 503
+        assert envelope["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert envelope["retryable"] is False
+        assert envelope.get("detail") == "document preview unavailable"
+        assert "private database detail" not in response.text
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

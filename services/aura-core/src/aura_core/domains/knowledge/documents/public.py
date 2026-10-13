@@ -18,17 +18,19 @@ from time import monotonic
 from typing import Any, ClassVar, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
-from aura_core.domains.knowledge.documents.chunking import chunk_text
+from aura_core.domains.knowledge.documents.chunking import CHUNK_OVERLAP, chunk_text
 from aura_core.domains.knowledge.documents.parser import DocumentParseError, parse_document
 from aura_core.domains.knowledge.documents.ports import (
     DocumentEmbedder,
     DocumentObjectStore,
     DocumentParser,
     DocumentRepository,
+    DocumentRepositoryUnavailable,
 )
 from aura_core.runtime.models.ports import ProviderTraceContext
 
 MAX_UPLOAD_BYTES = 100_000_000
+MAX_PREVIEW_CHARS = 20_000
 UPLOAD_SESSION_TTL = timedelta(minutes=15)
 PROCESSING_LEASE = timedelta(minutes=5)
 DOCUMENT_PROCESSING_TOPIC = "aura.knowledge.documents.process.v1"
@@ -111,6 +113,35 @@ class DocumentSearchHit:
     excerpt: str
     locator: str
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentPreview:
+    """Bounded, owner-authorized plain-text content for a ready document."""
+
+    document_id: UUID
+    text: str
+    truncated: bool
+    total_characters: int
+
+
+def _reconstruct_chunk_text(chunks: list[DocumentChunk]) -> str:
+    """Reconstruct normalized text without repeating deterministic overlap."""
+
+    if not chunks:
+        return ""
+    text = chunks[0].text
+    for chunk in chunks[1:]:
+        maximum = min(CHUNK_OVERLAP, len(text), len(chunk.text))
+        for overlap in range(maximum, 0, -1):
+            if text.endswith(chunk.text[:overlap]):
+                text += chunk.text[overlap:]
+                break
+        else:
+            # Keep manually supplied or legacy chunks readable while the
+            # production chunker continues to use its deterministic overlap.
+            text += "\n\n" + chunk.text
+    return text
 
 
 @dataclass
@@ -562,7 +593,17 @@ class MemoryDocumentRepository:
         self.chunk_rows[document_id] = list(chunks)
 
     async def chunks(self, document_id: UUID) -> list[DocumentChunk]:
-        return list(self.chunk_rows.get(document_id, ()))
+        return sorted(
+            self.chunk_rows.get(document_id, ()), key=lambda item: (item.ordinal, item.id)
+        )
+
+    async def preview_chunks(
+        self, owner: tuple[str, str], document_id: UUID
+    ) -> list[DocumentChunk]:
+        document = self.documents.get(document_id)
+        if document is None or document.owner != owner or not document.searchable:
+            return []
+        return await self.chunks(document_id)
 
     async def delete_chunks(self, document_id: UUID) -> None:
         self.chunk_rows.pop(document_id, None)
@@ -918,6 +959,7 @@ class DocumentService:
                 "aura.knowledge.document_upload": "document_upload_outcome",
                 "aura.knowledge.document_processing": "document_processing_outcome",
                 "aura.knowledge.document_deletion": "document_deletion_outcome",
+                "aura.knowledge.document_retrieval": "document_retrieval_outcome",
             }.get(component)
             if outcome_metric is not None:
                 metrics.increment(
@@ -1334,6 +1376,114 @@ class DocumentService:
             raise DocumentNotFound("document not found")
         chunks = await self.repository.chunks(document_id)
         return replace(item, chunk_count=len(chunks))  # type: ignore[arg-type]
+
+    async def preview(
+        self,
+        issuer: str,
+        subject: str,
+        document_id: UUID,
+        *,
+        context: ProviderTraceContext | None = None,
+    ) -> DocumentPreview:
+        """Return bounded plain text from ready chunks, never the raw object."""
+
+        started = monotonic()
+        request_context = context or ProviderTraceContext(
+            trace_id=uuid4().hex, span_id=uuid4().hex[:16]
+        )
+        owner = self._owner(issuer, subject)
+        try:
+            document = await self.repository.get(owner, document_id)
+        except DocumentRepositoryUnavailable:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="unavailable",
+                dependency="postgresql",
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
+        except Exception:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="error",
+                dependency="postgresql",
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
+        if document is None:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="not_found",
+                dependency="postgresql",
+                error_class="not_found",
+                context=request_context,
+            )
+            raise DocumentNotFound("document not found")
+        if document.status is not DocumentStatus.READY:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="conflict",
+                dependency="postgresql",
+                document_id=document.id,
+                error_class="validation",
+                context=request_context,
+            )
+            raise DocumentValidationError("document preview requires a ready document")
+
+        try:
+            chunks = await self.repository.preview_chunks(owner, document_id)
+        except DocumentRepositoryUnavailable:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="unavailable",
+                dependency="postgresql",
+                document_id=document.id,
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
+        except Exception:
+            self._record_metric(
+                "aura.knowledge.document_retrieval",
+                "document.preview",
+                started,
+                outcome="error",
+                dependency="postgresql",
+                document_id=document.id,
+                error_class="persistence",
+                context=request_context,
+            )
+            raise
+        ordered = sorted(chunks, key=lambda item: (item.ordinal, item.id))
+        text = _reconstruct_chunk_text(ordered)
+        bounded = text[:MAX_PREVIEW_CHARS]
+        self._record_metric(
+            "aura.knowledge.document_retrieval",
+            "document.preview",
+            started,
+            outcome="ok",
+            dependency="postgresql",
+            document_id=document.id,
+            context=request_context,
+        )
+        return DocumentPreview(
+            document.id,
+            bounded,
+            document.extracted_text_length > MAX_PREVIEW_CHARS,
+            min(document.extracted_text_length, 10 * 1024 * 1024),
+        )
 
     async def list(
         self,

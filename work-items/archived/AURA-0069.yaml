@@ -1,0 +1,240 @@
+id: AURA-0069
+title: Add the Aura Web document library experience
+status: integrated
+change_class: repository_governance
+intent: >
+  Add a calm responsive Knowledge Documents workspace for owner-private uploads,
+  processing visibility, search, inspection, bounded extracted-text preview,
+  authorized download, retry, and permanent deletion while preserving the
+  AURA-0068 storage and processing boundaries and keeping private document data
+  out of durable browser state, URLs, logs, telemetry, and service-worker caches.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Aura-managed Garage uploads remain the only v1 document source with no filesystem SMB Nextcloud arbitrary URL OCR image interpretation or sharing behavior
+    - Owner-approved Knowledge Documents destination with collection and UUID-only route-backed detail views
+    - Owner-approved exact 100000000-byte browser guidance limit for PDF DOCX Markdown and plain-text uploads while Core remains authoritative
+    - Owner-approved additive owner-authorized no-store document preview resource returning at most 20000 characters of already-sanitized extracted text for ready documents
+    - Owner-approved polling for processing state with no document SSE stream
+    - Document files filenames search text extracted content upload state and object URLs remain ephemeral and principal-bound in browser memory only
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - KNO-001
+  - KNO-003
+  - KNO-005
+  - KNO-006
+  - KNO-008
+  - KNO-012
+  - KNO-016
+  - KNO-019
+  - KNO-020
+  - KNO-024
+  - KNO-025
+  - KNO-026
+  - KNO-027
+  - KNO-028
+  - KNO-029
+  - AUI-001
+  - AUI-004
+  - AUI-005
+  - AUI-008
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - aura-api-client.generated
+  - aura-core.knowledge.documents.public-api
+  - aura-core.entrypoints.api.documents
+  - aura-web.knowledge.documents
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.shell
+  - aura-web.e2e
+  - frontend.storybook
+  - evaluation.document-library
+  - repository.module-registry
+allowed_paths:
+  - work-items/active/AURA-0069.yaml
+  - work-items/archived/AURA-0069.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/persistence.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - services/aura-core/tests/test_documents.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_document_retrieval.py
+  - services/aura-core/tests/test_document_sql.py
+  - services/aura-core/tests/system/test_document_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/knowledge/documents/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.component.spec.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/sw.js
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/documents.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/document-library.stories.ts
+  - frontend/tsconfig.base.json
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/events/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-observatory/**
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/libs/platform/aura-api-client/src/lib/aura-api-client.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.documents
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.document_retrieval
+  required_metrics:
+    - document_retrieval_duration_ms
+    - document_retrieval_outcome
+  required_evaluators:
+    - document_owner_isolation
+    - document_preview_boundedness
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Original files filenames extracted previews search text and owner identity are private and must not enter durable browser storage URLs logs telemetry caches stories snapshots or ordinary diagnostics.
+    - Every list inspect search preview download retry and delete operation remains owner-scoped and cross-owner identifiers resolve without existence disclosure.
+    - The preview resource is available only for ready documents returns at most 20000 characters and uses Cache-Control no-store without exposing chunks embeddings object keys or credentials.
+    - Search remains a POST body operation so private queries never enter route parameters or query strings.
+    - Upload uses the File body directly without whole-file arrayBuffer conversion and cancellation aborts the in-flight browser request without representing an uncertain server outcome as success.
+    - Upload create content retry and delete mutations use accepted-session CSRF same-origin idempotency and exact optimistic versions with reconciliation after uncertain outcomes.
+    - Temporary download object URLs are revoked and authenticated document responses are excluded from Cache Storage IndexedDB localStorage sessionStorage URLs and browser telemetry.
+    - Session or principal changes clear documents previews search text file references progress mutation state CSRF idempotency state object URLs and stale request generations.
+    - Document content remains untrusted evidence and is rendered only as plain text without HTML Markdown execution links or instruction authority.
+  data_classes:
+    - private_document_content
+    - private_document_filename_and_metadata
+    - private_document_search_text
+    - owner_identity
+    - document_and_processing_identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura OpenAPI additively exposes an owner-authorized GET /api/v1/documents/{document_id}/preview resource whose ready-only response contains no more than 20000 characters of sanitized extracted text plus bounded truncation metadata and whose generated client stays synchronized.
+  - Core obtains preview text through the knowledge.documents public API and repository using stable chunk order owner and ready-state checks no raw-object fetch and metadata-only retrieval telemetry.
+  - Aura Web exposes a grouped Knowledge destination named Documents with /documents and UUID-only /documents/:id routes while product behavior remains in the dedicated aura-documents feature library.
+  - The upload surface supports keyboard file selection drag and drop progress cancellation supported-format guidance and exact 100000000-byte client validation without buffering the entire file in browser code.
+  - Upload creation and streaming preserve CSRF idempotency expected-version content-length and content-type requirements and distinguish known rejection cancellation duplicate success recoverable failure unknown outcome and object-store unavailability.
+  - The searchable collection shows readable filename type size upload time and uploading queued processing ready failed or deleting state with polling that stops on terminal state session reset navigation teardown or cancellation.
+  - Duplicate upload success selects the existing document and communicates that Aura already has the content without creating a second apparent record.
+  - Route-backed detail shows metadata a plain-text bounded preview for ready documents an authorized ephemeral original download retry for retryable failure and an explicit focus-managed permanent-delete confirmation.
+  - Deleting documents disappear from ordinary active search immediately while asynchronous deletion or retryable cleanup failure is represented honestly and never enables download preview or search access.
+  - Empty initial-loading filtered-empty authentication permission offline object-store-unavailable parse-failure upload-canceled conflict unknown-outcome and deletion-retry states use calm plain language semantic status and a safe next action.
+  - Search text filenames file bodies previews and authenticated responses never enter URLs Cache Storage IndexedDB localStorage sessionStorage console logs browser telemetry or reusable Storybook and test artifacts.
+  - The static-shell service worker continues to bypass all /api/ traffic and non-GET requests and automated tests prove document list preview download search and upload traffic cannot populate its cache.
+  - Session and principal changes synchronously clear all private document state file references object URLs drafts progress idempotency and stale responses before accepting the replacement session.
+  - Keyboard drag-and-drop parity visible focus accessible labels live progress status focus restoration reduced motion 200 percent zoom reflow and axe checks cover collection upload detail preview download retry and deletion confirmation at desktop tablet and mobile widths.
+  - Light and dark Storybook states cover empty loading ready processing duplicate failed unavailable detail preview and deletion confirmation using only existing semantic tokens and generic shared components.
+  - No conversational document tool citation memory extraction document sharing replacement history attachments OCR image interpretation mounted source arbitrary URL new package framework service migration or durable browser storage is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0069.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0069.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0069.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0069.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0069.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests
+  - uv run pytest services/aura-core/tests/test_documents.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_sql.py services/aura-core/tests/system/test_document_api.py
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx lint aura-api-client
+  - pnpm --dir frontend exec nx test aura-documents
+  - pnpm --dir frontend exec nx lint aura-documents
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/documents.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

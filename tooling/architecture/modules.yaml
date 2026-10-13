@@ -149,6 +149,7 @@ modules:
   - aura_core.domains.knowledge.documents.repository
   dependencies:
   - aura-core.domains.knowledge.documents.persistence
+  - aura-core.domains.knowledge.documents.ports
   - aura-core.domains.knowledge.documents.public
 - id: aura-core.domains.automation.reminders
   root: services/aura-core/src/aura_core/domains/automation/reminders
@@ -1389,6 +1390,7 @@ modules:
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
+  - aura-core.runtime.models.ports
 - id: aura-core.entrypoints.cli
   root: services/aura-core/src/aura_core/entrypoints/cli.py
   kind: python
@@ -1729,6 +1731,12 @@ modules:
   root: frontend/libs/aura/governance/approvals
   kind: frontend-feature
   public_api: frontend/libs/aura/governance/approvals/src/index.ts
+  dependencies:
+  - aura-web.api-client
+- id: aura-web.knowledge-documents
+  root: frontend/libs/aura/knowledge/documents
+  kind: frontend-feature
+  public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
 - id: aura-contract.openapi

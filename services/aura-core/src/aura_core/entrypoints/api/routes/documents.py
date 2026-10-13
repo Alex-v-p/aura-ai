@@ -9,13 +9,16 @@ import json
 from collections.abc import AsyncIterator
 from typing import Literal, cast
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from aura_core.domains.knowledge.documents.ports import DocumentObjectStoreError
+from aura_core.domains.knowledge.documents.ports import (
+    DocumentObjectStoreError,
+    DocumentRepositoryUnavailable,
+)
 from aura_core.domains.knowledge.documents.public import (
     DocumentError,
     DocumentNotFound,
@@ -26,6 +29,7 @@ from aura_core.domains.knowledge.documents.public import (
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
 from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Session
+from aura_core.runtime.models.ports import ProviderTraceContext
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
@@ -283,6 +287,44 @@ async def inspect_document(
         return _detail_payload(await _service(request).get(*_owner(session), document_id))
     except DocumentNotFound as exc:
         raise HTTPException(status_code=404, detail="document not found") from exc
+
+
+@router.get("/{document_id}/preview")
+async def preview_document(
+    request: Request,
+    document_id: UUID,
+    response: Response,
+    session: Session = Depends(require_session),
+) -> dict[str, object]:
+    """Return a bounded plain-text preview without touching object storage."""
+
+    _no_store(response)
+    try:
+        preview = await _service(request).preview(
+            session.principal.issuer,
+            session.principal.subject,
+            document_id,
+            context=ProviderTraceContext(
+                trace_id=uuid4().hex,
+                span_id=uuid4().hex[:16],
+            ),
+        )
+        return {
+            "documentId": str(preview.document_id),
+            "text": preview.text,
+            "truncated": preview.truncated,
+            "totalCharacters": preview.total_characters,
+        }
+    except DocumentNotFound as exc:
+        raise HTTPException(status_code=404, detail="document not found") from exc
+    except DocumentValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DocumentRepositoryUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="document preview unavailable",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
 
 
 @router.get("/{document_id}/content")

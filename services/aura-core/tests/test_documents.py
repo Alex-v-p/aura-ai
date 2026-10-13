@@ -12,6 +12,7 @@ import zipfile
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, fields
 from typing import cast
+from uuid import UUID, uuid4
 
 import pytest
 from aura_core.domains.knowledge.documents.parser import (
@@ -20,7 +21,9 @@ from aura_core.domains.knowledge.documents.parser import (
     validate_format,
 )
 from aura_core.domains.knowledge.documents.public import (
+    MAX_PREVIEW_CHARS,
     MAX_UPLOAD_BYTES,
+    DocumentChunk,
     DocumentLifecycleEvent,
     DocumentNotFound,
     DocumentService,
@@ -87,6 +90,31 @@ class RecordingEvents:
         self.records.append((event, document))
 
 
+class RecordingMetrics:
+    def __init__(self) -> None:
+        self.spans: list[tuple[str, str, dict[str, object]]] = []
+        self.measurements: list[tuple[str, str, dict[str, str]]] = []
+
+    def record_span(
+        self, component: str, operation: str, duration_ms: float, **attributes: object
+    ) -> None:
+        self.spans.append((component, operation, {"duration_ms": duration_ms, **attributes}))
+
+    def observe(
+        self, component: str, name: str, value: float, *, trace_id: str | None = None,
+        **attributes: str,
+    ) -> None:
+        del value, trace_id
+        self.measurements.append((component, name, attributes))
+
+    def increment(
+        self, component: str, name: str, *, trace_id: str | None = None,
+        **attributes: str,
+    ) -> None:
+        del trace_id
+        self.measurements.append((component, name, attributes))
+
+
 def _docx(*, members: dict[str, bytes]) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -111,12 +139,14 @@ def _service(
     store: MemoryDocumentObjectStore | None = None,
     embedder: RecordingEmbedder | None = None,
     events: RecordingEvents | None = None,
+    metrics: RecordingMetrics | None = None,
 ) -> DocumentService:
     return DocumentService(
         MemoryDocumentRepository(),
         store or MemoryDocumentObjectStore(),
         embedder=embedder,
         events=events,
+        metrics=metrics,
     )
 
 
@@ -441,3 +471,76 @@ async def test_lifecycle_events_are_identifier_only_ordered_and_replayable() -> 
         "version",
         "occurred_at",
     }
+
+
+@pytest.mark.asyncio
+async def test_ready_preview_is_owner_scoped_bounded_and_deterministically_ordered() -> None:
+    service = _service()
+    document = await service.upload(
+        *OWNER,
+        filename="preview.txt",
+        media_type="text/plain",
+        stream=(b"first section\n" + b"x" * (MAX_PREVIEW_CHARS + 100)),
+    )
+    ready = await service.process(document.id)
+    preview = await service.preview(*OWNER, ready.id)
+    assert len(preview.text) <= MAX_PREVIEW_CHARS
+    assert preview.truncated is True
+    assert preview.total_characters == ready.extracted_text_length
+    assert preview.text.startswith("first section")
+    with pytest.raises(DocumentNotFound):
+        await service.preview(*OTHER_OWNER, ready.id)
+
+
+@pytest.mark.asyncio
+async def test_preview_reconstructs_chunk_overlap_without_duplicate_text() -> None:
+    service = _service()
+    source = " ".join(f"token-{index}" for index in range(900))
+    document = await service.upload(
+        *OWNER,
+        filename="multi-chunk.txt",
+        media_type="text/plain",
+        stream=source.encode(),
+    )
+    ready = await service.process(document.id)
+    preview = await service.preview(*OWNER, ready.id)
+    assert preview.truncated is False
+    assert preview.text == source
+    assert preview.total_characters == len(source)
+
+
+@pytest.mark.asyncio
+async def test_preview_records_bounded_outcomes_for_missing_not_ready_and_repository_failure(
+) -> None:
+    metrics = RecordingMetrics()
+    service = _service(metrics=metrics)
+    with pytest.raises(DocumentNotFound):
+        await service.preview(*OWNER, uuid4())
+    queued = await service.upload(
+        *OWNER, filename="queued.txt", media_type="text/plain", stream=b"queued"
+    )
+    with pytest.raises(DocumentValidationError):
+        await service.preview(*OWNER, queued.id)
+
+    class FailingPreviewRepository(MemoryDocumentRepository):
+        async def preview_chunks(
+            self, owner: tuple[str, str], document_id: UUID
+        ) -> list[DocumentChunk]:
+            del owner, document_id
+            raise RuntimeError("database unavailable")
+
+    failing = DocumentService(
+        FailingPreviewRepository(), MemoryDocumentObjectStore(), metrics=metrics
+    )
+    document = await failing.upload(
+        *OWNER, filename="failure.txt", media_type="text/plain", stream=b"failure"
+    )
+    await failing.process(document.id)
+    with pytest.raises(RuntimeError):
+        await failing.preview(*OWNER, document.id)
+    outcomes = [
+        attributes.get("outcome")
+        for _component, name, attributes in metrics.measurements
+        if name == "document_retrieval_outcome"
+    ]
+    assert {"not_found", "conflict", "error"} <= set(outcomes)

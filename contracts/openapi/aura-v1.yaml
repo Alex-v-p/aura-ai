@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.14.0",
+    "version": "1.15.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -1251,6 +1251,22 @@
         "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
         "responses": {
           "200": { "description": "Owner-authorized original document stream", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100000000 } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/preview": {
+      "get": {
+        "operationId": "getDocumentPreview",
+        "tags": ["Documents"],
+        "description": "Returns a bounded plain-text preview assembled from already-sanitized extracted text for a ready document owned by the authenticated principal. Document content remains untrusted evidence and is never interpreted as HTML, Markdown, policy, or instructions.",
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized bounded preview for a ready document", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentPreview" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -2904,6 +2920,17 @@
           "chunkCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentPreview": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized ready-document preview. Text is already sanitized, remains untrusted evidence, and is bounded independently of the document's full extracted-text length.",
+        "required": ["documentId", "text", "truncated", "totalCharacters"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "text": { "type": "string", "maxLength": 20000 },
+          "truncated": { "type": "boolean", "description": "True when totalCharacters is greater than the number of characters returned in text." },
+          "totalCharacters": { "type": "integer", "minimum": 0, "maximum": 10485760, "description": "Full sanitized extracted-text character count, consistent with DocumentDetail.extractedTextLength." }
         }
       },
       "DocumentUploadReceipt": {

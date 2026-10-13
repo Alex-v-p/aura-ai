@@ -1,4 +1,4 @@
-"""Static OpenAPI and lifecycle-event assertions for AURA-0068."""
+"""Static document OpenAPI and lifecycle-event assertions."""
 
 from __future__ import annotations
 
@@ -7,6 +7,19 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
+from aura_core.domains.knowledge.documents.evaluation import (
+    COMPONENT_ID,
+    COMPONENT_VERSION,
+    DELETION_COMPONENT_ID,
+    DOCUMENT_COMPONENT_VERSIONS,
+    EVALUATOR_ALLOWED_COMPONENTS,
+    EVALUATOR_COMPONENTS,
+    EVALUATOR_VERSIONS,
+    PROCESSING_COMPONENT_ID,
+    RETRIEVAL_COMPONENT_ID,
+    UPLOAD_COMPONENT_ID,
+)
+from aura_core.platform.telemetry import COMPONENT_VERSIONS
 
 ROOT = Path(__file__).parents[3]
 
@@ -17,7 +30,7 @@ def _contract() -> dict[str, Any]:
 
 def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_schemas() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.14.0"
+    assert contract["info"]["version"] == "1.15.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected = {
         "/api/v1/documents/uploads",
@@ -26,6 +39,7 @@ def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_sch
         "/api/v1/documents/search",
         "/api/v1/documents/{document_id}",
         "/api/v1/documents/{document_id}/content",
+        "/api/v1/documents/{document_id}/preview",
         "/api/v1/documents/{document_id}/retry",
     }
     assert expected <= paths.keys()
@@ -73,6 +87,20 @@ def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_sch
         schemas["DocumentDetail"]["properties"]["extractedTextLength"]["maximum"]
         == 10 * 1024 * 1024
     )
+    preview = paths["/api/v1/documents/{document_id}/preview"]["get"]
+    assert preview["operationId"] == "getDocumentPreview"
+    assert preview["responses"]["200"]["headers"]["Cache-Control"] == {
+        "required": True,
+        "schema": {"type": "string", "const": "no-store"},
+    }
+    assert "409" in preview["responses"]
+    preview_schema = schemas["DocumentPreview"]
+    assert preview_schema["additionalProperties"] is False
+    assert preview_schema["properties"]["text"]["maxLength"] == 20_000
+    assert preview_schema["properties"]["totalCharacters"]["maximum"] == 10 * 1024 * 1024
+    assert {"documentId", "text", "truncated", "totalCharacters"} == set(
+        preview_schema["required"]
+    )
     for name in (
         "DocumentSummary",
         "DocumentDetail",
@@ -118,6 +146,7 @@ def test_generated_client_exposes_the_same_document_operations_and_headers() -> 
         "searchDocuments",
         "getDocument",
         "downloadDocument",
+        "getDocumentPreview",
         "retryDocumentProcessing",
         "deleteDocument",
     ):
@@ -166,4 +195,63 @@ def test_document_component_manifests_allow_only_metadata_observation() -> None:
             "evidence_id",
             "job_id",
         }
+        if manifest.get("component", {}).get("id") == "aura.knowledge.document_retrieval":
+            operations = {
+                item["id"]: item for item in cast(list[dict[str, str]], manifest["operations"])
+            }
+            assert operations == {
+                "document.search": {
+                    "id": "document.search",
+                    "input_schema": "document-search-v1",
+                    "output_schema": "document-search-result-v1",
+                },
+                "document.preview": {
+                    "id": "document.preview",
+                    "input_schema": "document-preview-request-v1",
+                    "output_schema": "document-preview-v1",
+                },
+            }
     assert required_metrics <= found_metrics
+
+
+def test_document_retrieval_manifest_matches_runtime_and_evaluator_registries() -> None:
+    manifest_path = (
+        ROOT
+        / "services/aura-core/resources/component-manifests/document-retrieval.yaml"
+    )
+    manifest = cast(dict[str, Any], yaml.safe_load(manifest_path.read_text()))
+    component = cast(dict[str, str], manifest["component"])
+
+    assert component["id"] == COMPONENT_ID
+    assert component["version"] == COMPONENT_VERSION == COMPONENT_VERSIONS[COMPONENT_ID]
+    evaluator_ids = set(cast(list[str], manifest["evaluators"]))
+    assert evaluator_ids <= set(EVALUATOR_VERSIONS)
+    assert "document_preview_boundedness" in evaluator_ids
+
+
+def test_document_evaluator_registry_matches_each_manifest_component() -> None:
+    expected_components = {
+        UPLOAD_COMPONENT_ID,
+        PROCESSING_COMPONENT_ID,
+        RETRIEVAL_COMPONENT_ID,
+        DELETION_COMPONENT_ID,
+    }
+    manifests: dict[str, dict[str, Any]] = {}
+    manifest_dir = ROOT / "services/aura-core/resources/component-manifests"
+    for path in manifest_dir.glob("document-*.yaml"):
+        manifest = cast(dict[str, Any], yaml.safe_load(path.read_text()))
+        component = cast(dict[str, str], manifest["component"])
+        component_id = component["id"]
+        if component_id in expected_components:
+            manifests[component_id] = manifest
+
+    assert set(manifests) == expected_components
+    assert {
+        component_id: str(manifest["component"]["version"])
+        for component_id, manifest in manifests.items()
+    } == dict(DOCUMENT_COMPONENT_VERSIONS)
+    for component_id, manifest in manifests.items():
+        for evaluator_id in cast(list[str], manifest["evaluators"]):
+            assert evaluator_id in EVALUATOR_COMPONENTS
+            assert component_id in EVALUATOR_ALLOWED_COMPONENTS[evaluator_id]
+            assert evaluator_id in EVALUATOR_VERSIONS

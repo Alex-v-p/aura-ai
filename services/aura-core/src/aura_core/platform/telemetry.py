@@ -49,7 +49,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.memory_retrieval": "1.2.0",
     "aura.knowledge.document_upload": "1.0.0",
     "aura.knowledge.document_processing": "1.0.0",
-    "aura.knowledge.document_retrieval": "1.0.0",
+    "aura.knowledge.document_retrieval": "1.1.0",
     "aura.knowledge.document_deletion": "1.0.0",
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
@@ -312,7 +312,11 @@ _METRICS: Mapping[str, frozenset[str]] = {
         }
     ),
     "aura.knowledge.document_retrieval": frozenset(
-        {"document_retrieval_duration_ms", "document_retrieval_candidate_count"}
+        {
+            "document_retrieval_duration_ms",
+            "document_retrieval_outcome",
+            "document_retrieval_candidate_count",
+        }
     ),
     "aura.knowledge.document_deletion": frozenset(
         {
@@ -473,7 +477,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     }),
     "aura.knowledge.document_upload": frozenset({"document.upload"}),
     "aura.knowledge.document_processing": frozenset({"document.process", "document.retry"}),
-    "aura.knowledge.document_retrieval": frozenset({"document.search"}),
+    "aura.knowledge.document_retrieval": frozenset({"document.search", "document.preview"}),
     "aura.knowledge.document_deletion": frozenset({"document.delete"}),
 }
 

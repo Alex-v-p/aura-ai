@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy import cast as sql_cast
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.knowledge.documents.persistence import (
@@ -23,6 +24,7 @@ from aura_core.domains.knowledge.documents.persistence import (
     DocumentUploadSessionRow,
     VectorType,
 )
+from aura_core.domains.knowledge.documents.ports import DocumentRepositoryUnavailable
 from aura_core.domains.knowledge.documents.public import (
     Document,
     DocumentChunk,
@@ -465,15 +467,18 @@ class SqlDocumentRepository:
         return document
 
     async def get(self, owner: tuple[str, str], document_id: UUID) -> Document | None:
-        async with self.sessions() as session:
-            row = await session.scalar(
-                select(DocumentRow).where(
-                    DocumentRow.id == document_id,
-                    DocumentRow.principal_issuer == owner[0],
-                    DocumentRow.principal_subject == owner[1],
+        try:
+            async with self.sessions() as session:
+                row = await session.scalar(
+                    select(DocumentRow).where(
+                        DocumentRow.id == document_id,
+                        DocumentRow.principal_issuer == owner[0],
+                        DocumentRow.principal_subject == owner[1],
+                    )
                 )
-            )
-            return self._document(row) if row else None
+                return self._document(row) if row else None
+        except (DBAPIError, TimeoutError) as exc:
+            raise DocumentRepositoryUnavailable("document repository unavailable") from exc
 
     async def get_any(self, document_id: UUID) -> Document | None:
         async with self.sessions() as session:
@@ -721,6 +726,30 @@ class SqlDocumentRepository:
                 )
             ).all()
             return [self._chunk(row) for row in rows]
+
+    async def preview_chunks(
+        self, owner: tuple[str, str], document_id: UUID
+    ) -> list[DocumentChunk]:
+        """Read ready chunks through the owner-scoped document boundary."""
+
+        try:
+            async with self.sessions() as session:
+                rows = (
+                    await session.scalars(
+                        select(DocumentChunkRow)
+                        .join(DocumentRow, DocumentRow.id == DocumentChunkRow.document_id)
+                        .where(
+                            DocumentChunkRow.document_id == document_id,
+                            DocumentRow.principal_issuer == owner[0],
+                            DocumentRow.principal_subject == owner[1],
+                            DocumentRow.status == DocumentStatus.READY.value,
+                        )
+                        .order_by(DocumentChunkRow.ordinal, DocumentChunkRow.id)
+                    )
+                ).all()
+                return [self._chunk(row) for row in rows]
+        except (DBAPIError, TimeoutError) as exc:
+            raise DocumentRepositoryUnavailable("document repository unavailable") from exc
 
     async def delete_chunks(self, document_id: UUID) -> None:
         async with self.sessions() as session:

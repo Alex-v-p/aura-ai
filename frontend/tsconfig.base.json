@@ -24,6 +24,7 @@
       "@aura/aura/interaction/agents": ["libs/aura/interaction/agents/src/index.ts"],
       "@aura/aura/interaction/personas": ["libs/aura/interaction/personas/src/index.ts"],
       "@aura/aura/knowledge/memory": ["libs/aura/knowledge/memory/src/index.ts"],
+      "@aura/aura/knowledge/documents": ["libs/aura/knowledge/documents/src/index.ts"],
       "@aura/aura/automation/reminders": ["libs/aura/automation/reminders/src/index.ts"],
       "@aura/aura/automation/notifications": ["libs/aura/automation/notifications/src/index.ts"],
       "@aura/aura/governance/approvals": ["libs/aura/governance/approvals/src/index.ts"],
