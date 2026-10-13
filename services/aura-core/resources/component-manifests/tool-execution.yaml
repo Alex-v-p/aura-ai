@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.tool_execution
-  version: 1.2.0
+  version: 1.2.1
   owner: runtime.tools
   category: execution
 input:
@@ -15,6 +15,7 @@ output:
 dependencies:
   - aura.runtime.policy_evaluation
   - aura.knowledge.memory_retrieval
+  - reminder_store
 metrics:
   - tool_execution_duration_ms
   - tool_execution_outcome
@@ -36,8 +37,8 @@ evaluators:
   - conversational_reminder_owner_isolation
   - conversational_reminder_metadata_only_capture
 cardinality:
-  metric_attributes: [outcome, error_class, dependency]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id, idempotency]
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id, tool_policy_revision_id, approval_id, tool_call_id, idempotency]
   prohibited: [prompt, response, arguments, query, target_query, content, recurrence, timezone, due_at, owner_identity, result, raw_result, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

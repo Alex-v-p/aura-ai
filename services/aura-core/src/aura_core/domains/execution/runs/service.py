@@ -400,6 +400,7 @@ class RunCoordinator:
                 # Resumption does not pass through the ordinary execution
                 # finally block.  Clear terminal state explicitly, while a
                 # still-waiting run remains eligible for same-worker resume.
+                self._active_tool_attempts.pop(run.id, None)
                 if run.status is not RunStatus.WAITING_FOR_CONFIRMATION:
                     self._clear_thinking_stream(run.id)
             return
@@ -916,19 +917,32 @@ class RunCoordinator:
             outcome="approved" if approved else "denied",
             **self._metadata(run),
         )
-        self._tool_span(
-            "aura.runtime.tool_execution",
-            "tool.execute",
-            0.0,
-            run,
-            secrets.token_hex(8),
-            worker_span_id,
-            "approved" if approved else "denied",
-            None,
-            tool_call_id=call_id,
-            approval_id=run.approval_id,
-            dependency="reminder_store",
-        )
+        if approved:
+            self._active_tool_attempts[run.id] = {
+                "conversation": conversation,
+                "call_id": call_id,
+                "tool_id": resumed_tool_id,
+                "version": resumed_tool_version,
+                "execution_started": perf_counter(),
+                "execution_span_id": secrets.token_hex(8),
+                "parent_span_id": worker_span_id,
+                "approval_id": run.approval_id,
+                "dependency": "reminder_store",
+            }
+        else:
+            self._tool_span(
+                "aura.runtime.tool_execution",
+                "tool.execute",
+                0.0,
+                run,
+                secrets.token_hex(8),
+                worker_span_id,
+                "denied",
+                "policy",
+                tool_call_id=call_id,
+                approval_id=run.approval_id,
+                dependency="reminder_store",
+            )
         if approved and proposal is None:
             raise RunExecutionFailure("persistence")
         if approved and self.reminder_service is None:
@@ -945,6 +959,9 @@ class RunCoordinator:
             await self._publish_tool_status(
                 conversation, run, call_id, resumed_tool_id, resumed_tool_version, "executing"
             )
+            active_attempt = self._active_tool_attempts.get(run.id)
+            if active_attempt is not None:
+                active_attempt["execution_started"] = perf_counter()
             if is_command_proposal:
                 executor = getattr(self.reminder_service, "execute_command", None)
                 if not callable(executor):
@@ -953,7 +970,11 @@ class RunCoordinator:
                     conversation.principal_issuer,
                     conversation.principal_subject,
                     proposal,
-                    idempotency_key=f"approval:{run.approval_id}",
+                    # Approval IDs are UUIDs and are the durable identity of
+                    # this approved command.  Keep the same key for every
+                    # redelivery so both legacy and typed reminder ports can
+                    # enforce their idempotency contracts.
+                    idempotency_key=str(run.approval_id),
                 )
                 descriptor = self.tool_registry.get(resumed_tool_id, resumed_tool_version)
                 if descriptor is None:
@@ -978,6 +999,15 @@ class RunCoordinator:
                     "status": reminder.status.value,
                     "dueAt": reminder.due_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 }
+            active_attempt = self._active_tool_attempts.get(run.id)
+            if active_attempt is not None:
+                execution_started = active_attempt.get("execution_started")
+                if isinstance(execution_started, (int, float)):
+                    active_attempt["execution_duration"] = max(
+                        0.0, perf_counter() - execution_started
+                    )
+                completed_attempt = self._active_tool_attempts.pop(run.id, None)
+                self._record_tool_execution(run, completed_attempt, "completed", None)
             evidence = _render_tool_evidence(result_value)
         else:
             await self._publish_tool_status(
@@ -1023,6 +1053,7 @@ class RunCoordinator:
         if not await self._consume_synthesis(
             conversation, run, attempt_id, provider, synthesis, output_characters, started, worker_span_id
         ):
+            self._active_tool_attempts.pop(run.id, None)
             return
         conversation, finished, assistant = await self.store.finish_run(
             run.id, RunStatus.COMPLETED, attempt_id=attempt_id
@@ -1051,19 +1082,6 @@ class RunCoordinator:
                 "reminder_command_execution_outcome" if is_command_proposal else "reminder_create_tool_outcome",
                 outcome="completed",
                 **self._metadata(finished),
-            )
-            self._tool_span(
-                "aura.runtime.tool_execution",
-                "tool.execute",
-                0.0,
-                finished,
-                secrets.token_hex(8),
-                worker_span_id,
-                "completed",
-                None,
-                tool_call_id=call_id,
-                approval_id=finished.approval_id,
-                dependency="reminder_store",
             )
 
     async def _settle_resumed_failure(
@@ -1116,19 +1134,8 @@ class RunCoordinator:
             outcome="failed",
             **self._metadata(run),
         )
-        self._tool_span(
-            "aura.runtime.tool_execution",
-            "tool.execute",
-            0.0,
-            run,
-            secrets.token_hex(8),
-            worker_span_id,
-            "failed",
-            "execution",
-            tool_call_id=run.pending_tool_call_id,
-            approval_id=run.approval_id,
-            dependency="reminder_store",
-        )
+        failed_attempt = self._active_tool_attempts.pop(run.id, None)
+        self._record_tool_execution(run, failed_attempt, "failed", "execution")
         try:
             await self._publish_tool_status(
                 conversation,
@@ -1225,19 +1232,6 @@ class RunCoordinator:
             else "reminder_create_tool_outcome",
             outcome="completed",
             **self._metadata(run),
-        )
-        self._tool_span(
-            "aura.runtime.tool_execution",
-            "tool.execute",
-            0.0,
-            run,
-            secrets.token_hex(8),
-            None,
-            "completed",
-            None,
-            tool_call_id=call_id,
-            approval_id=approval_id,
-            dependency="reminder_store",
         )
         return True
 
@@ -2064,15 +2058,27 @@ class RunCoordinator:
         parent_span_id = attempt.get("parent_span_id")
         if not isinstance(started, (int, float)) or not isinstance(span_id, str):
             return
+        duration = attempt.get("execution_duration")
+        duration_seconds = (
+            float(duration)
+            if isinstance(duration, (int, float))
+            else perf_counter() - started
+        )
+        call_id = attempt.get("call_id")
+        approval_id = attempt.get("approval_id")
+        dependency = attempt.get("dependency")
         self._tool_span(
             "aura.runtime.tool_execution",
             "tool.execute",
-            perf_counter() - started,
+            duration_seconds,
             run,
             span_id,
             parent_span_id if isinstance(parent_span_id, str) else None,
             status,
             error_class,
+            tool_call_id=call_id if isinstance(call_id, UUID) else None,
+            approval_id=approval_id if isinstance(approval_id, UUID) else None,
+            dependency=dependency if isinstance(dependency, str) else None,
         )
         self.metrics.increment(
             "aura.runtime.tool_execution",

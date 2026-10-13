@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuraApprovalsApi } from './approvals-api';
-import { ApprovalApiError, approvalSummaryFromDetail, collectApprovalHistory, decisionFailureNotice, emptyApprovalCollection, isTerminalApproval, type ApprovalCollection, type ApprovalDetail, type ApprovalStatus, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalView, type ApprovalsApi } from './approval-models';
+import { ApprovalApiError, approvalSummaryFromDetail, collectApprovalHistory, decisionFailureNotice, emptyApprovalCollection, isTerminalApproval, shouldPreserveReviewedApproval, type ApprovalCollection, type ApprovalDetail, type ApprovalStatus, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalView, type ApprovalsApi } from './approval-models';
 
 const retryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
 function statusOf(error: unknown): number | null { const status = (error as { readonly status?: unknown })?.status; return typeof status === 'number' ? status : null; }
@@ -120,7 +120,12 @@ export class ApprovalStore {
   async inspect(id: string): Promise<ApprovalDetail | null> {
     const routeChanged = this.detailKey !== id;
     if (routeChanged && this.activeMutation) { this.addDecisionConfirmation(this.activeMutation.approvalId); ++this.mutationGeneration; this.activeMutation = null; this.saving.set(false); }
-    const session = this.sessionGeneration; const generation = ++this.detailGeneration; this.detailKey = id; this.reviewedId = null; this.selected.set(null); this.detailLoading.set(true); this.detailError.set(null); this.notice.set(null); if (!this.activeMutation) this.saving.set(false);
+    // An approval event can reconcile the same detail while its decision
+    // buttons are still in the DOM. Keep the last owner-reviewed snapshot
+    // until the replacement arrives so a real click cannot be dropped merely
+    // because reviewedId was cleared between pointerdown and click.
+    const preserveReviewedDetail = shouldPreserveReviewedApproval(routeChanged, this.reviewedId, this.selected()?.id ?? null, id);
+    const session = this.sessionGeneration; const generation = ++this.detailGeneration; this.detailKey = id; if (!preserveReviewedDetail) { this.reviewedId = null; this.selected.set(null); } this.detailLoading.set(true); this.detailError.set(null); this.notice.set(null); if (!this.activeMutation) this.saving.set(false);
     try { const detail = await this.api.get(id); if (session !== this.sessionGeneration || generation !== this.detailGeneration || this.detailKey !== id) return null; this.selected.set(detail); this.reviewedId = id; return detail; }
     catch (error: unknown) { if (this.handleAuthorizationFailure(error, session)) return null; if (session === this.sessionGeneration && generation === this.detailGeneration && this.detailKey === id) { const message = safeMessage(error, 'That approval could not be loaded.'); const status = statusOf(error); this.errorStatus.set(status); this.detailError.set(message); } return null; }
     finally { if (session === this.sessionGeneration && generation === this.detailGeneration && this.detailKey === id) this.detailLoading.set(false); }

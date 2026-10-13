@@ -19,6 +19,12 @@ _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _private_pem = _private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
 _key = JsonWebKey.import_key(_private_pem, {"kid": "aura-e2e", "use": "sig", "alg": "RS256"})
 _codes: dict[str, dict[str, str]] = {}
+# The marker is intentionally explicit and test-only.  Keeping the seen set in
+# the provider process makes retries of the same marked prompt deterministic:
+# native tool selection can create one proposal, while resumed tools-disabled
+# synthesis can never create a second one.
+_REMINDER_SERIES_MARKER = "AURA_E2E_REMINDER_SERIES_CREATE"
+_series_markers_seen: set[str] = set()
 
 
 def kind() -> str:
@@ -157,7 +163,12 @@ async def tags() -> dict[str, list[dict[str, str]]]:
 async def show(body: dict[str, Any]) -> dict[str, list[str]]:
     if kind() != "ollama":
         raise HTTPException(status_code=404)
-    return {"capabilities": ["embedding"] if body.get("name") == "embed" else ["chat"]}
+    name = body.get("name")
+    if name == "embed":
+        return {"capabilities": ["embedding"]}
+    if name == "fixture-chat":
+        return {"capabilities": ["chat", "tools", "tool_calling"]}
+    return {"capabilities": ["chat"]}
 
 
 @app.post("/api/chat")
@@ -168,8 +179,45 @@ async def chat(body: dict[str, Any]) -> StreamingResponse:
     content = next(
         (item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), ""
     )
+    tools_enabled = isinstance(body.get("tools"), list) and bool(body.get("tools"))
+
+    # Ollama's native tool protocol must not mix text and a tool call in the
+    # same selection stream.  The marker is used only by the real browser
+    # approval flow; ordinary fixture prompts retain the old text behavior.
+    marked = isinstance(content, str) and _REMINDER_SERIES_MARKER in content
+    if marked and tools_enabled and content not in _series_markers_seen:
+        _series_markers_seen.add(content)
+        # The value is deliberately naive: Core interprets conversational
+        # wall-clock input through the run's pinned Europe/Brussels timezone.
+        local_start = (datetime.now(UTC) + timedelta(days=30)).replace(tzinfo=None)
+        recurrence = {"frequency": "daily", "interval": 1}
+
+        async def tool_stream() -> Any:
+            yield json.dumps(
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "reminder.series.create",
+                                    "arguments": {
+                                        "content": "Fixture recurring reminder",
+                                        "localStart": local_start.isoformat(timespec="seconds"),
+                                        "recurrence": recurrence,
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                }
+            ) + "\n"
+            yield json.dumps({"message": {}, "done": True}) + "\n"
+
+        return StreamingResponse(tool_stream(), media_type="application/x-ndjson")
 
     async def stream() -> Any:
+        # The resumed approval path deliberately omits tools.  It must receive
+        # ordinary text synthesis even for the marked prompt.
         yield json.dumps({"message": {"content": "Fixture reply: "}}) + "\n"
         if isinstance(content, str) and content.startswith("background-run-"):
             await asyncio.sleep(4)

@@ -47,6 +47,39 @@ interface NotificationPageResponse extends JsonObject {
   readonly unacknowledgedCount?: number;
 }
 
+interface ApprovalSummary extends JsonObject {
+  readonly id?: string;
+  readonly conversationId?: string;
+  readonly toolId?: string;
+  readonly status?: string;
+  readonly executionStatus?: string;
+  readonly version?: number;
+}
+
+interface ApprovalDetail extends ApprovalSummary {
+  readonly proposal?: JsonObject | null;
+}
+
+interface ReminderSeriesResponse extends JsonObject {
+  readonly id?: string;
+  readonly status?: string;
+  readonly nextReminderId?: string | null;
+  readonly version?: number;
+}
+
+interface ReminderSeriesPageResponse extends JsonObject {
+  readonly items?: ReadonlyArray<ReminderSeriesResponse>;
+}
+
+interface ReminderOccurrenceResponse extends JsonObject {
+  readonly reminderId?: string;
+  readonly outcome?: string;
+}
+
+interface ReminderOccurrencePageResponse extends JsonObject {
+  readonly items?: ReadonlyArray<ReminderOccurrenceResponse>;
+}
+
 const configuredModes = (process.env['AURA_E2E_IDENTITY_MODES'] ?? process.env['AURA_E2E_IDENTITY_MODE'] ?? 'local-identity')
   .split(',')
   .map((mode) => mode.trim())
@@ -110,6 +143,74 @@ async function waitForCompletedRun(
     ?? (detail.currentRun?.['id'] === runId ? detail.currentRun : undefined);
   expect(completed).toMatchObject({ status: 'completed', error: null });
   return detail;
+}
+
+async function waitForPendingReminderApproval(
+  page: Page,
+  config: StackConfig,
+  conversationId: string,
+): Promise<ApprovalSummary> {
+  let matching: ApprovalSummary[] = [];
+  await expect.poll(async () => {
+    const response = await page.request.get(new URL('/api/v1/approvals?status=pending&limit=100', config.baseUrl).toString());
+    if (!response.ok()) return false;
+    const payload = (await response.json()) as { items?: ReadonlyArray<ApprovalSummary> };
+    matching = (payload.items ?? []).filter((item) => item.conversationId === conversationId && item.toolId === 'reminder.series.create');
+    return matching.length === 1;
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+  const approval = matching[0];
+  if (!approval?.id) throw new Error('The marked conversation did not create one recurring-reminder approval');
+  return approval;
+}
+
+async function waitForApprovedReminderApproval(
+  page: Page,
+  config: StackConfig,
+  approvalId: string,
+): Promise<ApprovalDetail> {
+  let detail: ApprovalDetail = {};
+  await expect.poll(async () => {
+    const response = await page.request.get(new URL(`/api/v1/approvals/${approvalId}`, config.baseUrl).toString());
+    if (!response.ok()) return false;
+    detail = (await response.json()) as ApprovalDetail;
+    return detail.status === 'approved' && detail.executionStatus === 'completed';
+  }, { timeout: 120_000, intervals: [500, 1_000, 2_000, 5_000] }).toBe(true);
+  expect(detail).toMatchObject({ id: approvalId, status: 'approved', executionStatus: 'completed' });
+  return detail;
+}
+
+async function waitForOneActiveReminderSeries(
+  page: Page,
+  config: StackConfig,
+): Promise<ReminderSeriesResponse> {
+  let active: ReminderSeriesResponse[] = [];
+  await expect.poll(async () => {
+    const response = await page.request.get(new URL('/api/v1/reminder-series?limit=100', config.baseUrl).toString());
+    if (!response.ok()) return false;
+    const payload = (await response.json()) as ReminderSeriesPageResponse;
+    active = (payload.items ?? []).filter((item) => item.status === 'active');
+    return active.length === 1 && typeof active[0]?.nextReminderId === 'string';
+  }, { timeout: 120_000, intervals: [500, 1_000, 2_000, 5_000] }).toBe(true);
+  const series = active[0];
+  if (!series?.id || !series.nextReminderId) throw new Error('The approved command did not create one active recurring series');
+  return series;
+}
+
+async function waitForGeneratedReminder(
+  page: Page,
+  config: StackConfig,
+  seriesId: string,
+  reminderId: string,
+): Promise<void> {
+  await expect.poll(async () => {
+    const occurrenceResponse = await page.request.get(new URL(`/api/v1/reminder-series/${seriesId}/occurrences?limit=100`, config.baseUrl).toString());
+    if (!occurrenceResponse.ok()) return false;
+    const occurrences = (await occurrenceResponse.json()) as ReminderOccurrencePageResponse;
+    const occurrence = (occurrences.items ?? []).filter((item) => item.reminderId === reminderId);
+    if (occurrence.length !== 1 || occurrence[0]?.outcome !== 'scheduled') return false;
+    const reminderResponse = await page.request.get(new URL(`/api/v1/reminders/${reminderId}`, config.baseUrl).toString());
+    return reminderResponse.ok();
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(true);
 }
 
 async function waitForSettledMemoryActivity(
@@ -503,6 +604,103 @@ for (const mode of configuredModes) {
       await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 90_000 });
     });
 
+    test('drives one recurring reminder through native tool approval and durable resume', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the conversational reminder approval check`);
+      if (!config) return;
+      test.setTimeout(240_000);
+
+      await signIn(page, config);
+      const session = await apiSession(page, config);
+      const modelsResponse = await page.request.get(new URL('/api/v1/models', config.baseUrl).toString());
+      expect(modelsResponse.ok(), await modelsResponse.text()).toBeTruthy();
+      const models = (await modelsResponse.json()) as { models?: Array<JsonObject> };
+      const model = models.models?.find((candidate) => candidate['id'] === 'fixture-chat' && candidate['selectable'] === true);
+      expect(model).toBeTruthy();
+      if (!model) return;
+
+      // This request runs in the authenticated browser context, preserving the
+      // exact pinned timezone that the conversational command must use.
+      const prompt = `AURA_E2E_REMINDER_SERIES_CREATE ${mode} ${Date.now()}`;
+      const createResponse = await page.request.post(new URL('/api/v1/conversations', config.baseUrl).toString(), {
+        headers: csrfHeaders(session, config.baseUrl),
+        data: { message: prompt, modelId: 'fixture-chat', clientTimeZone: 'Europe/Brussels' },
+      });
+      expect(createResponse.status(), await createResponse.text()).toBe(202);
+      const accepted = (await createResponse.json()) as JsonObject;
+      const conversation = accepted['conversation'] as JsonObject | undefined;
+      const run = accepted['run'] as JsonObject | undefined;
+      const conversationId = conversation?.['id'];
+      const runId = run?.['id'];
+      expect(typeof conversationId).toBe('string');
+      expect(typeof runId).toBe('string');
+      expect(run?.['clientTimeZone']).toBe('Europe/Brussels');
+      if (typeof conversationId !== 'string' || typeof runId !== 'string') return;
+
+      const pending = await waitForPendingReminderApproval(page, config, conversationId);
+      expect(pending).toMatchObject({ conversationId, toolId: 'reminder.series.create', status: 'pending', version: 1 });
+      expect(pending.id).toEqual(expect.any(String));
+      if (typeof pending.id !== 'string') return;
+
+      // Review and approve through the real Aura Web approval surface.  The
+      // protected detail is intentionally not asserted for private content.
+      await page.goto(new URL('/approvals', config.baseUrl).toString());
+      await expect(page.getByRole('heading', { name: 'Approvals', exact: true })).toBeVisible();
+      const approvalRow = page.locator(`#approval-${pending.id}`);
+      await expect(approvalRow).toHaveCount(1);
+      await approvalRow.click();
+      const detail = page.getByRole('dialog');
+      await expect(detail).toBeVisible();
+      const approve = detail.getByRole('button', { name: 'Approve', exact: true });
+      await expect(approve).toBeVisible();
+      let approvalDecisionPosts = 0;
+      let approvalDecisionResponses: number[] = [];
+      let approvalDecisionResponseBodies: string[] = [];
+      let approvalDecisionFailures: string[] = [];
+      const approvalDecisionPath = `/api/v1/approvals/${pending.id}/approve`;
+      const observeApprovalDecision = (request: { method(): string; url(): string }): void => {
+        const requestUrl = new URL(request.url());
+        if (request.method() === 'POST' && requestUrl.pathname === approvalDecisionPath) approvalDecisionPosts += 1;
+      };
+      const observeApprovalDecisionResponse = async (response: { request(): { method(): string }; url(): string; status(): number; text(): Promise<string> }): Promise<void> => {
+        const responseUrl = new URL(response.url());
+        if (response.request().method() === 'POST' && responseUrl.pathname === approvalDecisionPath) {
+          approvalDecisionResponses.push(response.status());
+          approvalDecisionResponseBodies.push(await response.text());
+        }
+      };
+      const observeApprovalDecisionFailure = (request: { method(): string; url(): string; failure(): { errorText?: string } | null }): void => {
+        const requestUrl = new URL(request.url());
+        if (request.method() === 'POST' && requestUrl.pathname === approvalDecisionPath) approvalDecisionFailures.push(request.failure()?.errorText ?? 'unknown request failure');
+      };
+      page.on('request', observeApprovalDecision);
+      page.on('response', observeApprovalDecisionResponse);
+      page.on('requestfailed', observeApprovalDecisionFailure);
+      await approve.click();
+      await expect.poll(() => approvalDecisionPosts, { timeout: 10_000 }).toBe(1);
+      await expect.poll(() => approvalDecisionResponses.length + approvalDecisionFailures.length, { timeout: 10_000 }).toBe(1);
+      expect(approvalDecisionFailures, approvalDecisionFailures.join('; ')).toHaveLength(0);
+      expect(approvalDecisionResponses, approvalDecisionResponseBodies.join('; ')).toEqual([200]);
+      page.off('request', observeApprovalDecision);
+      page.off('response', observeApprovalDecisionResponse);
+      page.off('requestfailed', observeApprovalDecisionFailure);
+
+      await waitForApprovedReminderApproval(page, config, pending.id);
+      await waitForCompletedRun(page, config, conversationId, runId);
+
+      const series = await waitForOneActiveReminderSeries(page, config);
+      await waitForGeneratedReminder(page, config, series.id as string, series.nextReminderId as string);
+
+      // The approval decision is idempotent and the resumed tools-disabled
+      // synthesis cannot create a second proposal or series.
+      const approvalHistoryResponse = await page.request.get(new URL(`/api/v1/approvals?limit=100`, config.baseUrl).toString());
+      expect(approvalHistoryResponse.ok(), await approvalHistoryResponse.text()).toBeTruthy();
+      const approvalHistory = (await approvalHistoryResponse.json()) as { items?: ReadonlyArray<ApprovalSummary> };
+      const conversationApprovals = (approvalHistory.items ?? []).filter((item) => item.conversationId === conversationId);
+      expect(conversationApprovals).toHaveLength(1);
+      expect(conversationApprovals[0]).toMatchObject({ id: pending.id, toolId: 'reminder.series.create', status: 'approved' });
+    });
+
     test('exposes the conservative recall policy seam on the authenticated stack', async ({ page }) => {
       const config = stackConfig(mode);
       const enabled = process.env['AURA_E2E_MEMORY_RECALL'] === '1';
@@ -718,7 +916,16 @@ for (const mode of configuredModes) {
           sensitivity: 'private',
           observableComponent: 'aura.runtime.tool_execution',
         }),
+        expect.objectContaining({ id: 'reminder.list', version: 1, classification: 'read', permissionScope: 'reminders:read' }),
+        expect.objectContaining({ id: 'reminder.inspect', version: 1, classification: 'read', permissionScope: 'reminders:read' }),
+        expect.objectContaining({ id: 'reminder.series.create', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
+        expect.objectContaining({ id: 'reminder.reschedule', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
+        expect.objectContaining({ id: 'reminder.series.update', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
+        expect.objectContaining({ id: 'reminder.series.pause', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
+        expect.objectContaining({ id: 'reminder.series.resume', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
+        expect.objectContaining({ id: 'reminder.cancel', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
       ]);
+      expect(tools.items).toHaveLength(10);
       expect(JSON.stringify(tools.items)).not.toMatch(/handler|schema|credential|query|content/i);
 
       const agentsResponse = await page.request.get(new URL('/api/v1/agents', config.baseUrl).toString());
@@ -735,6 +942,14 @@ for (const mode of configuredModes) {
       expect(attached?.['grants']).toEqual([
         { toolId: 'memory.search', toolVersion: 1 },
         { toolId: 'reminder.create', toolVersion: 1 },
+        { toolId: 'reminder.list', toolVersion: 1 },
+        { toolId: 'reminder.inspect', toolVersion: 1 },
+        { toolId: 'reminder.series.create', toolVersion: 1 },
+        { toolId: 'reminder.reschedule', toolVersion: 1 },
+        { toolId: 'reminder.series.update', toolVersion: 1 },
+        { toolId: 'reminder.series.pause', toolVersion: 1 },
+        { toolId: 'reminder.series.resume', toolVersion: 1 },
+        { toolId: 'reminder.cancel', toolVersion: 1 },
       ]);
     });
   });

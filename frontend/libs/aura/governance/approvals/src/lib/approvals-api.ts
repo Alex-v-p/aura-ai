@@ -1,11 +1,11 @@
 import { Injectable } from '@angular/core';
 import { AURA_API_OPERATIONS, AuraApiClient, type ApprovalEvent, type AuraOperationDescriptor, type AuraOperationId, type AuraOperationInput, type AuraOperationResponse } from '@aura/aura-api-client';
-import { approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, isValidApprovalEvent, ApprovalApiError, type ApprovalDetail, type ApprovalPage, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalsApi, type ApprovalStatus } from './approval-models';
+import { approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, createUuidV4, isValidApprovalEvent, ApprovalApiError, type ApprovalDetail, type ApprovalPage, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalsApi, type ApprovalStatus } from './approval-models';
 import { ApprovalSessionHydrator } from './approval-session-hydration';
 
 type RequestInput = { path: Record<string, string>; query: Record<string, unknown>; headers: Record<string, string>; body: unknown };
 const emptyInput = (): RequestInput => ({ path: {}, query: {}, headers: {}, body: undefined });
-const key = (): string => typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `aura-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const key = (): string => createUuidV4();
 
 @Injectable({ providedIn: 'root' })
 export class AuraApprovalsApi implements ApprovalsApi {

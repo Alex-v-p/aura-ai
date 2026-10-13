@@ -11,6 +11,7 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -22,7 +23,10 @@ from aura_core.domains.automation.reminders.proposals import (
     SqlReminderProposalRepository,
     proposal_expiry,
 )
-from aura_core.domains.automation.reminders.public import ReminderProposal
+from aura_core.domains.automation.reminders.public import (
+    ReminderCommandProposal,
+    ReminderProposal,
+)
 from aura_core.domains.automation.reminders.repository import SqlReminderRepository
 from aura_core.domains.governance.approvals.persistence import ApprovalRow
 from aura_core.domains.governance.approvals.public import (
@@ -179,6 +183,98 @@ def test_approval_detail_is_the_only_content_bearing_authorized_projection() -> 
         "dueAt": proposal.due_at.isoformat(),
     }
     assert "private approval content" not in repr(as_payload(approval))
+
+
+def test_typed_command_detail_is_bounded_and_excludes_private_arguments() -> None:
+    approval = _approval()
+    proposal = ReminderCommandProposal(
+        id=approval.proposal_id,
+        issuer=ISSUER,
+        subject=OWNER,
+        operation="series.create",
+        tool_id="reminder.series.create",
+        tool_version=1,
+        target_id=None,
+        expected_version=None,
+        normalized_arguments={
+            "content": "private recurring reminder",
+            "recurrence": {"frequency": "daily", "interval": 1},
+            "timezone": "Europe/Brussels",
+            "target": "private target query",
+            "dueAt": "2026-10-11T14:00:00+02:00",
+        },
+        timezone="Europe/Brussels",
+        run_id=approval.run_id,
+        conversation_id=approval.conversation_id,
+        tool_call_id=approval.tool_call_id,
+        created_at=CREATED,
+        expires_at=approval.expires_at,
+        target_type="series",
+    )
+
+    detail = detail_payload(ApprovalDetail(approval=approval, proposal=proposal))
+    command = cast(dict[str, object], detail["proposal"])
+    assert command == {
+        "id": str(proposal.id),
+        "operation": "series.create",
+        "summary": "Create recurring reminder",
+        "targetType": "series",
+        "targetId": None,
+        "expectedVersion": None,
+    }
+    assert len(cast(str, command["summary"])) <= 120
+    assert not {
+        "content",
+        "recurrence",
+        "timezone",
+        "target",
+        "dueAt",
+        "normalizedArguments",
+        "arguments",
+    } & set(command)
+
+
+@pytest.mark.parametrize(
+    "tool_id",
+    [
+        "reminder.create",
+        "reminder.series.create",
+        "reminder.reschedule",
+        "reminder.series.update",
+        "reminder.series.pause",
+        "reminder.series.resume",
+        "reminder.cancel",
+    ],
+)
+def test_approval_replay_event_accepts_additive_reminder_command_ids_without_schema_change(
+    tool_id: str,
+) -> None:
+    approval = replace(_approval(), tool_id=tool_id)
+    event = ApprovalReplayEvent(
+        id=uuid4(),
+        approval_id=approval.id,
+        proposal_id=approval.proposal_id,
+        run_id=approval.run_id,
+        conversation_id=approval.conversation_id,
+        tool_id=tool_id,
+        tool_version=1,
+        status=ApprovalStatus.PENDING,
+        execution_status=ApprovalExecutionStatus.NOT_STARTED,
+        version=approval.version,
+        occurred_at=CREATED,
+    )
+    payload = event.payload()
+    assert payload["schemaVersion"] == 1
+    assert payload["toolId"] == tool_id
+    assert not {
+        "content",
+        "recurrence",
+        "timezone",
+        "dueAt",
+        "arguments",
+        "query",
+        "result",
+    } & set(payload)
 
 
 def test_approval_cursor_round_trip_is_owner_bound() -> None:

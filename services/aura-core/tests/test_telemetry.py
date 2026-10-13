@@ -939,7 +939,7 @@ def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> 
     assert metrics.stats().rejected >= 3
     assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.3.0"
     assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.1.0"
-    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.2.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.2.1"
 
 
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:
@@ -1388,6 +1388,27 @@ def test_component_manifest_versions_match_runtime_catalogue() -> None:
         component = cast(dict[str, Any], document["component"])
         manifest_versions[str(component["id"])] = str(component["version"])
     assert manifest_versions == dict(COMPONENT_VERSIONS)
+
+
+def test_tool_execution_manifest_matches_emitted_reminder_telemetry() -> None:
+    manifest_path = (
+        Path(__file__).parents[1] / "resources" / "component-manifests" / "tool-execution.yaml"
+    )
+    document = cast(dict[str, Any], yaml.safe_load(manifest_path.read_text()))
+    cardinality = cast(dict[str, Any], document["cardinality"])
+    assert "reminder_store" in document["dependencies"]
+    assert set(cardinality["metric_attributes"]) >= {
+        "outcome",
+        "error_class",
+        "dependency",
+        "provider",
+    }
+    assert set(cardinality["trace_only"]) >= {
+        "approval_id",
+        "tool_call_id",
+        "tool_policy_revision_id",
+    }
+    assert "content" not in cardinality["trace_only"]
 
 
 def test_persona_preview_component_is_ephemeral_and_cardinality_bounded() -> None:

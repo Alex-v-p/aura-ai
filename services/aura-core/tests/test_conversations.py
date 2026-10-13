@@ -217,6 +217,35 @@ class _SynthesisFailureProvider(_NativeToolProvider):
         yield "unreachable"
 
 
+class _BlockingSynthesisProvider(_NativeToolProvider):
+    def __init__(self) -> None:
+        super().__init__(
+            selection_events=(
+                ModelToolCall(
+                    "reminder.series.create",
+                    {
+                        "content": "private cancellation reminder",
+                        "localStart": "2027-01-11T09:00:00",
+                        "recurrence": {"frequency": "daily", "interval": 1},
+                    },
+                ),
+                ModelStreamCompleted(),
+            )
+        )
+        self.entered = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+        del model_id, messages
+        self.synthesis_calls += 1
+        self.entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            self.closed.set()
+        yield "unreachable"
+
+
 class _CrashBoundary(BaseException):
     """Simulated worker loss that bypasses normal exception settlement."""
 
@@ -275,12 +304,42 @@ class _BlockingReminderService:
 class _FailingCommandReminderService:
     """Delegate reads while forcing the approved typed command to fail."""
 
-    def __init__(self, inner: ReminderApplicationService) -> None:
+    def __init__(self, inner: ReminderApplicationService, *, delay_seconds: float = 0.0) -> None:
         self.inner = inner
+        self.delay_seconds = delay_seconds
 
     async def execute_command(self, *args: object, **kwargs: object) -> object:
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
         del args, kwargs
         raise RuntimeError("forced command execution failure")
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
+class _RecordingCommandReminderService:
+    """Record approved-command idempotency keys while delegating execution."""
+
+    def __init__(self, inner: ReminderApplicationService, *, delay_seconds: float = 0.0) -> None:
+        self.inner = inner
+        self.delay_seconds = delay_seconds
+        self.idempotency_keys: list[str] = []
+
+    async def execute_command(
+        self,
+        issuer: str,
+        subject: str,
+        proposal: ReminderCommandProposal,
+        *,
+        idempotency_key: str,
+    ) -> object:
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        self.idempotency_keys.append(idempotency_key)
+        return await self.inner.execute_command(
+            issuer, subject, proposal, idempotency_key=idempotency_key
+        )
 
     def __getattr__(self, name: str) -> object:
         return getattr(self.inner, name)
@@ -618,6 +677,166 @@ async def test_recurring_mutation_pins_resolved_target_and_expected_version_befo
 
 
 @pytest.mark.asyncio
+async def test_approved_recurring_command_uses_approval_uuid_and_replays_once() -> None:
+    """A resumed typed command uses the approval UUID for repository idempotency."""
+
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    provider = _NativeToolProvider(
+        selection_events=(
+            ModelToolCall(
+                "reminder.series.create",
+                {
+                    "content": "take vitamins",
+                    "localStart": "2027-01-11T09:00:00",
+                    "recurrence": {"frequency": "daily", "interval": 1},
+                },
+            ),
+            ModelStreamCompleted(),
+        )
+    )
+    models = await provider.list_models()
+    store = ConversationStore()
+    _conversation, _, run = await store.create(
+        "https://issuer",
+        "owner",
+        "Create recurring reminder",
+        "tool-model",
+        models,
+        str(uuid4()),
+        client_time_zone="Europe/Brussels",
+    )
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    metrics = MetadataMetrics()
+    service = _RecordingCommandReminderService(
+        ReminderApplicationService(reminders, clock=lambda: now), delay_seconds=0.01
+    )
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics=metrics,
+        approval_service=approvals,
+        reminder_service=service,
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    approval_id = waiting.approval_id
+    pending = await approvals.get("https://issuer", "owner", approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key=str(uuid4()),
+    )
+    await store.resume_waiting_run(run.id, approval_id, approved=True)
+
+    await coordinator.execute(run.id, provider)
+    await coordinator.execute(run.id, provider)
+
+    _, completed = await store.find_run_any(run.id)
+    assert completed.status is RunStatus.COMPLETED
+    assert service.idempotency_keys == [str(approval_id)]
+    assert UUID(service.idempotency_keys[0]) == approval_id
+    assert len((await reminders.list_series("https://issuer", "owner")).items) == 1
+    spans = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "tool_execution_duration_ms"
+        and dict(item.dimensions).get("outcome") == "completed"
+    ]
+    assert len(spans) == 1
+    assert spans[0].value > 0
+    trace = dict(spans[0].trace_attributes)
+    assert trace["run_id"] == str(run.id)
+    assert trace["approval_id"] == str(approval_id)
+    assert trace["tool_call_id"] == str(waiting.pending_tool_call_id)
+    assert trace["tool_policy_revision_id"] == str(run.tool_policy_revision_id)
+    rendered = repr(spans)
+    assert "take vitamins" not in rendered
+    assert "Europe/Brussels" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_approved_recurring_side_effect_closes_one_span() -> None:
+    now = datetime(2027, 1, 10, 12, tzinfo=UTC)
+    provider = _BlockingSynthesisProvider()
+    models = await provider.list_models()
+    store = ConversationStore()
+    conversation, _, run = await store.create(
+        "https://issuer",
+        "owner",
+        "Cancel recurring reminder",
+        "tool-model",
+        models,
+        str(uuid4()),
+        client_time_zone="Europe/Brussels",
+    )
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: now), clock=lambda: now
+    )
+    reminders = MemoryReminderRepository(clock=lambda: now)
+    metrics = MetadataMetrics()
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        metrics=metrics,
+        cancellation_poll_seconds=0.01,
+        approval_service=approvals,
+        reminder_service=ReminderApplicationService(reminders, clock=lambda: now),
+    )
+
+    await coordinator.execute(run.id, provider)
+    _, waiting = await store.find_run_any(run.id)
+    assert waiting.status is RunStatus.WAITING_FOR_CONFIRMATION
+    assert waiting.approval_id is not None
+    pending = await approvals.get("https://issuer", "owner", waiting.approval_id)
+    await approvals.approve(
+        "https://issuer",
+        "owner",
+        waiting.approval_id,
+        expected_version=pending.approval.version,
+        idempotency_key=str(uuid4()),
+    )
+    await store.resume_waiting_run(run.id, waiting.approval_id, approved=True)
+
+    task = asyncio.create_task(coordinator.execute(run.id, provider))
+    await asyncio.wait_for(provider.entered.wait(), timeout=1)
+    await coordinator.cancel(run.id, "owner", "https://issuer", str(uuid4()))
+    await asyncio.wait_for(task, timeout=1)
+
+    loaded = (await store.get(conversation.id, "owner", "https://issuer")).runs[0]
+    assert loaded.status is RunStatus.CANCELED
+    assert len((await reminders.list_series("https://issuer", "owner")).items) == 1
+    assert run.id not in coordinator._active_tool_attempts  # pyright: ignore[reportPrivateUsage]
+    spans = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "tool_execution_duration_ms"
+        and dict(item.dimensions).get("outcome") == "completed"
+    ]
+    assert len(spans) == 1
+    assert spans[0].value > 0
+    assert not [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "tool_execution_duration_ms"
+        and dict(item.dimensions).get("outcome") == "failed"
+    ]
+    rendered = repr(spans)
+    assert "private cancellation reminder" not in rendered
+    assert "Europe/Brussels" not in rendered
+    await asyncio.wait_for(provider.closed.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_approved_typed_command_failure_is_versioned_and_metadata_only() -> None:
     """A forced command failure keeps the typed tool identity and private data out."""
 
@@ -661,7 +880,7 @@ async def test_approved_typed_command_failure_is_versioned_and_metadata_only() -
         metrics=metrics,
         approval_service=approvals,
         reminder_service=_FailingCommandReminderService(
-            ReminderApplicationService(reminders, clock=lambda: now)
+            ReminderApplicationService(reminders, clock=lambda: now), delay_seconds=0.01
         ),
     )
 
@@ -698,6 +917,16 @@ async def test_approved_typed_command_failure_is_versioned_and_metadata_only() -
         encoded = repr((item.dimensions, item.trace_attributes))
         assert "take vitamins" not in encoded
         assert "Europe/Brussels" not in encoded
+    failed_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.metric == "tool_execution_duration_ms"
+        and dict(item.dimensions).get("outcome") == "failed"
+    ]
+    assert len(failed_spans) == 1
+    assert failed_spans[0].value > 0
+    assert "take vitamins" not in repr(failed_spans)
+    assert "Europe/Brussels" not in repr(failed_spans)
     statuses = [
         event.data
         for event in await publisher.history(run.id)

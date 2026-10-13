@@ -23,6 +23,15 @@ from aura_core.domains.automation.reminders.public import (
 APPROVAL_COMPONENT = "aura.governance.approval_workflow"
 APPROVAL_TOPIC = "aura.approvals.events.v1"
 
+_COMMAND_SUMMARIES = {
+    "series.create": "Create recurring reminder",
+    "reschedule": "Reschedule reminder",
+    "series.update": "Update recurring reminder",
+    "series.pause": "Pause recurring reminder",
+    "series.resume": "Resume recurring reminder",
+    "cancel": "Cancel reminder",
+}
+
 
 class ApprovalStatus(StrEnum):
     PENDING = "pending"
@@ -419,8 +428,12 @@ def detail_payload(detail: ApprovalDetail) -> dict[str, object]:
         payload["proposal"] = {
             "id": str(detail.proposal.id),
             "operation": detail.proposal.operation,
+            "summary": _COMMAND_SUMMARIES.get(
+                detail.proposal.operation, "Manage reminder"
+            ),
             "targetType": detail.proposal.target_type,
             "targetId": str(detail.proposal.target_id) if detail.proposal.target_id else None,
+            "expectedVersion": detail.proposal.expected_version,
         }
     else:
         payload["proposal"] = {

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostListener, In
 import { A11yModule } from '@angular/cdk/a11y';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ApprovalStore } from './approval-store';
-import type { ApprovalDetail, ApprovalSummary } from './approval-models';
+import { approvalActionLabel, approvalLeadCopy, isReminderCommandProposal, reminderCommandConsequence, type ApprovalDetail, type ApprovalProposal, type ApprovalSummary, type ReminderCommandProposalDetail } from './approval-models';
 
 type ReturnFocusState = { readonly returnFocusRequested?: boolean; readonly returnFocusId?: string | null };
 function boundedFocusId(value: unknown): string | null { return typeof value === 'string' && value.startsWith('approval-') && value.length <= 160 && /^[A-Za-z0-9_-]+$/.test(value) ? value : null; }
@@ -41,7 +41,11 @@ export class ApprovalsPageComponent {
   async reject(approval: ApprovalDetail): Promise<void> { await this.runDecision(approval, () => this.store.reject(approval)); }
   statusLabel(status: ApprovalSummary['status']): string { return this.store.statusLabel(status); }
   executionLabel(status: ApprovalSummary['executionStatus']): string { return this.store.executionLabel(status); }
-  actionLabel(approval: ApprovalSummary): string { return approval.toolId === 'reminder.create' ? 'Create a reminder' : 'Take an action'; }
+  actionLabel(approval: ApprovalSummary | ApprovalDetail): string { return approvalActionLabel(approval); }
+  leadCopy(approval: ApprovalSummary): string { return approvalLeadCopy(approval); }
+  isCommandProposal(proposal: ApprovalProposal): proposal is ReminderCommandProposalDetail { return isReminderCommandProposal(proposal); }
+  commandSummary(_approval: ApprovalDetail, proposal: ReminderCommandProposalDetail): string { return proposal.summary; }
+  commandConsequence(proposal: ReminderCommandProposalDetail): string { return reminderCommandConsequence(proposal); }
   formatDate(value: string | null | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value)) : 'Unknown time'; }
   isTerminal(approval: ApprovalSummary): boolean { return approval.status !== 'pending'; }
   private async runDecision(approval: ApprovalDetail, decision: () => Promise<boolean>): Promise<void> {

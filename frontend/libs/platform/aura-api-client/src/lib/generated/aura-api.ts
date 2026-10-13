@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: ed0636b2da233674d74cdcd9431c44626394fdeea4dc74f5979b520df9631036
+// Contract SHA-256: 2db23d1fcaa1ec140d17ae8fcc9889d8a2f3d4e50fcd7dacb75da3342b7bb63c
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -305,11 +305,15 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "
 
 export type ApprovalExecutionStatus = "not_started" | "queued" | "executing" | "completed" | "failed" | "denied";
 
-export type Approval = { readonly "id": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolCallId": string; readonly "toolId": "reminder.create"; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
+export type ReminderApprovalToolId = "reminder.create" | "reminder.series.create" | "reminder.reschedule" | "reminder.series.update" | "reminder.series.pause" | "reminder.series.resume" | "reminder.cancel";
+
+export type Approval = { readonly "id": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolCallId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
 
 export type ReminderProposalDetail = { readonly "id": string; readonly "content": string; readonly "dueAt": string; };
 
-export type ApprovalDetail = Approval & { readonly "proposal": ReminderProposalDetail; };
+export type ReminderCommandProposalDetail = { readonly "id": string; readonly "operation": "series.create" | "reschedule" | "series.update" | "series.pause" | "series.resume" | "cancel"; readonly "summary": string; readonly "targetType": "series" | "reminder" | "occurrence" | null; readonly "targetId": string | null; readonly "expectedVersion": number | null; };
+
+export type ApprovalDetail = Approval & { readonly "proposal": ReminderProposalDetail | ReminderCommandProposalDetail; };
 
 export type ApprovalPage = { readonly "items": ReadonlyArray<Approval>; readonly "nextCursor": string | null; };
 
@@ -317,7 +321,7 @@ export type ApprovalDecisionRequest = { readonly "expectedVersion": number; };
 
 export type ApprovalStreamEvent = ApprovalEvent | ApprovalHeartbeatEvent;
 
-export type ApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolId": "reminder.create"; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
+export type ApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
 
 export type ApprovalHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 

@@ -76,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.12.0"
+    assert contract["info"]["version"] == "1.13.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +238,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.12.0"
+    assert contract["info"]["version"] == "1.13.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -308,7 +308,7 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.12.0"
+    assert contract["info"]["version"] == "1.13.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected_paths = {
         "/api/v1/approvals",
@@ -341,10 +341,37 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
         "expired",
         "canceled",
     ]
+    assert schemas["ReminderApprovalToolId"]["enum"] == [
+        "reminder.create",
+        "reminder.series.create",
+        "reminder.reschedule",
+        "reminder.series.update",
+        "reminder.series.pause",
+        "reminder.series.resume",
+        "reminder.cancel",
+    ]
     approval = schemas["Approval"]
     assert {"id", "proposalId", "runId", "status", "version", "expiresAt"} <= set(
         approval["required"]
     )
+    assert approval["properties"]["toolId"]["$ref"].endswith("/ReminderApprovalToolId")
+    command_detail = schemas["ReminderCommandProposalDetail"]
+    assert set(command_detail["required"]) == {
+        "id",
+        "operation",
+        "summary",
+        "targetType",
+        "targetId",
+        "expectedVersion",
+    }
+    assert command_detail["properties"]["summary"]["minLength"] == 1
+    assert command_detail["properties"]["summary"]["maxLength"] == 120
+    assert command_detail["additionalProperties"] is False
+    proposal_schema = schemas["ApprovalDetail"]["allOf"][1]["properties"]["proposal"]
+    assert {
+        "#/components/schemas/ReminderProposalDetail",
+        "#/components/schemas/ReminderCommandProposalDetail",
+    } == {item["$ref"] for item in proposal_schema["oneOf"]}
     stream = paths["/api/v1/approvals/stream"]["get"]
     assert stream["operationId"] == "streamApprovals"
     event = schemas.get("ApprovalEvent") or schemas["ApprovalLifecycleEvent"]
@@ -356,6 +383,8 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
         "prompt",
         "response",
     } & set(event_properties)
+    assert event_properties["schemaVersion"]["const"] == 1
+    assert event_properties["toolId"]["$ref"].endswith("/ReminderApprovalToolId")
 
     generated_client = (
         ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
@@ -368,7 +397,7 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.12.0"
+    assert contract["info"]["version"] == "1.13.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]

@@ -32,7 +32,7 @@ from uuid import UUID
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.tool_selection": "1.3.0",
     "aura.runtime.policy_evaluation": "1.1.0",
-    "aura.runtime.tool_execution": "1.2.0",
+    "aura.runtime.tool_execution": "1.2.1",
     "aura.interaction.agent_configuration": "1.2.0",
     "aura.interaction.persona_preview": "1.0.0",
     "aura.execution.run_coordinator": "1.8.0",

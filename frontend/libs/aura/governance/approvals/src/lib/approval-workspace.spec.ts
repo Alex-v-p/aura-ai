@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendApprovalPage, approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, approvalSummaryFromDetail, collectApprovalHistory, decisionFailureNotice, emptyApprovalCollection, isValidApprovalEvent, type ApprovalDetail, type ApprovalSummary } from './approval-models';
+import { APPROVAL_TOOL_IDS, approvalActionLabel, approvalLeadCopy, appendApprovalPage, approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, approvalSummaryFromDetail, collectApprovalHistory, createUuidV4, decisionFailureNotice, emptyApprovalCollection, isReminderCommandProposal, isValidApprovalEvent, reminderCommandConsequence, shouldPreserveReviewedApproval, type ApprovalDetail, type ApprovalSummary } from './approval-models';
 import { ApprovalApiError } from './approval-models';
 import { ApprovalSessionHydrator } from './approval-session-hydration';
 
@@ -28,6 +28,66 @@ describe('approval workspace', () => {
     for (const key of ['approvalId', 'proposalId', 'runId', 'conversationId']) expect(isValidApprovalEvent({ ...valid, [key]: 'not-a-uuid' })).toBe(false);
     expect(isValidApprovalEvent({ ...valid, occurredAt: '2026/10/10 09:00:00' })).toBe(false);
     expect(isValidApprovalEvent({ ...valid, extra: true })).toBe(false);
+  });
+
+  it('accepts every supported reminder command in metadata-only events and rejects unknown tools', () => {
+    const event = {
+      schemaVersion: 1,
+      eventId: '550e8400-e29b-41d4-a716-446655440000',
+      eventType: 'approval.pending',
+      approvalId: '550e8400-e29b-41d4-a716-446655440001',
+      proposalId: '550e8400-e29b-41d4-a716-446655440002',
+      runId: '550e8400-e29b-41d4-a716-446655440003',
+      conversationId: '550e8400-e29b-41d4-a716-446655440004',
+      toolVersion: 1,
+      status: 'pending',
+      executionStatus: 'not_started',
+      version: 1,
+      occurredAt: '2026-10-10T09:00:00Z',
+    } as const;
+    for (const toolId of APPROVAL_TOOL_IDS) expect(isValidApprovalEvent({ ...event, toolId })).toBe(true);
+    expect(isValidApprovalEvent({ ...event, toolId: 'calendar.delete' })).toBe(false);
+  });
+
+  it('keeps typed command proposal details separate from private legacy content', () => {
+    const detail = {
+      ...base,
+      toolId: 'reminder.series.create' as const,
+      proposal: { id: 'proposal-1', operation: 'series.create' as const, summary: 'Create a recurring reminder.', targetType: 'series' as const, targetId: null, expectedVersion: null },
+    } as ApprovalDetail;
+    const summary = approvalSummaryFromDetail(detail);
+    expect(summary.toolId).toBe('reminder.series.create');
+    expect(Object.prototype.hasOwnProperty.call(summary, 'proposal')).toBe(false);
+  });
+
+  it('describes cancel scope and keeps protocol fields out of the primary copy', () => {
+    const occurrence = { ...base, toolId: 'reminder.cancel' as const, proposal: { id: 'proposal-1', operation: 'cancel' as const, summary: 'Cancel the next occurrence.', targetType: 'occurrence' as const, targetId: 'occurrence-1', expectedVersion: 3 } } as ApprovalDetail;
+    expect(isReminderCommandProposal(occurrence.proposal)).toBe(true);
+    expect(approvalActionLabel(occurrence)).toBe('Cancel this reminder occurrence');
+    expect(reminderCommandConsequence(occurrence.proposal)).toContain('future recurring occurrences remain scheduled');
+    expect(approvalActionLabel({ ...base, toolId: 'reminder.cancel' })).toBe('Cancel a reminder');
+    const series = { ...occurrence, proposal: { ...occurrence.proposal, targetType: 'series' as const } };
+    expect(approvalActionLabel(series)).toBe('Cancel this recurring reminder');
+    expect(reminderCommandConsequence(series.proposal)).toContain('prevents future occurrences');
+  });
+
+  it('uses neutral lead copy after a recurring command is terminal', () => {
+    const approved = { ...base, toolId: 'reminder.series.update' as const, status: 'approved' as const, executionStatus: 'completed' as const };
+    expect(approvalLeadCopy(approved)).toBe('Approved and completed. This action is no longer awaiting authorization.');
+    expect(approvalLeadCopy({ ...approved, status: 'rejected', executionStatus: 'denied' })).toContain('will not take this action');
+  });
+
+  it('preserves decision readiness while the same approval is reconciled', () => {
+    expect(shouldPreserveReviewedApproval(false, base.id, base.id, base.id)).toBe(true);
+    expect(shouldPreserveReviewedApproval(true, base.id, base.id, base.id)).toBe(false);
+    expect(shouldPreserveReviewedApproval(false, 'another-approval', base.id, base.id)).toBe(false);
+  });
+
+  it('always creates UUID idempotency keys when randomUUID is unavailable', () => {
+    const native = '550e8400-e29b-41d4-a716-446655440000';
+    expect(createUuidV4({ randomUUID: () => native })).toBe(native);
+    expect(createUuidV4({ getRandomValues: (bytes) => bytes.fill(0) })).toBe('00000000-0000-4000-8000-000000000000');
+    expect(createUuidV4({})).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   });
 
   it('advances history past pending-only pages before exposing continuation', async () => {

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.12.0",
+    "version": "1.13.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -1007,7 +1007,7 @@
         "operationId": "getApproval",
         "tags": ["Approvals"],
         "responses": {
-          "200": { "description": "Owner-authorized approval detail including the private reminder proposal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDetail" } } } },
+          "200": { "description": "Owner-authorized approval detail including either the legacy private reminder proposal or a bounded typed reminder-command summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalDetail" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
@@ -2509,9 +2509,14 @@
       },
       "ApprovalStatus": { "type": "string", "enum": ["pending", "approved", "rejected", "expired", "canceled"] },
       "ApprovalExecutionStatus": { "type": "string", "enum": ["not_started", "queued", "executing", "completed", "failed", "denied"] },
+      "ReminderApprovalToolId": {
+        "type": "string",
+        "description": "Closed additive set of always-confirmed reminder mutation tools represented by approval metadata.",
+        "enum": ["reminder.create", "reminder.series.create", "reminder.reschedule", "reminder.series.update", "reminder.series.pause", "reminder.series.resume", "reminder.cancel"]
+      },
       "Approval": {
         "type": "object", "additionalProperties": false,
-        "description": "Owner-authorized durable approval metadata. Proposal content and requested due time are available only from ApprovalDetail.",
+        "description": "Owner-authorized durable approval metadata. Legacy proposal content and requested due time or a bounded typed command summary are available only from ApprovalDetail.",
         "required": ["id", "proposalId", "runId", "conversationId", "toolCallId", "toolId", "toolVersion", "status", "executionStatus", "version", "expiresAt", "createdAt", "updatedAt", "decidedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
@@ -2519,7 +2524,7 @@
           "runId": { "type": "string", "format": "uuid" },
           "conversationId": { "type": "string", "format": "uuid" },
           "toolCallId": { "type": "string", "format": "uuid" },
-          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolId": { "$ref": "#/components/schemas/ReminderApprovalToolId" },
           "toolVersion": { "type": "integer", "const": 1 },
           "status": { "$ref": "#/components/schemas/ApprovalStatus" },
           "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
@@ -2540,10 +2545,23 @@
           "dueAt": { "type": "string", "format": "date-time", "description": "Validated requested instant normalized to UTC." }
         }
       },
+      "ReminderCommandProposalDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded private reminder-command summary returned only after owner authorization. Raw content, recurrence, timezone, due values, target queries, and normalized arguments are excluded.",
+        "required": ["id", "operation", "summary", "targetType", "targetId", "expectedVersion"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "operation": { "type": "string", "enum": ["series.create", "reschedule", "series.update", "series.pause", "series.resume", "cancel"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Server-derived command label containing no raw reminder arguments." },
+          "targetType": { "type": ["string", "null"], "enum": ["series", "reminder", "occurrence", null] },
+          "targetId": { "type": ["string", "null"], "format": "uuid" },
+          "expectedVersion": { "type": ["integer", "null"], "minimum": 1 }
+        }
+      },
       "ApprovalDetail": {
         "allOf": [
           { "$ref": "#/components/schemas/Approval" },
-          { "type": "object", "required": ["proposal"], "properties": { "proposal": { "$ref": "#/components/schemas/ReminderProposalDetail" } } }
+          { "type": "object", "required": ["proposal"], "properties": { "proposal": { "oneOf": [{ "$ref": "#/components/schemas/ReminderProposalDetail" }, { "$ref": "#/components/schemas/ReminderCommandProposalDetail" }] } } }
         ]
       },
       "ApprovalPage": {
@@ -2578,7 +2596,7 @@
           "proposalId": { "type": "string", "format": "uuid" },
           "runId": { "type": "string", "format": "uuid" },
           "conversationId": { "type": "string", "format": "uuid" },
-          "toolId": { "type": "string", "const": "reminder.create" },
+          "toolId": { "$ref": "#/components/schemas/ReminderApprovalToolId" },
           "toolVersion": { "type": "integer", "const": 1 },
           "status": { "$ref": "#/components/schemas/ApprovalStatus" },
           "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },

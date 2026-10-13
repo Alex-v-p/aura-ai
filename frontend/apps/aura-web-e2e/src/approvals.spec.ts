@@ -4,16 +4,23 @@ import AxeBuilder from '@axe-core/playwright';
 const now = '2026-10-10T09:00:00.000Z';
 type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'canceled';
 type ExecutionStatus = 'not_started' | 'queued' | 'executing' | 'completed' | 'failed' | 'denied';
-type ApprovalSummary = { id: string; proposalId: string; runId: string; conversationId: string; toolCallId: string; toolId: 'reminder.create'; toolVersion: 1; status: ApprovalStatus; executionStatus: ExecutionStatus; version: number; createdAt: string; updatedAt: string; expiresAt: string; decidedAt: string | null };
-type ApprovalDetail = ApprovalSummary & { proposal: { id: string; content: string; dueAt: string } };
+type ApprovalToolId = 'reminder.create' | 'reminder.series.create' | 'reminder.reschedule' | 'reminder.series.update' | 'reminder.series.pause' | 'reminder.series.resume' | 'reminder.cancel';
+type ApprovalSummary = { id: string; proposalId: string; runId: string; conversationId: string; toolCallId: string; toolId: ApprovalToolId; toolVersion: 1; status: ApprovalStatus; executionStatus: ExecutionStatus; version: number; createdAt: string; updatedAt: string; expiresAt: string; decidedAt: string | null };
+type ApprovalDetail = ApprovalSummary & { proposal: { id: string; content: string; dueAt: string } | { id: string; operation: 'series.create' | 'reschedule' | 'series.update' | 'series.pause' | 'series.resume' | 'cancel'; summary: string; targetType: 'reminder' | 'series' | 'occurrence' | null; targetId: string | null; expectedVersion: number | null } };
 
 const summary = (id: string, status: ApprovalStatus = 'pending', executionStatus: ExecutionStatus = 'not_started'): ApprovalSummary => ({ id, proposalId: `proposal-${id}`, runId: `run-${id}`, conversationId: `conversation-${id}`, toolCallId: `call-${id}`, toolId: 'reminder.create', toolVersion: 1, status, executionStatus, version: status === 'pending' ? 1 : 2, createdAt: now, updatedAt: now, expiresAt: '2026-10-10T10:00:00.000Z', decidedAt: status === 'pending' ? null : '2026-10-10T09:05:00.000Z' });
 const pending = { ...summary('approval-pending'), id: '00000000-0000-4000-8000-000000000001', proposalId: '00000000-0000-4000-8000-000000000002', runId: '00000000-0000-4000-8000-000000000003', conversationId: '00000000-0000-4000-8000-000000000004', toolCallId: '00000000-0000-4000-8000-000000000005' };
 const pendingB = summary('approval-pending-b');
+const commandPending: ApprovalSummary = { ...summary('command-pending'), id: '00000000-0000-4000-8000-000000000011', proposalId: '00000000-0000-4000-8000-000000000012', runId: '00000000-0000-4000-8000-000000000013', conversationId: '00000000-0000-4000-8000-000000000014', toolCallId: '00000000-0000-4000-8000-000000000015', toolId: 'reminder.series.create' };
 const approved = summary('approval-approved', 'approved', 'completed');
 const rejected = summary('approval-rejected', 'rejected', 'denied');
 const historyThree = summary('approval-history-3', 'approved', 'completed');
+const cancelOccurrence = { ...summary('cancel-occurrence'), id: '00000000-0000-4000-8000-000000000021', proposalId: '00000000-0000-4000-8000-000000000022', toolId: 'reminder.cancel' as const };
+const cancelOccurrenceDetail: ApprovalDetail = { ...cancelOccurrence, proposal: { id: cancelOccurrence.proposalId, operation: 'cancel', summary: 'Cancel the next occurrence of the recurring reminder.', targetType: 'occurrence', targetId: '00000000-0000-4000-8000-000000000023', expectedVersion: 4 } };
+const terminalCommand = { ...commandPending, id: '00000000-0000-4000-8000-000000000031', proposalId: '00000000-0000-4000-8000-000000000032', status: 'approved' as const, executionStatus: 'completed' as const, version: 2, decidedAt: now };
+const terminalCommandDetail: ApprovalDetail = { ...terminalCommand, proposal: { id: terminalCommand.proposalId, operation: 'series.update', summary: 'Update future occurrences on the recurring reminder.', targetType: 'series', targetId: '00000000-0000-4000-8000-000000000033', expectedVersion: 1 } };
 const detailFor = (approval: ApprovalSummary, content = 'Create a reminder to bring the library books back.'): ApprovalDetail => ({ ...approval, proposal: { id: approval.proposalId, content, dueAt: '2026-10-11T16:30:00.000Z' } });
+const commandDetail: ApprovalDetail = { ...commandPending, proposal: { id: commandPending.proposalId, operation: 'series.create', summary: 'Create this recurring reminder on the configured schedule.', targetType: 'series', targetId: null, expectedVersion: null } };
 
 type DecisionResponse = { readonly status?: number; readonly abort?: boolean };
 type ApprovalFixtureState = {
@@ -24,9 +31,11 @@ type ApprovalFixtureState = {
   details: Record<string, ApprovalDetail>;
   detailErrors: Record<string, number | undefined>;
   detailGate?: Promise<void>;
+  detailRefreshGate?: Promise<void>;
   decisionGate?: Promise<void>;
   decisionResponses: DecisionResponse[];
   decisionCalls: number;
+  decisionIdempotencyKeys: string[];
   listRequests: number;
   detailRequests: number;
   pendingListResponses: number[];
@@ -35,7 +44,7 @@ type ApprovalFixtureState = {
   historyListGate?: Promise<void>;
   historyPages: Record<string, { readonly items: ApprovalSummary[]; readonly nextCursor: string | null }>;
   sessionStatus: number | null;
-  streamMode: 'heartbeat' | 'invalid-valid' | 'pending-refresh' | 'event-reconcile-fail' | '410' | 'cap';
+  streamMode: 'heartbeat' | 'invalid-valid' | 'pending-refresh' | 'event-reconcile-fail' | 'command' | '410' | 'cap';
   streamEventGate?: Promise<void>;
   streamRequests: number;
   streamHeaders: string[];
@@ -47,10 +56,11 @@ async function installFixtures(page: Page): Promise<ApprovalFixtureState> {
     historyRows: [approved, rejected],
     pendingNextCursor: null,
     historyNextCursor: null,
-    details: { [pending.id]: detailFor(pending), [pendingB.id]: detailFor(pendingB, 'Create a second reminder.'), [approved.id]: detailFor(approved, 'The approved reminder is already complete.'), [rejected.id]: detailFor(rejected, 'The rejected reminder was not created.') },
+    details: { [pending.id]: detailFor(pending), [pendingB.id]: detailFor(pendingB, 'Create a second reminder.'), [approved.id]: detailFor(approved, 'The approved reminder is already complete.'), [rejected.id]: detailFor(rejected, 'The rejected reminder was not created.'), [commandPending.id]: commandDetail, [cancelOccurrence.id]: cancelOccurrenceDetail, [terminalCommand.id]: terminalCommandDetail },
     detailErrors: {},
     decisionResponses: [],
     decisionCalls: 0,
+    decisionIdempotencyKeys: [],
     listRequests: 0,
     detailRequests: 0,
     pendingListResponses: [],
@@ -84,6 +94,12 @@ async function installFixtures(page: Page): Promise<ApprovalFixtureState> {
         const eventId = mode === 'pending-refresh' ? '22222222-2222-4222-8222-222222222222' : '33333333-3333-4333-8333-333333333333';
         return route.fulfill({ status: 200, contentType: 'text/event-stream', body: `id: ${eventId}\nevent: approval.approved\ndata: ${JSON.stringify({ schemaVersion: 1, eventId, eventType: 'approval.approved', approvalId: pending.id, proposalId: pending.proposalId, runId: pending.runId, conversationId: pending.conversationId, toolId: 'reminder.create', toolVersion: 1, status: 'approved', executionStatus: 'completed', version: 2, occurredAt: now })}\n\n` });
       }
+      if (state.streamMode === 'command') {
+        state.streamMode = 'heartbeat';
+        state.pendingRows = [commandPending];
+        const eventId = '44444444-4444-4444-8444-444444444444';
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body: `id: ${eventId}\nevent: approval.pending\ndata: ${JSON.stringify({ schemaVersion: 1, eventId, eventType: 'approval.pending', approvalId: commandPending.id, proposalId: commandPending.proposalId, runId: commandPending.runId, conversationId: commandPending.conversationId, toolId: commandPending.toolId, toolVersion: 1, status: 'pending', executionStatus: 'not_started', version: 1, occurredAt: now })}\n\n` });
+      }
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': heartbeat\n\n' });
     }
     const detailMatch = url.pathname.match(/\/approvals\/([^/]+)$/);
@@ -91,6 +107,7 @@ async function installFixtures(page: Page): Promise<ApprovalFixtureState> {
       state.detailRequests += 1;
       const id = detailMatch[1];
       if (state.detailGate && id === pending.id) await state.detailGate;
+      if (state.detailRefreshGate && id === pending.id && state.detailRequests > 1) await state.detailRefreshGate;
       const errorStatus = state.detailErrors[id];
       if (errorStatus) return route.fulfill({ status: errorStatus, json: { detail: 'detail unavailable' } });
       return route.fulfill({ json: state.details[id] ?? detailFor(summary(id)) });
@@ -98,6 +115,7 @@ async function installFixtures(page: Page): Promise<ApprovalFixtureState> {
     const decisionMatch = url.pathname.match(/\/approvals\/([^/]+)\/(approve|reject)$/);
     if (decisionMatch && request.method() === 'POST') {
       state.decisionCalls += 1;
+      state.decisionIdempotencyKeys.push(request.headers()['idempotency-key'] ?? '');
       if (state.decisionGate) await state.decisionGate;
       const configured = state.decisionResponses.shift();
       if (configured?.abort) return route.abort('failed');
@@ -168,6 +186,84 @@ test.describe('approval decision inbox', () => {
     const results = await new AxeBuilder({ page }).include('.approvals-page').analyze();
     expect(results.violations).toEqual([]);
     expect(state.decisionCalls).toBe(0);
+  });
+
+  test('accepts a recurring reminder lifecycle event and renders its typed command detail', async ({ page }) => {
+    const state = await installFixtures(page);
+    state.pendingRows = [];
+    state.streamMode = 'command';
+    await page.goto('/approvals');
+    const row = page.locator(`#approval-${commandPending.id}`);
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute('aria-label', 'Review approval: Create a recurring reminder');
+    const detail = await openApproval(page, commandPending.id);
+    await expect(detail.getByRole('heading', { name: 'Create a recurring reminder', exact: true })).toBeVisible();
+    await expect(detail.getByText(commandDetail.proposal.summary, { exact: true })).toBeVisible();
+    const technicalDetails = detail.locator('details.technical-disclosure');
+    await expect(detail.getByText('series.create', { exact: true })).toBeHidden();
+    await expect(detail.getByText('series', { exact: true })).toBeHidden();
+    await technicalDetails.getByText('Technical details', { exact: true }).click();
+    await expect(detail.getByText('series.create', { exact: true })).toBeVisible();
+    await expect(detail.getByText('series', { exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    expect(state.streamRequests).toBe(1);
+  });
+
+  test('renders cancel scope in plain language and keeps protocol fields in technical details', async ({ page }) => {
+    const state = await installFixtures(page);
+    state.pendingRows = [cancelOccurrence];
+    await page.goto('/approvals');
+    const detail = await openApproval(page, cancelOccurrence.id);
+    await expect(detail.getByRole('heading', { name: 'Cancel this reminder occurrence', exact: true })).toBeVisible();
+    await expect(detail.locator('.proposal-card').getByText('future recurring occurrences remain scheduled', { exact: false })).toBeVisible();
+    await expect(detail.locator('.proposal-card').getByText('cancel', { exact: true })).toHaveCount(0);
+    await detail.getByText('Technical details', { exact: true }).click();
+    await expect(detail.getByText('cancel', { exact: true })).toBeVisible();
+    await expect(detail.getByText('occurrence', { exact: true })).toBeVisible();
+  });
+
+  test('uses terminal copy for an approved recurring command', async ({ page }) => {
+    const state = await installFixtures(page);
+    state.pendingRows = [terminalCommand];
+    await page.goto('/approvals');
+    const detail = await openApproval(page, terminalCommand.id);
+    await expect(detail.getByText('Approved and completed. This action is no longer awaiting authorization.', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Aura is waiting for your authorization before it takes this action.', { exact: true })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  });
+
+  test('does not drop one approval click while SSE reconciliation refreshes the same detail', async ({ page }) => {
+    const state = await installFixtures(page);
+    state.streamMode = 'pending-refresh';
+    let releaseStreamEvent: (() => void) | undefined;
+    state.streamEventGate = new Promise<void>((resolve) => { releaseStreamEvent = resolve; });
+    let releaseDetailRefresh: (() => void) | undefined;
+    state.detailRefreshGate = new Promise<void>((resolve) => { releaseDetailRefresh = resolve; });
+    await page.goto('/approvals');
+    const detail = await openApproval(page);
+    state.streamEventGate = undefined;
+    releaseStreamEvent?.();
+    await expect.poll(() => state.detailRequests).toBe(2);
+    const approve = detail.getByRole('button', { name: 'Approve', exact: true });
+    await expect(approve).toBeVisible();
+    await approve.click();
+    await expect.poll(() => state.decisionCalls).toBe(1);
+    releaseDetailRefresh?.();
+    await expect(detail.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  });
+
+  test('sends a UUID idempotency key when the browser has no randomUUID', async ({ page }) => {
+    await page.addInitScript(() => {
+      const browserCrypto = globalThis.crypto as Crypto & { randomUUID?: () => string };
+      try { Object.defineProperty(browserCrypto, 'randomUUID', { configurable: true, value: undefined }); }
+      catch { Object.defineProperty(Crypto.prototype, 'randomUUID', { configurable: true, value: undefined }); }
+    });
+    const state = await installFixtures(page);
+    await page.goto('/approvals');
+    const detail = await openApproval(page);
+    await detail.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect.poll(() => state.decisionCalls).toBe(1);
+    expect(state.decisionIdempotencyKeys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   });
 
   test('keeps the authoritative pending badge independent of History and pagination', async ({ page }) => {

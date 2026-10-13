@@ -15,7 +15,7 @@ def _contract() -> dict[str, Any]:
 
 def test_notification_api_is_owner_scoped_and_mutations_are_csrf_idempotent() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.12.0"
+    assert contract["info"]["version"] == "1.13.0"
     paths = contract["paths"]
     assert {
         "/api/v1/notifications",

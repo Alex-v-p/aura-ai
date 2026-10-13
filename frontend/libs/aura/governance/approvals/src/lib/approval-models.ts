@@ -1,11 +1,111 @@
-import type { Approval, ApprovalDetail as ApiApprovalDetail, ApprovalEvent, ApprovalExecutionStatus, ApprovalPage as ApiApprovalPage, ApprovalStatus, ApprovalStreamEvent as ApiApprovalStreamEvent } from '@aura/aura-api-client';
+import type { Approval, ApprovalDetail as ApiApprovalDetail, ApprovalEvent as ApiApprovalEvent, ApprovalExecutionStatus, ApprovalPage as ApiApprovalPage, ApprovalStatus, ApprovalStreamEvent as ApiApprovalStreamEvent, ReminderApprovalToolId, ReminderCommandProposalDetail as ApiReminderCommandProposalDetail, ReminderProposalDetail as ApiReminderProposalDetail } from '@aura/aura-api-client';
 
 export type { ApprovalExecutionStatus, ApprovalStatus };
-export type ApprovalSummary = Approval;
-export type ApprovalDetail = ApiApprovalDetail;
-export type ApprovalPage = ApiApprovalPage;
+/** The approval inbox is intentionally closed over the reminder commands that
+ * can be confirmed. Unknown tool ids must never become actionable UI. */
+export const APPROVAL_TOOL_IDS = [
+  'reminder.create',
+  'reminder.series.create',
+  'reminder.reschedule',
+  'reminder.series.update',
+  'reminder.series.pause',
+  'reminder.series.resume',
+  'reminder.cancel',
+] as const;
+export type ApprovalToolId = ReminderApprovalToolId;
+export function isApprovalToolId(value: unknown): value is ApprovalToolId {
+  return typeof value === 'string' && (APPROVAL_TOOL_IDS as readonly string[]).includes(value);
+}
+
+export type ReminderProposalDetail = ApiReminderProposalDetail;
+export type ReminderCommandProposalDetail = ApiReminderCommandProposalDetail;
+export type ApprovalProposal = ReminderProposalDetail | ReminderCommandProposalDetail;
+export type ApprovalSummary = Omit<Approval, 'toolId'> & { readonly toolId: ApprovalToolId };
+export type ApprovalDetail = Omit<ApiApprovalDetail, 'toolId' | 'proposal'> & { readonly toolId: ApprovalToolId; readonly proposal: ApprovalProposal };
+export type ApprovalPage = Omit<ApiApprovalPage, 'items'> & { readonly items: ReadonlyArray<ApprovalSummary> };
+export type ApprovalEvent = ApiApprovalEvent;
 export type ApprovalStreamEvent = ApiApprovalStreamEvent;
 export type ApprovalView = 'pending' | 'history';
+
+export function isReminderCommandProposal(proposal: ApprovalProposal): proposal is ReminderCommandProposalDetail {
+  return 'operation' in proposal;
+}
+
+function targetLabel(targetType: ReminderCommandProposalDetail['targetType']): string {
+  return targetType === 'occurrence' ? 'this reminder occurrence' : targetType === 'series' ? 'this recurring reminder' : 'this reminder';
+}
+
+/** Plain-language labels keep consequential scope visible without exposing protocol fields in the primary card. */
+export function approvalActionLabel(approval: ApprovalSummary | ApprovalDetail): string {
+  const proposal = 'proposal' in approval ? approval.proposal : null;
+  if (proposal && isReminderCommandProposal(proposal)) {
+    switch (proposal.operation) {
+      case 'series.create': return 'Create a recurring reminder';
+      case 'reschedule': return `Reschedule ${targetLabel(proposal.targetType)}`;
+      case 'series.update': return 'Update this recurring reminder';
+      case 'series.pause': return 'Pause this recurring reminder';
+      case 'series.resume': return 'Resume this recurring reminder';
+      case 'cancel': return `Cancel ${targetLabel(proposal.targetType)}`;
+    }
+  }
+  switch (approval.toolId) {
+    case 'reminder.create': return 'Create a reminder';
+    case 'reminder.series.create': return 'Create a recurring reminder';
+    case 'reminder.reschedule': return 'Reschedule a reminder';
+    case 'reminder.series.update': return 'Update a recurring reminder';
+    case 'reminder.series.pause': return 'Pause a recurring reminder';
+    case 'reminder.series.resume': return 'Resume a recurring reminder';
+    case 'reminder.cancel': return 'Cancel a reminder';
+    default: return 'Review reminder action';
+  }
+}
+
+export function reminderCommandConsequence(proposal: ReminderCommandProposalDetail): string {
+  switch (proposal.operation) {
+    case 'series.create': return 'This creates the recurring reminder described above.';
+    case 'reschedule': return proposal.targetType === 'occurrence'
+      ? 'Only this reminder occurrence will move; the rest of the recurring schedule stays on its cadence.'
+      : 'This moves the reminder to the requested time.';
+    case 'series.update': return 'This changes future occurrences; past occurrences remain unchanged.';
+    case 'series.pause': return 'Future occurrences will be suppressed until the recurring reminder is resumed.';
+    case 'series.resume': return 'Future occurrences will resume on the recurring reminder’s existing cadence.';
+    case 'cancel': return proposal.targetType === 'occurrence'
+      ? 'Only this reminder occurrence will be canceled; future recurring occurrences remain scheduled.'
+      : proposal.targetType === 'series'
+        ? 'This cancels the recurring reminder and prevents future occurrences.'
+        : 'This cancels the reminder.';
+  }
+}
+
+export function approvalLeadCopy(approval: ApprovalSummary): string {
+  if (approval.status === 'pending') return 'Aura is waiting for your authorization before it takes this action.';
+  if (approval.status === 'approved') {
+    return approval.executionStatus === 'completed'
+      ? 'Approved and completed. This action is no longer awaiting authorization.'
+      : 'Approved. Aura no longer needs authorization for this action.';
+  }
+  if (approval.status === 'rejected') return 'This request was rejected. Aura will not take this action.';
+  if (approval.status === 'expired') return 'This request expired before authorization and can no longer be approved.';
+  return 'This request was canceled and can no longer be changed.';
+}
+
+export interface UuidSource { readonly randomUUID?: () => string; readonly getRandomValues?: (bytes: Uint8Array) => Uint8Array; }
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export function createUuidV4(source?: UuidSource): string {
+  const runtimeSource = source ?? (typeof globalThis !== 'undefined' ? globalThis.crypto as UuidSource | undefined : undefined);
+  const native = runtimeSource?.randomUUID?.();
+  if (native && uuidPattern.test(native)) return native;
+  const bytes = new Uint8Array(16);
+  if (runtimeSource?.getRandomValues) runtimeSource.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+export function shouldPreserveReviewedApproval(routeChanged: boolean, reviewedId: string | null, selectedId: string | null, approvalId: string): boolean {
+  return !routeChanged && reviewedId === approvalId && selectedId === approvalId;
+}
 export function approvalSummaryFromDetail(detail: ApprovalDetail): ApprovalSummary {
   const { proposal, ...summary } = detail;
   void proposal;
@@ -67,7 +167,7 @@ export function isValidApprovalEvent(value: unknown): value is ApprovalEvent {
   return event.schemaVersion === 1 && boundedEventId(event.eventId) &&
     (event.eventType === 'approval.pending' || event.eventType === 'approval.approved' || event.eventType === 'approval.rejected' || event.eventType === 'approval.expired' || event.eventType === 'approval.canceled') &&
     boundedEventId(event.approvalId) && boundedEventId(event.proposalId) && boundedEventId(event.runId) && boundedEventId(event.conversationId) &&
-    event.toolId === 'reminder.create' && event.toolVersion === 1 &&
+    isApprovalToolId(event.toolId) && event.toolVersion === 1 &&
     (event.status === 'pending' || event.status === 'approved' || event.status === 'rejected' || event.status === 'expired' || event.status === 'canceled') &&
     (event.executionStatus === 'not_started' || event.executionStatus === 'queued' || event.executionStatus === 'executing' || event.executionStatus === 'completed' || event.executionStatus === 'failed' || event.executionStatus === 'denied') &&
     Number.isInteger(event.version) && Number(event.version) > 0 && isStrictRfc3339(event.occurredAt);
