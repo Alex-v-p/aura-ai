@@ -182,7 +182,9 @@ class AppState:
         approval_id = getattr(approval, "id", None)
         if not isinstance(run_id, UUID) or not isinstance(approval_id, UUID):
             raise ValueError("approval identifiers are required")
-        status = getattr(getattr(approval, "status", None), "value", getattr(approval, "status", None))
+        status = getattr(
+            getattr(approval, "status", None), "value", getattr(approval, "status", None)
+        )
         approved = status == "approved"
         run = await self.store.resume_waiting_run(run_id, approval_id, approved=approved)
         await self.coordinator.enqueue(run)
@@ -385,14 +387,16 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
-            self.approval_repository = approval_repository(self.sessions_factory, metrics=self.metrics, execution_port=self.store)
-            self.approval_service = approval_service(self.approval_repository, execution_port=self.store)
+            self.approval_repository = approval_repository(
+                self.sessions_factory, metrics=self.metrics, execution_port=self.store
+            )
+            self.approval_service = approval_service(
+                self.approval_repository, execution_port=self.store
+            )
             cast(Any, self.memory_repository).set_run_recall_metadata_loader(
                 self.sql_store.get_run_memory_recall_metadata
             )
-            agent_policy_loader = memory_uow.make_agent_policy_loader(
-                self.agent_service.repository
-            )
+            agent_policy_loader = memory_uow.make_agent_policy_loader(self.agent_service.repository)
             cast(Any, self.memory_repository).set_candidate_evidence_loader(
                 memory_uow.memory_evidence_loader(
                     self.sessions_factory,
@@ -501,7 +505,9 @@ class AppState:
             thinking_subscribe = getattr(self.nats, "subscribe_thinking_events", None)
             if callable(thinking_subscribe):
                 subscribe = cast(
-                    Callable[[Callable[[UUID, UUID, int, str], Awaitable[None]]], Awaitable[object]],
+                    Callable[
+                        [Callable[[UUID, UUID, int, str], Awaitable[None]]], Awaitable[object]
+                    ],
                     thinking_subscribe,
                 )
                 await subscribe(self._ingest_thinking_wakeup)
@@ -635,11 +641,7 @@ class AppState:
                         duplicate = await self.nats.publish(command)
                         wakeup_id = command.identifier("eventId")
                         publish_wakeup = getattr(self.nats, "publish_notification_event", None)
-                        if (
-                            is_reminder
-                            and wakeup_id is not None
-                            and callable(publish_wakeup)
-                        ):
+                        if is_reminder and wakeup_id is not None and callable(publish_wakeup):
                             publish = cast(Callable[[UUID], Awaitable[None]], publish_wakeup)
                             await publish(UUID(wakeup_id))
                         if is_approval_command:
@@ -765,9 +767,7 @@ class AppState:
                     if not is_approval_command:
                         self.metrics.increment(
                             component,
-                            "reminder_outbox_dispatched"
-                            if is_reminder
-                            else "outbox_dispatched",
+                            "reminder_outbox_dispatched" if is_reminder else "outbox_dispatched",
                             **metadata,
                         )
                     if duplicate and not is_approval_command:

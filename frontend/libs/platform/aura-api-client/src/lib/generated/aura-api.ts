@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 58f015c28f3e01d18bb447eaeb1807daa1025eb30f1a28bee5bb1a1b52fc927f
+// Contract SHA-256: 68465a574b80a0d5873ed5f82bf1c90fa1c420061e88696da80d18b7d6f1d0c7
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -202,11 +202,23 @@ export type UpdateConversationRequest = { readonly "modelId"?: string; readonly 
 
 export type UpdateConversationMetadataRequest = { readonly "title"?: string; readonly "archived"?: boolean; readonly "version": number; };
 
-export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
+export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+
+export type CreateConversationBranchRequest = { readonly "sourceUserMessageId": string; readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+
+export type RegenerateRunRequest = { readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
 
 export type ConversationPage = { readonly "items": ReadonlyArray<ConversationSummary>; readonly "nextCursor": string | null; };
 
 export type ConversationSummary = { readonly "id": string; readonly "title": string; readonly "agentProfileId": string; readonly "agentRevisionId": string; readonly "agent"?: AgentReference; readonly "agentAssignments"?: ReadonlyArray<AgentAssignment>; readonly "persona"?: PersonaReference; readonly "personaOverride"?: boolean; readonly "personaAssignments"?: ReadonlyArray<PersonaAssignment>; readonly "modelId": string; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "archivedAt"?: string | null; readonly "currentRun": Run | null; };
+
+export type ConversationBranchOrigin = "root" | "edited_message" | "regenerated_response";
+
+export type ConversationBranchSummary = { readonly "id": string; readonly "conversationId": string; readonly "parentBranchId": string | null; readonly "forkedFromMessageId": string | null; readonly "headMessageId": string | null; readonly "origin": ConversationBranchOrigin; readonly "createdAt": string; };
+
+export type ConversationBranchPage = { readonly "items": ReadonlyArray<ConversationBranchSummary>; readonly "nextCursor": string | null; };
+
+export type ConversationBranchDetail = { readonly "branch": ConversationBranchSummary; readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; };
 
 export type AgentReference = { readonly "profileId": string; readonly "revisionId": string; readonly "displayName": string; readonly "revision": number; readonly "status": ProfileStatus; readonly "newerRevisionAvailable": boolean; };
 
@@ -216,11 +228,11 @@ export type PersonaReference = { readonly "profileId": string; readonly "revisio
 
 export type PersonaAssignment = { readonly "id": string; readonly "persona": PersonaReference; readonly "source": "agent_default" | "conversation_override"; readonly "reason": "initial" | "agent_switch" | "agent_revision_upgrade" | "manual_override" | "reset_to_agent_default"; readonly "effectiveAfterMessageId": string | null; readonly "createdAt": string; };
 
-export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; };
+export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; readonly "branches"?: ReadonlyArray<ConversationBranchSummary>; };
 
-export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "createdAt": string; readonly "updatedAt": string; };
+export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -232,7 +244,7 @@ export type ConversationArchiveState = "active" | "archived" | "all";
 
 export type RunError = { readonly "code": string; readonly "message": string; readonly "retryable": boolean; readonly "traceId": string; };
 
-export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; };
+export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; readonly "branch"?: ConversationBranchSummary; };
 
 export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | ModelThinkingDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
 
@@ -418,10 +430,14 @@ export interface AuraApiOperations {
   readonly createConversation: { readonly response: ConversationRunAccepted; readonly body: CreateConversationRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getConversation: { readonly response: ConversationDetail; readonly body: never; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly updateConversation: { readonly response: ConversationSummary; readonly body: UpdateConversationRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listConversationBranches: { readonly response: ConversationBranchPage; readonly body: never; readonly path: { readonly "conversation_id": string; }; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createConversationBranch: { readonly response: ConversationRunAccepted; readonly body: CreateConversationBranchRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getConversationBranch: { readonly response: ConversationBranchDetail; readonly body: never; readonly path: { readonly "conversation_id": string; readonly "branch_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createRun: { readonly response: ConversationRunAccepted; readonly body: CreateRunRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly updateConversationMetadata: { readonly response: ConversationSummary; readonly body: UpdateConversationMetadataRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly cancelRun: { readonly response: Run; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly retryRun: { readonly response: ConversationRunAccepted; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly regenerateRun: { readonly response: ConversationRunAccepted; readonly body: RegenerateRunRequest; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamRunEvents: { readonly response: RunEvent; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly getRunMemoryActivity: { readonly response: RunMemoryActivitySnapshot; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listMemories: { readonly response: MemoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "kind"?: MemoryKind; readonly "scopeType"?: MemoryCollectionScopeType; readonly "agentProfileId"?: string; readonly "status"?: MemoryLifecycleStatus; readonly "provenanceType"?: MemoryProvenanceType; readonly "confidenceMin"?: number; readonly "confidenceMax"?: number; readonly "createdFrom"?: string; readonly "createdTo"?: string; readonly "includeHistorical"?: boolean; }; readonly headers: Readonly<Record<string, never>>; };
@@ -521,10 +537,14 @@ export const AURA_API_OPERATIONS = {
   createConversation: { method: 'POST', pathTemplate: '/api/v1/conversations', requestMode: 'json', responseMode: 'json' },
   getConversation: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}', requestMode: 'none', responseMode: 'json' },
   updateConversation: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}', requestMode: 'json', responseMode: 'json' },
+  listConversationBranches: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}/branches', requestMode: 'none', responseMode: 'json' },
+  createConversationBranch: { method: 'POST', pathTemplate: '/api/v1/conversations/{conversation_id}/branches', requestMode: 'json', responseMode: 'json' },
+  getConversationBranch: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}/branches/{branch_id}', requestMode: 'none', responseMode: 'json' },
   createRun: { method: 'POST', pathTemplate: '/api/v1/conversations/{conversation_id}/runs', requestMode: 'json', responseMode: 'json' },
   updateConversationMetadata: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}/metadata', requestMode: 'json', responseMode: 'json' },
   cancelRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/cancel', requestMode: 'none', responseMode: 'json' },
   retryRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/retry', requestMode: 'none', responseMode: 'json' },
+  regenerateRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/regenerate', requestMode: 'json', responseMode: 'json' },
   streamRunEvents: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/events', requestMode: 'none', responseMode: 'event-stream' },
   getRunMemoryActivity: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/memory-activity', requestMode: 'none', responseMode: 'json' },
   listMemories: { method: 'GET', pathTemplate: '/api/v1/memories', requestMode: 'none', responseMode: 'json' },

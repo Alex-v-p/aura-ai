@@ -73,6 +73,45 @@ browser IANA timezone is pinned to a new run; prompt compilation derives local
 date/time from the server clock. Legacy runs remain valid and ambiguous times
 must be clarified with an explicit offset rather than guessed.
 
+### Immutable conversation branching and regeneration
+
+An owner correction never updates an existing message. Core creates a new
+branch from the corrected user message's preceding ancestor path, persists a
+new user message, and admits a new governed run through the conversation's
+currently effective configuration. Regeneration is separate from failed-run
+retry: it creates an alternative branch and fresh governed run from the source
+run's preceding user-message path, while retry remains recovery linked through
+`retryOfRunId`. Branch and message ancestry are PostgreSQL-owned immutable
+lineage; branch paths include exactly their ancestors and exclude later source
+and sibling messages.
+
+Shared historical messages are references in the new path rather than newly
+processed content. Their prior memory extraction, tool calls, approvals, and
+other effects are not repeated. A branch or regenerated run performs fresh
+policy admission, governed tool execution, document retrieval, and citation
+validation. Source-run evidence identifiers, citations, tool results, pending
+approvals, and side effects are never copied into the new run.
+
+OpenAPI contract `aura-v1` version 1.17.0 adds owner-authorized branch listing,
+branch-path loading, edited-message branch creation, and run regeneration.
+Mutations require anti-CSRF, idempotency, and the expected conversation version.
+Existing create-run clients may optionally select an opaque branch; omission
+preserves the pre-1.17 linear conversation behavior. Existing message, run, and
+accepted-run representations add only optional opaque branch, message-parent,
+and regeneration lineage identifiers. The `runs/v1` event contract remains at
+schema version 1 and adds the same optional identifiers to snapshot message and
+run shapes. Older producers may omit these properties and older consumers may
+ignore them.
+
+Aura Core's conversation and run modules produce both contracts. The generated
+transport-only Aura API client and owner-authorized Aura Web conversation
+surface consume them. Rollout is additive: migrate every existing conversation
+to one root branch, deploy Core before or with the regenerated client, and keep
+the legacy conversation detail and run creation paths readable throughout.
+Branch identifiers are opaque URL state only; message content, prompts,
+responses, citations, evidence, and tool payloads remain excluded from URLs,
+browser persistence, events, logs, traces, metrics, and evaluation capture.
+
 ## Execution rules
 
 - Independent conversations and agents may run concurrently within resource limits.

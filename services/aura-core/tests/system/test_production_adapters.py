@@ -46,7 +46,7 @@ from aura_core.runtime.streaming.publisher import EventPublisher
 from authlib.jose import JsonWebKey, JsonWebToken
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 from conftest import owner_client
 
@@ -655,6 +655,136 @@ async def test_sql_create_add_and_retry_stage_foreign_keys_in_order(
     assert retried[2].retry_of_run_id == added[2].id
     assert retry_replay[2].id == retried[2].id
     assert retried[1].id == added[1].id
+
+
+@pytest.mark.asyncio
+async def test_sql_edit_branch_orders_message_before_run_and_rolls_back_atomically(
+    sql_store: SqlConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production adapter must satisfy the run-to-message FK in one UoW.
+
+    The successful branch proves the corrected user message is durable before
+    its run references it.  The injected failure occurs after the message
+    flush, so PostgreSQL must roll back the branch, message, and every later
+    side effect together.
+    """
+
+    issuer = "https://identity.integration.example"
+    owner = "branch-order-owner"
+    conversation, source, original = await sql_store.create(
+        issuer, owner, "original question", "chat", MODELS, str(uuid4())
+    )
+    await sql_store.finish_run(original.id, RunStatus.COMPLETED)
+    accepted_version = (await sql_store.get(conversation.id, owner, issuer)).version
+
+    loaded, corrected, branch_run, branch = await sql_store.create_branch(
+        conversation.id,
+        source.id,
+        "corrected question",
+        accepted_version,
+        str(uuid4()),
+        owner,
+        issuer,
+    )
+    assert loaded.id == conversation.id
+    assert corrected.content == "corrected question"
+    assert branch_run.user_message_id == corrected.id
+    assert branch_run.branch_id == branch.id
+
+    async with sql_store.sessions() as session:
+        persisted = (
+            await session.execute(
+                text(
+                    """
+                    SELECT m.id AS message_id,
+                           m.run_id AS message_run_id,
+                           r.user_message_id AS run_message_id,
+                           r.branch_id AS run_branch_id,
+                           b.head_message_id AS branch_head_message_id
+                    FROM messages AS m
+                    JOIN runs AS r ON r.user_message_id = m.id
+                    JOIN conversation_branches AS b ON b.id = m.branch_id
+                    WHERE m.id = :message_id
+                      AND r.id = :run_id
+                      AND b.id = :branch_id
+                    """
+                ),
+                {
+                    "message_id": corrected.id,
+                    "run_id": branch_run.id,
+                    "branch_id": branch.id,
+                },
+            )
+        ).mappings().one()
+    assert persisted["message_id"] == corrected.id
+    assert persisted["message_run_id"] == branch_run.id
+    assert persisted["run_message_id"] == corrected.id
+    assert persisted["run_branch_id"] == branch.id
+    assert persisted["branch_head_message_id"] == corrected.id
+
+    rollback_conversation, rollback_source, rollback_original = await sql_store.create(
+        issuer, owner, "rollback question", "chat", MODELS, str(uuid4())
+    )
+    await sql_store.finish_run(rollback_original.id, RunStatus.COMPLETED)
+    rollback_before = await sql_store.get(rollback_conversation.id, owner, issuer)
+
+    def fail_run_stage(_session: Any, _run: Any) -> None:
+        raise RuntimeError("injected run staging failure")
+
+    monkeypatch.setattr(sql_store.runs, "stage", fail_run_stage)
+    with pytest.raises(RuntimeError, match="injected run staging failure"):
+        await sql_store.create_branch(
+            rollback_conversation.id,
+            rollback_source.id,
+            "must not persist",
+            rollback_before.version,
+            str(uuid4()),
+            owner,
+            issuer,
+        )
+
+    async with sql_store.sessions() as session:
+        counts = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                      (SELECT count(*) FROM messages
+                       WHERE conversation_id = :conversation_id) AS messages,
+                      (SELECT count(*) FROM runs
+                       WHERE conversation_id = :conversation_id) AS runs,
+                      (SELECT count(*) FROM conversation_branches
+                       WHERE conversation_id = :conversation_id) AS branches,
+                      (SELECT count(*) FROM outbox
+                       WHERE payload->>'conversationId' = :conversation_text) AS outbox,
+                      (SELECT count(*) FROM command_idempotency
+                       WHERE principal_issuer = :issuer
+                         AND principal_subject = :owner
+                         AND response->>'conversationId' = :conversation_text) AS idempotency,
+                      (SELECT count(*) FROM messages
+                       WHERE conversation_id = :conversation_id
+                         AND content = 'must not persist') AS corrected_messages
+                    """
+                ),
+                {
+                    "conversation_id": rollback_conversation.id,
+                    "conversation_text": str(rollback_conversation.id),
+                    "issuer": issuer,
+                    "owner": owner,
+                },
+            )
+        ).mappings().one()
+    assert dict(counts) == {
+        "messages": 1,
+        "runs": 1,
+        "branches": 1,
+        "outbox": 1,
+        "idempotency": 1,
+        "corrected_messages": 0,
+    }
+    rollback_after = await sql_store.get(rollback_conversation.id, owner, issuer)
+    assert rollback_after.version == rollback_before.version
 
 
 @pytest.mark.asyncio

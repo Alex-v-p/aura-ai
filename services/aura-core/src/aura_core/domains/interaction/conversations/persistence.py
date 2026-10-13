@@ -15,9 +15,7 @@ class ConversationRow(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     principal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    title_state: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="legacy"
-    )
+    title_state: Mapped[str] = mapped_column(String(16), nullable=False, server_default="legacy")
     agent_profile_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     agent_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     persona_override_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -29,6 +27,21 @@ class ConversationRow(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ConversationBranchRow(Base):
+    """Conversation-owned immutable branch lineage."""
+
+    __tablename__ = "conversation_branches"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id"), nullable=False, index=True
+    )
+    parent_branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    forked_from_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    head_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, default="root")
 
 
 class MessageRow(Base):
@@ -44,6 +57,8 @@ class MessageRow(Base):
     citations: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    parent_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
 
 
 class IdempotencyRow(Base):

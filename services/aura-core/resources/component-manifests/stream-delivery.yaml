@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.stream_delivery
-  version: 1.4.0
+  version: 1.5.0
   owner: aura-core
   category: delivery
 input:
@@ -43,7 +43,7 @@ metric_semantics:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [error_class, dependency, outcome, status]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id]
   prohibited: [prompt, response, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

@@ -7,6 +7,7 @@ SQLAlchemy repository can implement the same public methods without changing rou
 import asyncio
 import base64
 import binascii
+import copy
 import hashlib
 import inspect
 import json
@@ -44,6 +45,8 @@ from aura_core.domains.interaction.conversations.dto import (
     AssignmentReason,
     Conversation,
     ConversationArchiveState,
+    ConversationBranch,
+    ConversationBranchOrigin,
     ConversationListFilters,
     DocumentCitation,
     Message,
@@ -226,9 +229,7 @@ class ConversationStore:
         value = getattr(revision, "memory_policy_revision_id", None)
         return value if isinstance(value, UUID) else None
 
-    def _tool_policy_snapshot(
-        self, revision: AgentRevision
-    ) -> tuple[UUID | None, int, int, int]:
+    def _tool_policy_snapshot(self, revision: AgentRevision) -> tuple[UUID | None, int, int, int]:
         """Snapshot the immutable tool policy at in-memory run admission."""
 
         policy_id = getattr(revision, "tool_policy_revision_id", None)
@@ -276,20 +277,23 @@ class ConversationStore:
             agent_profile_id = pinned_revision.profile_id
             policy = self.agents.get_memory_policy(run.memory_policy_revision_id)
             recall_method = cast(Callable[[MemoryRecallRequest], Awaitable[object]], method)
-            result = cast(MemoryRecallResult, await recall_method(
-                MemoryRecallRequest(
-                    issuer=conversation.principal_issuer,
-                    subject=conversation.principal_subject,
-                    agent_profile_id=agent_profile_id,
-                    query=query,
-                    policy=policy,
-                    context_token_budget=budget,
-                    run_id=run.id,
-                    conversation_id=conversation.id,
-                    trace_id=trace_id or run.id.hex,
-                    parent_span_id=parent_span_id,
-                )
-            ))
+            result = cast(
+                MemoryRecallResult,
+                await recall_method(
+                    MemoryRecallRequest(
+                        issuer=conversation.principal_issuer,
+                        subject=conversation.principal_subject,
+                        agent_profile_id=agent_profile_id,
+                        query=query,
+                        policy=policy,
+                        context_token_budget=budget,
+                        run_id=run.id,
+                        conversation_id=conversation.id,
+                        trace_id=trace_id or run.id.hex,
+                        parent_span_id=parent_span_id,
+                    )
+                ),
+            )
             raw_items: Sequence[object] = tuple(result.memories)
             items = normalize_memory_evidence(raw_items, limit=policy.max_memories)
             run.memory_embedding_generation_id = result.embedding_generation_id
@@ -301,15 +305,15 @@ class ConversationStore:
             recall_outcome = (
                 "skipped"
                 if isinstance(gate_outcome, str) and gate_outcome.startswith("skipped/")
-                else "degraded" if degraded else "ok"
+                else "degraded"
+                if degraded
+                else "ok"
             )
             run.memory_recall_metadata = serialize_memory_recall_metadata(
                 items,
                 policy_revision_id=run.memory_policy_revision_id,
                 embedding_generation_id=result.embedding_generation_id,
-                retrieval_version=str(
-                    getattr(result, "retrieval_version", "memory-retrieval-v2")
-                ),
+                retrieval_version=str(getattr(result, "retrieval_version", "memory-retrieval-v2")),
                 outcome=recall_outcome,
                 fallback_used=bool(getattr(result, "fallback_used", False)),
                 degradation_reason=degradation_reason,
@@ -352,7 +356,7 @@ class ConversationStore:
         async with self._global_lock:
             return self._locks.setdefault(conversation_id, asyncio.Lock())
 
-    async def get(
+    async def _get_raw(
         self, conversation_id: UUID, subject: str, issuer: str | None = None
     ) -> Conversation:
         if issuer is None:
@@ -365,6 +369,40 @@ class ConversationStore:
         ):
             raise ConversationNotFound
         return conversation
+
+    async def get(
+        self, conversation_id: UUID, subject: str, issuer: str | None = None
+    ) -> Conversation:
+        """Return the deterministic legacy/root conversation projection.
+
+        Alternative branches remain durable and are exposed through the
+        branch-specific query.  Mutation and worker paths use ``_get_raw`` so
+        they always operate on the complete aggregate.
+        """
+
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        root = next(
+            (branch for branch in conversation.branches if branch.parent_branch_id is None),
+            None,
+        )
+        if root is None:
+            return conversation
+        from aura_core.domains.interaction.conversations.context import branch_message_ids
+
+        visible_ids = branch_message_ids(conversation, root.id) or set()
+        if all(run.branch_id in {None, root.id} for run in conversation.runs):
+            return conversation
+        projection = copy.copy(conversation)
+        projection.messages = [
+            message for message in conversation.messages if message.id in visible_ids
+        ]
+        projection.runs = [
+            run
+            for run in conversation.runs
+            if run.branch_id is None or run.branch_id == root.id
+        ]
+        projection.active_branch_id = root.id
+        return projection
 
     @staticmethod
     def _activity_key(item: Conversation) -> tuple[datetime, UUID]:
@@ -446,9 +484,7 @@ class ConversationStore:
                 if fingerprint != filters_fingerprint(normalized_filters):
                     raise InvalidConversationCursor("cursor does not match filters")
                 values = [
-                    item
-                    for item in values
-                    if self._activity_key(item) < (cursor_time, cursor_id)
+                    item for item in values if self._activity_key(item) < (cursor_time, cursor_id)
                 ]
             except ValueError, binascii.Error, UnicodeDecodeError:
                 self._record_conversation_list(
@@ -544,7 +580,11 @@ class ConversationStore:
     ) -> tuple[Conversation, Message, Run]:
         key = (issuer, subject, idempotency_key)
         fingerprint = _fingerprint(
-            "create", message, model_id, agent_revision_id, persona_revision_id,
+            "create",
+            message,
+            model_id,
+            agent_revision_id,
+            persona_revision_id,
             client_time_zone,
         )
         existing = self._idempotency.get(key)
@@ -577,7 +617,10 @@ class ConversationStore:
             client_time_zone=client_time_zone,
             title_state=TitleState.PENDING,
         )
-        user_message = Message(conversation.id, MessageRole.USER, message)
+        root_branch = ConversationBranch(conversation.id)
+        conversation.branches.append(root_branch)
+        conversation.active_branch_id = root_branch.id
+        user_message = Message(conversation.id, MessageRole.USER, message, branch_id=root_branch.id)
         run = Run(
             conversation_id=conversation.id,
             user_message_id=user_message.id,
@@ -594,6 +637,7 @@ class ConversationStore:
             tool_timeout_ms=tool_timeout_ms,
             tool_retry_limit=tool_retry_limit,
             client_time_zone=client_time_zone,
+            branch_id=root_branch.id,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
@@ -614,6 +658,216 @@ class ConversationStore:
         )
         self._conversations[conversation.id] = conversation
         result = (conversation, user_message, run)
+        self._idempotency[key] = result
+        self._idempotency_fingerprints[key] = fingerprint
+        return result
+
+    async def list_branches(
+        self, conversation_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[ConversationBranch]:
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        return list(conversation.branches)
+
+    async def branch_path(
+        self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[Message]:
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        from aura_core.domains.interaction.conversations.context import branch_message_ids
+
+        allowed = branch_message_ids(conversation, branch_id) or set()
+        return [message for message in conversation.messages if message.id in allowed]
+
+    async def branch_runs(
+        self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[Run]:
+        """Return runs owned by one branch without applying the legacy projection."""
+
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        if not any(branch.id == branch_id for branch in conversation.branches):
+            raise ConversationNotFound
+        return [run for run in conversation.runs if run.branch_id == branch_id]
+
+    async def create_branch(
+        self,
+        conversation_id: UUID,
+        source_user_message_id: UUID,
+        corrected_message: str,
+        expected_version: int,
+        idempotency_key: str,
+        subject: str,
+        issuer: str | None = None,
+        client_time_zone: str | None = None,
+        source_branch_id: UUID | None = None,
+    ) -> tuple[Conversation, Message, Run, ConversationBranch]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        key = (issuer, subject, idempotency_key)
+        fingerprint = _fingerprint(
+            "branch",
+            conversation_id,
+            source_user_message_id,
+            corrected_message,
+            expected_version,
+            client_time_zone,
+            source_branch_id,
+        )
+        existing = self._idempotency.get(key)
+        if existing is not None:
+            if self._idempotency_fingerprints.get(key) != fingerprint:
+                raise IdempotencyConflict
+            return cast(tuple[Conversation, Message, Run, ConversationBranch], existing)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
+        if conversation.version != expected_version:
+            raise VersionConflict
+        source = next(
+            (item for item in conversation.messages if item.id == source_user_message_id), None
+        )
+        if (
+            source is None
+            or source.role is not MessageRole.USER
+            or source.state is not MessageState.COMPLETE
+        ):
+            raise ConversationNotFound
+        from aura_core.domains.interaction.conversations.context import branch_message_ids
+
+        selected_branch_id = source_branch_id or conversation.active_branch_id or source.branch_id
+        allowed = branch_message_ids(conversation, selected_branch_id) or set()
+        if source.id not in allowed:
+            raise ConversationNotFound
+        source_path = list(conversation.messages)
+        source_path = [item for item in source_path if item.id in allowed]
+        position = next(
+            (index for index, item in enumerate(source_path) if item.id == source.id), 0
+        )
+        parent_message = source_path[position - 1] if position else None
+        # A fork before the first local message cannot encode an empty
+        # boundary with a nullable locator. Anchor it to the source's owning
+        # branch so inherited sibling messages are not carried forward.
+        parent_branch_id = (
+            parent_message.branch_id if parent_message is not None else source.branch_id
+        )
+        branch = ConversationBranch(
+            conversation_id,
+            parent_branch_id=parent_branch_id,
+            forked_from_message_id=parent_message.id if parent_message else source.id,
+            origin=ConversationBranchOrigin.EDITED_MESSAGE,
+        )
+        revision = self._resolve_agent(conversation.agent_revision_id)
+        effective_persona = (
+            conversation.persona_override_revision_id or revision.persona_revision_id
+        )
+        tool_policy_id, call_limit, timeout_ms, retry_limit = self._tool_policy_snapshot(revision)
+        created = now()
+        user = Message(
+            conversation.id,
+            MessageRole.USER,
+            corrected_message,
+            run_id=None,
+            created_at=created,
+            updated_at=created,
+            branch_id=branch.id,
+            parent_message_id=parent_message.id if parent_message else None,
+        )
+        run = Run(
+            conversation_id=conversation.id,
+            user_message_id=user.id,
+            agent_revision_id=revision.id,
+            model_policy_revision_id=revision.model_policy_revision_id,
+            provider="ollama",
+            model_id=conversation.model_id,
+            persona_revision_id=effective_persona,
+            prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
+            prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
+            memory_policy_revision_id=self._memory_policy_revision(revision),
+            tool_policy_revision_id=tool_policy_id,
+            tool_call_limit=call_limit,
+            tool_timeout_ms=timeout_ms,
+            tool_retry_limit=retry_limit,
+            client_time_zone=validate_client_time_zone(
+                client_time_zone or conversation.client_time_zone
+            ),
+            branch_id=branch.id,
+        )
+        user.run_id = run.id
+        branch.head_message_id = user.id
+        conversation.branches.append(branch)
+        conversation.messages.append(user)
+        conversation.runs.append(run)
+        conversation.active_branch_id = branch.id
+        conversation.version += 1
+        conversation.updated_at = created
+        result = (conversation, user, run, branch)
+        self._idempotency[key] = result
+        self._idempotency_fingerprints[key] = fingerprint
+        return result
+
+    async def regenerate(
+        self,
+        run_id: UUID,
+        expected_version: int,
+        idempotency_key: str,
+        subject: str,
+        issuer: str | None = None,
+        client_time_zone: str | None = None,
+    ) -> tuple[Conversation, Message, Run, ConversationBranch]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        key = (issuer, subject, idempotency_key)
+        fingerprint = _fingerprint("regenerate", run_id, expected_version, client_time_zone)
+        existing = self._idempotency.get(key)
+        if existing is not None:
+            if self._idempotency_fingerprints.get(key) != fingerprint:
+                raise IdempotencyConflict
+            return cast(tuple[Conversation, Message, Run, ConversationBranch], existing)
+        conversation, source_run = await self._find_run(run_id, subject, issuer)
+        if conversation.archived_at is not None:
+            raise ArchivedConversationConflict
+        if conversation.version != expected_version:
+            raise VersionConflict
+        source_user = next(
+            item for item in conversation.messages if item.id == source_run.user_message_id
+        )
+        branch = ConversationBranch(
+            conversation.id,
+            parent_branch_id=source_user.branch_id,
+            forked_from_message_id=source_user.id,
+            origin=ConversationBranchOrigin.REGENERATED_RESPONSE,
+        )
+        revision = self._resolve_agent(conversation.agent_revision_id)
+        effective_persona = (
+            conversation.persona_override_revision_id or revision.persona_revision_id
+        )
+        tool_policy_id, call_limit, timeout_ms, retry_limit = self._tool_policy_snapshot(revision)
+        run = Run(
+            conversation_id=conversation.id,
+            user_message_id=source_user.id,
+            agent_revision_id=revision.id,
+            model_policy_revision_id=revision.model_policy_revision_id,
+            provider="ollama",
+            model_id=conversation.model_id,
+            persona_revision_id=effective_persona,
+            prompt_bundle_revision_id=revision.prompt_bundle_revision_id,
+            prompt_hash=self.agents.compilation(revision.id, effective_persona).prompt_hash,
+            memory_policy_revision_id=self._memory_policy_revision(revision),
+            tool_policy_revision_id=tool_policy_id,
+            tool_call_limit=call_limit,
+            tool_timeout_ms=timeout_ms,
+            tool_retry_limit=retry_limit,
+            client_time_zone=validate_client_time_zone(
+                client_time_zone or conversation.client_time_zone
+            ),
+            branch_id=branch.id,
+            regenerated_from_run_id=source_run.id,
+        )
+        branch.head_message_id = source_user.id
+        conversation.branches.append(branch)
+        conversation.runs.append(run)
+        conversation.active_branch_id = branch.id
+        conversation.version += 1
+        conversation.updated_at = now()
+        result = (conversation, source_user, run, branch)
         self._idempotency[key] = result
         self._idempotency_fingerprints[key] = fingerprint
         return result
@@ -666,7 +920,7 @@ class ConversationStore:
                 raise InvalidConversationMetadata(str(exc)) from exc
         else:
             normalized_title = None
-        conversation = await self.get(conversation_id, subject, issuer)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
         was_archived = conversation.archived_at is not None
         fingerprint = _fingerprint("metadata", conversation_id, normalized_title, archived, version)
         key = (issuer, subject, idempotency_key)
@@ -735,7 +989,7 @@ class ConversationStore:
     ) -> Conversation:
         if issuer is None:
             raise ValueError("issuer is required")
-        conversation = await self.get(conversation_id, subject, issuer)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
         if conversation.archived_at is not None:
             raise ArchivedConversationConflict
         key = (issuer, subject, idempotency_key)
@@ -917,9 +1171,10 @@ class ConversationStore:
         self._idempotency[key] = conversation
         self._idempotency_fingerprints[key] = fingerprint
         if persona_revision_id is not None or use_agent_default_persona:
-            effective = persona_revision_id or self._revision_unchecked(
-                conversation.agent_revision_id
-            ).persona_revision_id
+            effective = (
+                persona_revision_id
+                or self._revision_unchecked(conversation.agent_revision_id).persona_revision_id
+            )
             self._record_persona_configuration(
                 conversation,
                 effective,
@@ -972,7 +1227,7 @@ class ConversationStore:
             raise ValueError("issuer is required")
         if not confirmation:
             raise AgentSwitchConfirmationRequired
-        conversation = await self.get(conversation_id, subject, issuer)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
         if conversation.archived_at is not None:
             raise ArchivedConversationConflict
         key = (issuer, subject, idempotency_key)
@@ -994,9 +1249,7 @@ class ConversationStore:
             self._assign_agent(
                 conversation,
                 agent_revision_id,
-                AssignmentReason.REVISION_UPGRADE
-                if upgrade
-                else AssignmentReason.MANUAL_SWITCH,
+                AssignmentReason.REVISION_UPGRADE if upgrade else AssignmentReason.MANUAL_SWITCH,
             )
             conversation.version += 1
             conversation.updated_at = now()
@@ -1013,10 +1266,11 @@ class ConversationStore:
         idempotency_key: str,
         issuer: str | None = None,
         client_time_zone: str | None = None,
+        branch_id: UUID | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if issuer is None:
             raise ValueError("issuer is required")
-        conversation = await self.get(conversation_id, subject, issuer)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
         if conversation.archived_at is not None:
             raise ArchivedConversationConflict
         client_time_zone = validate_client_time_zone(client_time_zone)
@@ -1025,7 +1279,7 @@ class ConversationStore:
         existing = self._idempotency.get(key)
         if existing is not None:
             fingerprint = hashlib.sha256(
-                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
             ).hexdigest()
             if self._idempotency_fingerprints.get(key) != fingerprint:
                 raise IdempotencyConflict
@@ -1047,7 +1301,27 @@ class ConversationStore:
             effective_persona = (
                 conversation.persona_override_revision_id or current_revision.persona_revision_id
             )
-            user_message = Message(conversation.id, MessageRole.USER, message)
+            selected_branch = (
+                next((item for item in conversation.branches if item.id == branch_id), None)
+                if branch_id
+                else next(
+                    (
+                        item
+                        for item in conversation.branches
+                        if item.id == conversation.active_branch_id
+                    ),
+                    None,
+                )
+            )
+            if selected_branch is None:
+                raise ConversationNotFound
+            user_message = Message(
+                conversation.id,
+                MessageRole.USER,
+                message,
+                branch_id=selected_branch.id,
+                parent_message_id=selected_branch.head_message_id,
+            )
             run = Run(
                 conversation_id=conversation.id,
                 user_message_id=user_message.id,
@@ -1066,6 +1340,7 @@ class ConversationStore:
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=pinned_time_zone,
+                branch_id=selected_branch.id,
             )
             user_message.run_id = run.id
             conversation.messages.append(user_message)
@@ -1075,7 +1350,7 @@ class ConversationStore:
         result = (conversation, user_message, run)
         self._idempotency[key] = result
         self._idempotency_fingerprints[key] = hashlib.sha256(
-            f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+            f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
         ).hexdigest()
         return result
 
@@ -1117,11 +1392,7 @@ class ConversationStore:
         persona_revision_id = prior.persona_revision_id
         prompt_bundle_revision_id = prior.prompt_bundle_revision_id
         prompt_hash = prior.prompt_hash
-        if (
-            persona_revision_id is None
-            or prompt_bundle_revision_id is None
-            or prompt_hash is None
-        ):
+        if persona_revision_id is None or prompt_bundle_revision_id is None or prompt_hash is None:
             persona_revision_id, prompt_bundle_revision_id, prompt_hash = self._provenance(
                 prior.agent_revision_id, prior.persona_revision_id
             )
@@ -1160,6 +1431,7 @@ class ConversationStore:
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=prior.client_time_zone,
+                branch_id=prior.branch_id,
             )
             conversation.runs.append(run)
             conversation.version += 1
@@ -1298,9 +1570,22 @@ class ConversationStore:
         ):
             raise RunClaimLost
         if run.assistant_message_id is None:
-            assistant = Message(conversation.id, MessageRole.ASSISTANT, text, state, run.id)
+            assistant = Message(
+                conversation.id,
+                MessageRole.ASSISTANT,
+                text,
+                state,
+                run.id,
+                branch_id=run.branch_id,
+                parent_message_id=run.user_message_id,
+            )
             run.assistant_message_id = assistant.id
             conversation.messages.append(assistant)
+            branch = next(
+                (item for item in conversation.branches if item.id == run.branch_id), None
+            )
+            if branch is not None:
+                branch.head_message_id = assistant.id
         else:
             assistant = next(
                 item for item in conversation.messages if item.id == run.assistant_message_id
@@ -1377,7 +1662,11 @@ class ConversationStore:
             assistant.updated_at = now()
         conversation.updated_at = now()
         if status == RunStatus.COMPLETED and assistant is not None:
-            if self.memory_command_factory is not None and not run.document_search_used:
+            if (
+                self.memory_command_factory is not None
+                and run.regenerated_from_run_id is None
+                and not run.document_search_used
+            ):
                 command = self.memory_command_factory(conversation, run, assistant)
                 publish = getattr(self.memory_outbox, "publish", None)
                 if callable(publish):
@@ -1423,7 +1712,11 @@ class ConversationStore:
             return run
 
     async def resume_waiting_run(
-        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        approved: bool,
         transaction: object | None = None,
     ) -> Run:
         del transaction
@@ -1480,7 +1773,7 @@ class ConversationStore:
         persona_revision_id: UUID | None = None,
         parent_span_id: str | None = None,
     ) -> list[tuple[str, str]]:
-        conversation = await self.get(conversation_id, subject, issuer)
+        conversation = await self._get_raw(conversation_id, subject, issuer)
         run = next(
             (item for item in conversation.runs if item.id.hex == trace_id),
             conversation.current_run,
@@ -1500,11 +1793,7 @@ class ConversationStore:
             run_id=trace_id,
             conversation_id=str(conversation.id),
         ).text
-        pinned_zone = (
-            run.client_time_zone
-            if run is not None
-            else conversation.client_time_zone
-        )
+        pinned_zone = run.client_time_zone if run is not None else conversation.client_time_zone
         local_now = server_local_time(now(), pinned_zone)
         if local_now is not None:
             prompt = (

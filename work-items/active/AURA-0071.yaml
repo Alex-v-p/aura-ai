@@ -1,0 +1,217 @@
+id: AURA-0071
+title: Add immutable conversation branching and regeneration
+status: review
+change_class: repository_governance
+intent: >
+  Let an authenticated owner correct an earlier user message or regenerate an
+  assistant answer as an immutable alternative branch, navigate every branch,
+  and preserve the original transcript while admitting every new run through
+  current Aura policy and fresh evidence validation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved edits and regenerations always create immutable alternative branches and never rewrite messages or runs.
+    - Owner-approved regeneration is a new governed run admitted with the currently effective conversation configuration while failed-run retry remains recovery of the original run.
+    - Owner-approved branch navigation uses opaque identifiers only and does not place message content in URLs or durable browser storage.
+    - Owner-approved branch selection replaces the current URL state so deep links are stable without adding every branch switch to browser Back and Forward history.
+    - Owner-approved branch runs must obtain fresh document evidence and citation validation and must not duplicate side effects or memory extraction for shared historical messages.
+    - Owner-approved edit-and-branch runs apply normal memory processing to their newly created user and assistant turn, while regeneration skips automatic memory extraction because it adds no new owner-authored evidence and assistant output alone is not durable memory evidence.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - RUN-001
+  - RUN-003
+  - RUN-005
+  - RUN-008
+  - RUN-011
+  - RUN-020
+  - RUN-021
+  - AUI-002
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-api-client.generated
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.api
+  - aura-core.platform.telemetry
+  - aura-web.interaction.conversations
+  - aura-web.e2e
+  - evaluation.conversation-branching
+allowed_paths:
+  - work-items/active/AURA-0071.yaml
+  - work-items/archived/AURA-0071.yaml
+  - docs/specifications/agents-and-execution.md
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - services/aura-core/migrations/versions/0021_conversation_branching.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/conversation-persistence.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_conversation_branch_evaluation.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_migration_0021_conversation_branching.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/test_fake_provider.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/observatory/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.interaction.conversation_persistence
+    - aura.execution.run_coordinator
+    - aura.runtime.stream_delivery
+  required_metrics:
+    - conversation_branch_creation_outcome
+    - conversation_branch_load_outcome
+    - conversation_regeneration_outcome
+  required_evaluators:
+    - conversation_branch_context_isolation
+    - conversation_regeneration_evidence_freshness
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every branch list load edit and regeneration command is owner-authorized without cross-owner existence disclosure.
+    - Existing messages runs citations tool results and memory activity remain immutable and cannot be moved rewritten or relabelled into another branch.
+    - A branch context contains only its ancestor path and never later or sibling messages.
+    - Regeneration uses current effective policy and obtains fresh run-scoped tool evidence; source-run evidence identifiers and citations are never copied.
+    - Shared historical messages do not repeat prior memory extraction or tool side effects merely because a new descendant branch is created.
+    - URLs browser storage events logs traces metrics and evaluator capture contain only bounded opaque identifiers statuses counts timings and failure classifications and never message document prompt response or tool content.
+  data_classes:
+    - private_conversation_content
+    - owner_identity
+    - opaque_conversation_branch_identifiers
+    - run_lineage_metadata
+    - metadata_only_document_citations
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Existing linear conversations migrate to one root branch and remain readable through every pre-existing API and generated-client interface.
+  - Editing an earlier owner user message creates one idempotent immutable branch from that message's parent path with corrected content and a newly admitted run while the source message and all original descendants remain byte-for-byte unchanged.
+  - Regenerating an owner assistant turn creates one idempotent alternative run from the same preceding user-message path using the currently effective conversation configuration without changing failed-run retry semantics.
+  - Branch list and branch-path APIs expose stable opaque branch and lineage identifiers enforce optimistic conversation versions for mutations and deny cross-owner access without existence disclosure.
+  - Each branch context contains exactly its ancestor message path and excludes all later source-branch and sibling-branch messages even during concurrent branch creation.
+  - A branch or regenerated run performs fresh governed tool and citation validation and never copies source-run evidence identifiers citations tool results or side effects.
+  - Shared historical messages do not trigger duplicate automatic memory extraction; edited branches process only their newly created user and assistant turn, and regenerated answers enqueue no memory extraction because they contain no new owner-authored evidence.
+  - Run events and response snapshots remain backward compatible and add only optional opaque lineage fields needed to reconcile the correct branch.
+  - Aura Web provides keyboard-accessible Edit and branch and Regenerate actions plus previous and next branch navigation with clear preserved-original messaging responsive layout and URL state containing opaque identifiers only.
+  - Metadata-only telemetry and evaluations distinguish branch creation load regeneration conflict denial and failure outcomes without capturing private conversation document prompt response citation or tool content.
+  - Full-stack browser acceptance edits an earlier user turn receives the alternative answer regenerates it switches between branches and proves the original transcript remains unchanged.
+  - No branch merge history rewrite shared editing arbitrary deletion new executor framework new service package dependency or protected-baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0071.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0071.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0071.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0071.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0071.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py
+  - uv run pytest deploy/compose/e2e/test_fake_provider.py
+  - uv run pytest services/aura-core/tests/test_conversations.py services/aura-core/tests/test_conversation_branch_evaluation.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_migration_0021_conversation_branching.py services/aura-core/tests/test_run_events.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_api_conversation_flow.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/system/test_production_adapters.py
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx lint aura-api-client
+  - pnpm --dir frontend exec nx test aura-conversations
+  - pnpm --dir frontend exec nx lint aura-conversations
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

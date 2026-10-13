@@ -74,7 +74,11 @@ class RunRepository(Protocol):
         self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID
     ) -> Run: ...
     async def resume_waiting_run(
-        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        approved: bool,
     ) -> Run: ...
 
 

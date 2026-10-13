@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.16.0",
+    "version": "1.17.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -322,6 +322,53 @@
         }
       }
     },
+    "/api/v1/conversations/{conversation_id}/branches": {
+      "get": {
+        "operationId": "listConversationBranches",
+        "tags": ["Conversations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/ConversationId" },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Opaque branch lineage ordered by creation time and branch identifier", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationBranchPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "operationId": "createConversationBranch",
+        "tags": ["Conversations", "Runs"],
+        "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConversationBranchRequest" } } } },
+        "responses": {
+          "202": { "description": "Immutable edited-message branch and newly governed run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/branches/{branch_id}": {
+      "get": {
+        "operationId": "getConversationBranch",
+        "tags": ["Conversations"],
+        "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/ConversationBranchId" }],
+        "responses": {
+          "200": { "description": "The branch's ordered ancestor path and run snapshots, excluding sibling and later source-branch messages", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationBranchDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/conversations/{conversation_id}/runs": {
       "post": {
         "operationId": "createRun",
@@ -382,6 +429,24 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/regenerate": {
+      "post": {
+        "operationId": "regenerateRun",
+        "tags": ["Runs"],
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegenerateRunRequest" } } } },
+        "responses": {
+          "202": { "description": "Immutable alternative branch and fresh governed run queued from the source run's preceding user-message path", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
@@ -1321,6 +1386,7 @@
       "AgentProfileId": { "name": "agent_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "PersonaProfileId": { "name": "persona_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ConversationId": { "name": "conversation_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ConversationBranchId": { "name": "branch_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped conversation branch identifier." },
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryId": { "name": "memory_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
@@ -2234,7 +2300,27 @@
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "conversationVersion": { "type": "integer", "minimum": 1 },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch to extend. Omission preserves the pre-1.17 default linear conversation behavior." },
           "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
+        }
+      },
+      "CreateConversationBranchRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sourceUserMessageId", "message", "conversationVersion"],
+        "properties": {
+          "sourceUserMessageId": { "type": "string", "format": "uuid", "description": "Owner-authorized user message replaced only within the newly created immutable branch." },
+          "message": { "type": "string", "minLength": 1, "maxLength": 32768, "description": "Corrected user content for the new branch. The source message remains unchanged." },
+          "conversationVersion": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque source branch containing the edited message. Omission selects the message's authoritative creation lineage for backward compatibility." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." }
+        }
+      },
+      "RegenerateRunRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["conversationVersion"],
+        "properties": {
+          "conversationVersion": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." }
         }
       },
       "ConversationPage": {
@@ -2264,6 +2350,37 @@
           "updatedAt": { "type": "string", "format": "date-time" },
           "archivedAt": { "type": ["string", "null"], "format": "date-time", "description": "Archive timestamp when available. Producers in contract version 1.3.0 and later include this property." },
           "currentRun": { "oneOf": [{ "$ref": "#/components/schemas/Run" }, { "type": "null" }] }
+        }
+      },
+      "ConversationBranchOrigin": { "type": "string", "enum": ["root", "edited_message", "regenerated_response"] },
+      "ConversationBranchSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "conversationId", "parentBranchId", "forkedFromMessageId", "headMessageId", "origin", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid", "description": "Opaque owner-scoped branch identifier." },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "parentBranchId": { "type": ["string", "null"], "format": "uuid", "description": "Immediate source branch, or null for the migrated root branch." },
+          "forkedFromMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Last shared ancestor message, or null for the root branch or a fork before the first message." },
+          "headMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Current terminal message on this immutable lineage path." },
+          "origin": { "$ref": "#/components/schemas/ConversationBranchOrigin" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ConversationBranchPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ConversationBranchSummary" } },
+          "nextCursor": { "type": ["string", "null"] }
+        }
+      },
+      "ConversationBranchDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["branch", "messages", "recentRuns"],
+        "properties": {
+          "branch": { "$ref": "#/components/schemas/ConversationBranchSummary" },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" }, "description": "Ordered root-to-head ancestor path only; sibling and later source-branch messages are excluded." },
+          "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } }
         }
       },
       "AgentReference": {
@@ -2321,7 +2438,8 @@
             "required": ["messages", "recentRuns"],
             "properties": {
               "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } },
-              "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } }
+              "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } },
+              "branches": { "type": "array", "items": { "$ref": "#/components/schemas/ConversationBranchSummary" }, "description": "Optional opaque lineage metadata. Pre-1.17 producers may omit this property." }
             }
           }
         ]
@@ -2336,6 +2454,8 @@
           "content": { "type": "string" },
           "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
           "runId": { "type": ["string", "null"], "format": "uuid" },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch on which this immutable message was created. Optional for backward compatibility with pre-1.17 producers." },
+          "parentMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Previous message in this message's immutable ancestor path. Optional for backward compatibility with pre-1.17 producers." },
           "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are excluded." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
@@ -2366,6 +2486,8 @@
           "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "retryOfRunId": { "type": ["string", "null"], "format": "uuid" },
+          "branchId": { "type": ["string", "null"], "format": "uuid", "description": "Opaque branch containing this run. Optional or null for backward compatibility with pre-1.17 producers." },
+          "regeneratedFromRunId": { "type": ["string", "null"], "format": "uuid", "description": "Source run for a user-requested regeneration, or null for ordinary and failed-run retry executions. Optional for backward compatibility with pre-1.17 producers." },
           "createdAt": { "type": "string", "format": "date-time" },
           "startedAt": { "type": ["string", "null"], "format": "date-time" },
           "finishedAt": { "type": ["string", "null"], "format": "date-time" },
@@ -2392,7 +2514,8 @@
         "properties": {
           "conversation": { "$ref": "#/components/schemas/ConversationSummary" },
           "userMessage": { "$ref": "#/components/schemas/Message" },
-          "run": { "$ref": "#/components/schemas/Run" }
+          "run": { "$ref": "#/components/schemas/Run" },
+          "branch": { "$ref": "#/components/schemas/ConversationBranchSummary", "description": "New or selected branch metadata. Optional for backward compatibility with pre-1.17 producers." }
         }
       },
       "RunEvent": {

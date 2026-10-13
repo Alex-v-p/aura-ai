@@ -1905,6 +1905,276 @@ test('renders a completed local reply', async ({ page }) => {
   );
 });
 
+test('navigates immutable conversation branches with keyboard controls and opaque URL state', async ({
+  page,
+}) => {
+  const rootBranch = {
+    id: 'root-branch',
+    conversationId: 'welcome',
+    parentBranchId: null,
+    forkedFromMessageId: null,
+    headMessageId: 'assistant-root',
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+  const alternativeBranch = {
+    id: 'branch-alt',
+    conversationId: 'welcome',
+    parentBranchId: 'root-branch',
+    forkedFromMessageId: 'user-root',
+    headMessageId: 'assistant-alt',
+    createdAt: '2026-01-01T00:01:00Z',
+  };
+  const rootMessages = [
+    {
+      id: 'user-root',
+      conversationId: 'welcome',
+      role: 'user',
+      content: 'Original question',
+      state: 'complete',
+      runId: 'run-root',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+    {
+      id: 'assistant-root',
+      conversationId: 'welcome',
+      role: 'assistant',
+      content: 'Original answer',
+      state: 'complete',
+      runId: 'run-root',
+      createdAt: '2026-01-01T00:00:01Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    },
+  ];
+  const alternativeMessages = [
+    { ...rootMessages[0], id: 'user-alt', content: 'Corrected question', runId: 'run-alt' },
+    { ...rootMessages[1], id: 'assistant-alt', content: 'Alternative answer', runId: 'run-alt' },
+  ];
+  await page.route('**/api/v1/conversations/welcome', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      json: {
+        id: 'welcome',
+        title: 'A thoughtful beginning',
+        agentProfileId: 'general',
+        agentRevisionId: 'agent-rev-1',
+        modelId: 'qwen2.5:7b',
+        version: 2,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:01:00Z',
+        messages: rootMessages,
+        recentRuns: [],
+        currentRun: null,
+      },
+    });
+  });
+  const branchDetail = {
+    branch: alternativeBranch,
+    messages: alternativeMessages,
+    recentRuns: [
+      {
+        id: 'run-alt',
+        conversationId: 'welcome',
+        userMessageId: 'user-alt',
+        assistantMessageId: 'assistant-alt',
+        status: 'completed',
+        agentRevisionId: 'agent-rev-1',
+        modelPolicyRevisionId: 'policy-1',
+        provider: 'ollama',
+        modelId: 'qwen2.5:7b',
+        retryOfRunId: null,
+        branchId: 'branch-alt',
+        regeneratedFromRunId: null,
+        createdAt: '2026-01-01T00:02:00Z',
+        startedAt: '2026-01-01T00:02:00Z',
+        finishedAt: '2026-01-01T00:02:01Z',
+        error: null,
+      },
+    ],
+    currentRun: null,
+  };
+  let branchCreateAttempts = 0;
+  await page.route(
+    (url) => url.pathname === '/api/v1/conversations/welcome/branches',
+    async (route) => {
+      if (route.request().method() === 'POST') {
+        branchCreateAttempts += 1;
+        if (branchCreateAttempts === 1) {
+          return route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Conversation version conflict' }),
+          });
+        }
+        return route.fulfill({
+          status: 202,
+          json: {
+            conversation: {
+              id: 'welcome',
+              title: 'A thoughtful beginning',
+              agentProfileId: 'general',
+              agentRevisionId: 'agent-rev-1',
+              modelId: 'qwen2.5:7b',
+              version: 3,
+              createdAt: '2026-01-01T00:00:00Z',
+              updatedAt: '2026-01-01T00:02:00Z',
+            },
+            branch: alternativeBranch,
+            userMessage: alternativeMessages[0],
+            run: {
+              id: 'run-alt',
+              conversationId: 'welcome',
+              userMessageId: 'user-alt',
+              assistantMessageId: 'assistant-alt',
+              status: 'completed',
+              agentRevisionId: 'agent-rev-1',
+              modelPolicyRevisionId: 'policy-1',
+              provider: 'ollama',
+              modelId: 'qwen2.5:7b',
+              retryOfRunId: null,
+              branchId: 'branch-alt',
+              regeneratedFromRunId: null,
+              createdAt: '2026-01-01T00:02:00Z',
+              startedAt: '2026-01-01T00:02:00Z',
+              finishedAt: '2026-01-01T00:02:01Z',
+              error: null,
+            },
+          },
+        });
+      }
+      if (route.request().method() !== 'GET') return route.continue();
+      return route.fulfill({ json: { items: [rootBranch, alternativeBranch], nextCursor: null } });
+    },
+  );
+  await page.route('**/api/v1/conversations/welcome/branches/**', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/root-branch')) {
+      return route.fulfill({
+        json: { branch: rootBranch, messages: rootMessages, recentRuns: [], currentRun: null },
+      });
+    }
+    return route.fulfill({ json: branchDetail });
+  });
+  // The successful branch detail is already terminal. Keep the generic fake
+  // provider stream from emitting a completion event that would reconcile the
+  // selected alternative against the legacy root projection.
+  await page.route('**/api/v1/runs/run-alt/events**', async (route) =>
+    route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'retry: 86400000\n\n' }),
+  );
+
+  await page.goto('/conversation/welcome?fixture=branches&branch=branch-alt');
+  await expect(page.getByText('Corrected question', { exact: true })).toBeVisible();
+  await expect(page.getByText('Branch 2 of 2', { exact: true })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('branch')).toBe('branch-alt');
+  expect(new URL(page.url()).searchParams.get('fixture')).toBe('branches');
+
+  const previous = page.getByRole('button', { name: 'Previous conversation branch' });
+  const next = page.getByRole('button', { name: 'Next conversation branch' });
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeDisabled();
+  await previous.focus();
+  await expect(previous).toBeFocused();
+  await previous.press('Enter');
+  await expect(page.getByText('Original question', { exact: true })).toBeVisible();
+  await expect(page.getByText('Corrected question', { exact: true })).not.toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('branch')).toBe('root-branch');
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeEnabled();
+  const edit = page.getByRole('button', { name: 'Edit and branch' }).first();
+  await edit.focus();
+  await expect(edit).toBeFocused();
+  await edit.press('Enter');
+  const editor = page.getByRole('textbox', { name: 'Edit your message' });
+  await expect(editor).toBeVisible();
+  await editor.fill('A canceled correction');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(editor).not.toBeVisible();
+  await expect(edit).toBeFocused();
+  await expect(page.getByText('Original question', { exact: true })).toBeVisible();
+
+  await edit.press('Enter');
+  await editor.fill('A corrected question');
+  await page.getByRole('button', { name: 'Create branch' }).click();
+  await expect(page.getByRole('alert')).toContainText(/latest version|changed/i);
+  await page.getByRole('button', { name: 'Retry branch action' }).click();
+  await expect(page.getByText('Alternative answer', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit and branch' }).first()).toBeFocused();
+  expect(branchCreateAttempts).toBe(2);
+});
+
+test('shows a branch-list error and retries the branch action', async ({ page }) => {
+  const rootBranch = {
+    id: 'root-branch',
+    conversationId: 'branch-error',
+    parentBranchId: null,
+    forkedFromMessageId: null,
+    headMessageId: 'assistant-root',
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+  let attempts = 0;
+  await page.route('**/api/v1/conversations/branch-error', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      json: {
+        id: 'branch-error',
+        title: 'Branch recovery',
+        agentProfileId: 'general',
+        agentRevisionId: 'agent-rev-1',
+        modelId: 'qwen2.5:7b',
+        version: 1,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        messages: [
+          {
+            id: 'user-root',
+            conversationId: 'branch-error',
+            role: 'user',
+            content: 'Root question',
+            state: 'complete',
+            runId: 'run-root',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            id: 'assistant-root',
+            conversationId: 'branch-error',
+            role: 'assistant',
+            content: 'Root answer',
+            state: 'complete',
+            runId: 'run-root',
+            createdAt: '2026-01-01T00:00:01Z',
+            updatedAt: '2026-01-01T00:00:01Z',
+          },
+        ],
+        recentRuns: [],
+        currentRun: null,
+      },
+    });
+  });
+  await page.route(
+    (url) => url.pathname === '/api/v1/conversations/branch-error/branches',
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      attempts += 1;
+      if (attempts === 1) {
+        return route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Branch list temporarily unavailable' }),
+        });
+      }
+      return route.fulfill({ json: { items: [rootBranch], nextCursor: null } });
+    },
+  );
+
+  await page.goto('/conversation/branch-error');
+  await expect(page.getByRole('alert')).toContainText(/branch/i);
+  await page.getByRole('button', { name: 'Retry branch action' }).click();
+  await expect(page.getByText('Branch 1 of 1', { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
 test('renders validated document citations as accessible authorized links', async ({ page }) => {
   const documentId = '11111111-1111-4111-8111-111111111111';
   const fixtureDocument = {

@@ -134,3 +134,14 @@ def test_recurring_reminder_migration_follows_approval_backed_reminder_tool() ->
     spec.loader.exec_module(module)
     assert module.revision == "0017_recurring_reminders"
     assert module.down_revision == "0016_approval_reminder_tool"
+
+
+def test_conversation_branching_migration_is_current_forward_head() -> None:
+    path = MIGRATION_DIR / "0021_conversation_branching.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0021", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0021_conversation_branching"
+    assert module.down_revision == "0020_document_search_citations"

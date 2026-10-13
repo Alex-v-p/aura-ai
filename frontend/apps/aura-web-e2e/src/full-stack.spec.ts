@@ -569,6 +569,183 @@ for (const mode of configuredModes) {
       await runDocumentSearchCitationAcceptance(page, mode);
     });
 
+    test('AURA_E2E_CONVERSATION_BRANCHING edits, regenerates, switches, and preserves the original', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run conversation branching acceptance`);
+      if (!config) return;
+      test.setTimeout(180_000);
+
+      await signIn(page, config);
+      await waitForModelCatalog(page);
+      await closeConversationOptions(page);
+      const originalPrompt = `branch-original-${mode}-${Date.now()}`;
+      await sendAndWaitForAssistant(page, originalPrompt);
+      const conversationId = page.url().match(/\/conversation\/([^/?]+)/)?.[1];
+      expect(conversationId).toBeTruthy();
+      if (!conversationId) return;
+
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      const initialResponse = await page.request.get(new URL(`/api/v1/conversations/${conversationId}`, config.baseUrl).toString());
+      expect(initialResponse.ok(), await initialResponse.text()).toBeTruthy();
+      const initialDetail = await initialResponse.json() as ConversationDetailResponse;
+      const messages = (initialDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+      const originalMessage = messages.find((item) => item['role'] === 'user');
+      const runs = (initialDetail['recentRuns'] as Array<JsonObject> | undefined) ?? [];
+      const originalRun = runs.find((item) => item['userMessageId'] === originalMessage?.['id']);
+      expect(typeof originalMessage?.['id']).toBe('string');
+      expect(typeof originalRun?.['id']).toBe('string');
+      if (typeof originalMessage?.['id'] !== 'string' || typeof originalRun?.['id'] !== 'string') return;
+
+      const correctedPrompt = `${originalPrompt}-corrected`;
+      const transcriptUserMessage = (content: string) =>
+        page
+          .getByRole('main')
+          .getByRole('article', { name: 'Your message' })
+          .getByText(content, { exact: true });
+      const editAndBranch = page.getByRole('button', { name: 'Edit and branch' }).first();
+      await expect(editAndBranch).toBeEnabled();
+      await editAndBranch.click();
+      const editor = page.getByRole('textbox', { name: 'Edit your message' });
+      await expect(editor).toBeVisible();
+      await editor.fill(correctedPrompt);
+      await page.getByRole('button', { name: 'Create branch' }).click();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/Branch 2 of 2/, { exact: true })).toBeVisible();
+
+      const previous = page.getByRole('button', { name: 'Previous conversation branch' });
+      const next = page.getByRole('button', { name: 'Next conversation branch' });
+      await expect(previous).toBeEnabled();
+      await expect(next).toBeDisabled();
+
+      const branchListUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches?limit=100`,
+        config.baseUrl,
+      ).toString();
+      let editedBranchId: string | undefined;
+      let editedBranchRun: (RunDetail & JsonObject) | undefined;
+      let editedBranchDetail: ConversationDetailResponse = {};
+      await expect.poll(async () => {
+        const response = await page.request.get(branchListUrl);
+        if (!response.ok()) return false;
+        const payload = await response.json() as JsonObject;
+        const branches = (payload['items'] as Array<JsonObject> | undefined) ?? [];
+        const editedBranch = branches.find(
+          (item) => item['forkedFromMessageId'] === originalMessage['id'] && typeof item['id'] === 'string',
+        );
+        editedBranchId = typeof editedBranch?.['id'] === 'string' ? editedBranch['id'] : undefined;
+        return editedBranchId ?? false;
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBeTruthy();
+      expect(editedBranchId).toBeTruthy();
+      if (!editedBranchId) return;
+
+      const editedBranchUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches/${editedBranchId}`,
+        config.baseUrl,
+      ).toString();
+      await expect.poll(async () => {
+        const response = await page.request.get(editedBranchUrl);
+        if (!response.ok()) return false;
+        editedBranchDetail = await response.json() as ConversationDetailResponse;
+        const editedMessages = (editedBranchDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+        const editedAssistant = editedMessages.find((item) => item['role'] === 'assistant');
+        editedBranchRun = editedBranchDetail.recentRuns?.find(
+          (item) => item['branchId'] === editedBranchId && item['status'] === 'completed',
+        );
+        return Boolean(editedAssistant && editedBranchRun && typeof editedBranchRun['id'] === 'string');
+      }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      const editedMessages = (editedBranchDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+      expect(editedMessages.some((item) => item['role'] === 'assistant')).toBe(true);
+      expect(editedBranchRun).toMatchObject({ branchId: editedBranchId, status: 'completed', error: null });
+      const editedBranchRunId = editedBranchRun?.['id'];
+      expect(typeof editedBranchRunId).toBe('string');
+      if (typeof editedBranchRunId !== 'string') return;
+      await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/Branch 2 of 2/, { exact: true })).toBeVisible();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible();
+      const selectedRegenerate = page.getByRole('button', { name: 'Regenerate' }).last();
+      await expect(selectedRegenerate).toBeEnabled();
+
+      const initialBranchesResponse = await page.request.get(branchListUrl);
+      expect(initialBranchesResponse.ok(), await initialBranchesResponse.text()).toBeTruthy();
+      const initialBranchesPayload = await initialBranchesResponse.json() as JsonObject;
+      const initialBranchIds = new Set<string>();
+      for (const item of (initialBranchesPayload['items'] as Array<JsonObject> | undefined) ?? []) {
+        if (typeof item['id'] === 'string') initialBranchIds.add(item['id']);
+      }
+
+      await selectedRegenerate.click();
+      await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 30_000 });
+      let regeneratedBranchId: string | undefined;
+      await expect.poll(async () => {
+        const response = await page.request.get(branchListUrl);
+        if (!response.ok()) return false;
+        const payload = await response.json() as JsonObject;
+        const branches = (payload['items'] as Array<JsonObject> | undefined) ?? [];
+        const regeneratedBranch = branches.find(
+          (item) => typeof item['id'] === 'string' && !initialBranchIds.has(item['id']),
+        );
+        regeneratedBranchId = typeof regeneratedBranch?.['id'] === 'string'
+          ? regeneratedBranch['id']
+          : undefined;
+        return regeneratedBranchId ?? false;
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBeTruthy();
+      expect(regeneratedBranchId).toBeTruthy();
+      if (!regeneratedBranchId) return;
+
+      const regeneratedBranchUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches/${regeneratedBranchId}`,
+        config.baseUrl,
+      ).toString();
+      let regeneratedBranchDetail: ConversationDetailResponse = {};
+      let regeneratedRun: (RunDetail & JsonObject) | undefined;
+      await expect.poll(async () => {
+        const response = await page.request.get(regeneratedBranchUrl);
+        if (!response.ok()) return false;
+        regeneratedBranchDetail = await response.json() as ConversationDetailResponse;
+        regeneratedRun = regeneratedBranchDetail.recentRuns?.find(
+          (item) => item['regeneratedFromRunId'] === editedBranchRunId,
+        );
+        return Boolean(regeneratedRun && typeof regeneratedRun['id'] === 'string');
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+      expect(regeneratedRun).toMatchObject({ regeneratedFromRunId: editedBranchRunId });
+      const regeneratedRunId = regeneratedRun?.['id'];
+      expect(typeof regeneratedRunId).toBe('string');
+      if (typeof regeneratedRunId !== 'string') return;
+
+      await expect.poll(async () => {
+        const response = await page.request.get(regeneratedBranchUrl);
+        if (!response.ok()) return false;
+        regeneratedBranchDetail = await response.json() as ConversationDetailResponse;
+        const completedRun = regeneratedBranchDetail.recentRuns?.find(
+          (item) => item['id'] === regeneratedRunId,
+        );
+        return completedRun?.status === 'completed';
+      }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      const completedRegeneratedRun = regeneratedBranchDetail.recentRuns?.find(
+        (item) => item['id'] === regeneratedRunId,
+      );
+      expect(completedRegeneratedRun).toMatchObject({ status: 'completed', error: null });
+
+      await expect(page.getByText(/Branch 3 of 3/, { exact: true })).toBeVisible();
+      await expect(previous).toBeEnabled();
+      await expect(next).toBeDisabled();
+      await previous.click();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible();
+      await expect(page.getByText(/Branch 2 of 3/, { exact: true })).toBeVisible();
+      await previous.click();
+      await expect(transcriptUserMessage(originalPrompt)).toBeVisible();
+      await expect(page.getByText(/Branch 1 of 3/, { exact: true })).toBeVisible();
+      await expect(next).toBeEnabled();
+
+      const originalAfter = await page.request.get(new URL(`/api/v1/conversations/${conversationId}`, config.baseUrl).toString());
+      expect(originalAfter.ok(), await originalAfter.text()).toBeTruthy();
+      const originalPayload = await originalAfter.json() as ConversationDetailResponse;
+      const originalMessages = (originalPayload['messages'] as Array<JsonObject> | undefined) ?? [];
+      expect(originalMessages.some((item) => item['content'] === originalPrompt)).toBe(true);
+      expect(originalMessages.some((item) => item['content'] === correctedPrompt)).toBe(false);
+      expect(originalMessages.filter((item) => item['content'] === originalPrompt)).toHaveLength(1);
+    });
+
     test('fires one durable reminder notification and catches up after SSE reconnect', async ({ page }) => {
       const config = stackConfig(mode);
       test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the reminder notification check`);
@@ -730,9 +907,9 @@ for (const mode of configuredModes) {
       const approve = detail.getByRole('button', { name: 'Approve', exact: true });
       await expect(approve).toBeVisible();
       let approvalDecisionPosts = 0;
-      let approvalDecisionResponses: number[] = [];
-      let approvalDecisionResponseBodies: string[] = [];
-      let approvalDecisionFailures: string[] = [];
+      const approvalDecisionResponses: number[] = [];
+      const approvalDecisionResponseBodies: string[] = [];
+      const approvalDecisionFailures: string[] = [];
       const approvalDecisionPath = `/api/v1/approvals/${pending.id}/approve`;
       const observeApprovalDecision = (request: { method(): string; url(): string }): void => {
         const requestUrl = new URL(request.url());

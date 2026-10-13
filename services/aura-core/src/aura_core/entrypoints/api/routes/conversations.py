@@ -20,6 +20,7 @@ from aura_core.domains.interaction.conversations.public import (
     ArchivedConversationConflict,
     Conversation,
     ConversationArchiveState,
+    ConversationBranch,
     ConversationListFilters,
     ConversationNotFound,
     IdempotencyConflict,
@@ -28,6 +29,7 @@ from aura_core.domains.interaction.conversations.public import (
     ModelUnavailable,
     PersonaUnavailable,
     VersionConflict,
+    branch_message_ids,
 )
 from aura_core.domains.interaction.personas.public import PersonaRevisionQueryPort
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
@@ -68,6 +70,16 @@ class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=32768)
     conversationVersion: int = Field(ge=1)
+    branchId: UUID | None = None
+    clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class CreateBranchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sourceUserMessageId: UUID
+    message: str = Field(min_length=1, max_length=32768)
+    conversationVersion: int = Field(ge=1)
+    branchId: UUID | None = None
     clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -102,24 +114,69 @@ def state(request: Request) -> AppState:
     return request.app.state.aura
 
 
+async def _branch_session(request: Request) -> Session:
+    try:
+        return await require_session(request)
+    except HTTPException as exc:
+        _record_branch_outcome(
+            request,
+            _path_uuid(request, 1),
+            "conversation.branch.list",
+            "denied",
+            0.0,
+            error_class="authorization" if exc.status_code in {401, 403} else "persistence",
+        )
+        raise
+
+
+async def _branch_csrf(request: Request) -> Session:
+    try:
+        session = await require_session(request)
+        return await require_csrf(request, session, request.headers.get("x-csrf-token"))
+    except HTTPException as exc:
+        _record_branch_outcome(
+            request,
+            _path_uuid(request, 1),
+            "conversation.branch.create",
+            "denied",
+            0.0,
+            error_class="authorization" if exc.status_code in {401, 403} else "persistence",
+        )
+        raise
+
+
+def _path_uuid(request: Request, index: int) -> UUID:
+    parts = request.url.path.rstrip("/").split("/")
+    del index
+    for part in parts:
+        try:
+            return UUID(part)
+        except ValueError:
+            continue
+    return UUID(int=0)
+
+
 def conversation_payload(
     conversation: Conversation,
     agents: AgentCatalog | None = None,
     personas: PersonaRevisionQueryPort | None = None,
 ) -> dict[str, object]:
     current = conversation.current_run
+
     def agent_reference(profile_id: UUID, revision_id: UUID) -> dict[str, object] | None:
-        profile = next(
-            (item for item in agents.list_agents() if item.id == profile_id), None
-        ) if agents else None
-        revision = next(
-            (
-                item
-                for item in profile.revisions
-                if item.id == revision_id
-            ),
-            None,
-        ) if profile else None
+        profile = (
+            next((item for item in agents.list_agents() if item.id == profile_id), None)
+            if agents
+            else None
+        )
+        revision = (
+            next(
+                (item for item in profile.revisions if item.id == revision_id),
+                None,
+            )
+            if profile
+            else None
+        )
         if revision is None:
             # Never turn an unresolved identifier into a trusted reference.
             return None
@@ -137,6 +194,7 @@ def conversation_payload(
     current_reference = agent_reference(
         conversation.agent_profile_id, conversation.agent_revision_id
     )
+
     def persona_reference(identifier: UUID) -> dict[str, object] | None:
         profiles = personas.list_personas() if personas else []
         profile = next(
@@ -164,9 +222,13 @@ def conversation_payload(
     effective_persona_id = conversation.persona_override_revision_id
     if effective_persona_id is None:
         try:
-            effective_persona_id = agents.resolve_revision_unchecked(
-                conversation.agent_revision_id
-            ).persona_revision_id if agents else None
+            effective_persona_id = (
+                agents.resolve_revision_unchecked(
+                    conversation.agent_revision_id
+                ).persona_revision_id
+                if agents
+                else None
+            )
         except Exception:
             effective_persona_id = None
     current_persona = (
@@ -229,11 +291,105 @@ def detail_payload(
     personas: PersonaRevisionQueryPort | None = None,
 ) -> dict[str, object]:
     result = conversation_payload(conversation, agents, personas)
-    result["messages"] = [message_payload(message) for message in conversation.messages]
+    # Keep the legacy response deterministic: it exposes only the immutable
+    # root lineage. Alternative branches use the branch-specific endpoint.
+    root = next(
+        (branch for branch in conversation.branches if branch.parent_branch_id is None), None
+    )
+    if root is None:
+        visible_messages = conversation.messages
+        visible_message_ids = {message.id for message in visible_messages}
+    else:
+        visible_message_ids = branch_message_ids(conversation, root.id) or set()
+        visible_messages = [
+            message for message in conversation.messages if message.id in visible_message_ids
+        ]
+    result["messages"] = [message_payload(message) for message in visible_messages]
     # Retry lineage is durable history.  Do not truncate the summary and make
     # an older retry target disappear from the client-visible conversation.
-    result["recentRuns"] = [run_payload(run) for run in conversation.runs]
+    root_runs = [
+        run
+        for run in conversation.runs
+        if root is None
+        or run.branch_id == root.id
+        or (run.branch_id is None and run.user_message_id in visible_message_ids)
+    ]
+    result["recentRuns"] = [run_payload(run) for run in root_runs]
+    # ``conversation_payload`` is also used by branch-aware reads and derives
+    # currentRun from the full aggregate.  Legacy detail must not expose an
+    # active sibling regeneration through that field.
+    current_root_run = next(
+        (
+            run
+            for run in reversed(root_runs)
+            if run.status
+            in {
+                RunStatus.QUEUED,
+                RunStatus.RUNNING,
+                RunStatus.CANCEL_REQUESTED,
+            }
+        ),
+        None,
+    )
+    result["currentRun"] = run_payload(current_root_run) if current_root_run else None
+    result["branches"] = [branch_payload(branch) for branch in conversation.branches]
     return result
+
+
+def branch_payload(branch: ConversationBranch) -> dict[str, object]:
+    return {
+        "id": str(branch.id),
+        "conversationId": str(branch.conversation_id),
+        "parentBranchId": str(branch.parent_branch_id) if branch.parent_branch_id else None,
+        "forkedFromMessageId": str(branch.forked_from_message_id)
+        if branch.forked_from_message_id
+        else None,
+        "headMessageId": str(branch.head_message_id) if branch.head_message_id else None,
+        "origin": branch.origin.value,
+        "createdAt": branch.created_at.isoformat(),
+    }
+
+
+def _record_branch_outcome(
+    request: Request,
+    conversation_id: UUID,
+    operation: str,
+    outcome: str,
+    duration_ms: float,
+    *,
+    error_class: str | None = None,
+    result_count: int | None = None,
+) -> None:
+    trace_id = conversation_id.hex
+    trace_attributes: dict[str, str] = {}
+    if result_count is not None:
+        trace_attributes["result_count"] = str(result_count)
+    state(request).metrics.record_span(
+        "aura.interaction.conversation_persistence",
+        operation,
+        duration_ms,
+        trace_id=trace_id,
+        span_id=new_span_id(),
+        parent_span_id=None,
+        dependency="conversation_store",
+        outcome=outcome,
+        error_class=error_class,
+        conversation_id=str(conversation_id),
+        **trace_attributes,
+    )
+    metric_attributes: dict[str, str] = {}
+    if result_count is not None:
+        metric_attributes["result_count"] = str(result_count)
+    state(request).metrics.increment(
+        "aura.interaction.conversation_persistence",
+        "conversation_branch_creation_outcome"
+        if operation == "conversation.branch.create"
+        else "conversation_branch_load_outcome",
+        trace_id=trace_id,
+        conversation_id=str(conversation_id),
+        outcome=outcome,
+        **metric_attributes,
+    )
 
 
 async def model_descriptors(request: Request) -> list[ModelDescriptor]:
@@ -394,6 +550,173 @@ async def get_conversation(
     return detail_payload(conversation, state(request).agents, state(request).personas)
 
 
+@router.get("/{conversation_id}/branches")
+async def list_branches(
+    request: Request,
+    conversation_id: UUID,
+    session: Session = Depends(_branch_session),
+    cursor: str | None = Query(default=None, min_length=1, max_length=1024),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, object]:
+    timer = Stopwatch()
+    try:
+        branches = await state(request).store.list_branches(
+            conversation_id, session.principal.subject, session.principal.issuer
+        )
+    except ConversationNotFound as exc:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.list", "not_found", timer.elapsed_ms(),
+            error_class="not_found",
+        )
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except Exception:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.list", "error", timer.elapsed_ms(),
+            error_class="persistence",
+        )
+        raise
+    branches.sort(key=lambda item: (item.created_at, item.id))
+    if cursor is not None:
+        try:
+            cursor_id = UUID(cursor)
+            index = next(index for index, item in enumerate(branches) if item.id == cursor_id)
+            branches = branches[index + 1 :]
+        except (ValueError, StopIteration) as exc:
+            _record_branch_outcome(
+                request, conversation_id, "conversation.branch.list", "error",
+                timer.elapsed_ms(), error_class="invalid_cursor",
+            )
+            raise HTTPException(status_code=400, detail="invalid branch cursor") from exc
+    page = branches[:limit]
+    next_cursor = str(page[-1].id) if len(branches) > limit and page else None
+    _record_branch_outcome(
+        request, conversation_id, "conversation.branch.list", "ok", timer.elapsed_ms(),
+        result_count=len(page),
+    )
+    return {"items": [branch_payload(branch) for branch in page], "nextCursor": next_cursor}
+
+
+@router.get("/{conversation_id}/branches/{branch_id}")
+async def get_branch(
+    request: Request,
+    conversation_id: UUID,
+    branch_id: UUID,
+    session: Session = Depends(_branch_session),
+) -> dict[str, object]:
+    timer = Stopwatch()
+    try:
+        branches = await state(request).store.list_branches(
+            conversation_id, session.principal.subject, session.principal.issuer
+        )
+        branch = next(item for item in branches if item.id == branch_id)
+        messages = await state(request).store.branch_path(
+            conversation_id, branch_id, session.principal.subject, session.principal.issuer
+        )
+    except (ConversationNotFound, StopIteration) as exc:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.get", "not_found", timer.elapsed_ms(),
+            error_class="not_found",
+        )
+        raise HTTPException(status_code=404, detail="branch not found") from exc
+    except Exception:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.get", "error", timer.elapsed_ms(),
+            error_class="persistence",
+        )
+        raise
+    try:
+        recent_runs = [
+            run_payload(run)
+            for run in await state(request).store.branch_runs(
+                conversation_id, branch_id, session.principal.subject, session.principal.issuer
+            )
+        ]
+    except ConversationNotFound as exc:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.get", "not_found", timer.elapsed_ms(),
+            error_class="not_found",
+        )
+        raise HTTPException(status_code=404, detail="branch not found") from exc
+    except Exception:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.get", "error", timer.elapsed_ms(),
+            error_class="persistence",
+        )
+        raise
+    _record_branch_outcome(
+        request, conversation_id, "conversation.branch.get", "ok", timer.elapsed_ms(),
+        result_count=len(messages),
+    )
+    return {
+        "branch": branch_payload(branch),
+        "messages": [message_payload(item) for item in messages],
+        "recentRuns": recent_runs,
+    }
+
+
+@router.post("/{conversation_id}/branches", status_code=status.HTTP_202_ACCEPTED)
+async def create_branch(
+    request: Request,
+    conversation_id: UUID,
+    body: CreateBranchRequest,
+    session: Session = Depends(_branch_csrf),
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    timer = Stopwatch()
+    try:
+        conversation, message, run, branch = await state(request).store.create_branch(
+            conversation_id,
+            body.sourceUserMessageId,
+            body.message,
+            body.conversationVersion,
+            idempotency_key,
+            session.principal.subject,
+            session.principal.issuer,
+            body.clientTimeZone,
+            body.branchId,
+        )
+    except ConversationNotFound as exc:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.create", "not_found", timer.elapsed_ms(),
+            error_class="not_found",
+        )
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.create", "conflict", timer.elapsed_ms(),
+            error_class="conflict",
+        )
+        raise HTTPException(status_code=409, detail="conversation version conflict") from exc
+    except IdempotencyConflict as exc:
+        _record_branch_outcome(
+            request,
+            conversation_id,
+            "conversation.branch.create",
+            "idempotent",
+            timer.elapsed_ms(),
+            error_class="idempotency",
+        )
+        raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except Exception:
+        _record_branch_outcome(
+            request, conversation_id, "conversation.branch.create", "error", timer.elapsed_ms(),
+            error_class="persistence",
+        )
+        raise
+    _record_branch_outcome(
+        request, conversation_id, "conversation.branch.create", "ok", timer.elapsed_ms(),
+    )
+    await state(request).coordinator.enqueue(run)
+    return {
+        "conversation": conversation_payload(
+            conversation, state(request).agents, state(request).personas
+        ),
+        "branch": branch_payload(branch),
+        "userMessage": message_payload(message),
+        "run": run_payload(run),
+    }
+
+
 @router.patch("/{conversation_id}")
 async def update_conversation(
     request: Request,
@@ -413,8 +736,7 @@ async def update_conversation(
         raise HTTPException(
             status_code=422,
             detail=(
-                "modelId, agentRevisionId, personaRevisionId, or "
-                "useAgentDefaultPersona is required"
+                "modelId, agentRevisionId, personaRevisionId, or useAgentDefaultPersona is required"
             ),
         )
     if body.personaRevisionId is not None and body.useAgentDefaultPersona:
@@ -660,6 +982,7 @@ async def create_run(
             idempotency_key,
             session.principal.issuer,
             body.clientTimeZone,
+            body.branchId,
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
@@ -771,9 +1094,7 @@ def _record_conversation_model_persistence(
     root_id = new_span_id()
     persistence_span_id = new_span_id()
     try:
-        revision = state(request).agents.resolve_revision_unchecked(
-            conversation.agent_revision_id
-        )
+        revision = state(request).agents.resolve_revision_unchecked(conversation.agent_revision_id)
         model_policy_revision_id = str(revision.model_policy_revision_id)
     except Exception:
         model_policy_revision_id = None

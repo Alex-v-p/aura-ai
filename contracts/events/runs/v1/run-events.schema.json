@@ -67,6 +67,8 @@
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "branchId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Opaque conversation branch containing this run. Optional or null for compatibility with pre-1.17 producers." },
+        "regeneratedFromRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Source run for owner-requested regeneration, or null for ordinary and failed-run retry executions. Optional for compatibility with pre-1.17 producers." },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "startedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
         "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
@@ -84,6 +86,8 @@
         "content": { "type": "string" },
         "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
         "runId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "branchId": { "$ref": "#/$defs/Uuid", "description": "Opaque branch on which this immutable message was created. Optional for compatibility with pre-1.17 producers." },
+        "parentMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Previous message in this immutable ancestor path. Optional for compatibility with pre-1.17 producers." },
         "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property." },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "updatedAt": { "$ref": "#/$defs/Timestamp" }

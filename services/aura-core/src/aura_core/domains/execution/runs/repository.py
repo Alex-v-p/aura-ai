@@ -62,6 +62,8 @@ class SqlRunRepository:
             tool_lifecycle_status=row.tool_lifecycle_status,
             citations=citations,
             document_search_used=row.document_search_used,
+            branch_id=row.branch_id,
+            regenerated_from_run_id=row.regenerated_from_run_id,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -183,6 +185,8 @@ class SqlRunRepository:
                 created_at=run.created_at,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
+                branch_id=run.branch_id,
+                regenerated_from_run_id=run.regenerated_from_run_id,
             )
         )
 

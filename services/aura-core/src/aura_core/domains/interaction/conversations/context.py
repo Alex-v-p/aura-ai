@@ -12,6 +12,7 @@ from uuid import UUID
 
 from aura_core.domains.interaction.conversations.dto import (
     Conversation,
+    ConversationBranchOrigin,
     Message,
     MessageRole,
     MessageState,
@@ -129,9 +130,7 @@ def normalize_memory_evidence(items: Sequence[object], *, limit: int = 8) -> lis
                     vector_score=_memory_float(item, "vector_score", "vectorScore"),
                     lexical_rank=_memory_int(item, "lexical_rank"),
                     vector_rank=_memory_int(item, "vector_rank"),
-                    reciprocal_rank_score=_memory_float(
-                        item, "reciprocal_rank_score", "rrf_score"
-                    ),
+                    reciprocal_rank_score=_memory_float(item, "reciprocal_rank_score", "rrf_score"),
                     validity_score=_memory_float(item, "validity_score", "validity"),
                     scope_score=_memory_float(item, "scope_score", "scopeScore"),
                     final_score=_memory_float(item, "final_score", "finalScore"),
@@ -193,14 +192,10 @@ def serialize_memory_recall_metadata(
                 "scopeScore": item.scope_score,
                 "finalScore": item.final_score,
                 "queryMatchScore": item.query_match_score,
-                "agentProfileId": (
-                    str(item.agent_profile_id) if item.agent_profile_id else None
-                ),
+                "agentProfileId": (str(item.agent_profile_id) if item.agent_profile_id else None),
                 "provenanceIds": [str(value) for value in item.provenance_ids],
                 "embeddingGenerationId": (
-                    str(item.embedding_generation_id)
-                    if item.embedding_generation_id
-                    else None
+                    str(item.embedding_generation_id) if item.embedding_generation_id else None
                 ),
             }
         )
@@ -258,11 +253,7 @@ def _memory_component_with_count(
 def admitted_memory_tokens(context: Sequence[tuple[str, str]]) -> int:
     """Count the rendered memory component after delimiters and trimming."""
 
-    return sum(
-        estimate_tokens(content)
-        for role, content in context
-        if role == "memory"
-    )
+    return sum(estimate_tokens(content) for role, content in context if role == "memory")
 
 
 def record_memory_context_admission(
@@ -362,7 +353,14 @@ def build_context_with_admission(
             (run for run in reversed(conversation.runs) if run.status.value != "completed"),
             None,
         )
+    allowed_ids = branch_message_ids(conversation, current_run.branch_id) if current_run else None
     current_prompt = messages.get(current_run.user_message_id) if current_run is not None else None
+    if (
+        current_prompt is not None
+        and allowed_ids is not None
+        and current_prompt.id not in allowed_ids
+    ):
+        current_prompt = None
     if current_prompt is not None and (
         current_prompt.role != MessageRole.USER or current_prompt.state != MessageState.COMPLETE
     ):
@@ -392,6 +390,8 @@ def build_context_with_admission(
     for run in reversed(conversation.runs):
         if run.status.value != "completed":
             continue
+        if allowed_ids is not None and run.user_message_id not in allowed_ids:
+            continue
         user = messages.get(run.user_message_id)
         assistant = (
             messages.get(run.assistant_message_id) if run.assistant_message_id is not None else None
@@ -403,6 +403,7 @@ def build_context_with_admission(
             or assistant.state != MessageState.COMPLETE
             or user.role != MessageRole.USER
             or assistant.role != MessageRole.ASSISTANT
+            or (allowed_ids is not None and assistant.id not in allowed_ids)
         ):
             continue
         cost = estimate_tokens(user.content) + estimate_tokens(assistant.content)
@@ -420,3 +421,52 @@ def build_context_with_admission(
     if current_prompt is not None:
         selected.append((current_prompt.role.value, current_prompt.content))
     return selected, admitted_memory_count
+
+
+def branch_message_ids(conversation: Conversation, branch_id: UUID | None) -> set[UUID] | None:
+    """Return exactly the ancestor path visible to a branch.
+
+    ``None`` preserves the legacy linear context for pre-lineage runs.  A
+    branch includes its own local messages and the parent path only through
+    the immutable fork boundary; sibling and later source messages are never
+    eligible.
+    """
+
+    if branch_id is None:
+        return None
+    branches = {branch.id: branch for branch in conversation.branches}
+    if branch_id not in branches:
+        return {message.id for message in conversation.messages if message.branch_id is None}
+    result: set[UUID] = set()
+    current = branches[branch_id]
+    boundary: UUID | None = None
+    exclude_boundary = False
+    while True:
+        local = [message for message in conversation.messages if message.branch_id == current.id]
+        if boundary is not None:
+            index = next((i for i, message in enumerate(local) if message.id == boundary), None)
+            if index is not None:
+                local = local[: index if exclude_boundary else index + 1]
+        result.update(message.id for message in local)
+        if current.parent_branch_id is None:
+            if boundary is not None and not exclude_boundary:
+                result.add(boundary)
+            elif current.forked_from_message_id is not None:
+                result.add(current.forked_from_message_id)
+            break
+        boundary = current.forked_from_message_id
+        exclude_boundary = (
+            current.origin is ConversationBranchOrigin.EDITED_MESSAGE
+            and boundary is not None
+            and any(
+                message.branch_id == current.id and message.parent_message_id is None
+                for message in conversation.messages
+            )
+        )
+        if boundary is not None and not exclude_boundary:
+            result.add(boundary)
+        parent = branches.get(current.parent_branch_id)
+        if parent is None:
+            break
+        current = parent
+    return result

@@ -85,6 +85,9 @@ class Run:
     tool_lifecycle_status: str | None = None
     citations: tuple[DocumentCitation, ...] = ()
     document_search_used: bool = False
+    # Optional lineage fields preserve compatibility with pre-branch runs.
+    branch_id: UUID | None = None
+    regenerated_from_run_id: UUID | None = None
 
 
 class RunClaim(NamedTuple):

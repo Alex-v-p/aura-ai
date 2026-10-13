@@ -1,11 +1,13 @@
 """Public conversation commands, queries, DTOs, and errors."""
 
-from aura_core.domains.interaction.conversations.context import build_context
+from aura_core.domains.interaction.conversations.context import branch_message_ids, build_context
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
     Conversation,
     ConversationArchiveState,
+    ConversationBranch,
+    ConversationBranchOrigin,
     ConversationListFilters,
     DocumentCitation,
     Message,
@@ -68,6 +70,8 @@ __all__ = [
     "AgentUnavailable",
     "PersonaUnavailable",
     "Conversation",
+    "ConversationBranch",
+    "ConversationBranchOrigin",
     "DocumentCitation",
     "ConversationArchiveState",
     "ConversationListFilters",
@@ -90,6 +94,7 @@ __all__ = [
     "encode_cursor",
     "filters_fingerprint",
     "build_context",
+    "branch_message_ids",
     "now",
     "TITLE_SYSTEM_PROMPT",
     "fallback_title_candidate",

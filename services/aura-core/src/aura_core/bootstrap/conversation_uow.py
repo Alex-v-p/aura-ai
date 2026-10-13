@@ -49,6 +49,8 @@ from aura_core.domains.interaction.conversations.public import (
     ArchivedConversationConflict,
     AssignmentReason,
     Conversation,
+    ConversationBranch,
+    ConversationBranchOrigin,
     ConversationListFilters,
     ConversationNotFound,
     ConversationRecord,
@@ -143,9 +145,7 @@ class SqlConversationStore:
     def set_memory_activity_repository(self, repository: object | None) -> None:
         self.memory_activity_repository = repository
 
-    async def get_run_memory_activity(
-        self, run_id: UUID, issuer: str, subject: str
-    ) -> object:
+    async def get_run_memory_activity(self, run_id: UUID, issuer: str, subject: str) -> object:
         repository = self.memory_activity_repository
         method = getattr(repository, "get_run_memory_activity", None)
         if not callable(method):
@@ -301,30 +301,35 @@ class SqlConversationStore:
         try:
             pinned_revision = self._revision_unchecked(run.agent_revision_id)
             agent_profile_id = pinned_revision.profile_id
-            policy = await self.agent_store.get_memory_policy(
-                conversation.principal_issuer,
-                conversation.principal_subject,
-                run.memory_policy_revision_id,
-            ) if self.agent_store is not None else self.agents.get_memory_policy(
-                run.memory_policy_revision_id
+            policy = (
+                await self.agent_store.get_memory_policy(
+                    conversation.principal_issuer,
+                    conversation.principal_subject,
+                    run.memory_policy_revision_id,
+                )
+                if self.agent_store is not None
+                else self.agents.get_memory_policy(run.memory_policy_revision_id)
             )
             recall_method = cast(Callable[[MemoryRecallRequest], Awaitable[object]], method)
-            result = cast(MemoryRecallResult, await recall_method(
-                MemoryRecallRequest(
-                    issuer=conversation.principal_issuer,
-                    subject=conversation.principal_subject,
-                    agent_profile_id=agent_profile_id,
-                    query=query,
-                    policy=policy,
-                    context_token_budget=budget,
-                    run_id=run.id,
-                    conversation_id=conversation.id,
-                    trace_id=trace_id or run.id.hex,
-                    parent_span_id=parent_span_id,
-                    tool_policy_revision_id=run.tool_policy_revision_id,
-                    purpose=purpose,
-                )
-            ))
+            result = cast(
+                MemoryRecallResult,
+                await recall_method(
+                    MemoryRecallRequest(
+                        issuer=conversation.principal_issuer,
+                        subject=conversation.principal_subject,
+                        agent_profile_id=agent_profile_id,
+                        query=query,
+                        policy=policy,
+                        context_token_budget=budget,
+                        run_id=run.id,
+                        conversation_id=conversation.id,
+                        trace_id=trace_id or run.id.hex,
+                        parent_span_id=parent_span_id,
+                        tool_policy_revision_id=run.tool_policy_revision_id,
+                        purpose=purpose,
+                    )
+                ),
+            )
             raw_items: Sequence[object] = tuple(result.memories)
             items = normalize_memory_evidence(raw_items, limit=policy.max_memories)
             degraded = bool(getattr(result, "degraded", False))
@@ -333,7 +338,9 @@ class SqlConversationStore:
             recall_outcome = (
                 "skipped"
                 if isinstance(gate_outcome, str) and gate_outcome.startswith("skipped/")
-                else "degraded" if degraded else "ok"
+                else "degraded"
+                if degraded
+                else "ok"
             )
             if purpose is MemoryRecallPurpose.AUTOMATIC_CONTEXT:
                 run.memory_recall_metadata = serialize_memory_recall_metadata(
@@ -544,6 +551,10 @@ class SqlConversationStore:
         )
         conversation.messages = messages
         conversation.runs = runs
+        conversation.branches = await self.conversations.branches(session, row.id)
+        conversation.active_branch_id = (
+            conversation.branches[-1].id if conversation.branches else None
+        )
         conversation.assignments = await self.conversations.assignments(session, row.id)
         conversation.persona_assignments = await self.conversations.persona_assignments(
             session, row.id
@@ -601,7 +612,11 @@ class SqlConversationStore:
         self._validate_model(model_id, models)
         client_time_zone = validate_client_time_zone(client_time_zone)
         fingerprint = _fingerprint(
-            "create", message, model_id, agent_revision_id, persona_revision_id,
+            "create",
+            message,
+            model_id,
+            agent_revision_id,
+            persona_revision_id,
             client_time_zone,
         )
         async with self.sessions() as session, session.begin():
@@ -639,6 +654,7 @@ class SqlConversationStore:
             )
             run_id = UUID(bytes=hashlib.sha256(f"{conversation_id}:run".encode()).digest()[:16])
             created = now()
+            root_branch = ConversationBranch(conversation_id, created_at=created)
             conversation_row = ConversationRecord(
                 id=conversation_id,
                 principal_id=principal.id,
@@ -662,15 +678,14 @@ class SqlConversationStore:
                 id=user_id,
                 created_at=created,
                 updated_at=created,
+                branch_id=root_branch.id,
             )
             (
                 tool_policy_id,
                 tool_call_limit,
                 tool_timeout_ms,
                 tool_retry_limit,
-            ) = await self._tool_policy_snapshot(
-                issuer, subject, revision
-            )
+            ) = await self._tool_policy_snapshot(issuer, subject, revision)
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -686,11 +701,14 @@ class SqlConversationStore:
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=client_time_zone,
+                branch_id=root_branch.id,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
             )
             self.conversations.stage_conversation(session, conversation_row)
+            await session.flush()
+            self.conversations.stage_branch(session, root_branch)
             await session.flush()
             self.conversations.stage_assignment(
                 session,
@@ -806,9 +824,7 @@ class SqlConversationStore:
                 raise InvalidConversationMetadata(str(exc)) from exc
         else:
             normalized_title = None
-        fingerprint = _fingerprint(
-            "metadata", conversation_id, normalized_title, archived, version
-        )
+        fingerprint = _fingerprint("metadata", conversation_id, normalized_title, archived, version)
         effective_metrics = metrics or self.prompt_metrics
         persistence_started = perf_counter()
         try:
@@ -986,9 +1002,7 @@ class SqlConversationStore:
             if decoded_cursor and decoded_cursor[2] != filters_fingerprint(normalized_filters):
                 raise InvalidConversationCursor("cursor does not match filters")
         except InvalidConversationCursor:
-            self._record_conversation_list(
-                trace_id, parent_span_id, started, "error", "validation"
-            )
+            self._record_conversation_list(trace_id, parent_span_id, started, "error", "validation")
             raise
         try:
             async with self.sessions() as session:
@@ -1380,6 +1394,7 @@ class SqlConversationStore:
         idempotency_key: str,
         issuer: str | None = None,
         client_time_zone: str | None = None,
+        branch_id: UUID | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if self.agent_store is not None:
             await self.agent_store.refresh()
@@ -1398,7 +1413,7 @@ class SqlConversationStore:
                 )
                 pinned_time_zone = client_time_zone or prior_row.client_time_zone
                 fingerprint = hashlib.sha256(
-                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
                 ).hexdigest()
                 if prior.fingerprint != fingerprint:
                     raise IdempotencyConflict
@@ -1414,7 +1429,7 @@ class SqlConversationStore:
                 raise ArchivedConversationConflict
             pinned_time_zone = client_time_zone or row.client_time_zone
             fingerprint = hashlib.sha256(
-                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}".encode()
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
             ).hexdigest()
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
@@ -1425,6 +1440,14 @@ class SqlConversationStore:
             # test seam deterministic.
             revision = await self._resolve_active_agent_for_run(session, row.agent_revision_id)
             effective_persona = row.persona_override_revision_id or revision.persona_revision_id
+            loaded_before = await self._load(session, row)
+            selected_branch = (
+                next((item for item in loaded_before.branches if item.id == branch_id), None)
+                if branch_id
+                else (loaded_before.branches[-1] if loaded_before.branches else None)
+            )
+            if selected_branch is None:
+                raise ConversationNotFound
             user_id, run_id = uuid4(), uuid4()
             created = now()
             user_message = Message(
@@ -1436,15 +1459,15 @@ class SqlConversationStore:
                 id=user_id,
                 created_at=created,
                 updated_at=created,
+                branch_id=selected_branch.id,
+                parent_message_id=selected_branch.head_message_id,
             )
             (
                 tool_policy_id,
                 tool_call_limit,
                 tool_timeout_ms,
                 tool_retry_limit,
-            ) = await self._tool_policy_snapshot(
-                issuer, subject, revision
-            )
+            ) = await self._tool_policy_snapshot(issuer, subject, revision)
             run = Run(
                 conversation_id=conversation_id,
                 user_message_id=user_id,
@@ -1460,12 +1483,14 @@ class SqlConversationStore:
                 tool_timeout_ms=tool_timeout_ms,
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=pinned_time_zone,
+                branch_id=selected_branch.id,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
             )
             self.conversations.stage_message(session, user_message)
             await session.flush()
+            await self.conversations.update_branch_head(session, selected_branch.id, user_id)
             self.runs.stage(session, run)
             await session.flush()
             self.outbox.stage(
@@ -1504,6 +1529,311 @@ class SqlConversationStore:
                 next(item for item in loaded.messages if item.id == user_id),
                 next(item for item in loaded.runs if item.id == run_id),
             )
+
+    async def list_branches(
+        self, conversation_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[ConversationBranch]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        async with self.sessions() as session:
+            row = await self._row(session, conversation_id, subject, issuer)
+            loaded = await self._load(session, row)
+            return list(loaded.branches)
+
+    async def branch_path(
+        self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[Message]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        from aura_core.domains.interaction.conversations.context import branch_message_ids
+
+        async with self.sessions() as session:
+            row = await self._row(session, conversation_id, subject, issuer)
+            loaded = await self._load(session, row)
+            allowed = branch_message_ids(loaded, branch_id) or set()
+            return [message for message in loaded.messages if message.id in allowed]
+
+    async def branch_runs(
+        self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
+    ) -> list[Run]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        async with self.sessions() as session:
+            row = await self._row(session, conversation_id, subject, issuer)
+            loaded = await self._load(session, row)
+            if not any(branch.id == branch_id for branch in loaded.branches):
+                raise ConversationNotFound
+            return [run for run in loaded.runs if run.branch_id == branch_id]
+
+    async def create_branch(
+        self,
+        conversation_id: UUID,
+        source_user_message_id: UUID,
+        corrected_message: str,
+        expected_version: int,
+        idempotency_key: str,
+        subject: str,
+        issuer: str | None = None,
+        client_time_zone: str | None = None,
+        source_branch_id: UUID | None = None,
+    ) -> tuple[Conversation, Message, Run, ConversationBranch]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        fingerprint = _fingerprint(
+            "branch",
+            conversation_id,
+            source_user_message_id,
+            corrected_message,
+            expected_version,
+            client_time_zone,
+            source_branch_id,
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, idempotency_key)
+            prior = await self.conversations.idempotency(session, issuer, subject, idempotency_key)
+            if prior is not None:
+                if prior.fingerprint != fingerprint:
+                    raise IdempotencyConflict
+                row = await self._row(
+                    session, UUID(prior.response["conversationId"]), subject, issuer
+                )
+                loaded = await self._load(session, row)
+                branch = next(
+                    item for item in loaded.branches if item.id == UUID(prior.response["branchId"])
+                )
+                user = next(
+                    item for item in loaded.messages if item.id == UUID(prior.response["messageId"])
+                )
+                run = next(item for item in loaded.runs if item.id == UUID(prior.response["runId"]))
+                return loaded, user, run, branch
+            row = await self._row(session, conversation_id, subject, issuer, lock=True)
+            if row.archived_at is not None:
+                raise ArchivedConversationConflict
+            if row.version != expected_version:
+                raise VersionConflict
+            if await self.runs.active(session, conversation_id, lock=True) is not None:
+                raise ActiveRunConflict
+            source = await self.conversations.message(session, source_user_message_id)
+            if (
+                source is None
+                or source.conversation_id != conversation_id
+                or source.role is not MessageRole.USER
+                or source.state is not MessageState.COMPLETE
+            ):
+                raise ConversationNotFound
+            loaded = await self._load(session, row)
+            selected_branch_id = source_branch_id or loaded.active_branch_id or source.branch_id
+            from aura_core.domains.interaction.conversations.context import branch_message_ids
+
+            allowed = branch_message_ids(loaded, selected_branch_id) or set()
+            if source.id not in allowed:
+                raise ConversationNotFound
+            source_path = [item for item in loaded.messages if item.id in allowed]
+            index = next((i for i, item in enumerate(source_path) if item.id == source.id), 0)
+            parent = source_path[index - 1] if index else None
+            branch = ConversationBranch(
+                conversation_id,
+                parent.branch_id if parent is not None else source.branch_id,
+                parent.id if parent else source.id,
+                created_at=now(),
+                origin=ConversationBranchOrigin.EDITED_MESSAGE,
+            )
+            revision = await self._resolve_active_agent_for_run(session, row.agent_revision_id)
+            effective_persona = row.persona_override_revision_id or revision.persona_revision_id
+            user_id, run_id, created = uuid4(), uuid4(), now()
+            user = Message(
+                conversation_id,
+                MessageRole.USER,
+                corrected_message,
+                state=MessageState.COMPLETE,
+                run_id=run_id,
+                id=user_id,
+                created_at=created,
+                updated_at=created,
+                branch_id=branch.id,
+                parent_message_id=parent.id if parent else None,
+            )
+            tool_policy_id, call_limit, timeout_ms, retry_limit = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
+            run = Run(
+                conversation_id,
+                user_id,
+                revision.id,
+                revision.model_policy_revision_id,
+                "ollama",
+                row.model_id,
+                id=run_id,
+                created_at=created,
+                memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=call_limit,
+                tool_timeout_ms=timeout_ms,
+                tool_retry_limit=retry_limit,
+                client_time_zone=validate_client_time_zone(
+                    client_time_zone or row.client_time_zone
+                ),
+                branch_id=branch.id,
+            )
+            run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
+                self._provenance(run.agent_revision_id, effective_persona)
+            )
+            user.run_id = run.id
+            branch.head_message_id = user.id
+            self.conversations.stage_branch(session, branch)
+            self.conversations.stage_message(session, user)
+            # ``runs.user_message_id`` is an FK to the message row.  Flush
+            # the corrected message first; the surrounding transaction keeps
+            # branch, message, run, outbox, and idempotency atomic on failure.
+            await session.flush()
+            self.runs.stage(session, run)
+            self.outbox.stage(
+                session,
+                command_id=run_id,
+                run_id=run_id,
+                conversation_id=conversation_id,
+                correlation_id=run_id,
+                causation_id=user_id,
+            )
+            row.version += 1
+            row.updated_at = created
+            await self.conversations.update(session, row)
+            self.conversations.stage_idempotency(
+                session,
+                issuer,
+                subject,
+                idempotency_key,
+                fingerprint,
+                {
+                    "conversationId": str(conversation_id),
+                    "messageId": str(user_id),
+                    "runId": str(run_id),
+                    "branchId": str(branch.id),
+                },
+            )
+            await session.flush()
+            loaded = await self._load(session, row)
+            return loaded, user, run, branch
+
+    async def regenerate(
+        self,
+        run_id: UUID,
+        expected_version: int,
+        idempotency_key: str,
+        subject: str,
+        issuer: str | None = None,
+        client_time_zone: str | None = None,
+    ) -> tuple[Conversation, Message, Run, ConversationBranch]:
+        if issuer is None:
+            raise ValueError("issuer is required")
+        fingerprint = _fingerprint("regenerate", run_id, expected_version, client_time_zone)
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, idempotency_key)
+            prior_command = await self.conversations.idempotency(
+                session, issuer, subject, idempotency_key
+            )
+            if prior_command is not None:
+                if prior_command.fingerprint != fingerprint:
+                    raise IdempotencyConflict
+                row = await self._row(
+                    session, UUID(prior_command.response["conversationId"]), subject, issuer
+                )
+                loaded = await self._load(session, row)
+                branch = next(
+                    item
+                    for item in loaded.branches
+                    if item.id == UUID(prior_command.response["branchId"])
+                )
+                user = next(
+                    item
+                    for item in loaded.messages
+                    if item.id == UUID(prior_command.response["messageId"])
+                )
+                run = next(
+                    item for item in loaded.runs if item.id == UUID(prior_command.response["runId"])
+                )
+                return loaded, user, run, branch
+            prior = await self.runs.get(session, run_id)
+            if prior is None:
+                raise ConversationNotFound
+            row = await self._row(session, prior.conversation_id, subject, issuer, lock=True)
+            if row.archived_at is not None:
+                raise ArchivedConversationConflict
+            if row.version != expected_version:
+                raise VersionConflict
+            if await self.runs.active(session, prior.conversation_id, lock=True) is not None:
+                raise ActiveRunConflict
+            source_user = await self.conversations.message(session, prior.user_message_id)
+            if source_user is None:
+                raise ConversationNotFound
+            branch = ConversationBranch(
+                prior.conversation_id,
+                source_user.branch_id,
+                source_user.id,
+                created_at=now(),
+                head_message_id=source_user.id,
+                origin=ConversationBranchOrigin.REGENERATED_RESPONSE,
+            )
+            revision = await self._resolve_active_agent_for_run(session, row.agent_revision_id)
+            effective_persona = row.persona_override_revision_id or revision.persona_revision_id
+            new_id, created = uuid4(), now()
+            tool_policy_id, call_limit, timeout_ms, retry_limit = await self._tool_policy_snapshot(
+                issuer, subject, revision
+            )
+            regenerated = Run(
+                prior.conversation_id,
+                source_user.id,
+                revision.id,
+                revision.model_policy_revision_id,
+                "ollama",
+                row.model_id,
+                id=new_id,
+                created_at=created,
+                memory_policy_revision_id=self._memory_policy_revision(revision),
+                tool_policy_revision_id=tool_policy_id,
+                tool_call_limit=call_limit,
+                tool_timeout_ms=timeout_ms,
+                tool_retry_limit=retry_limit,
+                client_time_zone=validate_client_time_zone(
+                    client_time_zone or row.client_time_zone
+                ),
+                branch_id=branch.id,
+                regenerated_from_run_id=prior.id,
+            )
+            (
+                regenerated.persona_revision_id,
+                regenerated.prompt_bundle_revision_id,
+                regenerated.prompt_hash,
+            ) = self._provenance(regenerated.agent_revision_id, effective_persona)
+            self.conversations.stage_branch(session, branch)
+            self.runs.stage(session, regenerated)
+            self.outbox.stage(
+                session,
+                command_id=new_id,
+                run_id=new_id,
+                conversation_id=prior.conversation_id,
+                correlation_id=new_id,
+                causation_id=prior.id,
+            )
+            row.version += 1
+            row.updated_at = created
+            await self.conversations.update(session, row)
+            self.conversations.stage_idempotency(
+                session,
+                issuer,
+                subject,
+                idempotency_key,
+                fingerprint,
+                {
+                    "conversationId": str(prior.conversation_id),
+                    "messageId": str(source_user.id),
+                    "runId": str(new_id),
+                    "branchId": str(branch.id),
+                },
+            )
+            await session.flush()
+            loaded = await self._load(session, row)
+            return loaded, source_user, regenerated, branch
 
     async def request_cancel(
         self,
@@ -1630,6 +1960,7 @@ class SqlConversationStore:
                 tool_timeout_ms=prior.tool_timeout_ms,
                 tool_retry_limit=prior.tool_retry_limit,
                 client_time_zone=prior.client_time_zone,
+                branch_id=prior.branch_id,
             )
             self.runs.stage(session, retried)
             await session.flush()
@@ -1963,10 +2294,11 @@ class SqlConversationStore:
         async with self.sessions() as session, session.begin():
             rows = await self.runs.expired(session, now())
             for run in rows:
-                if (
-                    run.approval_id is not None
-                    and run.tool_lifecycle_status in {"approved", "denied", "executing"}
-                ):
+                if run.approval_id is not None and run.tool_lifecycle_status in {
+                    "approved",
+                    "denied",
+                    "executing",
+                }:
                     # Approval-backed execution is recoverable. Leave the
                     # expired RUNNING row intact so start_run can reclaim it
                     # and replay the approval-derived reminder idempotency.
@@ -2016,11 +2348,15 @@ class SqlConversationStore:
                     content=text,
                     state=state,
                     run_id=run_id,
+                    branch_id=run.branch_id,
+                    parent_message_id=run.user_message_id,
                 )
                 self.conversations.stage_message(session, message)
                 await session.flush()
                 run.assistant_message_id = message.id
                 await self.runs.save(session, run)
+                if run.branch_id is not None:
+                    await self.conversations.update_branch_head(session, run.branch_id, message.id)
             else:
                 updated = await self.conversations.append_message(session, message.id, text, state)
                 if updated is not None:
@@ -2105,7 +2441,11 @@ class SqlConversationStore:
                 None,
             )
             if status == RunStatus.COMPLETED and assistant is not None:
-                if self.memory_command_factory is not None and not run.document_search_used:
+                if (
+                    self.memory_command_factory is not None
+                    and run.regenerated_from_run_id is None
+                    and not run.document_search_used
+                ):
                     command = self.memory_command_factory(conversation, run, assistant)
                     await self.outbox.stage_command(session, command=command)
             return (
@@ -2118,8 +2458,13 @@ class SqlConversationStore:
             )
 
     async def wait_for_confirmation(
-        self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID,
-        *, transaction: object | None = None,
+        self,
+        run_id: UUID,
+        attempt_id: UUID,
+        approval_id: UUID,
+        tool_call_id: UUID,
+        *,
+        transaction: object | None = None,
     ) -> Run:
         if transaction is not None:
             if not isinstance(transaction, AsyncSession):
@@ -2162,8 +2507,13 @@ class SqlConversationStore:
         ):
             raise RunClaimLost
         return run
+
     async def resume_waiting_run(
-        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        approved: bool,
         transaction: object | None = None,
     ) -> Run:
         if transaction is not None:
