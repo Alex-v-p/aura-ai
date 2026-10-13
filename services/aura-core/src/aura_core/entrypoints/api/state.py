@@ -420,6 +420,7 @@ class AppState:
                     self.settings.ollama_url,
                     self.settings.ollama_run_timeout_seconds,
                     telemetry=self.metrics,
+                    dimension=self.settings.document_embedding_dimension,
                 ),
             )
             self.sql_store.set_memory_recall(

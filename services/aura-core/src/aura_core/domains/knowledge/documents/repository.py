@@ -10,7 +10,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import cast as sql_cast
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -24,7 +24,10 @@ from aura_core.domains.knowledge.documents.persistence import (
     DocumentUploadSessionRow,
     VectorType,
 )
-from aura_core.domains.knowledge.documents.ports import DocumentRepositoryUnavailable
+from aura_core.domains.knowledge.documents.ports import (
+    DocumentRepositoryUnavailable,
+    DocumentSearchResult,
+)
 from aura_core.domains.knowledge.documents.public import (
     Document,
     DocumentChunk,
@@ -1108,7 +1111,10 @@ class SqlDocumentRepository:
         offset: int = 0,
         media_type: str | None = None,
         query_embedding: tuple[float, ...] | None = None,
-    ) -> list[DocumentSearchHit]:
+        query_model_id: str | None = None,
+        query_model_revision: str | None = None,
+        query_model_digest: str | None = None,
+    ) -> DocumentSearchResult:
         async with self.sessions() as session:
             filters = [
                 DocumentRow.principal_issuer == owner[0],
@@ -1121,11 +1127,43 @@ class SqlDocumentRepository:
             # candidates to materialize the requested page without scanning
             # arbitrary rows in Python, while retaining a hard abuse bound.
             candidate_limit = min(1000, max(limit * 8, limit))
+            vector_identity_available = (
+                query_embedding is not None
+                and query_model_id is not None
+                and query_model_digest is not None
+            )
             query_vector = (
                 "[" + ",".join(format(value, ".17g") for value in query_embedding) + "]"
-                if query_embedding is not None
+                if vector_identity_available and query_embedding is not None
                 else None
             )
+            identity_mismatch = False
+            if vector_identity_available:
+                # Keep this query metadata-only and bounded: it tells the
+                # service that prior-generation vectors were intentionally
+                # excluded, without selecting their model identity, digest, or
+                # content.  Lexical retrieval remains independent below.
+                mismatch_rows = (
+                    await session.execute(
+                        select(DocumentChunkRow.id)
+                        .join(DocumentRow, DocumentRow.id == DocumentChunkRow.document_id)
+                        .where(
+                            *filters,
+                            DocumentChunkRow.embedding.is_not(None),
+                            or_(
+                                DocumentChunkRow.model_id.is_distinct_from(query_model_id),
+                                DocumentChunkRow.model_revision.is_distinct_from(
+                                    query_model_revision
+                                ),
+                                DocumentChunkRow.model_digest.is_distinct_from(
+                                    query_model_digest
+                                ),
+                            ),
+                        )
+                        .limit(1)
+                    )
+                ).all()
+                identity_mismatch = bool(mismatch_rows)
             lexical_rows = (
                 await session.execute(
                     select(DocumentChunkRow, DocumentRow)
@@ -1149,12 +1187,18 @@ class SqlDocumentRepository:
             rows: list[tuple[DocumentChunkRow, DocumentRow]] = [
                 (chunk, document) for chunk, document in lexical_rows
             ]
-            if query_embedding is not None:
+            if vector_identity_available and query_vector is not None:
                 vector_rows = (
                     await session.execute(
                         select(DocumentChunkRow, DocumentRow)
                         .join(DocumentRow, DocumentRow.id == DocumentChunkRow.document_id)
-                        .where(*filters, DocumentChunkRow.embedding.is_not(None))
+                        .where(
+                            *filters,
+                            DocumentChunkRow.embedding.is_not(None),
+                            DocumentChunkRow.model_id == query_model_id,
+                            DocumentChunkRow.model_revision == query_model_revision,
+                            DocumentChunkRow.model_digest == query_model_digest,
+                        )
                         .order_by(
                             DocumentChunkRow.embedding.op("<=>")(
                                 sql_cast(query_vector, VectorType())
@@ -1174,8 +1218,16 @@ class SqlDocumentRepository:
             for chunk, document in rows:
                 overlap = len(terms & set(chunk.text.casefold().split()))
                 lexical = overlap / max(1, len(terms))
-                vector = _cosine(query_embedding, self._chunk(chunk).embedding)
-                if overlap or (query_embedding is not None and chunk.embedding is not None):
+                candidate = self._chunk(chunk)
+                vector_compatible = (
+                    vector_identity_available
+                    and candidate.embedding is not None
+                    and candidate.model_id == query_model_id
+                    and candidate.model_revision == query_model_revision
+                    and candidate.model_digest == query_model_digest
+                )
+                vector = _cosine(query_embedding, candidate.embedding) if vector_compatible else 0.0
+                if overlap or vector_compatible:
                     vector = max(vector, 0.001) if query_embedding is not None else vector
                     hits.append(
                         DocumentSearchHit(
@@ -1187,9 +1239,12 @@ class SqlDocumentRepository:
                             0.65 * lexical + 0.35 * vector,
                         )
                     )
-            return sorted(hits, key=lambda item: (-item.score, str(item.evidence_id)))[
-                offset : offset + limit
-            ]
+            return DocumentSearchResult(
+                sorted(hits, key=lambda item: (-item.score, str(item.evidence_id)))[
+                    offset : offset + limit
+                ],
+                identity_mismatch=identity_mismatch,
+            )
 
 
 def _cosine(

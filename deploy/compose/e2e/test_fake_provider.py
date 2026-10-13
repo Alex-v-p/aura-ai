@@ -17,12 +17,16 @@ async def test_fake_provider_embedding_matches_document_vector_width(
         tags = await client.get("/api/tags")
         response = await client.post(
             "/api/embed",
-            json={"model": "nomic-embed-text", "input": "bounded fixture"},
+            json={
+                "model": "qwen3-embedding:4b",
+                "input": "bounded fixture",
+                "dimensions": 768,
+            },
         )
 
     assert tags.status_code == 200
     assert any(
-        item.get("name") == "nomic-embed-text"
+        item.get("name") == "qwen3-embedding:4b"
         for item in tags.json().get("models", [])
     )
     assert response.status_code == 200
@@ -30,4 +34,4 @@ async def test_fake_provider_embedding_matches_document_vector_width(
     vector = body["embeddings"][0]
     assert len(vector) == 768
     assert all(isinstance(value, float) for value in vector)
-    assert body["model_revision"] == "fixture-embedding-v1"
+    assert body["model_revision"] == "fixture-qwen-embedding-v1"

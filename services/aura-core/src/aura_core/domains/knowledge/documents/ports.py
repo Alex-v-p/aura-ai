@@ -57,6 +57,21 @@ class DocumentEmbedding:
     digest: str
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentSearchResult:
+    """Internal retrieval result with bounded, metadata-only degradation state.
+
+    The application service unwraps this value before returning search hits to
+    API callers.  ``identity_mismatch`` only says that at least one stored
+    vector was excluded because it was produced by a different verified model
+    generation; it deliberately carries no model identifiers, digests, or
+    document content.
+    """
+
+    hits: list[DocumentSearchHit]
+    identity_mismatch: bool = False
+
+
 class DocumentRepository(Protocol):
     async def create_upload(
         self,
@@ -188,4 +203,7 @@ class DocumentRepository(Protocol):
         limit: int,
         media_type: str | None = None,
         query_embedding: tuple[float, ...] | None = None,
-    ) -> list[DocumentSearchHit]: ...
+        query_model_id: str | None = None,
+        query_model_revision: str | None = None,
+        query_model_digest: str | None = None,
+    ) -> DocumentSearchResult: ...

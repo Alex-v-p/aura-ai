@@ -48,6 +48,9 @@ class ComposeTopologyTests(unittest.TestCase):
             "fixture-chat": "5aab3664f58aecf3728756feafd39dfc723fdfd43dff233a622eea824574d18b",
             "fixture-chat-2": "2da0d79fc1a6e1cb9edef7bc5a3c41ee4e31df2eb8f53f35487639a0f9ed8951",
             "embed": "8a1eed22144c3f04485a69eea62bfd3fa1026de39dc252b77ba9b1f3f08b00ec",
+            "qwen3-embedding:4b": (
+                "c3e3b7d3a5a23e7f0c3d0d53d5f9d67f03d06f6f85ec5c9d03a8d2c7a8e5f1b4"
+            ),
         }
         for name, digest in expected.items():
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
@@ -120,6 +123,23 @@ class ComposeTopologyTests(unittest.TestCase):
             "AURA_OLLAMA_RUN_TIMEOUT_SECONDS: ${AURA_OLLAMA_RUN_TIMEOUT_SECONDS:-300}",
             api,
         )
+
+    def test_core_entrypoints_share_dimension_safe_document_embedding_defaults(self) -> None:
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        for service in (api, worker):
+            self.assertIn(
+                "AURA_DOCUMENT_EMBEDDING_MODEL: "
+                "${AURA_DOCUMENT_EMBEDDING_MODEL:-qwen3-embedding:4b}",
+                service,
+            )
+            self.assertIn(
+                "AURA_DOCUMENT_EMBEDDING_DIMENSION: ${AURA_DOCUMENT_EMBEDDING_DIMENSION:-768}",
+                service,
+            )
+        self.assertIn("AURA_DOCUMENT_EMBEDDING_MODEL=qwen3-embedding:4b", environment)
+        self.assertIn("AURA_DOCUMENT_EMBEDDING_DIMENSION=768", environment)
 
     def test_browser_e2e_runner_uses_only_the_web_network(self) -> None:
         e2e = self.compose.split("  frontend-e2e:\n", 1)[1].split("\nsecrets:\n", 1)[0]

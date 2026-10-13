@@ -1032,7 +1032,15 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     "degradation": frozenset(
-        {"none", "query_embedding", "database", "telemetry", "budget", "embedding_unavailable"}
+        {
+            "none",
+            "query_embedding",
+            "database",
+            "telemetry",
+            "budget",
+            "embedding_unavailable",
+            "identity_mismatch",
+        }
     ),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")

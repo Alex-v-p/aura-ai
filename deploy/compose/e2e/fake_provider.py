@@ -161,8 +161,8 @@ async def tags() -> dict[str, list[dict[str, str]]]:
                 "modified_at": "2026-10-09T00:00:00Z",
             },
             {
-                "name": "nomic-embed-text",
-                "digest": "9b6e3f6f9c7d4a8b1e2d3c4f5a6b7c8d9e0f112233445566778899aabbccdde0",
+                "name": "qwen3-embedding:4b",
+                "digest": "c3e3b7d3a5a23e7f0c3d0d53d5f9d67f03d06f6f85ec5c9d03a8d2c7a8e5f1b4",
                 "modified_at": "2026-10-09T00:00:00Z",
             },
         ]
@@ -174,7 +174,7 @@ async def show(body: dict[str, Any]) -> dict[str, list[str]]:
     if kind() != "ollama":
         raise HTTPException(status_code=404)
     name = body.get("name")
-    if name in {"embed", "nomic-embed-text"}:
+    if name in {"embed", "qwen3-embedding:4b"}:
         return {"capabilities": ["embedding"]}
     if name == "fixture-chat":
         return {"capabilities": ["chat", "tools", "tool_calling"]}
@@ -187,7 +187,12 @@ async def embed(body: dict[str, Any]) -> dict[str, list[list[float]] | str]:
         raise HTTPException(status_code=404)
     model = body.get("model")
     value = body.get("input")
-    if model != "nomic-embed-text" or not isinstance(value, str) or not value:
+    if (
+        model != "qwen3-embedding:4b"
+        or body.get("dimensions") != _EMBEDDING_DIMENSION
+        or not isinstance(value, str)
+        or not value
+    ):
         raise HTTPException(status_code=400)
     vector: list[float] = []
     block = 0
@@ -196,7 +201,7 @@ async def embed(body: dict[str, Any]) -> dict[str, list[list[float]] | str]:
         vector.extend(((byte / 255.0) * 2.0) - 1.0 for byte in digest)
         block += 1
     vector = vector[:_EMBEDDING_DIMENSION]
-    return {"embeddings": [vector], "model_revision": "fixture-embedding-v1"}
+    return {"embeddings": [vector], "model_revision": "fixture-qwen-embedding-v1"}
 
 
 @app.post("/api/chat")

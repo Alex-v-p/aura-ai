@@ -263,7 +263,7 @@ async def test_completion_cas_cannot_restore_document_after_delete_wins() -> Non
     assert await repository.chunks(document.id) == []
 
 
-def test_sql_search_uses_expanded_lexical_and_vector_candidate_windows() -> None:
+def test_sql_search_uses_verified_identity_for_vector_candidates() -> None:
     statements: list[Any] = []
 
     class Session:
@@ -288,11 +288,21 @@ def test_sql_search_uses_expanded_lexical_and_vector_candidate_windows() -> None
             "rare evidence",
             limit=2,
             query_embedding=(1.0, 0.0),
+            query_model_id="qwen3-embedding:4b",
+            query_model_revision="fixture-qwen-embedding-v1",
+            query_model_digest="a" * 64,
         )
 
     asyncio.run(exercise())
-    assert len(statements) == 2
-    assert all(statement._limit_clause.value == 16 for statement in statements)
+    assert len(statements) == 3
+    assert statements[0]._limit_clause.value == 1
+    assert all(statement._limit_clause.value == 16 for statement in statements[1:])
+    mismatch_sql = str(statements[0])
+    assert "IS DISTINCT FROM" in mismatch_sql
+    vector_sql = str(next(statement for statement in statements if "<=>" in str(statement)))
+    assert "model_id" in vector_sql
+    assert "model_revision" in vector_sql
+    assert "model_digest" in vector_sql
     assert DocumentChunkRow.__table__.c.document_id.index is True
     migration = (
         __import__("pathlib").Path(__file__).parents[1]

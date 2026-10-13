@@ -16,6 +16,8 @@ ROOT = Path(__file__).parents[4]
 def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
     settings = Settings()
 
+    assert settings.document_embedding_model == "qwen3-embedding:4b"
+    assert settings.document_embedding_dimension == 768
     assert settings.ollama_inventory_timeout_seconds == 5.0
     assert settings.ollama_verification_timeout_seconds == 60.0
     assert settings.ollama_inventory_cache_ttl_seconds == 15.0
@@ -30,6 +32,20 @@ def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
     ):
         with pytest.raises(ValueError):
             Settings(**cast(Any, {field: value}))
+
+
+def test_document_entrypoints_bind_the_dimension_safe_embedding_adapter() -> None:
+    api_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/api/state.py"
+    ).read_text()
+    worker_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/worker/app.py"
+    ).read_text()
+
+    assert "dimension=self.settings.document_embedding_dimension" in api_source
+    assert "dimension=config.document_embedding_dimension" in worker_source
+    assert "settings=self.settings" in api_source
+    assert "settings=config" in worker_source
 
 
 def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> None:

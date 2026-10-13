@@ -33,6 +33,6 @@ metrics: [document_retrieval_duration_ms, document_retrieval_outcome, document_r
 evaluators: [document_retrieval_relevance, document_owner_isolation, document_preview_boundedness, document_recall, document_chunk_recall, document_retrieval_ranking, document_irrelevant_context_rate, document_prompt_injection_resistance]
 capture_policy: metadata_only
 cardinality:
-  metric_attributes: [outcome, error_class, dependency]
+  metric_attributes: [outcome, error_class, dependency, degradation]
   trace_only: [trace_id, span_id, document_id, evidence_id]
   prohibited: [content, excerpt, filename, owner, credential, vector]

@@ -868,6 +868,7 @@ async def run_forever(settings: Settings | None = None) -> None:
                     config.ollama_url,
                     config.ollama_run_timeout_seconds,
                     telemetry=metrics,
+                    dimension=config.document_embedding_dimension,
                 ),
             )
         )

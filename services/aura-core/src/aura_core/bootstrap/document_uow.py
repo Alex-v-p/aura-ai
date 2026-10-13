@@ -34,12 +34,17 @@ def document_service(
     embedder: Any = None,
     commands: Any = None,
     parser: Any = None,
+    embedding_model: str | None = None,
 ) -> DocumentService:
+    effective_embedding_model = embedding_model or getattr(
+        settings, "document_embedding_model", "qwen3-embedding:4b"
+    )
     if testing or sessions is None:
         return DocumentService(
             MemoryDocumentRepository(),
             MemoryDocumentObjectStore(),
             embedder=embedder,
+            embedding_model=effective_embedding_model,
             commands=commands,
             parser=parser,
             metrics=metrics,
@@ -65,6 +70,7 @@ def document_service(
         repository,
         store,
         embedder=embedder,
+        embedding_model=effective_embedding_model,
         commands=effective_commands,
         parser=parser or HttpDocumentParser(settings.document_parser_url),
         metrics=metrics,

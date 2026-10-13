@@ -1,0 +1,14 @@
+agent: general_reviewer
+work_item: AURA-0073
+verdict: PASS
+checked:
+  - MetadataMetrics accepts and retains identity_mismatch as bounded degradation metadata without rejecting the retrieval span.
+  - The document-retrieval manifest permits the degradation dimension while continuing to prohibit document content, excerpts, filenames, owners, credentials, and vectors.
+  - The SQL identity-mismatch probe uses an owner-, ready-status-, and media-scoped SELECT with LIMIT 1 and returns only a boolean through the internal DocumentSearchResult.
+  - SQL and in-memory retrieval require exact model ID, revision, and digest identity for vector comparisons while preserving lexical fallback.
+  - DocumentService unwraps internal search metadata and preserves the existing public list of DocumentSearchHit values, ranking, and pagination behavior.
+  - The failed-document recovery regression covers failure, stale-chunk cleanup, retry, Qwen reprocessing, ready status, and searchable output.
+  - The deterministic E2E provider advertises and accepts qwen3-embedding:4b with an explicit 768-dimensional request.
+  - Targeted document SQL, retrieval, and telemetry tests passed: 73 passed and 2 environment-dependent database tests skipped.
+  - Work-item, changed-path, and observability validators passed; pyright, ruff, and git diff --check passed.
+findings: []

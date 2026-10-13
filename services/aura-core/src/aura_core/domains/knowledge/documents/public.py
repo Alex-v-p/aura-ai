@@ -26,6 +26,7 @@ from aura_core.domains.knowledge.documents.ports import (
     DocumentParser,
     DocumentRepository,
     DocumentRepositoryUnavailable,
+    DocumentSearchResult,
 )
 from aura_core.runtime.models.ports import ProviderTraceContext
 
@@ -792,9 +793,13 @@ class MemoryDocumentRepository:
         offset: int = 0,
         media_type: str | None = None,
         query_embedding: tuple[float, ...] | None = None,
-    ) -> list[DocumentSearchHit]:
+        query_model_id: str | None = None,
+        query_model_revision: str | None = None,
+        query_model_digest: str | None = None,
+    ) -> DocumentSearchResult:
         terms = set(query.casefold().split())
         hits: list[DocumentSearchHit] = []
+        identity_mismatch = False
         for document in await self.list(owner, limit=100_000, media_type=media_type):
             if not document.searchable:
                 continue
@@ -802,8 +807,21 @@ class MemoryDocumentRepository:
                 words = set(chunk.text.casefold().split())
                 overlap = len(terms & words)
                 lexical = overlap / max(1, len(terms))
-                vector = _cosine(query_embedding, chunk.embedding)
-                if overlap or (query_embedding is not None and chunk.embedding is not None):
+                vector_compatible = _embedding_identity_matches(
+                    chunk,
+                    query_embedding=query_embedding,
+                    query_model_id=query_model_id,
+                    query_model_revision=query_model_revision,
+                    query_model_digest=query_model_digest,
+                )
+                if (
+                    query_embedding is not None
+                    and chunk.embedding is not None
+                    and not vector_compatible
+                ):
+                    identity_mismatch = True
+                vector = _cosine(query_embedding, chunk.embedding) if vector_compatible else 0.0
+                if overlap or vector_compatible:
                     vector = max(vector, 0.001) if query_embedding is not None else vector
                     hits.append(
                         DocumentSearchHit(
@@ -815,9 +833,12 @@ class MemoryDocumentRepository:
                             0.65 * lexical + 0.35 * vector,
                         )
                     )
-        return sorted(hits, key=lambda item: (-item.score, str(item.document_id)))[
-            offset : offset + limit
-        ]
+        return DocumentSearchResult(
+            sorted(hits, key=lambda item: (-item.score, str(item.document_id)))[
+                offset : offset + limit
+            ],
+            identity_mismatch=identity_mismatch,
+        )
 
 
 class MemoryDocumentObjectStore:
@@ -1597,6 +1618,9 @@ class DocumentService:
         if not query.strip() or len(query) > 500:
             raise DocumentValidationError("invalid search query")
         effective_embedding = query_embedding
+        query_model_id: str | None = None
+        query_model_revision: str | None = None
+        query_model_digest: str | None = None
         embedding_degraded = False
         if self.embedder is not None:
             try:
@@ -1606,6 +1630,9 @@ class DocumentService:
                     context=context or _library_context("document-search"),
                 )
                 effective_embedding = result.vector
+                query_model_id = result.model_id
+                query_model_revision = result.model_revision
+                query_model_digest = result.model_digest
             except Exception:
                 # Lexical retrieval remains available during embedding-provider
                 # outage; the failure is represented only by bounded telemetry.
@@ -1616,15 +1643,26 @@ class DocumentService:
             "limit": limit,
             "media_type": media_type,
             "query_embedding": effective_embedding,
+            "query_model_id": query_model_id,
+            "query_model_revision": query_model_revision,
+            "query_model_digest": query_model_digest,
         }
         if offset:
             kwargs["offset"] = offset
         request_context = context or _library_context("document-search")
         try:
-            result = [
-                item
-                for item in await repository.search(self._owner(issuer, subject), query, **kwargs)
-            ]  # type: ignore[misc]
+            repository_result = await repository.search(
+                self._owner(issuer, subject), query, **kwargs
+            )
+            if isinstance(repository_result, DocumentSearchResult):
+                result = repository_result.hits
+                identity_mismatch = repository_result.identity_mismatch
+            else:
+                # Keep the application boundary tolerant of older adapters
+                # during rolling upgrades; the service response remains the
+                # same list of public search hits.
+                result = list(repository_result)
+                identity_mismatch = False
         except DocumentRepositoryUnavailable:
             self._record_metric(
                 "aura.knowledge.document_retrieval",
@@ -1647,14 +1685,18 @@ class DocumentService:
                 context=request_context,
             )
             raise
+        degraded_reason = (
+            "identity_mismatch" if identity_mismatch else
+            "embedding_unavailable" if embedding_degraded else None
+        )
         self._record_metric(
             "aura.knowledge.document_retrieval",
             "document.search",
             started,
-            outcome=("empty" if not result else "degraded" if embedding_degraded else "ok"),
+            outcome=("degraded" if degraded_reason else "empty" if not result else "ok"),
             dependency="embedding_provider" if embedding_degraded else "postgresql",
-            error_class="embedding_unavailable" if embedding_degraded else None,
-            degradation="embedding_unavailable" if embedding_degraded else None,
+            error_class=degraded_reason,
+            degradation=degraded_reason,
             candidates=len(result),
             context=request_context,
         )
@@ -2136,6 +2178,27 @@ def _library_context(operation: str) -> ProviderTraceContext:
         command_id=command_id,
         correlation_id=command_id,
         causation_id=command_id,
+    )
+
+
+def _embedding_identity_matches(
+    chunk: DocumentChunk,
+    *,
+    query_embedding: tuple[float, ...] | None,
+    query_model_id: str | None,
+    query_model_revision: str | None,
+    query_model_digest: str | None,
+) -> bool:
+    """Permit vector similarity only for one verified embedding generation."""
+
+    return (
+        query_embedding is not None
+        and chunk.embedding is not None
+        and query_model_id is not None
+        and query_model_digest is not None
+        and chunk.model_id == query_model_id
+        and chunk.model_revision == query_model_revision
+        and chunk.model_digest == query_model_digest
     )
 
 

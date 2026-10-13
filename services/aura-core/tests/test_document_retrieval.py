@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 from aura_core.domains.knowledge.documents.evaluation import (
@@ -33,10 +34,12 @@ from aura_core.domains.knowledge.documents.evaluation import (
 )
 from aura_core.domains.knowledge.documents.public import (
     DocumentLifecycleEvent,
+    DocumentMetrics,
     DocumentService,
     MemoryDocumentObjectStore,
     MemoryDocumentRepository,
 )
+from aura_core.platform.telemetry import MetadataMetrics
 from aura_core.runtime.models.ports import EmbeddingResult, ProviderTraceContext
 from fixtures.documents.runner import execute_labelled_retrieval, retained_payload_json
 
@@ -321,6 +324,66 @@ async def test_vector_provider_degradation_preserves_bounded_lexical_retrieval()
     await service.process(document.id)
     hits = await service.search(*OWNER, "automobile")
     assert hits and hits[0].document_id == document.id
+
+
+@pytest.mark.asyncio
+async def test_identity_mismatch_degradation_is_correlated_and_redacted() -> None:
+    metrics = MetadataMetrics()
+    service = DocumentService(
+        MemoryDocumentRepository(),
+        MemoryDocumentObjectStore(),
+        embedder=SemanticEmbedder(),
+        embedding_model="nomic-embed-text",
+        metrics=cast(DocumentMetrics, metrics),
+    )
+    document = await service.upload(
+        *OWNER,
+        filename="private-marker.txt",
+        media_type="text/plain",
+        stream=b"automobile private evidence TOP_SECRET_MARKER",
+    )
+    await service.process(document.id)
+
+    # Simulate a verified embedding-model rollout while old chunks remain.
+    service.embedding_model = "qwen3-embedding:4b"
+    context = ProviderTraceContext(
+        trace_id="a" * 32,
+        span_id="b" * 16,
+        correlation_id="00000000-0000-0000-0000-000000000007",
+    )
+    hits = await service.search(*OWNER, "automobile", context=context)
+
+    assert hits and hits[0].document_id == document.id
+    assert metrics.stats().rejected == 0
+    measurements = metrics.snapshot()
+    search_spans = [
+        measurement
+        for measurement in measurements
+        if measurement.kind == "span"
+        and measurement.component_id == "aura.knowledge.document_retrieval"
+        and dict(measurement.trace_attributes).get("operation") == "document.search"
+    ]
+    assert len(search_spans) == 1
+    span = search_spans[0]
+    assert span.trace_id == "a" * 32
+    assert span.parent_span_id == "b" * 16
+    assert dict(span.trace_attributes)["correlation_id"] == (
+        "00000000-0000-0000-0000-000000000007"
+    )
+    dimensions = dict(span.dimensions)
+    assert dimensions["outcome"] == "degraded"
+    assert dimensions["degradation"] == "identity_mismatch"
+    assert dimensions["error_class"] == "identity_mismatch"
+    assert any(
+        measurement.metric == "document_retrieval_duration_ms"
+        and measurement.trace_id == "a" * 32
+        for measurement in measurements
+    )
+    rendered = repr(measurements)
+    assert "private-marker.txt" not in rendered
+    assert "TOP_SECRET_MARKER" not in rendered
+    assert "a" * 64 not in rendered
+    assert "b" * 64 not in rendered
 
 
 @pytest.mark.asyncio

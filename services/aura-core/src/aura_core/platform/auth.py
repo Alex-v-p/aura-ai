@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     default_model: str = Field(
         default="", validation_alias=AliasChoices("AURA_OLLAMA_DEFAULT_MODEL", "AURA_DEFAULT_MODEL")
     )
+    # Document vectors use the installed Qwen Matryoshka model at the
+    # dimension of the existing pgvector index.  Memory has its own model
+    # selection and embedding provider composition and must not inherit this
+    # document-specific setting.
+    document_embedding_model: str = Field(
+        default="qwen3-embedding:4b",
+        validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_MODEL"),
+    )
+    document_embedding_dimension: Literal[768] = Field(
+        default=768,
+        validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_DIMENSION"),
+    )
     context_token_budget: int = Field(default=8192, gt=0)
     ollama_run_timeout_seconds: float = 300.0
     # Inventory reads use provider metadata and should fail quickly without
