@@ -13,7 +13,7 @@ services:
   aura-core-api:
     # Preserve Core's normal data, bus, cache, frontend, and provider paths
     # while adding only the OIDC control network.
-    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress, aura-identity]
 
   authentik-postgres:
     profiles: [local-identity]

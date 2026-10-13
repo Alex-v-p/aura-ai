@@ -1,0 +1,17 @@
+# Template rendered into /tmp by the Compose entrypoint. The RPC secret is
+# supplied through a Docker secret and substituted at container start.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+consistency_mode = "consistent"
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "aura-garage:3901"
+rpc_secret = "__GARAGE_RPC_SECRET__"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"

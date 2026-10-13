@@ -10,6 +10,7 @@ from uuid import UUID
 from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_service
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
@@ -51,6 +52,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaPreviewResult,
     PersonaPreviewTrace,
 )
+from aura_core.domains.knowledge.documents.public import DocumentService
 from aura_core.domains.knowledge.memory import public as memory_public
 from aura_core.domains.knowledge.memory.public import MemoryRepository
 from aura_core.platform.auth import (
@@ -87,6 +89,7 @@ from aura_core.platform.telemetry import (
     TelemetryLifecycle,
     new_span_id,
 )
+from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.runtime.models.gateway import ModelGateway, ModelPreviewFailure
 from aura_core.runtime.models.ports import (
@@ -230,6 +233,7 @@ class AppState:
         self.approval_repository: ApprovalRepository
         self.approval_service: ApprovalApplicationService
         self.memory_worker: object | None = None
+        self.document_service: DocumentService
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
@@ -275,12 +279,16 @@ class AppState:
             self.approval_service = approval_service(
                 self.approval_repository,
             )
+
             async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
                 return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
 
             self.store.get_run_memory_activity = get_memory_activity  # type: ignore[attr-defined]
             self.memory_worker = memory_uow.memory_processing_service(
                 None, settings=self.settings, metrics=self.metrics
+            )
+            self.document_service = document_service(
+                None, settings=self.settings, testing=True, metrics=self.metrics
             )
             self.store.set_memory_recall(
                 memory_uow.memory_recall_service(
@@ -345,6 +353,7 @@ class AppState:
                     NOTIFICATION_TOPIC,
                     APPROVAL_EVENT_TOPIC,
                     RUN_RESUME_TOPIC,
+                    "aura.knowledge.documents.events.v1",
                 ),
                 metrics=self.metrics,
             )
@@ -397,6 +406,17 @@ class AppState:
                 settings=self.settings,
                 metrics=self.metrics,
                 agent_policy_loader=agent_policy_loader,
+            )
+            self.document_service = document_service(
+                self.sessions_factory,
+                settings=self.settings,
+                metrics=self.metrics,
+                commands=SqlDocumentCommandSink(self.sessions_factory),
+                embedder=OllamaEmbeddingAdapter(
+                    self.settings.ollama_url,
+                    self.settings.ollama_run_timeout_seconds,
+                    telemetry=self.metrics,
+                ),
             )
             self.sql_store.set_memory_recall(
                 memory_uow.memory_recall_service(

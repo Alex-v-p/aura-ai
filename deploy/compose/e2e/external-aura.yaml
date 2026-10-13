@@ -11,14 +11,14 @@ services:
       AURA_OWNER_SUBJECT: owner
       AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
       AURA_DEFAULT_MODEL: fixture-chat
-    networks: [aura-e2e-provider]
+    networks: [aura-e2e-provider, aura-object-storage, aura-document-parser]
 
   aura-core-worker:
     environment:
       AURA_ENVIRONMENT: test
       AURA_OLLAMA_URL: http://aura-e2e-ollama:8081
       AURA_DEFAULT_MODEL: fixture-chat
-    networks: [aura-e2e-provider]
+    networks: [aura-e2e-provider, aura-object-storage]
 
   frontend-e2e:
     environment:

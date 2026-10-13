@@ -13,6 +13,7 @@ from aura_core.entrypoints.api.routes import (
     approvals,
     auth,
     conversations,
+    documents,
     health,
     memories,
     models,
@@ -146,6 +147,15 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
         )
         return response
 
+    @app.middleware("http")
+    async def prevent_document_caching(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
+        if request.url.path.startswith("/api/v1/documents"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     app.include_router(auth.router)
     app.include_router(models.router)
     app.include_router(models.memory_router)
@@ -159,18 +169,15 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(tools.router)
     app.include_router(reminders.router)
     app.include_router(notifications.router)
+    app.include_router(documents.router)
     app.include_router(health.router)
     return app
 
 
-def _memory_boundary(
-    path: str, method: str
-) -> tuple[str, str, str, str, str] | None:
+def _memory_boundary(path: str, method: str) -> tuple[str, str, str, str, str] | None:
     if path.startswith("/api/v1/memory-candidates") and method in {"POST", "PATCH"}:
         operation = (
-            "memory.candidate.approve"
-            if path.endswith("/approve")
-            else "memory.candidate.reject"
+            "memory.candidate.approve" if path.endswith("/approve") else "memory.candidate.reject"
         )
         return (
             "aura.knowledge.memory_extraction",

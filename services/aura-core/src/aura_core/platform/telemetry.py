@@ -47,6 +47,10 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.2.0",
+    "aura.knowledge.document_upload": "1.0.0",
+    "aura.knowledge.document_processing": "1.0.0",
+    "aura.knowledge.document_retrieval": "1.0.0",
+    "aura.knowledge.document_deletion": "1.0.0",
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
@@ -290,6 +294,38 @@ _METRICS: Mapping[str, frozenset[str]] = {
         "memory_context_tokens",
         "memory_retrieval_errors",
     }),
+    "aura.knowledge.document_upload": frozenset(
+        {"document_upload_duration_ms", "document_upload_outcome"}
+    ),
+    "aura.knowledge.document_processing": frozenset(
+        {
+            "document_processing_duration_ms",
+            "document_processing_outcome",
+            "document_chunk_count",
+            "document_retry_count",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
+            "outbox_duplicates",
+        }
+    ),
+    "aura.knowledge.document_retrieval": frozenset(
+        {"document_retrieval_duration_ms", "document_retrieval_candidate_count"}
+    ),
+    "aura.knowledge.document_deletion": frozenset(
+        {
+            "document_deletion_duration_ms",
+            "document_deletion_outcome",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
+            "outbox_duplicates",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -435,6 +471,10 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         "memory.fallback",
         "memory.degradation",
     }),
+    "aura.knowledge.document_upload": frozenset({"document.upload"}),
+    "aura.knowledge.document_processing": frozenset({"document.process", "document.retry"}),
+    "aura.knowledge.document_retrieval": frozenset({"document.search"}),
+    "aura.knowledge.document_deletion": frozenset({"document.delete"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -458,6 +498,10 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
     "aura.runtime.structured_inference": "structured_inference_duration_ms",
     "aura.runtime.embedding_gateway": "embedding_duration_ms",
+    "aura.knowledge.document_upload": "document_upload_duration_ms",
+    "aura.knowledge.document_processing": "document_processing_duration_ms",
+    "aura.knowledge.document_retrieval": "document_retrieval_duration_ms",
+    "aura.knowledge.document_deletion": "document_deletion_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -603,6 +647,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "tool_call_id",
         "approval_version",
         "idempotency",
+        "document_id",
+        "evidence_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -637,6 +683,8 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "approval_id",
         "proposal_id",
         "tool_call_id",
+        "document_id",
+        "evidence_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -674,6 +722,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "memory_store",
             "structured_inference",
             "embedding_provider",
+            "parser",
+            "object_storage",
             "query_embedding",
             "nats_transient",
             "memory_worker",
@@ -702,6 +752,12 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "capability",
             "policy",
             "provider_protocol",
+            "parse_failed",
+            "processing_failed",
+            "object_storage_failed",
+            "embedding_unavailable",
+            "upload_cleanup_retryable",
+            "delete_retryable",
             "execution",
             "cancellation",
             "purged",
@@ -790,7 +846,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
         "primary", "query_embedding", "lexical", "vector", "fusion", "rerank", "selection",
         "context_budget", "fallback", "degradation", "unknown",
     }),
-    "degradation": frozenset({"none", "query_embedding", "database", "telemetry", "budget"}),
+    "degradation": frozenset(
+        {"none", "query_embedding", "database", "telemetry", "budget", "embedding_unavailable"}
+    ),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 

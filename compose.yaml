@@ -49,6 +49,11 @@ services:
       AURA_NATS_PASSWORD_FILE: /run/secrets/aura-nats-password
       AURA_VALKEY_URL: redis://aura-valkey:6379/0
       AURA_VALKEY_PASSWORD_FILE: /run/secrets/aura-valkey-password
+      AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900
+      AURA_OBJECT_STORAGE_REGION: ${AURA_GARAGE_REGION:-garage}
+      AURA_OBJECT_STORAGE_BUCKET: ${AURA_GARAGE_BUCKET:-aura-documents}
+      AURA_OBJECT_STORAGE_ACCESS_KEY_FILE: /run/secrets/aura-garage-access-key
+      AURA_OBJECT_STORAGE_SECRET_KEY_FILE: /run/secrets/aura-garage-secret-key
       AURA_OLLAMA_URL: ${AURA_OLLAMA_URL:-http://host.docker.internal:11434}
       AURA_DEFAULT_MODEL: ${AURA_DEFAULT_MODEL:-}
       AURA_CONTEXT_TOKEN_BUDGET: ${AURA_CONTEXT_TOKEN_BUDGET:-8192}
@@ -64,10 +69,10 @@ services:
       AURA_OWNER_SUBJECT: ${AURA_OWNER_SUBJECT:?AURA_OWNER_SUBJECT must be configured for owner authorization}
       AURA_PUBLIC_ORIGIN: ${AURA_PUBLIC_ORIGIN:?AURA_PUBLIC_ORIGIN must be a stable HTTPS origin}
       AURA_SECURE_COOKIES: "true"
-    secrets: [aura-core-database-password, aura-oidc-client-secret, aura-nats-password, aura-valkey-password]
+    secrets: [aura-core-database-password, aura-oidc-client-secret, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # Only Core entrypoints need to contact configured external providers.
     # Keep all browser-facing and stateful service paths on internal networks.
-    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress]
     # Docker Desktop provides this name automatically; Linux Engine needs the
     # explicit gateway mapping for the local Ollama development default.
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -76,6 +81,7 @@ services:
       aura-core-postgres: {condition: service_healthy}
       aura-nats: {condition: service_started}
       aura-valkey: {condition: service_healthy}
+      aura-garage-bootstrap: {condition: service_completed_successfully}
     expose: ["8000"]
     healthcheck:
       # The Core runtime image is Python slim and intentionally does not
@@ -106,6 +112,12 @@ services:
       AURA_NATS_PASSWORD_FILE: /run/secrets/aura-nats-password
       AURA_VALKEY_URL: redis://aura-valkey:6379/0
       AURA_VALKEY_PASSWORD_FILE: /run/secrets/aura-valkey-password
+      AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900
+      AURA_OBJECT_STORAGE_REGION: ${AURA_GARAGE_REGION:-garage}
+      AURA_OBJECT_STORAGE_BUCKET: ${AURA_GARAGE_BUCKET:-aura-documents}
+      AURA_OBJECT_STORAGE_ACCESS_KEY_FILE: /run/secrets/aura-garage-access-key
+      AURA_OBJECT_STORAGE_SECRET_KEY_FILE: /run/secrets/aura-garage-secret-key
+      AURA_DOCUMENT_PARSER_URL: http://aura-document-parser:8080
       AURA_OLLAMA_URL: ${AURA_OLLAMA_URL:-http://host.docker.internal:11434}
       AURA_DEFAULT_MODEL: ${AURA_DEFAULT_MODEL:-}
       AURA_CONTEXT_TOKEN_BUDGET: ${AURA_CONTEXT_TOKEN_BUDGET:-8192}
@@ -113,15 +125,17 @@ services:
       AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS: ${AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS:-5}
       AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS: ${AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS:-60}
       AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS: ${AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS:-15}
-    secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password]
+    secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # The worker invokes Ollama, but has no browser-facing network attachment.
-    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]
+    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress]
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       aura-core-migrate: {condition: service_completed_successfully}
       aura-core-postgres: {condition: service_healthy}
       aura-nats: {condition: service_started}
       aura-valkey: {condition: service_healthy}
+      aura-garage-bootstrap: {condition: service_completed_successfully}
+      aura-document-parser: {condition: service_healthy}
     restart: unless-stopped
 
   aura-core-scheduler:
@@ -257,6 +271,126 @@ services:
     networks: [aura-frontend]
     command: [sh, -c, "pnpm --dir frontend exec playwright test --config=/workspace/playwright.compose.config.ts"]
 
+  aura-document-parser:
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-worker.Dockerfile
+      target: document-parser
+    init: true
+    entrypoint: [/usr/local/bin/document-parser-service.py]
+    expose: ["8080"]
+    # The parser receives hostile document bytes. Keep it on a private,
+    # single-purpose network with no database, broker, cache, object-store,
+    # identity, provider, host, or general-egress attachment.
+    networks: [aura-document-parser]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 64
+    ulimits:
+      nofile:
+        soft: 128
+        hard: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=1); raise SystemExit(0 if response.read() == b'ok' else 1)"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  aura-garage:
+    # Garage is intentionally required to be digest-qualified. The digest is
+    # an operator-reviewed deployment input because this repository does not
+    # perform registry lookups during configuration validation.
+    image: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+    entrypoint: [/garage]
+    command: [--config, /run/garage-config/garage.toml, server]
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage:/var/lib/garage
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config:ro
+    networks: [aura-object-storage]
+    depends_on:
+      aura-garage-config: {condition: service_completed_successfully}
+    expose: ["3900"]
+    healthcheck:
+      test: [CMD, /garage, --config, /run/garage-config/garage.toml, status]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    restart: unless-stopped
+
+  aura-garage-config:
+    image: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        case "$${AURA_GARAGE_IMAGE}" in *@sha256:*) ;; *) echo 'AURA_GARAGE_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        rpc_secret="$$(cat /run/secrets/aura-garage-rpc-secret)";
+        test -n "$${rpc_secret}";
+        sed "s/__GARAGE_RPC_SECRET__/$${rpc_secret}/" /etc/garage/garage.toml.template > /run/garage-config/garage.toml;
+        chmod 0600 /run/garage-config/garage.toml;
+        unset rpc_secret
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+    secrets: [aura-garage-rpc-secret]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config
+      - ./deploy/docker/garage.toml:/etc/garage/garage.toml.template:ro
+    network_mode: none
+    restart: "no"
+
+  aura-garage-bootstrap:
+    build:
+      context: .
+      dockerfile: deploy/docker/garage-bootstrap.Dockerfile
+      args:
+        GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+        BUSYBOX_IMAGE: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        case "$${AURA_GARAGE_IMAGE}" in *@sha256:*) ;; *) echo 'AURA_GARAGE_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        access_key="$$(cat /run/secrets/aura-garage-access-key)";
+        secret_key="$$(cat /run/secrets/aura-garage-secret-key)";
+        until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        node_id="$$(/garage --config /run/garage-config/garage.toml node id 2>/dev/null | cut -d@ -f1)";
+        if [ -z "$${node_id}" ]; then echo 'Garage node identity unavailable' >&2; exit 1; fi;
+        if ! /garage --config /run/garage-config/garage.toml layout show | grep -Fq "$${node_id}"; then /garage --config /run/garage-config/garage.toml layout assign "$${node_id}" -z dc1 -c 1GB; fi;
+        if ! /garage --config /run/garage-config/garage.toml layout show | grep -Eq 'Current cluster layout version: [1-9][0-9]*'; then /garage --config /run/garage-config/garage.toml layout apply --version 1; fi;
+        if ! /garage --config /run/garage-config/garage.toml key info "$${access_key}" >/dev/null 2>&1; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}"; fi;
+        if ! /garage --config /run/garage-config/garage.toml bucket info "$${AURA_GARAGE_BUCKET}" >/dev/null 2>&1; then /garage --config /run/garage-config/garage.toml bucket create "$${AURA_GARAGE_BUCKET}"; fi;
+        /garage --config /run/garage-config/garage.toml bucket allow --read --write --key "$${access_key}" "$${AURA_GARAGE_BUCKET}";
+        unset access_key secret_key
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+      AURA_GARAGE_BUCKET: ${AURA_GARAGE_BUCKET:-aura-documents}
+    secrets: [aura-garage-access-key, aura-garage-secret-key]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage:/var/lib/garage:ro
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config:ro
+    networks: [aura-object-storage]
+    depends_on:
+      aura-garage: {condition: service_healthy}
+      aura-garage-config: {condition: service_completed_successfully}
+    restart: "no"
+
 secrets:
   aura-core-database-password:
     file: ${AURA_CORE_DATABASE_PASSWORD_FILE:-./.secrets/aura-core-database-password}
@@ -266,6 +400,12 @@ secrets:
     file: ${AURA_NATS_PASSWORD_FILE:-./.secrets/aura-nats-password}
   aura-valkey-password:
     file: ${AURA_VALKEY_PASSWORD_FILE:-./.secrets/aura-valkey-password}
+  aura-garage-rpc-secret:
+    file: ${AURA_GARAGE_RPC_SECRET_FILE:-./.secrets/aura-garage-rpc-secret}
+  aura-garage-access-key:
+    file: ${AURA_GARAGE_ACCESS_KEY_FILE:-./.secrets/aura-garage-access-key}
+  aura-garage-secret-key:
+    file: ${AURA_GARAGE_SECRET_KEY_FILE:-./.secrets/aura-garage-secret-key}
 
 networks:
   # Docker Desktop does not publish host ports for containers attached only to
@@ -280,6 +420,14 @@ networks:
   aura-core-bus:
     internal: true
   aura-core-cache:
+    internal: true
+  # The parser has no route to any other service or the host. Core worker is
+  # the only normal-stack client on this network.
+  aura-document-parser:
+    internal: true
+  # Garage has no host/browser attachment. Only Core API/worker and its
+  # one-shot bootstrap job join this private object-storage network.
+  aura-object-storage:
     internal: true
   # Intentionally non-internal: API reaches the configured OIDC discovery/JWKS
   # endpoint and API/worker reach their configured Ollama provider. No service

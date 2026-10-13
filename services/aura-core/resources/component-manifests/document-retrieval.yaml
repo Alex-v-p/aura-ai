@@ -1,0 +1,21 @@
+component:
+  id: aura.knowledge.document_retrieval
+  version: 1.0.0
+  owner: knowledge.documents
+  category: retrieval
+input:
+  schema: document-search-v1
+  replayable: false
+output:
+  schema: document-search-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [postgresql, embedding_provider]
+metrics: [document_retrieval_duration_ms, document_retrieval_candidate_count]
+evaluators: [document_retrieval_relevance, document_owner_isolation]
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, document_id, evidence_id]
+  prohibited: [content, excerpt, filename, owner, credential, vector]

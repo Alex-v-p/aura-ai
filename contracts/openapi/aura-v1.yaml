@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.13.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
+    "version": "1.14.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -16,6 +16,7 @@
     { "name": "Runs" },
     { "name": "Tools" },
     { "name": "Memories" },
+    { "name": "Documents" },
     { "name": "Reminders" },
     { "name": "Notifications" },
     { "name": "Approvals" },
@@ -1132,6 +1133,150 @@
         }
       }
     },
+    "/api/v1/documents/uploads": {
+      "post": {
+        "operationId": "createDocumentUpload",
+        "tags": ["Documents"],
+        "description": "Creates an owner-bound, short-lived Aura upload session. The response never exposes an object-store key, bucket, endpoint, or credential.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateDocumentUploadRequest" } } } },
+        "responses": {
+          "201": { "description": "Owner-bound upload session created", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentUploadSession" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/uploads/{upload_id}/content": {
+      "put": {
+        "operationId": "uploadDocumentContent",
+        "tags": ["Documents"],
+        "description": "Streams one bounded document body through Aura Core. The declared byte count and media type must exactly match the upload session; Aura validates the extension, media type, and content signature before queueing processing. This endpoint is not a direct object-store upload.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentUploadId" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/ExpectedVersion" },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100000000 } },
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary", "maxLength": 100000000 } } } },
+        "responses": {
+          "202": { "description": "Content accepted and processing queued, or an active owner-scoped duplicate resolved without retaining duplicate object bytes", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentUploadReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "description": "Upload exceeds the exact 100000000-byte limit", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "415": { "description": "Declared type, filename extension, or content signature is unsupported or inconsistent", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "operationId": "listDocuments",
+        "tags": ["Documents"],
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DocumentStatus" } },
+          { "name": "mediaType", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped documents ordered by most recent update with document ID as a deterministic tie-breaker", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/documents/search": {
+      "post": {
+        "operationId": "searchDocuments",
+        "tags": ["Documents"],
+        "description": "Runs bounded hybrid lexical/vector retrieval only across ready documents owned by the authenticated principal. Private query text is accepted only in the body and must not enter URLs, logs, telemetry, diagnostics, or caches.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchDocumentsRequest" } } } },
+        "responses": {
+          "200": { "description": "Ranked owner-private document evidence with document and page-or-section provenance", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentSearchResultPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+      "get": {
+        "operationId": "getDocument",
+        "tags": ["Documents"],
+        "responses": {
+          "200": { "description": "Owner-authorized document processing metadata; storage internals, hashes, extracted content, chunks, and embeddings are omitted", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteDocument",
+        "tags": ["Documents"],
+        "description": "Immediately excludes the owner-scoped document from retrieval and queues retryable content, chunk, embedding, and object cleanup.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentTransitionRequest" } } } },
+        "responses": {
+          "202": { "description": "Deletion accepted", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/content": {
+      "get": {
+        "operationId": "downloadDocument",
+        "tags": ["Documents"],
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized original document stream", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100000000 } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/retry": {
+      "post": {
+        "operationId": "retryDocumentProcessing",
+        "tags": ["Documents"],
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentTransitionRequest" } } } },
+        "responses": {
+          "202": { "description": "Failed document processing queued for another bounded attempt", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -1169,12 +1314,15 @@
       "ReminderSeriesId": { "name": "series_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "DocumentId": { "name": "document_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
       "MemoryReadAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Required with scopeType=agent for a single-resource detail or mutation. Rejected for user scope." },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 512 }, "description": "Session-bound anti-CSRF token returned by getSession." },
-      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Caller-generated UUID. Reuse only for an exact replay of the same command." }
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Caller-generated UUID. Reuse only for an exact replay of the same command." },
+      "ExpectedVersion": { "name": "X-Expected-Version", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Optimistic version of the upload session being completed." }
     },
     "responses": {
       "BadRequest": { "description": "Malformed request", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
@@ -2672,6 +2820,166 @@
           "schemaVersion": { "type": "integer", "const": 1 },
           "eventType": { "type": "string", "const": "heartbeat" },
           "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentStatus": {
+        "type": "string",
+        "enum": ["uploading", "queued", "processing", "ready", "failed", "deleting"]
+      },
+      "DocumentMediaType": {
+        "type": "string",
+        "enum": ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/markdown", "text/plain"]
+      },
+      "DocumentFailure": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-visible failure classification. Parser details, filenames, content, hashes, object keys, credentials, and provider diagnostics are never returned.",
+        "required": ["code", "retryable"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "CreateDocumentUploadRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["filename", "mediaType", "byteCount"],
+        "properties": {
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\\\\u0000]+$", "description": "Owner-private display filename. Path components and NUL characters are rejected." },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 }
+        }
+      },
+      "DocumentUploadSession": {
+        "type": "object", "additionalProperties": false,
+        "description": "Opaque owner-bound Aura upload session. It is not an object-store upload grant and contains no storage internals.",
+        "required": ["id", "documentId", "filename", "mediaType", "byteCount", "status", "version", "createdAt", "expiresAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "documentId": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "type": "string", "const": "uploading" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/DocumentSummary" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "DocumentSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized document metadata. Owner identity, content hash, object key, extracted content, chunks, embeddings, and storage credentials are omitted.",
+        "required": ["id", "filename", "mediaType", "byteCount", "status", "failure", "version", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "$ref": "#/components/schemas/DocumentStatus" },
+          "failure": { "oneOf": [{ "$ref": "#/components/schemas/DocumentFailure" }, { "type": "null" }] },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized inspection view. Private content remains available only through explicit search excerpts and authorized original download.",
+        "required": ["id", "filename", "mediaType", "byteCount", "status", "failure", "version", "extractedTextLength", "chunkCount", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "$ref": "#/components/schemas/DocumentStatus" },
+          "failure": { "oneOf": [{ "$ref": "#/components/schemas/DocumentFailure" }, { "type": "null" }] },
+          "version": { "type": "integer", "minimum": 1 },
+          "extractedTextLength": { "type": "integer", "minimum": 0, "maximum": 10485760 },
+          "chunkCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentUploadReceipt": {
+        "type": "object", "additionalProperties": false,
+        "required": ["document", "duplicate"],
+        "properties": {
+          "document": { "$ref": "#/components/schemas/DocumentDetail" },
+          "duplicate": { "type": "boolean", "description": "True when the uploaded bytes matched an active document owned by the same principal and Aura discarded the duplicate object." }
+        }
+      },
+      "SearchDocumentsRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Private owner-scoped retrieval text. It must not appear in URLs, logs, telemetry, diagnostics, or caches." },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, query-, and filter-bound pagination cursor." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" }
+        }
+      },
+      "DocumentPageLocator": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "pageNumber"],
+        "properties": {
+          "kind": { "type": "string", "const": "page" },
+          "pageNumber": { "type": "integer", "minimum": 1, "maximum": 10000 }
+        }
+      },
+      "DocumentSectionLocator": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "sectionOrdinal", "heading"],
+        "properties": {
+          "kind": { "type": "string", "const": "section" },
+          "sectionOrdinal": { "type": "integer", "minimum": 1, "maximum": 10000 },
+          "heading": { "type": ["string", "null"], "maxLength": 500 }
+        }
+      },
+      "DocumentLocator": {
+        "oneOf": [{ "$ref": "#/components/schemas/DocumentPageLocator" }, { "$ref": "#/components/schemas/DocumentSectionLocator" }],
+        "discriminator": { "propertyName": "kind" }
+      },
+      "DocumentSearchResult": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized untrusted evidence. Excerpts cannot grant policy, permission, or instruction authority.",
+        "required": ["evidenceId", "documentId", "displayName", "excerpt", "locator", "score"],
+        "properties": {
+          "evidenceId": { "type": "string", "format": "uuid" },
+          "documentId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "excerpt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "locator": { "$ref": "#/components/schemas/DocumentLocator" },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "DocumentSearchResultPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/DocumentSearchResult" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "DocumentTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "DocumentDeletionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free deletion acknowledgement. Cleanup may continue asynchronously and is safe to retry.",
+        "required": ["documentId", "status", "version", "acceptedAt"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "const": "deleting" },
+          "version": { "type": "integer", "minimum": 1 },
+          "acceptedAt": { "type": "string", "format": "date-time" }
         }
       },
       "ErrorEnvelope": {

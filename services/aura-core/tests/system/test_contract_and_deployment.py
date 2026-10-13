@@ -76,7 +76,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.14.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +238,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.14.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -308,7 +308,7 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.14.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected_paths = {
         "/api/v1/approvals",
@@ -397,7 +397,7 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.14.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
@@ -533,7 +533,10 @@ def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None
     assert "AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER:?" in identity_override
     assert "AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?" in identity_override
     assert "networks: [aura-identity, aura-identity-db, aura-identity-cache]" in identity_override
-    assert "networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]" in compose
+    assert (
+        "networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, "
+        "aura-object-storage, aura-core-egress]"
+    ) in compose
     assert "host.docker.internal:host-gateway" in compose
     identity_core_block = identity_override.split("  aura-core-api:", 1)[1].split(
         "  authentik-postgres:", 1
@@ -550,6 +553,7 @@ def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None
         "aura-core-db",
         "aura-core-bus",
         "aura-core-cache",
+        "aura-object-storage",
         "aura-core-egress",
         "aura-identity",
     }

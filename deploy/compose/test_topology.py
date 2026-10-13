@@ -70,7 +70,16 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("AURA_ROLE: scheduler", scheduler)
         self.assertIn("AURA_DATABASE_PASSWORD_FILE", scheduler)
         self.assertIn("networks: [aura-core-db]", scheduler)
-        for forbidden in ("AURA_NATS", "AURA_VALKEY", "AURA_OLLAMA", "AURA_OIDC", "aura-core-bus", "aura-core-cache", "aura-core-egress", "host.docker.internal"):
+        for forbidden in (
+            "AURA_NATS",
+            "AURA_VALKEY",
+            "AURA_OLLAMA",
+            "AURA_OIDC",
+            "aura-core-bus",
+            "aura-core-cache",
+            "aura-core-egress",
+            "host.docker.internal",
+        ):
             self.assertNotIn(forbidden, scheduler)
         self.assertNotIn("aura-core-egress", web)
         self.assertNotIn("aura-core-egress", migrate)
@@ -146,6 +155,23 @@ class ComposeTopologyTests(unittest.TestCase):
             self.assertIn(f"  {network}:\n    internal: true", self.compose)
         self.assertIn("  aura-core-egress: {}", self.compose)
 
+    def test_document_parser_uses_the_installed_sandbox_entrypoint(self) -> None:
+        parser = service_block(self.compose, "aura-document-parser", "aura-garage")
+        dockerfile = (ROOT / "deploy/docker/aura-worker.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("entrypoint: [/usr/local/bin/document-parser-service.py]", parser)
+        self.assertIn(
+            "COPY --chmod=0555 deploy/docker/document_parser_service.py "
+            "/usr/local/bin/document-parser-service.py",
+            dockerfile,
+        )
+        self.assertIn(
+            'ENTRYPOINT ["/usr/local/bin/document-parser-service.py"]',
+            dockerfile,
+        )
+
     def test_identity_override_connects_only_the_api_to_identity_control_network(self) -> None:
         identity = (ROOT / "deploy/compose/local-identity.yaml").read_text(encoding="utf-8")
         api = service_block(identity, "aura-core-api", "authentik-postgres")
@@ -208,6 +234,104 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertNotIn("ports:", postgres)
         self.assertNotIn("expose:", postgres)
 
+    def test_garage_is_private_digest_qualified_and_core_only(self) -> None:
+        garage = service_block(self.compose, "aura-garage", "aura-garage-config")
+        config = service_block(self.compose, "aura-garage-config", "aura-garage-bootstrap")
+        bootstrap = self.compose.split("  aura-garage-bootstrap:\n", 1)[1].split(
+            "\nsecrets:\n", 1
+        )[0]
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "image: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:"
+            "4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}",
+            garage,
+        )
+        self.assertIn("rpc_secret", config)
+        self.assertIn("AURA_GARAGE_IMAGE must use a sha256 digest", config)
+        self.assertIn(
+            "AURA_GARAGE_IMAGE=dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a",
+            environment,
+        )
+        self.assertIn("printf 'GK000000000000000000000000\\n'", runner)
+        self.assertIn("entrypoint: [/garage]", garage)
+        self.assertIn("command: [--config, /run/garage-config/garage.toml, server]", garage)
+        self.assertIn(
+            "test: [CMD, /garage, --config, /run/garage-config/garage.toml, status]",
+            garage,
+        )
+        self.assertNotIn("/bin/sh", garage)
+        self.assertIn(
+            "image: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:"
+            "bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}",
+            config,
+        )
+        self.assertIn("network_mode: none", config)
+        self.assertIn("/run/secrets/aura-garage-rpc-secret", config)
+        self.assertIn("garage-bootstrap.Dockerfile", bootstrap)
+        self.assertIn("GARAGE_IMAGE:", bootstrap)
+        self.assertIn("node id 2>/dev/null | cut -d@ -f1", bootstrap)
+        self.assertIn("/var/lib/garage:ro", bootstrap)
+        self.assertIn("aura-object-storage", garage)
+        self.assertIn("aura-object-storage", bootstrap)
+        self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", api)
+        self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", worker)
+        self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", api)
+        self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", worker)
+        self.assertIn("aura-garage-access-key", api)
+        self.assertIn("aura-garage-secret-key", api)
+        self.assertNotIn("ports:", garage)
+        self.assertNotIn("aura-frontend", garage)
+        self.assertIn("  aura-object-storage:\n    internal: true", self.compose)
+
+    def test_document_parser_isolated_from_credentials_and_general_egress(self) -> None:
+        parser = service_block(self.compose, "aura-document-parser", "aura-garage")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        for forbidden in (
+            "AURA_DATABASE",
+            "AURA_NATS",
+            "AURA_VALKEY",
+            "AURA_OLLAMA",
+            "AURA_OIDC",
+            "AURA_OBJECT_STORAGE",
+            "aura-core-db",
+            "aura-core-bus",
+            "aura-core-cache",
+            "aura-object-storage",
+            "aura-core-egress",
+            "host.docker.internal",
+            "secrets:",
+        ):
+            self.assertNotIn(forbidden, parser)
+        self.assertIn("networks: [aura-document-parser]", parser)
+        self.assertIn("read_only: true", parser)
+        self.assertIn("no-new-privileges:true", parser)
+        self.assertIn("cap_drop:", parser)
+        self.assertIn('cpus: "1.0"', parser)
+        self.assertIn("mem_limit: 512m", parser)
+        self.assertIn("pids_limit: 64", parser)
+        self.assertIn("/tmp:rw,noexec,nosuid,nodev,size=64m", parser)
+        self.assertIn("healthz", parser)
+        self.assertIn("aura-document-parser", worker)
+        self.assertIn("AURA_DOCUMENT_PARSER_URL: http://aura-document-parser:8080", worker)
+
+    def test_full_stack_runner_uses_the_pinned_garage_default(self) -> None:
+        runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(encoding="utf-8")
+        digest = (
+            "dxflrs/garage:v2.1.0@sha256:"
+            "4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a"
+        )
+        self.assertIn(f"default_garage_image='{digest}'", runner)
+        self.assertIn(
+            'export AURA_GARAGE_IMAGE="${AURA_GARAGE_IMAGE:-$default_garage_image}"',
+            runner,
+        )
+
     def test_core_postgres_image_is_inherited_by_local_and_e2e_overlays(self) -> None:
         postgres = service_block(self.compose, "aura-core-postgres", "aura-nats")
         expected_image = "image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}"
@@ -234,7 +358,9 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("name: aura-e2e-provider", provider)
         self.assertIn("AURA_E2E_MODE", runner)
         self.assertIn("local-identity", runner)
-        self.assertGreaterEqual(runner.count("-p aura-e2e"), 6)
+        self.assertIn('e2e_project="aura-e2e-$fixture_suffix"', runner)
+        self.assertIn('-p "$e2e_project"', runner)
+        self.assertIn("-p aura-e2e-provider", runner)
         self.assertIn("--profile checks build frontend-e2e", runner)
 
     def test_local_identity_uses_a_verified_digest_default_with_a_guarded_override(self) -> None:

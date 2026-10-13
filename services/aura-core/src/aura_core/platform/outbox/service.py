@@ -3,7 +3,7 @@
 import asyncio
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -117,6 +117,7 @@ class OutboxCommand:
     # aggregateId.
     aggregate_type: str | None = None
     aggregate_id: UUID | None = None
+    event_payload: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         validate_identifier_metadata(
@@ -152,6 +153,34 @@ class OutboxCommand:
         schema_version = payload.get("schemaVersion")
         if type(schema_version) is not int:
             raise ValueError("outbox command has an invalid schema version")
+        if topic == "aura.knowledge.documents.events.v1":
+            required = {
+                "schemaVersion",
+                "eventId",
+                "eventType",
+                "documentId",
+                "status",
+                "documentVersion",
+                "occurredAt",
+                "correlationId",
+                "causationId",
+            }
+            if set(payload) != required or payload["schemaVersion"] != 1:
+                raise ValueError("document lifecycle event payload is not schema exact")
+            aggregate_id = UUID(str(payload["documentId"]))
+            return cls(
+                command_id,
+                topic,
+                None,
+                None,
+                created_at,
+                UUID(str(payload["correlationId"])),
+                UUID(str(payload["causationId"])),
+                schema_version=1,
+                aggregate_type="knowledge.document",
+                aggregate_id=aggregate_id,
+                event_payload=dict(payload),
+            )
         is_generic = "aggregateType" in payload or "aggregateId" in payload
         if is_generic and {"aggregateType", "aggregateId"} != (
             {"aggregateType", "aggregateId"} & payload.keys()
@@ -233,6 +262,9 @@ class OutboxCommand:
     def payload(self) -> dict[str, object]:
         """Return the generic identifier-only envelope for a command."""
 
+        if self.event_payload is not None:
+            return dict(self.event_payload)
+
         payload: dict[str, object]
         if self.aggregate_type is not None:
             payload = {
@@ -266,6 +298,28 @@ class OutboxCommand:
         value = dict(self.identifiers).get(name)
         return str(value) if value is not None else None
 
+
+def make_event_command(
+    topic: str,
+    event_id: UUID,
+    aggregate_id: UUID,
+    payload: Mapping[str, object],
+) -> OutboxCommand:
+    """Build a schema-exact metadata-only lifecycle event command."""
+
+    return OutboxCommand(
+        event_id,
+        topic,
+        None,
+        None,
+        datetime.now(UTC),
+        UUID(str(payload["correlationId"])),
+        UUID(str(payload["causationId"])),
+        schema_version=1,
+        aggregate_type="knowledge.document",
+        aggregate_id=aggregate_id,
+        event_payload=dict(payload),
+    )
 
 def make_run_command(run_id: UUID, conversation_id: UUID) -> OutboxCommand:
     return OutboxCommand(
