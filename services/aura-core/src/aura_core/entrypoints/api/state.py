@@ -9,6 +9,7 @@ from uuid import UUID
 
 from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
+from aura_core.bootstrap.attachment_uow import attachment_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_service
 from aura_core.bootstrap.health import ReadinessService
@@ -67,6 +68,7 @@ from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.oidc import OidcClient
 from aura_core.platform.outbox import (
     APPROVAL_EVENT_TOPIC,
+    ATTACHMENT_EVENT_TOPIC,
     RUN_RESUME_TOPIC,
     InMemoryOutbox,
     OutboxCommand,
@@ -174,6 +176,11 @@ class AppState:
         memory_service = getattr(self, "memory_model_service", None)
         if memory_service is not None:
             memory_service.provider = value
+        store = getattr(self, "store", None)
+        if store is not None and callable(getattr(value, "verify_model", None)):
+            setter = getattr(store, "set_model_selection", None)
+            if callable(setter):
+                setter(cast(ModelSelectionPort, value))
 
     async def resume_approval(self, approval: object) -> object:
         """Queue a waiting run after one durable approval decision."""
@@ -236,6 +243,7 @@ class AppState:
         self.approval_service: ApprovalApplicationService
         self.memory_worker: object | None = None
         self.document_service: DocumentService
+        self.attachment_service: Any
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
@@ -248,6 +256,8 @@ class AppState:
             self.store = ConversationStore(
                 self.settings.default_model or None, self.agents, self.personas
             )
+            if callable(getattr(self.provider, "verify_model", None)):
+                self.store.set_model_selection(cast(ModelSelectionPort, self.provider))
             self.persona_repository = PersonaMemoryRepository(self.persona_catalog)
             self.persona_service = PersonaConfigurationService(
                 self.persona_repository,
@@ -292,6 +302,10 @@ class AppState:
             self.document_service = document_service(
                 None, settings=self.settings, testing=True, metrics=self.metrics
             )
+            self.attachment_service = attachment_service(
+                None, settings=self.settings, testing=True, metrics=self.metrics
+            )
+            self.store.set_attachment_services(self.attachment_service, self.document_service)
             self.store.set_memory_recall(
                 memory_uow.memory_recall_service(
                     self.memory_repository, settings=self.settings, metrics=self.metrics
@@ -332,6 +346,8 @@ class AppState:
                 persona_query=self.personas,
                 persona_admission=self.persona_service,
             )
+            if callable(getattr(self.provider, "verify_model", None)):
+                self.sql_store.set_model_selection(cast(ModelSelectionPort, self.provider))
             self.agent_store = SqlAgentStore(
                 self.sessions_factory,
                 self.agents,
@@ -356,6 +372,7 @@ class AppState:
                     APPROVAL_EVENT_TOPIC,
                     RUN_RESUME_TOPIC,
                     "aura.knowledge.documents.events.v1",
+                    ATTACHMENT_EVENT_TOPIC,
                 ),
                 metrics=self.metrics,
             )
@@ -423,6 +440,10 @@ class AppState:
                     dimension=self.settings.document_embedding_dimension,
                 ),
             )
+            self.attachment_service = attachment_service(
+                self.sessions_factory, settings=self.settings, metrics=self.metrics
+            )
+            self.sql_store.set_attachment_services(self.attachment_service, self.document_service)
             self.sql_store.set_memory_recall(
                 memory_uow.memory_recall_service(
                     self.memory_repository, settings=self.settings, metrics=self.metrics
@@ -488,6 +509,8 @@ class AppState:
             approval_service=getattr(self, "approval_service", None),
             reminder_service=self.reminder_service,
             document_service=self.document_service,
+            attachment_service=self.attachment_service,
+            attachment_resolver=self.store,
             thinking_publisher=thinking_publisher,
         )
 

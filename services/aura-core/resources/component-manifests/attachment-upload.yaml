@@ -1,0 +1,33 @@
+component:
+  id: aura.artifacts.attachment_upload
+  version: 1.0.0
+  owner: artifacts.attachments
+  category: persistence
+input:
+  schema: image-attachment-upload-v1
+  replayable: false
+  replay_reason: Upload bytes are private and are never captured for replay.
+output:
+  schema: image-attachment-metadata-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - object_storage
+metrics: [attachment_upload_outcome]
+metric_semantics:
+  attachment_upload_outcome: Metadata-only owner-scoped upload outcome.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, attachment_id]
+  prohibited: [bytes, filename, exif, prompt, payload, content, endpoint, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

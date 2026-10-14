@@ -52,6 +52,7 @@ class RunRow(Base):
     regenerated_from_run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), index=True
     )
+    attachments: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
 
 
 class RunEventRow(Base):

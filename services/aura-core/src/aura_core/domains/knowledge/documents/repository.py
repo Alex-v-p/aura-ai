@@ -1114,6 +1114,7 @@ class SqlDocumentRepository:
         query_model_id: str | None = None,
         query_model_revision: str | None = None,
         query_model_digest: str | None = None,
+        allowed_document_ids: tuple[UUID, ...] | None = None,
     ) -> DocumentSearchResult:
         async with self.sessions() as session:
             filters = [
@@ -1123,6 +1124,8 @@ class SqlDocumentRepository:
             ]
             if media_type is not None:
                 filters.append(DocumentRow.media_type == media_type)
+            if allowed_document_ids is not None:
+                filters.append(DocumentRow.id.in_(tuple(dict.fromkeys(allowed_document_ids))[:8]))
             # The API uses an opaque offset cursor.  Fetch enough ranked SQL
             # candidates to materialize the requested page without scanning
             # arbitrary rows in Python, while retaining a hard abuse bound.

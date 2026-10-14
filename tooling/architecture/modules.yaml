@@ -263,6 +263,15 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/platform/__init__.py
   dependencies: []
+- id: aura-core.platform.object-store
+  root: services/aura-core/src/aura_core/platform/object_store
+  kind: package
+  public_api: services/aura-core/src/aura_core/platform/object_store/__init__.py
+  python_modules:
+  - aura_core.platform.object_store
+  source_files:
+  - services/aura-core/src/aura_core/platform/object_store/__init__.py
+  dependencies: []
 - id: aura-core.providers
   root: services/aura-core/src/aura_core/providers
   kind: package
@@ -309,6 +318,7 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/bootstrap/__init__.py
   dependencies:
+  - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.execution.runs
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.persistence
@@ -323,6 +333,9 @@ modules:
   - aura-core.domains.interaction.agents.persistence
   - aura-core.domains.interaction.conversations
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.knowledge.documents.ports
+  - aura-core.domains.knowledge.documents.public
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
@@ -343,11 +356,79 @@ modules:
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.repository
   - aura-core.domains.execution.runs.service
-  - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.database.base
   - aura-core.runtime.models.ports
   - aura-core.runtime.tools
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.knowledge.documents.ports
+- id: aura-core.domains.artifacts
+  root: services/aura-core/src/aura_core/domains/artifacts
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  python_modules:
+  - aura_core.domains.artifacts
+  source_files:
+  - services/aura-core/src/aura_core/domains/artifacts/__init__.py
+  dependencies:
+  - aura-core.domains.artifacts.attachments
+- id: aura-core.domains.artifacts.attachments
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments
+  source_files:
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/__init__.py
+  dependencies:
+  - aura-core.domains.artifacts.attachments.persistence
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.artifacts.attachments.public
+  - aura-core.domains.artifacts.attachments.repository
+  - aura-core.platform.database.base
+- id: aura-core.domains.artifacts.attachments.persistence
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/persistence.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.artifacts.attachments.ports
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/ports.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments.ports
+  dependencies:
+  - aura-core.domains.artifacts.attachments.public
+- id: aura-core.domains.artifacts.attachments.public
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments.public
+  dependencies:
+  - aura-core.domains.artifacts.attachments.ports
+- id: aura-core.domains.artifacts.attachments.repository
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/repository.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments.repository
+  dependencies:
+  - aura-core.domains.artifacts.attachments.persistence
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.artifacts.attachments.public
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+- id: aura-core.domains.artifacts.attachments.evaluation
+  root: services/aura-core/src/aura_core/domains/artifacts/attachments/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/attachments/evaluation.py
+  python_modules:
+  - aura_core.domains.artifacts.attachments.evaluation
+  dependencies: []
 - id: aura-core.domains.governance.audit
   root: services/aura-core/src/aura_core/domains/governance/audit
   kind: package
@@ -612,6 +693,8 @@ modules:
   python_modules:
   - aura_core.bootstrap.conversation_uow
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.audit.public
@@ -620,6 +703,8 @@ modules:
   - aura-core.domains.interaction.conversations.public
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.personas.public
+  - aura-core.domains.knowledge.documents.ports
+  - aura-core.domains.knowledge.documents.public
   - aura-core.domains.knowledge.memory.recall
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
@@ -633,6 +718,7 @@ modules:
   python_modules:
   - aura_core.bootstrap.database
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
   - aura-core.domains.automation.reminders.proposals
   - aura-core.domains.governance.approvals
   - aura-core.domains.automation.reminders
@@ -687,6 +773,7 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.knowledge.documents.ports
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
   - aura-core.providers.embeddings.ollama.adapter
@@ -704,6 +791,19 @@ modules:
   - aura-core.domains.knowledge.documents.repository
   - aura-core.platform.outbox
   - aura-core.providers.document-parser
+  - aura-core.providers.object-storage.garage
+- id: aura-core.bootstrap.attachment-uow
+  root: services/aura-core/src/aura_core/bootstrap/attachment_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/attachment_uow.py
+  python_modules:
+  - aura_core.bootstrap.attachment_uow
+  dependencies:
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.artifacts.attachments.public
+  - aura-core.domains.artifacts.attachments.repository
+  - aura-core.platform.outbox
+  - aura-core.providers.object-storage.image-inspection
   - aura-core.providers.object-storage.garage
 - id: aura-core.domains.knowledge.memory.persistence
   root: services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
@@ -894,10 +994,12 @@ modules:
   python_modules:
   - aura_core.domains.execution.runs.service
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.knowledge.documents.ports
   - aura-core.runtime.models.ports
   - aura-core.runtime.tools
 - id: aura-core.domains.governance.audit.persistence
@@ -1080,6 +1182,8 @@ modules:
   python_modules:
   - aura_core.domains.interaction.conversations.context
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.knowledge.documents.ports
   - aura-core.domains.interaction.conversations.dto
   - aura-core.runtime.models.capacity
 - id: aura-core.domains.interaction.conversations.dto
@@ -1114,6 +1218,7 @@ modules:
   python_modules:
   - aura_core.domains.interaction.conversations.public
   dependencies:
+  - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.repository
@@ -1126,6 +1231,7 @@ modules:
   python_modules:
   - aura_core.domains.interaction.conversations.repository
   dependencies:
+  - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.persistence
 - id: aura-core.domains.interaction.conversations.store
@@ -1135,6 +1241,9 @@ modules:
   python_modules:
   - aura_core.domains.interaction.conversations.store
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.artifacts.attachments.public
+  - aura-core.domains.knowledge.documents.ports
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.context
@@ -1142,6 +1251,7 @@ modules:
   - aura-core.domains.interaction.personas.public
   - aura-core.domains.interaction.conversations.titles
   - aura-core.domains.knowledge.memory.recall
+  - aura-core.domains.knowledge.documents.public
   - aura-core.platform.telemetry
   - aura-core.platform.outbox
   - aura-core.runtime.models.capacity
@@ -1157,6 +1267,7 @@ modules:
   - aura-core.entrypoints.api.errors
   - aura-core.entrypoints.api.routes
   - aura-core.entrypoints.api.routes.agents
+  - aura-core.entrypoints.api.routes.attachments
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.approvals
   - aura-core.entrypoints.api.routes.conversations
@@ -1197,6 +1308,7 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.routes.conversations
   dependencies:
+  - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.execution.runs.public
   - aura-core.domains.interaction.agents.public
   - aura-core.domains.interaction.conversations.public
@@ -1272,6 +1384,17 @@ modules:
   - aura-core.platform.auth
   - aura-core.platform.telemetry
   - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.api.routes.attachments
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/attachments.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/attachments.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.attachments
+  dependencies:
+  - aura-core.domains.artifacts.attachments.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
 - id: aura-core.entrypoints.api.routes.runs
   root: services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
   kind: python
@@ -1305,6 +1428,7 @@ modules:
   - aura_core.entrypoints.api.state
   dependencies:
   - aura-core.bootstrap.approval-uow
+  - aura-core.bootstrap.attachment-uow
   - aura-core.bootstrap.document-uow
   - aura-core.domains.governance.approvals
   - aura-core.bootstrap
@@ -1413,6 +1537,7 @@ modules:
   - aura-core.bootstrap.memory-uow
   - aura-core.bootstrap.reminder_uow
   - aura-core.bootstrap.document-uow
+  - aura-core.bootstrap.attachment-uow
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public
@@ -1573,6 +1698,7 @@ modules:
   - services/aura-core/src/aura_core/providers/object_storage/__init__.py
   dependencies:
   - aura-core.providers.object-storage.garage
+  - aura-core.providers.object-storage.image-inspection
 - id: aura-core.providers.document-parser
   root: services/aura-core/src/aura_core/providers/document_parser
   kind: package
@@ -1592,7 +1718,16 @@ modules:
   python_modules:
   - aura_core.providers.object_storage.garage
   dependencies:
+  - aura-core.domains.artifacts.attachments.ports
   - aura-core.domains.knowledge.documents.ports
+- id: aura-core.providers.object-storage.image-inspection
+  root: services/aura-core/src/aura_core/providers/object_storage/image_inspection.py
+  kind: provider
+  public_api: services/aura-core/src/aura_core/providers/object_storage/image_inspection.py
+  python_modules:
+  - aura_core.providers.object_storage.image_inspection
+  dependencies:
+  - aura-core.domains.artifacts.attachments.ports
 - id: aura-core.runtime.models.capacity
   root: services/aura-core/src/aura_core/runtime/models/capacity.py
   kind: python
@@ -1746,6 +1881,11 @@ modules:
   root: contracts/events/runs/v1
   kind: event-contract
   public_api: contracts/events/runs/v1/run-events.schema.json
+  dependencies: []
+- id: aura-contract.attachment-events
+  root: contracts/events/artifacts/v1
+  kind: event-contract
+  public_api: contracts/events/artifacts/v1/attachment-events.schema.json
   dependencies: []
 - id: aura-contract.automation-reminder-events
   root: contracts/events/automation/v1

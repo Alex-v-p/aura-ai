@@ -132,8 +132,43 @@ kbd { background: var(--surface-subtle); border: 1px solid var(--border); border
 .tool-status-state[data-status='completed'] { color: var(--accent); }
 .tool-status-state[data-status='failed'], .tool-status-state[data-status='denied'] { color: var(--danger-text); }
 .tool-statuses small { color: var(--text-muted); grid-column: 1 / -1; overflow-wrap: anywhere; }
+.attachment-button { align-items: center; background: var(--surface-subtle); border: 1px solid var(--control-border); border-radius: .55rem; color: var(--text); cursor: pointer; display: inline-flex; font: inherit; font-size: 1rem; height: 2.25rem; justify-content: center; margin-left: .35rem; width: 2.25rem; }
+.attachment-button:hover, .attachment-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.selected-attachments { display: flex; flex-wrap: wrap; gap: .4rem; padding: .2rem .25rem .45rem; }
+.composer-upload-status { display: grid; gap: .35rem; padding: .2rem .25rem .45rem; }
+.attachment-chip { align-items: center; background: var(--surface-subtle); border: 1px solid var(--control-border); border-radius: 999px; display: inline-flex; font-size: .76rem; gap: .35rem; max-width: 100%; padding: .3rem .45rem .3rem .6rem; }
+.attachment-chip button { background: transparent; border: 0; color: var(--text-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 .1rem; }
+.attachment-chip button, .attachment-remove { min-height: 24px; min-width: 24px; }
+.attachment-chip button:hover, .attachment-chip button:focus-visible { color: var(--danger-text); }
+.vision-guidance { background: var(--danger-surface); border: 1px solid var(--danger-text); border-radius: .55rem; color: var(--danger-text); font-size: .78rem; margin: .25rem 0 .55rem; padding: .5rem .65rem; }
+.message-attachments { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .75rem; }
+.attachment-card { align-items: center; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .6rem; color: var(--text); display: inline-flex; font-size: .78rem; gap: .4rem; max-width: 100%; padding: .45rem .55rem; }
+.image-card { cursor: pointer; }
+.image-card:hover, .image-card:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.attachment-card small { color: var(--text-muted); font-size: .68rem; }
+.attachment-unavailable { color: var(--text-muted); text-decoration: line-through; }
+.attachment-picker { background: var(--surface); border: 1px solid var(--control-border); border-radius: .85rem; box-shadow: 0 .8rem 2rem rgb(30 15 25 / .14); display: grid; gap: .75rem; margin: .6rem auto 0; max-width: 720px; padding: .85rem; width: 100%; }
+.attachment-preview-dialog { background: var(--surface); border: 1px solid var(--control-border); border-radius: .85rem; box-shadow: 0 1rem 3rem rgb(0 0 0 / .22); display: grid; gap: .75rem; inset: 10vh 10vw; max-height: 80vh; overflow: auto; padding: 1rem; position: fixed; z-index: 90; }
+.attachment-preview-image { display: block; height: auto; margin: auto; max-height: 68vh; max-width: 100%; object-fit: contain; }
+.attachment-picker-header { align-items: center; display: flex; justify-content: space-between; }
+.attachment-picker-header h2 { font-size: 1rem; margin: 0; }
+.attachment-limits { color: var(--text-muted); font-size: .75rem; margin: 0; }
+.attachment-tabs { border-bottom: 1px solid var(--border); display: flex; gap: .25rem; }
+.attachment-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .78rem; padding: .45rem .6rem; }
+.attachment-tabs button.active, .attachment-tabs button:focus-visible { border-bottom-color: var(--accent); color: var(--accent); outline: 0; }
+.attachment-upload, .attachment-library { display: grid; gap: .55rem; }
+.attachment-upload p { color: var(--text-muted); font-size: .75rem; margin: 0; }
+.attachment-upload-row { align-items: center; border: 1px solid var(--border); border-radius: .55rem; display: grid; font-size: .76rem; gap: .4rem; grid-template-columns: minmax(0, 1fr) minmax(5rem, 8rem) auto auto; padding: .45rem .55rem; }
+.attachment-upload-row progress { accent-color: var(--accent); width: 100%; }
+.attachment-library-row { align-items: center; background: transparent; border: 1px solid var(--border); border-radius: .55rem; color: var(--text); display: grid; gap: .25rem .5rem; grid-template-columns: auto minmax(0, 1fr) auto; padding: .5rem .6rem; text-align: left; }
+.attachment-library-row:has(.attachment-select-button:focus-visible), .attachment-library-row.selected { background: var(--accent-soft); border-color: var(--accent); outline: 0; }
+.attachment-library-row small { color: var(--text-muted); font-size: .68rem; }
+.attachment-thumb { align-items: center; background: var(--accent-soft); border-radius: .35rem; display: inline-flex; height: 1.8rem; justify-content: center; width: 1.8rem; }
+.attachment-thumb img { border-radius: inherit; height: 100%; object-fit: cover; width: 100%; }
+.attachment-row-actions { align-items: center; display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; margin-left: auto; }
+.attachment-delete-confirm { align-items: center; display: flex; flex-basis: 100%; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; }
 @media (max-width: 720px) { .run-inspector { border: 1px solid var(--border); border-radius: 1rem 1rem 0 0; bottom: 0; left: .5rem; max-height: 88dvh; right: .5rem; top: auto; width: auto; } }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0% { opacity: .7; transform: scale(.5); } 70%, 100% { opacity: 0; transform: scale(1.6); } }
-@media (max-width: 720px) { .conversation { height: 100%; min-height: 0; overflow-y: auto; padding: 1.5rem 1rem 0; } .conversation-header { margin-bottom: 1.5rem; } .conversation-header h1 { font-size: 1.55rem; } .title-line { align-items: flex-start; } .metadata-controls { margin-top: .1rem; } .connection { font-size: 0; } .connection-dot { height: .5rem; width: .5rem; } .transcript { flex: 0 0 auto; overflow: visible; overscroll-behavior: auto; } .welcome { padding: 2rem .25rem; } .user-turn { margin-left: .5rem; } .composer-wrap { border-radius: .85rem; margin-top: auto; padding-bottom: calc(.55rem + env(safe-area-inset-bottom)); } .privacy-note { padding-bottom: env(safe-area-inset-bottom); } .composer-hint { font-size: 0; } .hide-mobile { display: none; } .options-menu { min-width: min(17rem, calc(100vw - 2rem)); } .branch-toolbar { align-items: stretch; flex-direction: column; gap: .6rem; } .branch-toolbar-controls { justify-content: space-between; } .turn-actions { margin-left: 0; } }
+@media (max-width: 720px) { .conversation { height: 100%; min-height: 0; overflow-y: auto; padding: 1.5rem 1rem 0; } .conversation-header { margin-bottom: 1.5rem; } .conversation-header h1 { font-size: 1.55rem; } .title-line { align-items: flex-start; } .metadata-controls { margin-top: .1rem; } .connection { font-size: 0; } .connection-dot { height: .5rem; width: .5rem; } .transcript { flex: 0 0 auto; overflow: visible; overscroll-behavior: auto; } .welcome { padding: 2rem .25rem; } .user-turn { margin-left: .5rem; } .composer-wrap { border-radius: .85rem; margin-top: auto; padding-bottom: calc(.55rem + env(safe-area-inset-bottom)); } .privacy-note { padding-bottom: env(safe-area-inset-bottom); } .composer-hint { font-size: 0; } .hide-mobile { display: none; } .options-menu { min-width: min(17rem, calc(100vw - 2rem)); } .branch-toolbar { align-items: stretch; flex-direction: column; gap: .6rem; } .branch-toolbar-controls { justify-content: space-between; } .turn-actions { margin-left: 0; } .attachment-picker { border-radius: .75rem; margin-bottom: .5rem; } .attachment-upload-row { grid-template-columns: minmax(0, 1fr) auto; } .attachment-upload-row progress, .attachment-upload-row span:nth-of-type(2) { grid-column: 1 / -1; } .attachment-library-row { grid-template-columns: auto minmax(0, 1fr); } .attachment-library-row small { grid-column: 2; } }
 @media (prefers-reduced-motion: reduce) { .turn { animation: none; } .pulse::after { animation: none; } }

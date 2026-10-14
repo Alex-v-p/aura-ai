@@ -34,6 +34,13 @@ def _envelope(
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    if exc.status_code == 409 and exc.detail == "model_vision_required":
+        return _envelope(
+            request,
+            409,
+            "model_vision_required",
+            "The selected model requires verified vision capability.",
+        )
     mapping = {
         400: "BAD_REQUEST",
         401: "UNAUTHENTICATED",

@@ -1,0 +1,105 @@
+agent: contract_steward
+work_item: AURA-0076
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/fix_0076_contract_tombstone
+  worktree: dev
+scope:
+  ownership_zone: contracts.openapi.aura-v1, contracts.events.artifacts.v1, contracts.events.runs.v1, aura-api-client.generated
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/artifacts/v1/attachment-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/handoffs/AURA-0076-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no other agent is authorized to revise these contract-owned files during AURA-0076 implementation
+  compatibility: backward_compatible
+  definitions:
+    - id: Aura Core API
+      version: 1.18.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - Added owner-scoped image upload-session, listing, detail, original download, normalized preview, and idempotent deletion operations under /api/v1/attachments.
+        - Added optional bounded discriminated attachment references to conversation creation, run creation, and immutable edit-and-branch requests.
+        - Added optional immutable attachment summaries to message and run shapes inherited by conversation, branch, accepted-run, run snapshot, and SSE representations.
+        - Corrected attachment summaries to a discriminated available-or-unavailable union so content-free tombstones use the generic Attachment unavailable label, application/octet-stream, zero bytes, and no dimensions.
+        - Added the typed lowercase model_vision_required 409 alternative for image-bearing run admission while retaining the existing general conflict envelope.
+    - id: https://aura.local/contracts/events/artifacts/v1/attachment-events.schema.json
+      version: 1
+      source: contracts/events/artifacts/v1/attachment-events.schema.json
+      changes:
+        - Added a closed metadata-only image attachment lifecycle envelope containing only opaque identifiers, state, bounded object count, aggregate version, and timestamps.
+        - Prohibited filenames, media types, byte counts, dimensions, owner identity, bytes, EXIF, prompts, extracted content, checksums, storage details, credentials, diagnostics, and provider responses.
+    - id: https://aura.local/contracts/events/runs/v1/run-events.schema.json
+      version: 1
+      source: contracts/events/runs/v1/run-events.schema.json
+      changes:
+        - Added optional attachment summaries to run and message snapshots for direct owner-authorized no-store SSE presentation.
+        - Modeled available presentation data separately from content-free unavailable tombstones and rejected dimensions or ready-source media metadata on tombstones.
+        - Kept all new fields optional so historical v1 producers remain valid.
+  compatibility_notes:
+    - Existing operations, request requirements, response requirements, and event envelopes are unchanged.
+    - Historical messages and runs may omit attachments; legacy request producers may omit the new arrays; existing consumers may ignore every additive field and operation.
+    - Existing available attachment summaries remain valid; the unavailable branch now admits the content-free tombstone already emitted by Core instead of incorrectly requiring a ready-source media type and positive byte count.
+    - Empty or omitted attachment arrays preserve text-only behavior, and document.search@1 is unchanged.
+    - Run-event schemaVersion remains 1 because attachment properties are optional and old payloads continue to validate.
+    - The new artifact lifecycle schema has a distinct v1 contract identity and does not change an existing event contract.
+  producers:
+    - aura-core attachment HTTP entrypoint and artifacts.attachments lifecycle outbox producer
+    - aura-core conversation and run HTTP entrypoints
+    - aura-core run snapshot and SSE serializer
+  consumers:
+    - Aura Web conversation attachment picker, transcript, and preview client
+    - generated aura-api-client TypeScript consumers
+    - run-stream and replay consumers that accept run-events v1
+    - metadata-only artifact lifecycle consumers
+  rollout:
+    - Apply migration 0022 and register artifacts.attachments before enabling the attachment routes or lifecycle publisher.
+    - Deploy Aura Core producers before or with Aura Web; optional fields preserve mixed-version text-only clients.
+    - Enable image-bearing run admission only after the selected-model digest verification path and normalized derivative loader are available.
+    - No dual-write, protocol negotiation, hard-coded model routing, or schema-version bump is required for existing run-event consumers.
+  generated_outputs:
+    - path: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      source_sha256: d632dad9283669fb7239cac873ff374deaee4e0852a16f2a71249ac3439f2dcf
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - pnpm --dir frontend exec nx check-generated aura-api-client
+    - pnpm --dir frontend exec nx lint aura-api-client
+    - AJV 2020 validation of both OpenAPI and run-event available summaries and content-free unavailable summaries, including rejection of tombstone dimensions and ready-source media/byte metadata
+    - node local-reference audit for OpenAPI and both JSON Schema contracts
+    - git diff --check
+  failed: []
+  not_run:
+    - Python jsonschema is not installed in the current uv environment; schema-instance validation used the repository's installed AJV 2020 dependency instead.
+    - Persistent Core contract-test updates are assigned to the test/evaluation owner because this handoff is restricted to contract-owned paths.
+    - Remaining AURA-0076 checks are assigned to Core, platform, frontend, test/evaluation, review, and integration handoffs.
+decisions:
+  - OpenAPI 1.18.0 is an additive minor revision; no existing producer or consumer requirement was tightened.
+  - Image resources use attachmentId while document references retain documentId; the shared submitted and response forms remain provider-neutral and do not imply database foreign keys.
+  - Message tombstones use availability rather than attachment lifecycle state so deleted sources retain bounded immutable presentation metadata without exposing accessible content.
+  - MessageAttachmentSummary is a generated discriminated union: available summaries carry typed source metadata, while unavailable summaries carry only opaque link/source identifiers, kind, the generic unavailable label, application/octet-stream, zero bytes, and no dimensions.
+  - model_vision_required is a dedicated lowercase typed 409 as required by the approved plan; general Aura errors retain their existing uppercase-code contract.
+  - Generated output remains transport-only types and operation descriptors with no admission, retry, selection, or routing behavior.
+risks:
+  - Core and frontend implementations must use the exact generated operation IDs and response shapes; early parallel drafts used provisional names and were reported to their owners.
+  - Direct owner-authorized SSE snapshots may contain bounded display filenames, but artifact lifecycle events, persistence events, telemetry, audit, traces, metrics, evaluations, and provider diagnostics must remain filename-free.
+  - The test/evaluation owner must update the existing MessageAttachmentSummary structure assertion for the oneOf union and persist available/tombstone schema-instance coverage in its authorized test paths before integration.
+unresolved: []

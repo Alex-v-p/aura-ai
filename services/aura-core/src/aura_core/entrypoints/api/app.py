@@ -11,6 +11,7 @@ from aura_core.entrypoints.api.errors import install_error_handlers
 from aura_core.entrypoints.api.routes import (
     agents,
     approvals,
+    attachments,
     auth,
     conversations,
     documents,
@@ -154,6 +155,8 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
         response = await call_next(request)
         if request.url.path.startswith("/api/v1/documents"):
             response.headers["Cache-Control"] = "no-store"
+        if request.url.path.startswith("/api/v1/attachments"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     app.include_router(auth.router)
@@ -170,6 +173,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(reminders.router)
     app.include_router(notifications.router)
     app.include_router(documents.router)
+    app.include_router(attachments.router)
     app.include_router(health.router)
     return app
 

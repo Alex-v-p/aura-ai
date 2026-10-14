@@ -51,6 +51,7 @@ from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.outbox import (
     APPROVAL_EVENT_TOPIC,
+    ATTACHMENT_EVENT_TOPIC,
     RUN_RESUME_TOPIC,
     OutboxCommand,
     TransactionalOutboxTransport,
@@ -747,6 +748,10 @@ async def run_forever(settings: Settings | None = None) -> None:
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry()
+    from aura_core.bootstrap.attachment_uow import attachment_service
+
+    attachment_service_instance = attachment_service(sessions, settings=config, metrics=metrics)
+    store.set_attachment_services(attachment_service_instance, None)
     from aura_core.bootstrap.approval_uow import approval_repository, approval_service
     from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
     reminder_repository_instance = reminder_repository(sessions, metrics=metrics)
@@ -817,6 +822,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             document_process_topic,
             document_delete_topic,
             document_event_topic,
+            ATTACHMENT_EVENT_TOPIC,
         ),
         metrics=metrics,
     )
@@ -857,6 +863,8 @@ async def run_forever(settings: Settings | None = None) -> None:
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
+        if callable(getattr(provider, "verify_model", None)):
+            store.set_model_selection(provider)
         from aura_core.bootstrap.document_uow import document_service
 
         document_worker = DocumentWorker(
@@ -872,6 +880,7 @@ async def run_forever(settings: Settings | None = None) -> None:
                 ),
             )
         )
+        store.set_attachment_services(attachment_service_instance, document_worker.service)
         document_process_task = asyncio.create_task(
             run_document_loop(document_worker, document_process_consumer)
         )
@@ -897,6 +906,8 @@ async def run_forever(settings: Settings | None = None) -> None:
             approval_service=approval_service_instance,
             reminder_service=reminder_service_instance,
             document_service=document_worker.service,
+            attachment_service=attachment_service_instance,
+            attachment_resolver=store,
             thinking_publisher=event_transport,
         )
         # Approval/resumption wakeups are identifier-only; the worker always

@@ -3,6 +3,7 @@
 from aura_core.platform.outbox.repository import SqlOutboxRepository
 from aura_core.platform.outbox.service import (
     APPROVAL_EVENT_TOPIC,
+    ATTACHMENT_EVENT_TOPIC,
     RUN_RESUME_TOPIC,
     InMemoryOutbox,
     OutboxCommand,
@@ -20,6 +21,7 @@ from aura_core.platform.outbox.service import (
 __all__ = [
     "InMemoryOutbox",
     "APPROVAL_EVENT_TOPIC",
+    "ATTACHMENT_EVENT_TOPIC",
     "OutboxCommand",
     "make_event_command",
     "OutboxTransport",

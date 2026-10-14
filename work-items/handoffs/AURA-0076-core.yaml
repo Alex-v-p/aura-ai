@@ -1,0 +1,136 @@
+agent: core_worker
+work_item: AURA-0076
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0076_core
+  worktree: dev
+scope:
+  ownership_zone: aura-core.artifacts.attachments, aura-core.interaction.conversations, aura-core.execution.runs, aura-core.knowledge.documents, aura-core.bootstrap, aura-core.entrypoints.api, aura-core.entrypoints.worker, aura-core.migrations
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0022_conversation_attachments.py
+  - services/aura-core/resources/component-manifests/attachment-upload.yaml
+  - services/aura-core/resources/component-manifests/attachment-processing.yaml
+  - services/aura-core/resources/component-manifests/attachment-deletion.yaml
+  - services/aura-core/resources/component-manifests/attachment-vision-inference.yaml
+  - services/aura-core/resources/component-manifests/conversation-persistence.yaml
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - services/aura-core/src/aura_core/bootstrap/attachment_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/artifacts/__init__.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/__init__.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/persistence.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/evaluation.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/ports.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/dto.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/errors.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/attachments.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - tooling/architecture/modules.yaml
+  - services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_conversation_branch_evaluation.py
+  - services/aura-core/tests/test_conversations.py
+  - work-items/active/AURA-0076.yaml
+  - work-items/handoffs/AURA-0076-core.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+  files:
+    - services/aura-core/migrations/versions/0022_conversation_attachments.py
+observability:
+  components:
+    - aura.artifacts.attachment_upload
+    - aura.artifacts.attachment_processing
+    - aura.artifacts.attachment_deletion
+    - aura.interaction.conversation_persistence
+    - aura.knowledge.document_retrieval
+    - aura.execution.run_coordinator
+    - aura.models.inference
+  metrics_added:
+    - attachment_upload_outcome
+    - attachment_processing_outcome
+    - attachment_deletion_outcome
+    - conversation_attachment_admission_outcome
+    - attached_document_retrieval_outcome
+    - model_vision_verification_outcome
+    - vision_inference_outcome
+  evaluators:
+    - conversation_attachment_branch_isolation
+    - attached_document_grounding_and_citation
+    - vision_capability_and_image_preservation
+    - attachment_capture_redaction
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 -m unittest tooling.architecture.tests.test_modules
+    - .venv/bin/pytest services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_ollama_vision_attachments.py -q (37 passed, 1 skipped)
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=/tmp/aura-uv-cache uv run --offline pytest -q services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/system/test_production_adapters.py (30 passed, 17 skipped)
+    - .venv/bin/pytest services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_ollama_vision_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/system/test_production_adapters.py -q (64 passed, 18 skipped)
+    - .venv/bin/pytest services/aura-core/tests -q (1011 passed, 101 skipped)
+    - .venv/bin/pyright services/aura-core/src/aura_core services/aura-core/tests (passed)
+    - .venv/bin/ruff check services/aura-core/src/aura_core services/aura-core/tests (passed)
+    - python3 -m compileall -q services/aura-core/src/aura_core
+    - git diff --check
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=/tmp/aura-uv-cache uv run --offline pytest -q services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_telemetry.py (169 passed, 1 skipped)
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=/tmp/aura-uv-cache uv run --offline pyright services/aura-core/src/aura_core/domains/artifacts/attachments services/aura-core/src/aura_core/domains/interaction/conversations services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/bootstrap/conversation_uow.py services/aura-core/src/aura_core/entrypoints/api/state.py services/aura-core/src/aura_core/entrypoints/worker/app.py (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --offline ruff check services/aura-core/src/aura_core/domains/artifacts/attachments services/aura-core/src/aura_core/domains/interaction/conversations services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/bootstrap/conversation_uow.py services/aura-core/src/aura_core/platform/telemetry.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - .venv/bin/python lifecycle OutboxCommand.from_record probe (valid event accepted; invalid status/version/object-count rejected)
+    - service-recreation upload/delete idempotency and deleted-source regenerate/retry regression tests (passed)
+    - direct attachment upload route probe with required X-Expected-Version and stale-value 409 behavior
+    - public attachment get/list tombstone probe (404/empty) with internal conversation tombstone projection preserved
+    - metadata-only production-seam evaluator fixture replay (four positive and four negative outcomes)
+    - attachment trace probe (opaque attachment_id, correlation-derived trace/parent, latency, dependency, outcome/error; zero rejected records)
+    - lifecycle evaluator replay derives from branch selection, provider-neutral image messages, verified descriptor, retrieval/citation outputs, and metadata-only capture records
+    - durable run.snapshot replay strips attachment presentation while fresh owner-authorized SSE snapshots retain content-free tombstones
+    - persistent event publisher sanitizes run.snapshot before persistence and replay; SQL conversation-store get/detail plus branch/run/SSE lookup projects deleted image and document links as content-free unavailable summaries
+    - SQL attachment lifecycle test covers save_with_event/delete_with_event transaction staging, forced outbox rollback, attachment topic replay, and malformed payload rejection when AURA_0076_DATABASE_URL is configured
+    - compatibility assertions now track the current document.search tool catalog, OpenAPI 1.18.0 contract, conversation persistence manifest 1.7.0, and SQL memory-policy fallback expressions
+  failed: []
+  not_run:
+    - Full repository, frontend, contract/generated-client, deployment, and database-backed suites remain integration-owned; the SQL lifecycle test is skipped when AURA_0076_DATABASE_URL is absent.
+decisions:
+  - Attachment admission is owner-scoped and occurs before message/run staging; duplicate, unavailable, non-ready, cross-owner, and over-limit references fail atomically.
+  - Image-bearing create, run, branch, regeneration, and retry paths require a fresh provider verification through the public ModelSelectionPort, including advertised vision and immutable digest/revision; the typed error code is model_vision_required.
+  - Branch context uses only active-branch ancestors, prioritizes the current turn, and bounds images to four and documents to eight; attached document search passes the allowlist into the public document service and run-scopes evidence.
+  - Image bytes are re-authorized and loaded from the normalized preview for every provider call, including synthesis; no attachment identifiers or metadata cross the provider-neutral image port.
+  - Image deletion preserves an unavailable content-free historical summary while removing object bytes; lifecycle metrics and manifests are metadata-only.
+  - SQL upload sessions and delete idempotency records are owner-scoped and replayable across API/UoW recreation; lifecycle rows and exact attachment events are staged in the same SQL transaction as attachment state changes and published through the registered outbox topic.
+  - Cross-kind summaries are owned by interaction.conversations; source domains expose narrow owner/readiness/content/search ports, and read-time resolution projects both image and document deletion to immutable content-free tombstones without cross-domain writes.
+  - Upload-session idempotency fingerprints bind owner, filename, media type, and declared byte count; completion validates expected session version and exact byte count before claiming the session.
+  - Attachment evaluator functions are deterministic, versioned, replay-keyed, and metadata-only; lifecycle and image-loading spans use allowlisted operations and bounded outcomes.
+unresolved: []
+risks:
+  - Full repository, frontend, contract/generated-client, deployment, and database-backed validation remains integration-owned; the SQL lifecycle test is skipped unless AURA_0076_DATABASE_URL is configured.

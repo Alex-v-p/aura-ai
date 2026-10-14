@@ -1,0 +1,33 @@
+component:
+  id: aura.models.inference
+  version: 1.0.0
+  owner: runtime.models
+  category: inference
+input:
+  schema: provider-neutral-chat-request-v1
+  replayable: false
+  replay_reason: Image bytes and conversation content are never captured.
+output:
+  schema: provider-neutral-text-stream-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [model_provider]
+metrics: [model_vision_verification_outcome, vision_inference_outcome]
+evaluators: [vision_capability_and_image_preservation]
+metric_semantics:
+  model_vision_verification_outcome: Metadata-only fresh capability verification outcome.
+  vision_inference_outcome: Metadata-only image inference outcome.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id]
+  prohibited: [bytes, prompt, response, payload, content, filename, exif, endpoint, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

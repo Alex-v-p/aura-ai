@@ -1,11 +1,19 @@
 """Public conversation commands, queries, DTOs, and errors."""
 
-from aura_core.domains.interaction.conversations.context import branch_message_ids, build_context
+from aura_core.domains.artifacts.attachments.public import AttachmentAdmissionError
+from aura_core.domains.interaction.conversations.context import (
+    branch_message_ids,
+    build_context,
+    search_attached_documents,
+    select_attachment_context,
+)
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
+    AttachmentSummary,
     Conversation,
     ConversationArchiveState,
+    ConversationAttachmentReference,
     ConversationBranch,
     ConversationBranchOrigin,
     ConversationListFilters,
@@ -38,6 +46,7 @@ from aura_core.domains.interaction.conversations.store import (
     InvalidConversationCursor,
     InvalidConversationMetadata,
     ModelUnavailable,
+    ModelVisionRequiredError,
     PersonaUnavailable,
     VersionConflict,
     decode_cursor,
@@ -59,6 +68,7 @@ from aura_core.domains.interaction.conversations.titles import (
 __all__ = [
     "GENERAL_AGENT",
     "AgentAssignment",
+    "AttachmentSummary",
     "AssignmentReason",
     "PersonaAssignment",
     "PersonaAssignmentReason",
@@ -66,10 +76,12 @@ __all__ = [
     "PendingTitle",
     "TitleState",
     "ActiveRunConflict",
+    "AttachmentAdmissionError",
     "AgentSwitchConfirmationRequired",
     "AgentUnavailable",
     "PersonaUnavailable",
     "Conversation",
+    "ConversationAttachmentReference",
     "ConversationBranch",
     "ConversationBranchOrigin",
     "DocumentCitation",
@@ -87,6 +99,7 @@ __all__ = [
     "MessageRole",
     "MessageState",
     "ModelUnavailable",
+    "ModelVisionRequiredError",
     "SeededAgent",
     "SqlConversationRepository",
     "VersionConflict",
@@ -95,6 +108,8 @@ __all__ = [
     "filters_fingerprint",
     "build_context",
     "branch_message_ids",
+    "select_attachment_context",
+    "search_attached_documents",
     "now",
     "TITLE_SYSTEM_PROMPT",
     "fallback_title_candidate",

@@ -16,6 +16,21 @@ from aura_core.domains.execution.runs.events import (
 from aura_core.domains.execution.runs.ports import MetricsPort, NullMetrics
 
 
+def _without_durable_attachment_presentation(event: RunEvent) -> RunEvent:
+    """Strip stale attachment presentation from replayable run snapshots."""
+
+    if event.event_type != "run.snapshot":
+        return event
+    snapshot_run = event.data.get("run")
+    if not isinstance(snapshot_run, dict) or "attachments" not in snapshot_run:
+        return event
+    sanitized_run = dict(cast(dict[str, object], snapshot_run))
+    sanitized_run.pop("attachments", None)
+    data = dict(event.data)
+    data["run"] = sanitized_run
+    return replace(event, data=data)
+
+
 class EventPublisher:
     def __init__(self, metrics: MetricsPort | None = None) -> None:
         self._events: dict[UUID, list[RunEvent]] = defaultdict(list)
@@ -131,6 +146,7 @@ class EventPublisher:
         await self._publish_event(event, preserve_sequence=False)
 
     async def _publish_event(self, event: RunEvent, *, preserve_sequence: bool) -> None:
+        event = _without_durable_attachment_presentation(event)
         async with self._lock:
             if any(item.event_id == event.event_id for item in self._events[event.run_id]):
                 return
@@ -147,6 +163,7 @@ class EventPublisher:
     async def hydrate(self, events: list[RunEvent]) -> None:
         async with self._lock:
             for event in events:
+                event = _without_durable_attachment_presentation(event)
                 if event.event_type == "memory.activity":
                     event = _validated_memory_event(event)
                 if not any(item.event_id == event.event_id for item in self._events[event.run_id]):
@@ -159,6 +176,7 @@ class EventPublisher:
         """Add a cross-process event and wake active SSE subscribers."""
 
         async with self._lock:
+            event = _without_durable_attachment_presentation(event)
             if any(item.event_id == event.event_id for item in self._events[event.run_id]):
                 return
             if event.event_type == "memory.activity":
@@ -341,11 +359,15 @@ class PersistentEventPublisher(EventPublisher):
     async def publish(self, event: RunEvent) -> None:
         if event.event_type == "memory.activity":
             event = _validated_memory_event(event)
+        # Sanitize at the durable boundary, before the persistence callback is
+        # invoked. This protects every current and future run.snapshot
+        # producer, including events returned by a persistence adapter.
+        event = _without_durable_attachment_presentation(event)
         if await self.contains(event.run_id, event.event_id):
             return
         persisted = await self._persist(event)
         if persisted is not None:
-            event = persisted
+            event = _without_durable_attachment_presentation(persisted)
         if self._publish_external is not None:
             await self._publish_external(event)
         await super()._publish_event(event, preserve_sequence=True)

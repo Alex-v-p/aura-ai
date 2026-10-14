@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 RUN_COMMAND_TOPIC = "aura.runs.execute.v1"
 APPROVAL_EVENT_TOPIC = "aura.approvals.events.v1"
 RUN_RESUME_TOPIC = "aura.runs.resume.v1"
+ATTACHMENT_EVENT_TOPIC = "aura.artifacts.attachment.events.v1"
 _IDENTIFIER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")
 _IDENTIFIER_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 _IDENTIFIER_SUFFIXES = (
@@ -153,7 +154,76 @@ class OutboxCommand:
         schema_version = payload.get("schemaVersion")
         if type(schema_version) is not int:
             raise ValueError("outbox command has an invalid schema version")
-        if topic == "aura.knowledge.documents.events.v1":
+        if topic in {"aura.knowledge.documents.events.v1", ATTACHMENT_EVENT_TOPIC}:
+            if topic == ATTACHMENT_EVENT_TOPIC:
+                required = {
+                    "schemaVersion", "eventId", "eventType", "attachmentId", "uploadId",
+                    "status", "attachmentVersion", "storedObjectCount", "occurredAt",
+                    "correlationId", "causationId",
+                }
+                if set(payload) != required or payload["schemaVersion"] != 1:
+                    raise ValueError("attachment lifecycle event payload is not schema exact")
+                event_type = payload["eventType"]
+                event_status = payload["status"]
+                if event_type not in {
+                    "attachment.upload.created",
+                    "attachment.processing",
+                    "attachment.ready",
+                    "attachment.failed",
+                    "attachment.deleting",
+                    "attachment.deleted",
+                }:
+                    raise ValueError("attachment lifecycle event has an invalid event type")
+                if event_status not in {
+                    "uploading",
+                    "processing",
+                    "ready",
+                    "failed",
+                    "deleting",
+                    "deleted",
+                }:
+                    raise ValueError("attachment lifecycle event has an invalid status")
+                if (
+                    type(payload["attachmentVersion"]) is not int
+                    or not 1 <= payload["attachmentVersion"] <= 2_147_483_647
+                ):
+                    raise ValueError("attachment lifecycle event has an invalid version")
+                if (
+                    type(payload["storedObjectCount"]) is not int
+                    or not 0 <= payload["storedObjectCount"] <= 2
+                ):
+                    raise ValueError("attachment lifecycle event has an invalid object count")
+                occurred_at = payload["occurredAt"]
+                if type(occurred_at) is not str or re.fullmatch(
+                    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+                    occurred_at,
+                ) is None:
+                    raise ValueError("attachment lifecycle event has an invalid timestamp")
+                try:
+                    parsed_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+                    if parsed_at.tzinfo is None:
+                        raise ValueError
+                    UUID(str(payload["eventId"]))
+                    UUID(str(payload["attachmentId"]))
+                    UUID(str(payload["correlationId"]))
+                    UUID(str(payload["causationId"]))
+                    if payload["uploadId"] is not None:
+                        UUID(str(payload["uploadId"]))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("attachment lifecycle event has invalid identifiers") from exc
+                return cls(
+                    command_id,
+                    topic,
+                    None,
+                    None,
+                    created_at,
+                    UUID(str(payload["correlationId"])),
+                    UUID(str(payload["causationId"])),
+                    schema_version=1,
+                    aggregate_type="artifacts.attachment",
+                    aggregate_id=UUID(str(payload["attachmentId"])),
+                    event_payload=dict(payload),
+                )
             required = {
                 "schemaVersion",
                 "eventId",

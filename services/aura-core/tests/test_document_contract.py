@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 import yaml
 from aura_core.domains.knowledge.documents.evaluation import (
     COMPONENT_ID,
@@ -28,9 +29,96 @@ def _contract() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text()))
 
 
+def _schema_matches(schema: dict[str, Any], value: object, schemas: dict[str, Any]) -> bool:
+    """Small contract-test validator for the bounded summary schema subset."""
+
+    if "$ref" in schema:
+        return _schema_matches(
+            schemas[str(schema["$ref"]).rsplit("/", maxsplit=1)[-1]], value, schemas
+        )
+    if "oneOf" in schema:
+        return sum(
+            _schema_matches(branch, value, schemas)
+            for branch in cast(list[dict[str, Any]], schema["oneOf"])
+        ) == 1
+    if "const" in schema and value != schema["const"]:
+        return False
+    if "enum" in schema and value not in schema["enum"]:
+        return False
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        if not isinstance(value, dict):
+            return False
+        object_value = cast(dict[str, object], value)
+        required = cast(list[str], schema.get("required", []))
+        if any(key not in object_value for key in required):
+            return False
+        properties = cast(dict[str, dict[str, Any]], schema.get("properties", {}))
+        if schema.get("additionalProperties") is False and set(object_value) - set(properties):
+            return False
+        return all(
+            key not in properties or _schema_matches(properties[key], item, schemas)
+            for key, item in object_value.items()
+        )
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    return True
+
+
+def test_message_attachment_summary_tombstone_one_of_is_content_free() -> None:
+    contract = _contract()
+    schemas = cast(dict[str, Any], contract["components"]["schemas"])
+    summary = cast(dict[str, Any], schemas["MessageAttachmentSummary"])
+    assert "oneOf" in summary
+    variants = cast(list[dict[str, Any]], summary["oneOf"])
+    assert len(variants) == 2
+    refs = {str(variant["$ref"]) for variant in variants}
+    assert refs == {
+        "#/components/schemas/AvailableMessageAttachmentSummary",
+        "#/components/schemas/UnavailableMessageAttachmentSummary",
+    }
+    assert all(
+        schemas[ref.rsplit("/", maxsplit=1)[-1]]["additionalProperties"] is False
+        for ref in refs
+    )
+
+    available = {
+        "linkId": "00000000-0000-0000-0000-000000000001",
+        "kind": "image",
+        "sourceId": "00000000-0000-0000-0000-000000000002",
+        "displayFilename": "photo.png",
+        "mediaType": "image/png",
+        "byteCount": 128,
+        "availability": "available",
+        "width": 16,
+        "height": 16,
+    }
+    unavailable = {
+        "linkId": "00000000-0000-0000-0000-000000000003",
+        "kind": "image",
+        "sourceId": "00000000-0000-0000-0000-000000000004",
+        "displayFilename": "Attachment unavailable",
+        "mediaType": "application/octet-stream",
+        "byteCount": 0,
+        "availability": "unavailable",
+    }
+    assert _schema_matches(summary, available, schemas)
+    assert _schema_matches(summary, unavailable, schemas)
+
+    for invalid in (
+        {**unavailable, "width": 16, "height": 16},
+        {**unavailable, "mediaType": "image/png"},
+        {**unavailable, "byteCount": 1},
+    ):
+        with pytest.raises(AssertionError):
+            assert _schema_matches(summary, invalid, schemas)
+
+
 def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_schemas() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.17.0"
+    assert contract["info"]["version"] == "1.18.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected = {
         "/api/v1/documents/uploads",

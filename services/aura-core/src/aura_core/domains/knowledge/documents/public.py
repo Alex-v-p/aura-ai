@@ -796,11 +796,14 @@ class MemoryDocumentRepository:
         query_model_id: str | None = None,
         query_model_revision: str | None = None,
         query_model_digest: str | None = None,
+        allowed_document_ids: tuple[UUID, ...] | None = None,
     ) -> DocumentSearchResult:
         terms = set(query.casefold().split())
         hits: list[DocumentSearchHit] = []
         identity_mismatch = False
         for document in await self.list(owner, limit=100_000, media_type=media_type):
+            if allowed_document_ids is not None and document.id not in allowed_document_ids:
+                continue
             if not document.searchable:
                 continue
             for chunk in self.chunk_rows.get(document.id, ()):
@@ -1613,6 +1616,7 @@ class DocumentService:
         media_type: str | None = None,
         query_embedding: tuple[float, ...] | None = None,
         context: ProviderTraceContext | None = None,
+        allowed_document_ids: tuple[UUID, ...] | None = None,
     ) -> list[DocumentSearchHit]:
         started = monotonic()
         if not query.strip() or len(query) > 500:
@@ -1649,6 +1653,8 @@ class DocumentService:
         }
         if offset:
             kwargs["offset"] = offset
+        if allowed_document_ids is not None:
+            kwargs["allowed_document_ids"] = tuple(dict.fromkeys(allowed_document_ids))[:8]
         request_context = context or _library_context("document-search")
         try:
             repository_result = await repository.search(

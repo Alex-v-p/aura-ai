@@ -520,6 +520,27 @@ function docxFixture(text: string): Buffer {
   return Buffer.concat([localData, centralData, end]);
 }
 
+const ATTACHMENT_IMAGE_FIXTURES = [
+  { filename: 'aura-e2e.png', mediaType: 'image/png', content: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') },
+  { filename: 'aura-e2e.jpg', mediaType: 'image/jpeg', content: Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/AP/EABQQAQAAAAAAAAAAAAAAAAAAACD/2gAIAQEAAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8Af//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8Af//Z', 'base64') },
+  { filename: 'aura-e2e.webp', mediaType: 'image/webp', content: Buffer.from('UklGRiIAAABXRUJQVlA4IBQAAAAwAQCdASoBAAEADsD+JaQAA3AA/vuUAAA=', 'base64') },
+] as const;
+
+async function uploadAttachmentFixture(page: Page, config: StackConfig, session: { body: Record<string, unknown> }, fixture: { readonly filename: string; readonly mediaType: string; readonly content: Buffer }): Promise<JsonObject> {
+  const create = await page.request.post(new URL('/api/v1/attachments/uploads', config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { filename: fixture.filename, mediaType: fixture.mediaType, byteCount: fixture.content.byteLength } });
+  expect(create.status(), await create.text()).toBe(201);
+  const upload = await create.json() as JsonObject;
+  const uploadId = upload['id'];
+  expect(typeof uploadId).toBe('string');
+  if (typeof uploadId !== 'string') return {};
+  const content = await page.request.put(new URL(`/api/v1/attachments/uploads/${uploadId}/content`, config.baseUrl).toString(), { headers: { ...csrfHeaders(session, config.baseUrl), 'Content-Type': fixture.mediaType, 'Content-Length': String(fixture.content.byteLength), 'X-Expected-Version': '1' }, data: fixture.content });
+  expect(content.status(), await content.text()).toBe(202);
+  const receipt = await content.json() as JsonObject;
+  const attachment = receipt['attachment'];
+  expect(attachment).toBeTruthy();
+  return attachment as JsonObject;
+}
+
 async function sendAndWaitForAssistant(page: Page, text: string): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill(text);
@@ -567,6 +588,118 @@ for (const mode of configuredModes) {
 
     test('AURA_E2E_DOCUMENT_SEARCH_CITATION uploads, retrieves, cites, and deletes all supported formats', async ({ page }) => {
       await runDocumentSearchCitationAcceptance(page, mode);
+    });
+
+    test('AURA_E2E_CONVERSATION_ATTACHMENTS uploads images, admits verified vision, branches, regenerates, and tombstones deletion', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run attachment acceptance`);
+      if (!config) return;
+      test.setTimeout(300_000);
+      await signIn(page, config);
+      const session = await apiSession(page, config);
+      const modelsResponse = await page.request.get(new URL('/api/v1/models', config.baseUrl).toString());
+      expect(modelsResponse.ok(), await modelsResponse.text()).toBeTruthy();
+      const catalog = await modelsResponse.json() as { models?: Array<{ id?: string; capabilities?: string[]; selectable?: boolean }> };
+      const visionModel = catalog.models?.find((candidate) => candidate.selectable && candidate.capabilities?.includes('vision'))?.id;
+      test.skip(!visionModel, 'the configured stack did not advertise a freshly verified vision model');
+      if (!visionModel) return;
+
+      const groundedText = 'Owner-private retrieval fixture. The grounded answer must cite this marker: AURA_E2E_DOCUMENT_SEARCH_CITATION_00000000-0000-4000-8000-000000000000.';
+      const documentFixtures = [
+        { filename: `aura-attachment-${mode}.pdf`, mediaType: 'application/pdf', content: pdfFixture(groundedText) },
+        { filename: `aura-attachment-${mode}.docx`, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: docxFixture(groundedText) },
+      ] as const;
+      const documents: JsonObject[] = [];
+      for (const fixture of documentFixtures) {
+        const upload = await page.request.post(new URL('/api/v1/documents/uploads', config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { filename: fixture.filename, mediaType: fixture.mediaType, byteCount: fixture.content.byteLength } });
+        expect(upload.status(), await upload.text()).toBe(201);
+        const uploadSession = await upload.json() as JsonObject;
+        const uploadId = uploadSession['id'];
+        expect(typeof uploadId).toBe('string');
+        if (typeof uploadId !== 'string') return;
+        const content = await page.request.put(new URL(`/api/v1/documents/uploads/${uploadId}/content`, config.baseUrl).toString(), { headers: { ...csrfHeaders(session, config.baseUrl), 'Content-Type': fixture.mediaType, 'Content-Length': String(fixture.content.byteLength), 'X-Expected-Version': '1' }, data: fixture.content });
+        expect(content.status(), await content.text()).toBe(202);
+        const receipt = await content.json() as JsonObject;
+        const document = receipt['document'] as JsonObject | undefined;
+        expect(typeof document?.['id']).toBe('string');
+        if (typeof document?.['id'] !== 'string') return;
+        documents.push(document);
+      }
+      for (const document of documents) {
+        await expect.poll(async () => {
+          const response = await page.request.get(new URL(`/api/v1/documents/${document['id']}`, config.baseUrl).toString());
+          if (!response.ok()) return false;
+          const current = await response.json() as JsonObject;
+          return current['status'] === 'ready';
+        }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      }
+
+      const uploadedImages: JsonObject[] = [];
+      for (const fixture of ATTACHMENT_IMAGE_FIXTURES) {
+        const attachment = await uploadAttachmentFixture(page, config, session, fixture);
+        expect(typeof attachment['id']).toBe('string');
+        uploadedImages.push(attachment);
+      }
+      for (const image of uploadedImages) {
+        await expect.poll(async () => {
+          const response = await page.request.get(new URL(`/api/v1/attachments/${image['id']}`, config.baseUrl).toString());
+          if (!response.ok()) return false;
+          const current = await response.json() as JsonObject;
+          return current['status'] === 'ready';
+        }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      }
+
+      const marker = `AURA_ATTACHMENT_GROUNDING_${randomUUID()}`;
+      const conversationResponse = await page.request.post(new URL('/api/v1/conversations', config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { message: `${marker}: inspect the attached image and cite the attached PDF.`, modelId: visionModel, clientTimeZone: 'Europe/Brussels', attachments: [{ kind: 'document', documentId: documents[0]?.['id'] }, ...uploadedImages.map((image) => ({ kind: 'image', attachmentId: image['id'] }))] } });
+      expect(conversationResponse.status(), await conversationResponse.text()).toBe(202);
+      const accepted = await conversationResponse.json() as JsonObject;
+      const conversation = accepted['conversation'] as JsonObject | undefined;
+      const run = accepted['run'] as JsonObject | undefined;
+      expect(typeof conversation?.['id']).toBe('string');
+      expect(typeof run?.['id']).toBe('string');
+      if (typeof conversation?.['id'] !== 'string' || typeof run?.['id'] !== 'string') return;
+      const completed = await waitForCompletedRun(page, config, conversation['id'], run['id']);
+      const userMessage = (completed['messages'] as Array<JsonObject> | undefined)?.find((message) => message['role'] === 'user');
+      expect(userMessage?.['attachments']).toHaveLength(4);
+      expect((completed.recentRuns?.find((candidate) => candidate['id'] === run['id']) as JsonObject | undefined)?.['attachments']).toHaveLength(4);
+      const initialAssistant = (completed['messages'] as Array<JsonObject> | undefined)?.find((message) => message['role'] === 'assistant' && message['runId'] === run['id']);
+      expect(typeof initialAssistant?.['content']).toBe('string');
+      expect(String(initialAssistant?.['content'] ?? '').trim().length).toBeGreaterThan(0);
+      expect(String(initialAssistant?.['content'] ?? '')).toMatch(/image|photo|picture|attached/i);
+      const initialCitations = initialAssistant?.['citations'];
+      expect(Array.isArray(initialCitations)).toBe(true);
+      expect((initialCitations as Array<JsonObject> | undefined)?.length ?? 0).toBeGreaterThan(0);
+
+      const branchResponse = await page.request.post(new URL(`/api/v1/conversations/${conversation['id']}/branches`, config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { sourceUserMessageId: userMessage?.['id'], message: `${marker}: branch with the selected image.`, conversationVersion: conversation['version'], attachments: [{ kind: 'image', attachmentId: uploadedImages[0]?.['id'] }] } });
+      expect(branchResponse.status(), await branchResponse.text()).toBe(202);
+      const branchAccepted = await branchResponse.json() as JsonObject;
+      const branchRun = branchAccepted['run'] as JsonObject | undefined;
+      expect(typeof branchRun?.['id']).toBe('string');
+      if (typeof branchRun?.['id'] !== 'string') return;
+      const branchCompleted = await waitForCompletedRun(page, config, conversation['id'], branchRun['id']);
+      const branchVersion = branchCompleted['version'];
+      expect(typeof branchVersion).toBe('number');
+      if (typeof branchVersion !== 'number') return;
+      const regeneratedResponse = await page.request.post(new URL(`/api/v1/runs/${branchRun['id']}/regenerate`, config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { conversationVersion: branchVersion } });
+      expect(regeneratedResponse.status(), await regeneratedResponse.text()).toBe(202);
+      const regenerated = await regeneratedResponse.json() as JsonObject;
+      const regeneratedRun = regenerated['run'] as JsonObject | undefined;
+      expect(typeof regeneratedRun?.['id']).toBe('string');
+      if (typeof regeneratedRun?.['id'] !== 'string') return;
+      await waitForCompletedRun(page, config, conversation['id'], regeneratedRun['id']);
+
+      const latestAttachment = await page.request.get(new URL(`/api/v1/attachments/${uploadedImages[0]?.['id']}`, config.baseUrl).toString());
+      expect(latestAttachment.ok(), await latestAttachment.text()).toBeTruthy();
+      const latestImage = await latestAttachment.json() as JsonObject;
+      const deleteVersion = latestImage['version'] ?? uploadedImages[0]?.['version'] ?? 1;
+      const deleteResponse = await page.request.delete(new URL(`/api/v1/attachments/${uploadedImages[0]?.['id']}`, config.baseUrl).toString(), { headers: csrfHeaders(session, config.baseUrl), data: { expectedVersion: deleteVersion } });
+      expect(deleteResponse.status(), await deleteResponse.text()).toBe(202);
+      await expect.poll(async () => (await page.request.get(new URL(`/api/v1/attachments/${uploadedImages[0]?.['id']}`, config.baseUrl).toString())).status(), { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(404);
+      const afterDelete = await page.request.get(new URL(`/api/v1/conversations/${conversation['id']}`, config.baseUrl).toString());
+      expect(afterDelete.ok(), await afterDelete.text()).toBeTruthy();
+      const afterDeleteDetail = await afterDelete.json() as JsonObject;
+      const tombstone = ((afterDeleteDetail['messages'] as Array<JsonObject> | undefined) ?? []).flatMap((message) => (message['attachments'] as Array<JsonObject> | undefined) ?? []).find((attachment) => attachment['sourceId'] === uploadedImages[0]?.['id']);
+      expect(tombstone).toMatchObject({ availability: 'unavailable' });
     });
 
     test('AURA_E2E_CONVERSATION_BRANCHING edits, regenerates, switches, and preserves the original', async ({ page }) => {

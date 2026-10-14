@@ -20,14 +20,20 @@ class FakeChatModel:
         model_id: str = "fake",
         tool_events: Sequence[object] = (),
         tool_calling: bool = False,
+        vision: bool = False,
     ) -> None:
         self.chunks = tuple(chunks)
         self.model_id = model_id
         self.tool_events = tuple(tool_events)
         self.tool_calling = tool_calling
+        self.vision = vision
 
     async def list_models(self) -> Sequence[ModelDescriptor]:
-        capabilities = ("chat", "completion", "tools", "tool_calling") if self.tool_calling else ("chat", "completion")
+        capabilities = ("chat", "completion")
+        if self.tool_calling:
+            capabilities += ("tools", "tool_calling")
+        if self.vision:
+            capabilities += ("vision",)
         return (ModelDescriptor(self.model_id, self.model_id, "fake", capabilities),)
 
     async def stream_chat(

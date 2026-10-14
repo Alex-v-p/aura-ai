@@ -52,9 +52,11 @@ export interface DocumentUploadItem {
   readonly byteCount: number;
   readonly mediaType: DocumentMediaType | null;
   readonly progress: number;
-  readonly state: 'validating' | 'creating' | 'uploading' | 'queued' | 'duplicate' | 'failed' | 'canceled';
+  readonly state: 'validating' | 'creating' | 'uploading' | 'queued' | 'processing' | 'ready' | 'duplicate' | 'failed' | 'canceled';
   readonly message: string | null;
   readonly documentId: string | null;
+  readonly documentVersion: number | null;
+  readonly retryable: boolean;
   readonly file?: File;
 }
 

@@ -1,7 +1,7 @@
 import { OverlayModule, CdkOverlayOrigin, type ConnectedPosition } from '@angular/cdk/overlay';
 import { A11yModule } from '@angular/cdk/a11y';
-import { DatePipe } from '@angular/common';
-import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
+import { DatePipe, DecimalPipe } from '@angular/common';
+import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, ViewChild, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
@@ -15,6 +15,9 @@ import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/appro
 import { branchNavigationAvailable } from './branch-navigation';
 import { focusBranchEditTarget, retryBranchActionAndFocus, type BranchEditFocusRequest } from './branch-edit-focus';
 import { focusBranchAction } from './branch-action-focus';
+import { ATTACHMENT_MAX_IMAGES_PER_MESSAGE, ATTACHMENT_MAX_PER_MESSAGE, IMAGE_ATTACHMENT_ACCEPT, VISION_ALTERNATIVE, VISION_RECOMMENDATION, ConversationAttachmentStore, type AttachmentSelection, type AttachmentSummary } from './conversation-attachments';
+import { DocumentsStore, mediaTypeForFile } from '@aura/aura/knowledge/documents';
+import { selectedDocumentIsPending } from './conversation-attachment-readiness';
 
 export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
   return useAgentDefault ? '' : reference?.revisionId ?? '';
@@ -32,17 +35,35 @@ export function visibleFocusTarget(preferred: HTMLElement | null, fallback: HTML
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, RouterLink, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, SafeMarkdownComponent],
+  imports: [FormsModule, RouterLink, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, DecimalPipe, SafeMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
 })
-export class ConversationPanelComponent implements AfterViewChecked {
+export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   private readonly changeDetector = inject(ChangeDetectorRef);
   readonly store = inject(ConversationStore);
   readonly agentStore = inject(AgentStore);
   readonly personaStore = inject(PersonaStore);
   readonly approvalStore = inject(ApprovalStore);
+  readonly attachmentStore = inject(ConversationAttachmentStore);
+  readonly documentsStore = inject(DocumentsStore);
+  readonly attachmentPickerOpen = signal(false);
+  readonly attachmentPickerView = signal<'upload' | 'documents' | 'images'>('upload');
+  readonly attachmentAccept = `${IMAGE_ATTACHMENT_ACCEPT},.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document`;
+  readonly attachmentMax = ATTACHMENT_MAX_PER_MESSAGE;
+  readonly imageMax = ATTACHMENT_MAX_IMAGES_PER_MESSAGE;
+  readonly visionRecommendation = VISION_RECOMMENDATION;
+  readonly visionAlternative = VISION_ALTERNATIVE;
+  readonly branchAttachments = signal<ReadonlyArray<AttachmentSelection>>([]);
+  readonly imagePreviewUrls = signal<Readonly<Record<string, string>>>({});
+  readonly previewImageDialog = signal<AttachmentSummary | null>(null);
+  readonly previewDialogUrl = signal<string | null>(null);
+  readonly previewError = signal<string | null>(null);
+  readonly pendingDeleteImageId = signal<string | null>(null);
+  readonly deletingImageId = signal<string | null>(null);
+  readonly imageDeleteError = signal<string | null>(null);
+  readonly imageDeleteNotice = signal<string | null>(null);
   @ViewChild('composer') private readonly composer?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('optionsButton') private readonly optionsButton?: ElementRef<HTMLButtonElement>;
   @ViewChild('optionsMenu') private readonly optionsMenu?: ElementRef<HTMLElement>;
@@ -51,6 +72,7 @@ export class ConversationPanelComponent implements AfterViewChecked {
   @ViewChild('menuModel') private readonly menuModel?: ElementRef<HTMLSelectElement>;
   @ViewChild('configurationCancel') private readonly configurationCancel?: ElementRef<HTMLButtonElement>;
   @ViewChild('runInspectorClose') private readonly runInspectorClose?: ElementRef<HTMLButtonElement>;
+  @ViewChild('attachmentPickerClose') private readonly attachmentPickerClose?: ElementRef<HTMLButtonElement>;
   readonly optionsOpen = signal(false);
   readonly connectedOrigin = signal<CdkOverlayOrigin>({} as CdkOverlayOrigin);
   readonly optionsFocus = signal<'agent' | 'persona' | 'model'>('agent');
@@ -74,6 +96,15 @@ export class ConversationPanelComponent implements AfterViewChecked {
   private branchEditTriggerId: string | null = null;
   private previousBranchEditMessageId: string | null = null;
   private readonly pendingBranchEditFocus = signal<BranchEditFocusRequest | null>(null);
+  private attachmentLibraryLoaded = false;
+  private attachmentAcceptanceRevision = 0;
+  private attachmentPickerOpener: HTMLButtonElement | null = null;
+  private previewOpener: HTMLElement | null = null;
+  private previewSequence = 0;
+  private thumbnailEpoch = 0;
+  private deleteDialogOpener: HTMLElement | null = null;
+  private attachmentPrincipal: string | null = null;
+  private hydratedAttachmentConversationId: string | null = null;
 
   configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
     return configurationRevisionValue(reference, useAgentDefault);
@@ -81,6 +112,65 @@ export class ConversationPanelComponent implements AfterViewChecked {
 
   constructor() {
     void this.approvalStore.start();
+    effect(() => {
+      if (this.store.authState() !== 'authenticated' || this.attachmentLibraryLoaded) return;
+      this.attachmentLibraryLoaded = true;
+      void this.attachmentStore.load();
+      void this.documentsStore.load();
+    });
+    effect(() => {
+      const revision = this.store.attachmentAcceptanceRevision();
+      const acceptedConversationId = this.store.attachmentAcceptanceConversationId();
+      if (revision > this.attachmentAcceptanceRevision) {
+        this.attachmentAcceptanceRevision = revision;
+        if (acceptedConversationId === this.store.selectedId()) {
+          this.attachmentStore.clear();
+          this.store.setDraftAttachmentsFor(acceptedConversationId, []);
+        }
+      }
+    });
+    effect(() => {
+      // Defer authorized thumbnail fetches until the owner opens Images. A
+      // library refresh during initial conversation bootstrap must not compete
+      // with the composer render or keep the page busy before the picker is
+      // interactive.
+      if (!this.attachmentPickerOpen() || this.attachmentPickerView() !== 'images') return;
+      for (const image of this.attachmentStore.images().filter((item) => item.availability === 'available').slice(0, 8)) void this.loadImagePreview(image.attachmentId);
+    });
+    effect(() => {
+      const conversationId = this.store.selectedId();
+      const loading = this.store.loading();
+      const previousConversationId = this.hydratedAttachmentConversationId;
+      const switchedConversation = previousConversationId !== null && previousConversationId !== conversationId;
+      if (switchedConversation && (loading || previousConversationId?.startsWith('draft-'))) this.handoffLiveComposerDraft();
+      this.hydratedAttachmentConversationId = conversationId;
+      // Hydration is scoped to conversation changes. Reading the draft's
+      // attachment map here would make the hydration effect observe the
+      // write performed by the selection effect below, creating a needless
+      // bootstrap feedback edge (and, with mutable arrays, a render loop).
+      const attachments = untracked(() => this.store.attachmentsFor(conversationId));
+      this.attachmentStore.setSelected(attachments);
+      // A route can settle from its ephemeral draft id to its loaded id while
+      // the user is already interacting with the composer. Do not tear down a
+      // picker opened during that bootstrap transition; once loading has
+      // settled, a real conversation switch still resets its view.
+      if (switchedConversation && !loading) this.closeAttachmentPicker(false);
+    });
+    effect(() => {
+      const selected = this.attachmentStore.selected();
+      if (this.store.branchEditing()) this.branchAttachments.set(selected);
+      else this.store.setDraftAttachments(selected);
+    });
+    effect(() => {
+      const session = this.store.session();
+      const principal = session ? `${session.principal.issuer}\u0000${session.principal.subject}` : null;
+      const principalChanged = this.attachmentPrincipal !== null && principal !== this.attachmentPrincipal;
+      const authorizationEnded = this.store.authState() !== 'authenticated' && (this.attachmentPrincipal !== null || this.attachmentLibraryLoaded);
+      // Reading the principal makes a logout/login or account switch reset the
+      // owner-scoped image cache and its CSRF session.
+      this.attachmentPrincipal = principal;
+      if (principalChanged || authorizationEnded) { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.attachmentLibraryLoaded = false; }
+    });
     effect(() => {
       const conversation = this.store.selected();
       if (!conversation.id.startsWith('draft-') || conversation.agent) return;
@@ -168,11 +258,11 @@ export class ConversationPanelComponent implements AfterViewChecked {
   approvalLabel(status: ApprovalSummary['status']): string { return this.approvalStore.statusLabel(status); }
   thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
-  submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  submit(event?: Event): void { event?.preventDefault(); this.syncComposerDraft(); if (!this.defaultAgentReady() || this.submissionBlocked()) return; this.store.setDraftAttachments(this.attachmentStore.selected()); if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
   submitBranchEdit(event: Event): void {
     event.preventDefault();
-    void this.store.editAndBranch().then(() => {
-      if (!this.store.selectedBranch().editingMessageId) this.requestBranchEditFocus();
+    void this.store.editAndBranch(this.branchAttachments()).then(() => {
+      if (!this.store.selectedBranch().editingMessageId) { this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId())); this.branchAttachments.set([]); this.requestBranchEditFocus(); }
     });
   }
   async retryBranchAction(): Promise<void> {
@@ -191,14 +281,18 @@ export class ConversationPanelComponent implements AfterViewChecked {
   }
   beginEditMessage(messageId: string): void {
     this.branchEditTriggerId = `edit-branch-${messageId}`;
+    this.branchAttachments.set(this.store.attachmentsForTurn(messageId));
+    this.attachmentStore.setSelected(this.branchAttachments());
     this.store.beginEditMessage(messageId);
     queueMicrotask(() => { if (typeof document !== 'undefined') document.getElementById(`branch-edit-${messageId}`)?.focus(); });
   }
   cancelBranchEdit(): void {
+    this.branchAttachments.set([]);
+    this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId()));
     this.store.cancelEditMessage();
     this.requestBranchEditFocus();
   }
-  handleBranchEditKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) { event.preventDefault(); void this.store.editAndBranch().then(() => { if (!this.store.selectedBranch().editingMessageId) this.requestBranchEditFocus(); }); } }
+  handleBranchEditKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) { event.preventDefault(); void this.store.editAndBranch(this.branchAttachments()).then(() => { if (!this.store.selectedBranch().editingMessageId) { this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId())); this.branchAttachments.set([]); this.requestBranchEditFocus(); } }); } }
   canNavigateBranch(direction: -1 | 1): boolean {
     const branch = this.store.selectedBranch();
     if (branch.loading || branch.summaries.length < 2) return false;
@@ -239,6 +333,89 @@ export class ConversationPanelComponent implements AfterViewChecked {
     return this.store.authState() === 'authenticated' && !this.store.loading() && modelHydrated && agentHydrated;
   }
   handleKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.submit(event); } }
+  toggleAttachmentPicker(event?: Event, view: 'upload' | 'documents' | 'images' = 'upload'): void { this.syncComposerDraft(); if (event?.currentTarget instanceof HTMLButtonElement) this.attachmentPickerOpener = event.currentTarget; if (this.attachmentPickerOpen() && this.attachmentPickerView() === view) this.closeAttachmentPicker(); else { this.attachmentPickerView.set(view); this.attachmentPickerOpen.set(true); } }
+  readonly attachmentTabViews: ReadonlyArray<'upload' | 'documents' | 'images'> = ['upload', 'documents', 'images'];
+  attachmentTabKeydown(event: KeyboardEvent, current: 'upload' | 'documents' | 'images'): void {
+    const index = this.attachmentTabViews.indexOf(current);
+    const next = event.key === 'ArrowRight' ? (index + 1) % this.attachmentTabViews.length : event.key === 'ArrowLeft' ? (index + this.attachmentTabViews.length - 1) % this.attachmentTabViews.length : event.key === 'Home' ? 0 : event.key === 'End' ? this.attachmentTabViews.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    const view = this.attachmentTabViews[next];
+    this.attachmentPickerView.set(view);
+    queueMicrotask(() => document.getElementById(`attachment-tab-${view}`)?.focus());
+  }
+  closeAttachmentPicker(returnFocus = true): void { this.attachmentPickerOpen.set(false); if (returnFocus) queueMicrotask(() => this.attachmentPickerOpener?.focus()); }
+  selectAttachment(item: AttachmentSelection): void { this.attachmentStore.toggle(item); if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); }
+  removeAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); }
+  removeBranchAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); this.branchAttachments.set(this.attachmentStore.selected()); }
+  async onAttachmentFiles(event: Event): Promise<void> { const input = event.target as HTMLInputElement; for (const file of Array.from(input.files ?? [])) { if (mediaTypeForFile(file) === 'application/pdf' || mediaTypeForFile(file)?.includes('wordprocessingml')) { const accepted = await this.documentsStore.upload(file); const upload = this.documentsStore.uploads().find((item) => item.filename === file.name && item.documentId); if (accepted && upload?.documentId) this.selectAttachment({ kind: 'document', documentId: upload.documentId }); } else { const accepted = await this.attachmentStore.upload(file); if (accepted) { if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); } } } input.value = ''; }
+  documentReady(document: { readonly status: string }): boolean { return document.status === 'ready'; }
+  documentSelected(id: string): boolean { return this.attachmentStore.isSelected({ kind: 'document', documentId: id }); }
+  imageSelected(id: string): boolean { return this.attachmentStore.isSelected({ kind: 'image', attachmentId: id }); }
+  selectedImageCount(): number { return this.attachmentStore.selected().filter((item) => item.kind === 'image').length; }
+  hasSelectedImages(): boolean { return this.selectedImageCount() > 0; }
+  submissionBlocked(): boolean {
+    const activeDocumentUpload = this.documentsStore.uploads().some((item) => ['validating', 'creating', 'uploading'].includes(item.state));
+    return activeDocumentUpload || this.uploadInProgress() || (this.hasSelectedImages() && (!this.modelSupportsVision() || this.store.modelVisionRequiredFor()));
+  }
+  uploadInProgress(): boolean {
+    const selectedDocuments = this.attachmentStore.selected().filter((item): item is Extract<AttachmentSelection, { readonly kind: 'document' }> => item.kind === 'document');
+    const selectedDocumentPending = selectedDocuments.some((selection) => {
+      const upload = this.documentsStore.uploads().find((item) => item.documentId === selection.documentId);
+      // A direct upload row is reconciled from the same detail responses as
+      // the document library. Prefer its terminal state for that upload so a
+      // stale library summary cannot keep a ready attachment blocked.
+      if (upload?.state === 'ready' || upload?.state === 'duplicate') return false;
+      if (upload) return true;
+      return selectedDocumentIsPending(selection.documentId, this.documentsStore.documents().items);
+    });
+    return this.attachmentStore.uploads().some((item) => item.state === 'uploading' || item.state === 'processing') || selectedDocumentPending;
+  }
+  attachmentDisplayName(item: AttachmentSelection): string { return item.kind === 'image' ? this.attachmentStore.images().find((image) => image.attachmentId === item.attachmentId)?.displayFilename ?? 'Image' : this.documentsStore.documents().items.find((document) => document.id === item.documentId)?.filename ?? 'Document'; }
+  attachmentLabel(item: AttachmentSummary): string { return item.availability === 'unavailable' ? `${item.displayFilename} is unavailable` : item.displayFilename; }
+  verifiedVisionModels(): ReadonlyArray<{ readonly id: string; readonly displayName: string }> { const rejected = this.store.modelVisionRequiredFor() ? this.store.selectedModelId() : null; return this.store.models().filter((model) => model.selectable && model.capabilities.includes('vision') && model.id !== rejected).map((model) => ({ id: model.id, displayName: model.displayName })); }
+  modelSupportsVision(): boolean { const model = this.store.models().find((item) => item.id === this.store.selectedModelId()); return Boolean(model?.selectable && model.capabilities.includes('vision')); }
+  modelVisionRequiredFor(): boolean { return this.store.modelVisionRequiredFor(); }
+  visionGuidance(): string { const verified = this.verifiedVisionModels(); const recommendation = verified.find((model) => model.id === this.visionRecommendation); const alternative = verified.find((model) => model.id === this.visionAlternative); const choices = [recommendation?.displayName, alternative?.displayName].filter(Boolean); return choices.length ? `The selected model failed image-understanding verification. Choose ${choices.join(' or ')}, a verified vision model; Aura will not switch models automatically.` : verified.length ? 'The selected model failed image-understanding verification. Choose one of the verified vision models in Conversation options; Aura will not switch models automatically.' : 'The selected model failed image-understanding verification. Your draft and attachments are preserved while you choose a verified vision model.'; }
+  modelOptionLabel(model: { readonly id: string; readonly displayName: string; readonly selectable: boolean; readonly capabilities: ReadonlyArray<string> }): string { const suffixes: string[] = []; if (!model.selectable) suffixes.push('unavailable'); if (model.selectable && model.capabilities.includes('vision')) suffixes.push('Vision verified'); if (model.selectable && model.id === this.visionRecommendation && model.capabilities.includes('vision')) suffixes.push('Recommended'); return `${model.displayName}${suffixes.length ? ` (${suffixes.join(' · ')})` : ''}`; }
+  previewAttachment(item: AttachmentSummary, event?: Event): void { if (item.kind !== 'image' || item.availability !== 'available') return; if (event?.currentTarget instanceof HTMLElement) this.previewOpener = event.currentTarget; this.closePreview(false); this.previewError.set(null); this.previewImageDialog.set(item); const request = ++this.previewSequence; void this.attachmentStore.preview(item.sourceId).then((url) => { if (request !== this.previewSequence) { if (url) this.attachmentStore.revokePreview(url); return; } if (!url) { this.previewError.set('This image preview is temporarily unavailable.'); return; } this.previewDialogUrl.set(url); }); }
+  retryPreview(): void { const item = this.previewImageDialog(); if (item) this.previewAttachment(item); }
+  closePreview(returnFocus = true): void { this.previewSequence += 1; const url = this.previewDialogUrl(); if (url) this.attachmentStore.revokePreview(url); this.previewDialogUrl.set(null); this.previewError.set(null); this.previewImageDialog.set(null); const opener = this.previewOpener; this.previewOpener = null; if (returnFocus) queueMicrotask(() => { if (opener?.isConnected) opener.focus(); else this.attachmentPickerOpener?.focus(); }); }
+  imagePreviewUrl(id: string): string | null { return this.imagePreviewUrls()[id] ?? null; }
+  private clearImagePreviews(): void { this.thumbnailEpoch += 1; Object.values(this.imagePreviewUrls()).forEach((url) => this.attachmentStore.revokePreview(url)); this.imagePreviewUrls.set({}); }
+  private async loadImagePreview(id: string): Promise<void> { if (this.imagePreviewUrls()[id]) return; const epoch = this.thumbnailEpoch; const url = await this.attachmentStore.preview(id); if (url && epoch === this.thumbnailEpoch && this.attachmentStore.images().some((image) => image.attachmentId === id && image.availability === 'available')) this.imagePreviewUrls.update((items) => ({ ...items, [id]: url })); else if (url) this.attachmentStore.revokePreview(url); }
+  retryImageLibrary(): void { void this.attachmentStore.load(); }
+  confirmDeleteReusableImage(imageId: string, event?: Event): void { this.imageDeleteError.set(null); this.imageDeleteNotice.set(null); if (event?.currentTarget instanceof HTMLElement) this.deleteDialogOpener = event.currentTarget; this.pendingDeleteImageId.set(imageId); }
+  cancelDeleteReusableImage(): void { this.pendingDeleteImageId.set(null); this.imageDeleteError.set(null); const opener = this.deleteDialogOpener; this.deleteDialogOpener = null; queueMicrotask(() => { if (opener?.isConnected) opener.focus(); else this.attachmentPickerOpener?.focus(); }); }
+  async deleteReusableImage(imageId: string): Promise<void> {
+    if (this.deletingImageId()) return;
+    const image = this.attachmentStore.images().find((item) => item.attachmentId === imageId);
+    if (!image) return;
+    this.deletingImageId.set(imageId); this.imageDeleteError.set(null); this.imageDeleteNotice.set(null);
+    const deleted = await this.attachmentStore.deleteImage(image);
+    if (deleted !== 'failed') {
+      const thumbnail = this.imagePreviewUrls()[imageId];
+      if (thumbnail) this.attachmentStore.revokePreview(thumbnail);
+      this.imagePreviewUrls.update((items) => { const next = { ...items }; delete next[imageId]; return next; });
+      // A reusable image can be deleted while it is selected in the active
+      // draft. Remove it from both the picker selection and the owning draft
+      // only after terminal deletion succeeds; failed/deferred deletion must
+      // preserve the chip for retry.
+      this.removeAttachment({ kind: 'image', attachmentId: imageId });
+      this.pendingDeleteImageId.set(null); this.imageDeleteNotice.set(deleted === 'accepted' ? `${image.displayFilename} deletion is in progress.` : `${image.displayFilename} was deleted.`); const opener = this.deleteDialogOpener; this.deleteDialogOpener = null; queueMicrotask(() => { if (opener?.isConnected) opener.focus(); else this.attachmentPickerOpener?.focus(); });
+    } else this.imageDeleteError.set(`Could not delete ${image.displayFilename}. Try again.`);
+    this.deletingImageId.set(null);
+  }
+  async removeDocumentUpload(upload: { readonly key: string; readonly documentId: string | null }): Promise<void> {
+    if (upload.documentId) {
+      const document = this.documentsStore.documents().items.find((item) => item.id === upload.documentId);
+      const removed = await this.documentsStore.remove(upload.documentId, document?.version ?? 1);
+      if (!removed) return;
+      this.removeAttachment({ kind: 'document', documentId: upload.documentId });
+    }
+    this.documentsStore.removeUpload(upload.key);
+  }
+  ngOnDestroy(): void { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); }
   chooseAgent(revisionId: string): void {
     if (this.controlsDisabled()) return;
     const revision = this.agentOptions().find((item) => item.revisionId === revisionId && item.status === 'active');
@@ -255,7 +432,7 @@ export class ConversationPanelComponent implements AfterViewChecked {
     }
     this.applyDraftConfigurationIfNeeded();
   }
-  chooseModel(modelId: string): void { if (!this.controlsDisabled()) void this.store.selectModel(modelId); }
+  chooseModel(modelId: string): void { if (!this.controlsDisabled()) { this.syncComposerDraft(); void this.store.selectModel(modelId); } }
   applyConfiguration(): void {
     if (this.controlsDisabled()) return;
     this.store.stageConfiguration(this.stagedAgent(), this.stagedPersona(), this.stagedUseAgentDefaultPersona());
@@ -304,6 +481,7 @@ export class ConversationPanelComponent implements AfterViewChecked {
 
   toggleOptions(event?: Event, origin?: CdkOverlayOrigin, focus: 'agent' | 'persona' | 'model' = 'agent'): void {
     event?.stopPropagation();
+    this.syncComposerDraft();
     if (this.controlsDisabled()) return;
     if (this.optionsOpen() && this.opener === (event?.currentTarget as HTMLButtonElement | null)) this.closeOptions();
     else {
@@ -408,7 +586,7 @@ export class ConversationPanelComponent implements AfterViewChecked {
   cancelConfiguration(): void { this.store.cancelPendingConfiguration(); }
   async confirmConfiguration(): Promise<void> { await this.store.confirmConfigurationChange(); }
 
-  @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.memoryPopupTurnId()) this.closeMemoryPopup(); else if (this.runInspectorOpen()) this.closeRunInspector(); else if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
+   @HostListener('document:keydown.escape') onDocumentEscape(): void { if (this.previewImageDialog()) this.closePreview(); else if (this.memoryPopupTurnId()) this.closeMemoryPopup(); else if (this.runInspectorOpen()) this.closeRunInspector(); else if (this.optionsOpen()) this.closeOptions(); else if (this.store.pendingConfiguration()) this.cancelConfiguration(); }
 
   private applyDraftConfigurationIfNeeded(): void { if (this.store.selected().id.startsWith('draft-')) this.store.stageConfiguration(this.stagedAgent(), this.stagedPersona(), this.stagedUseAgentDefaultPersona()); }
   private focusRequestedControl(): void {
@@ -425,6 +603,16 @@ export class ConversationPanelComponent implements AfterViewChecked {
     const persona = this.store.selectedPersona();
     if (!persona) return 'Persona uses the selected agent default';
     return `Persona ${persona.displayName} revision ${persona.revision}${persona.status === 'disabled' ? ', disabled' : ''}${this.hasNewerPersonaRevision() ? ', newer revision available' : ''}`;
+  }
+
+  private syncComposerDraft(): void {
+    const value = this.composer?.nativeElement.value;
+    if (value !== undefined && value !== this.store.draft()) this.store.updateDraft(value);
+  }
+
+  private handoffLiveComposerDraft(): void {
+    const value = this.composer?.nativeElement.value;
+    if (value !== undefined && value.trim() && !this.store.draft().trim()) this.store.updateDraft(value);
   }
 
   modelMetadataLabel(): string { return `Model ${this.store.selectedModelId() || 'not selected'}`; }

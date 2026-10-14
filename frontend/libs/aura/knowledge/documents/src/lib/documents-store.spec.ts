@@ -28,6 +28,26 @@ describe('DocumentsStoreState async ownership guards', () => {
     expect(state.uploads()[0]?.state).toBe('canceled');
   });
 
+  it('reconciles an accepted upload through processing and failure, then retries with the current version', async () => {
+    const processing = { ...detail('doc-1', 'processing'), version: 2 };
+    const failed = { ...detail('doc-1', 'failed'), version: 3, failure: { code: 'parse_failed', retryable: true } };
+    const ready = { ...detail('doc-1', 'ready'), version: 4 };
+    const get = vi.fn().mockResolvedValueOnce(processing).mockResolvedValueOnce(failed);
+    const retry = vi.fn().mockResolvedValue(ready);
+    const state = new DocumentsStoreState(fakeApi({ get, retry }));
+    expect(await state.upload(new File(['hello'], 'notes.txt', { type: 'text/plain' }), 'upload-operation')).toBe(true);
+    expect(state.uploads()[0]?.state).toBe('queued');
+    await (state as unknown as { poll(id: string): Promise<void> }).poll('doc-1');
+    expect(state.uploads()[0]?.state).toBe('processing');
+    await (state as unknown as { poll(id: string): Promise<void> }).poll('doc-1');
+    expect(state.uploads()[0]).toMatchObject({ state: 'failed', documentId: 'doc-1', documentVersion: 3, retryable: true });
+    state.retryUpload('upload-operation');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(retry).toHaveBeenCalledWith('doc-1', { expectedVersion: 3 }, expect.any(String));
+    expect(state.uploads()[0]).toMatchObject({ state: 'ready', documentVersion: 4, retryable: false });
+  });
+
   it.each([401, 403] as const)('resets private state and flags auth when preview loses the session (%s)', async (status) => {
     const api = fakeApi({ get: vi.fn().mockResolvedValue(detail('doc-1', 'ready')), preview: vi.fn().mockRejectedValue({ ...authFailure, status }) });
     const state = new DocumentsStoreState(api);

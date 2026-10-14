@@ -1,0 +1,32 @@
+component:
+  id: aura.artifacts.attachment_deletion
+  version: 1.0.0
+  owner: artifacts.attachments
+  category: persistence
+input:
+  schema: image-attachment-delete-v1
+  replayable: true
+output:
+  schema: image-attachment-tombstone-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - object_storage
+metrics: [attachment_deletion_outcome]
+metric_semantics:
+  attachment_deletion_outcome: Metadata-only deletion and tombstone outcome.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, attachment_id]
+  prohibited: [bytes, filename, exif, prompt, payload, content, endpoint, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

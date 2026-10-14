@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
@@ -23,10 +23,71 @@ if TYPE_CHECKING:
     )
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class ChatImagePart:
+    """Bounded, provider-neutral image bytes for a model request.
+
+    The image is already normalized by the attachment boundary.  This value
+    object deliberately carries no filename, EXIF, object key, or attachment
+    identifier so provider payloads cannot accidentally become a second
+    content/metadata transport.  Providers may only receive the media type
+    and normalized bytes.
+    """
+
+    media_type: str
+    data: bytes = field(repr=False)
+
+    MAX_BYTES = 16 * 1024 * 1024
+    MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+    def __init__(
+        self,
+        media_type: str,
+        data: bytes | None = None,
+        *,
+        normalized_bytes: bytes | None = None,
+    ) -> None:
+        if data is not None and normalized_bytes is not None:
+            raise ValueError("provide image data only once")
+        value = data if data is not None else normalized_bytes
+        if value is None:
+            raise ValueError("image data is required")
+        object.__setattr__(self, "media_type", media_type)
+        object.__setattr__(self, "data", value)
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.media_type not in self.MEDIA_TYPES:
+            raise ValueError("unsupported image media type")
+        if not self.data:
+            raise ValueError("image data is required")
+        if len(self.data) > self.MAX_BYTES:
+            raise ValueError("image data exceeds model input limit")
+
+    @property
+    def normalized_bytes(self) -> bytes:
+        """Name the invariant explicitly at provider call sites."""
+
+        return self.data
+
+
+# Public aliases keep the port discoverable from both execution and runtime
+# model modules while retaining one concrete value object.
+BoundedImagePart = ChatImagePart
+ImagePart = ChatImagePart
+
+
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
     role: str
     content: str
+    image_parts: tuple[ChatImagePart, ...] = ()
+
+    @property
+    def images(self) -> tuple[ChatImagePart, ...]:
+        """Compatibility alias for adapters that call the parts ``images``."""
+
+        return self.image_parts
 
 
 class RunRepository(Protocol):
@@ -80,6 +141,10 @@ class RunRepository(Protocol):
         *,
         approved: bool,
     ) -> Run: ...
+
+
+class AttachmentResolutionPort(Protocol):
+    async def resolve_attachment_availability(self, conversation: Conversation) -> Conversation: ...
 
 
 class ChatCompletionPort(Protocol):

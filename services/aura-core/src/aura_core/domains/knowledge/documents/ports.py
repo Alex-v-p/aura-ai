@@ -72,6 +72,13 @@ class DocumentSearchResult:
     identity_mismatch: bool = False
 
 
+class DocumentSearchHitPort(Protocol):
+    """Minimal identifier-bearing hit used by attached grounding."""
+
+    @property
+    def document_id(self) -> UUID: ...
+
+
 class DocumentRepository(Protocol):
     async def create_upload(
         self,
@@ -206,4 +213,26 @@ class DocumentRepository(Protocol):
         query_model_id: str | None = None,
         query_model_revision: str | None = None,
         query_model_digest: str | None = None,
+        allowed_document_ids: tuple[UUID, ...] | None = None,
     ) -> DocumentSearchResult: ...
+
+
+class DocumentReadPort(Protocol):
+    """Owner-scoped document metadata port for interaction boundaries."""
+
+    async def get(self, issuer: str, subject: str, document_id: UUID) -> Document | None: ...
+
+
+class DocumentSearchPort(Protocol):
+    """Allowlisted retrieval port for attached-document grounding."""
+
+    async def search(
+        self,
+        issuer: str,
+        subject: str,
+        query: str,
+        *,
+        limit: int,
+        allowed_document_ids: tuple[UUID, ...] | None = None,
+        context: ProviderTraceContext | None = None,
+    ) -> object: ...

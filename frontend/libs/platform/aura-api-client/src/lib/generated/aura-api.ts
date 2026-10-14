@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 68465a574b80a0d5873ed5f82bf1c90fa1c420061e88696da80d18b7d6f1d0c7
+// Contract SHA-256: d632dad9283669fb7239cac873ff374deaee4e0852a16f2a71249ac3439f2dcf
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -196,15 +196,15 @@ export type PersonaPreviewRequest = PersonaDraftPreviewRequest | PersonaRevision
 
 export type PersonaPreviewResponse = { readonly "modelId": string; readonly "content": string; };
 
-export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+export type CreateConversationRequest = { readonly "message": string; readonly "modelId": string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "clientTimeZone"?: ClientTimeZone; readonly "attachments"?: MessageAttachmentInput; };
 
 export type UpdateConversationRequest = { readonly "modelId"?: string; readonly "agentRevisionId"?: string; readonly "personaRevisionId"?: string; readonly "useAgentDefaultPersona"?: true; readonly "transcriptSharingConfirmed"?: boolean; readonly "version": number; };
 
 export type UpdateConversationMetadataRequest = { readonly "title"?: string; readonly "archived"?: boolean; readonly "version": number; };
 
-export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; readonly "attachments"?: MessageAttachmentInput; };
 
-export type CreateConversationBranchRequest = { readonly "sourceUserMessageId": string; readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+export type CreateConversationBranchRequest = { readonly "sourceUserMessageId": string; readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; readonly "attachments"?: MessageAttachmentInput; };
 
 export type RegenerateRunRequest = { readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
 
@@ -230,9 +230,9 @@ export type PersonaAssignment = { readonly "id": string; readonly "persona": Per
 
 export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; readonly "branches"?: ReadonlyArray<ConversationBranchSummary>; };
 
-export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "createdAt": string; readonly "updatedAt": string; };
+export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -360,6 +360,44 @@ export type NotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly
 
 export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 
+export type DocumentAttachmentReference = { readonly "kind": "document"; readonly "documentId": string; };
+
+export type ImageAttachmentReference = { readonly "kind": "image"; readonly "attachmentId": string; };
+
+export type AttachmentReference = DocumentAttachmentReference | ImageAttachmentReference;
+
+export type MessageAttachmentInput = ReadonlyArray<AttachmentReference>;
+
+export type AttachmentAvailability = "available" | "unavailable";
+
+export type AttachmentSummaryMediaType = DocumentMediaType | AttachmentMediaType;
+
+export type AvailableMessageAttachmentSummary = { readonly "linkId": string; readonly "kind": "document" | "image"; readonly "sourceId": string; readonly "displayFilename": string; readonly "mediaType": AttachmentSummaryMediaType; readonly "byteCount": number; readonly "availability": "available"; readonly "width"?: number; readonly "height"?: number; };
+
+export type UnavailableMessageAttachmentSummary = { readonly "linkId": string; readonly "kind": "document" | "image"; readonly "sourceId": string; readonly "displayFilename": "Attachment unavailable"; readonly "mediaType": "application/octet-stream"; readonly "byteCount": 0; readonly "availability": "unavailable"; };
+
+export type MessageAttachmentSummary = AvailableMessageAttachmentSummary | UnavailableMessageAttachmentSummary;
+
+export type AttachmentStatus = "uploading" | "processing" | "ready" | "failed" | "deleting";
+
+export type AttachmentMediaType = "image/png" | "image/jpeg" | "image/webp";
+
+export type AttachmentFailure = { readonly "code": string; readonly "retryable": boolean; };
+
+export type CreateAttachmentUploadRequest = { readonly "filename": string; readonly "mediaType": AttachmentMediaType; readonly "byteCount": number; };
+
+export type AttachmentUploadSession = { readonly "id": string; readonly "attachmentId": string; readonly "filename": string; readonly "mediaType": AttachmentMediaType; readonly "byteCount": number; readonly "status": "uploading"; readonly "version": number; readonly "createdAt": string; readonly "expiresAt": string; };
+
+export type AttachmentPage = { readonly "items": ReadonlyArray<AttachmentDetail>; readonly "nextCursor": string | null; };
+
+export type AttachmentDetail = { readonly "id": string; readonly "filename": string; readonly "mediaType": AttachmentMediaType; readonly "byteCount": number; readonly "status": AttachmentStatus; readonly "failure": AttachmentFailure | null; readonly "version": number; readonly "width": number | null; readonly "height": number | null; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type AttachmentUploadReceipt = { readonly "attachment": AttachmentDetail; };
+
+export type AttachmentTransitionRequest = { readonly "expectedVersion": number; };
+
+export type AttachmentDeletionReceipt = { readonly "attachmentId": string; readonly "status": "deleting"; readonly "version": number; readonly "acceptedAt": string; };
+
 export type DocumentStatus = "uploading" | "queued" | "processing" | "ready" | "failed" | "deleting";
 
 export type DocumentMediaType = "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
@@ -397,6 +435,8 @@ export type DocumentSearchResultPage = { readonly "items": ReadonlyArray<Documen
 export type DocumentTransitionRequest = { readonly "expectedVersion": number; };
 
 export type DocumentDeletionReceipt = { readonly "documentId": string; readonly "status": "deleting"; readonly "version": number; readonly "acceptedAt": string; };
+
+export type ModelVisionRequiredError = { readonly "type": string; readonly "title": string; readonly "status": 409; readonly "code": "model_vision_required"; readonly "detail": string; readonly "retryable": false; readonly "traceId": string; readonly "resource": string | null; };
 
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
 
@@ -486,6 +526,13 @@ export interface AuraApiOperations {
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly createAttachmentUpload: { readonly response: AttachmentUploadSession; readonly body: CreateAttachmentUploadRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly uploadAttachmentContent: { readonly response: AttachmentUploadReceipt; readonly body: AuraBinaryRequestBody; readonly path: { readonly "upload_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; readonly "X-Expected-Version": string; readonly "Content-Length": string; readonly "Content-Type": string; }; };
+  readonly listAttachments: { readonly response: AttachmentPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "status"?: AttachmentStatus; readonly "mediaType"?: AttachmentMediaType; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getAttachment: { readonly response: AttachmentDetail; readonly body: never; readonly path: { readonly "attachment_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteAttachment: { readonly response: AttachmentDeletionReceipt; readonly body: AttachmentTransitionRequest; readonly path: { readonly "attachment_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly downloadAttachment: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "attachment_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly getAttachmentPreview: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "attachment_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createDocumentUpload: { readonly response: DocumentUploadSession; readonly body: CreateDocumentUploadRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly uploadDocumentContent: { readonly response: DocumentUploadReceipt; readonly body: AuraBinaryRequestBody; readonly path: { readonly "upload_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; readonly "X-Expected-Version": string; readonly "Content-Length": string; readonly "Content-Type": string; }; };
   readonly listDocuments: { readonly response: DocumentPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "status"?: DocumentStatus; readonly "mediaType"?: DocumentMediaType; }; readonly headers: Readonly<Record<string, never>>; };
@@ -593,6 +640,13 @@ export const AURA_API_OPERATIONS = {
   getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', requestMode: 'none', responseMode: 'json' },
   acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', requestMode: 'json', responseMode: 'json' },
   streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
+  createAttachmentUpload: { method: 'POST', pathTemplate: '/api/v1/attachments/uploads', requestMode: 'json', responseMode: 'json' },
+  uploadAttachmentContent: { method: 'PUT', pathTemplate: '/api/v1/attachments/uploads/{upload_id}/content', requestMode: 'binary', responseMode: 'json' },
+  listAttachments: { method: 'GET', pathTemplate: '/api/v1/attachments', requestMode: 'none', responseMode: 'json' },
+  getAttachment: { method: 'GET', pathTemplate: '/api/v1/attachments/{attachment_id}', requestMode: 'none', responseMode: 'json' },
+  deleteAttachment: { method: 'DELETE', pathTemplate: '/api/v1/attachments/{attachment_id}', requestMode: 'json', responseMode: 'json' },
+  downloadAttachment: { method: 'GET', pathTemplate: '/api/v1/attachments/{attachment_id}/content', requestMode: 'none', responseMode: 'binary' },
+  getAttachmentPreview: { method: 'GET', pathTemplate: '/api/v1/attachments/{attachment_id}/preview', requestMode: 'none', responseMode: 'binary' },
   createDocumentUpload: { method: 'POST', pathTemplate: '/api/v1/documents/uploads', requestMode: 'json', responseMode: 'json' },
   uploadDocumentContent: { method: 'PUT', pathTemplate: '/api/v1/documents/uploads/{upload_id}/content', requestMode: 'binary', responseMode: 'json' },
   listDocuments: { method: 'GET', pathTemplate: '/api/v1/documents', requestMode: 'none', responseMode: 'json' },

@@ -586,7 +586,7 @@ async def stream_run_events(
         conversation.id,
         0,
         {
-            "run": run_payload(run),
+            "run": run_payload(run, include_attachments=True),
             "assistantMessage": message_payload(assistant) if assistant else None,
         },
     )

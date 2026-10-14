@@ -29,10 +29,10 @@ operations:
     input_schema: document-detail-request-v1
     output_schema: document-detail-v1
 dependencies: [postgresql, embedding_provider]
-metrics: [document_retrieval_duration_ms, document_retrieval_outcome, document_retrieval_candidate_count]
-evaluators: [document_retrieval_relevance, document_owner_isolation, document_preview_boundedness, document_recall, document_chunk_recall, document_retrieval_ranking, document_irrelevant_context_rate, document_prompt_injection_resistance]
+metrics: [document_retrieval_duration_ms, document_retrieval_outcome, document_retrieval_candidate_count, attached_document_retrieval_outcome]
+evaluators: [document_retrieval_relevance, document_owner_isolation, document_preview_boundedness, document_recall, document_chunk_recall, document_retrieval_ranking, document_irrelevant_context_rate, document_prompt_injection_resistance, attached_document_grounding_and_citation]
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency, degradation]
   trace_only: [trace_id, span_id, document_id, evidence_id]
-  prohibited: [content, excerpt, filename, owner, credential, vector]
+  prohibited: [bytes, content, excerpt, filename, prompt, payload, owner, credential, vector]

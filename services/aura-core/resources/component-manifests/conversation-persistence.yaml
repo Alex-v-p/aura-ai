@@ -17,6 +17,7 @@ dependencies:
   - conversation_store
 evaluators:
   - conversation_branch_context_isolation
+  - conversation_attachment_branch_isolation
   - conversation_regeneration_evidence_freshness
 metrics:
   - checkpoint_persisted
@@ -30,6 +31,7 @@ metrics:
   - conversation_branch_creation_outcome
   - conversation_branch_load_outcome
   - conversation_regeneration_outcome
+  - conversation_attachment_admission_outcome
   - errors
 metric_semantics:
   checkpoint_persisted: Partial assistant output committed before a stream event is published.
@@ -47,7 +49,7 @@ capture_policy: metadata_only
 cardinality:
   metric_attributes: [provider, error_class, dependency, outcome, archive_state]
   trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id, model_id, agent_revision_id, model_policy_revision_id, title_input_size, title_output_size, result_count]
-  prohibited: [prompt, response, payload, endpoint, token, credential]
+  prohibited: [bytes, filename, prompt, response, payload, content, endpoint, token, credential]
 retention:
   process_buffer: bounded
   overflow: drop_oldest_and_count

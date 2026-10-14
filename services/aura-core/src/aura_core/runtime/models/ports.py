@@ -7,7 +7,37 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from aura_core.domains.execution.runs.ports import ChatMessage
+from aura_core.domains.execution.runs.ports import (
+    BoundedImagePart,
+    ChatImagePart,
+    ChatMessage,
+    ImagePart,
+)
+
+__all__ = [
+    "BoundedImagePart",
+    "ChatImagePart",
+    "ChatMessage",
+    "ImagePart",
+    "ModelDescriptor",
+    "ChatModelPort",
+    "ModelTextDelta",
+    "ModelThinkingDelta",
+    "ModelToolCall",
+    "ModelStreamCompleted",
+    "ModelToolStreamEvent",
+    "ModelStreamEvent",
+    "ToolCallingModelPort",
+    "ThinkingModelPort",
+    "ThinkingDeltaPublisher",
+    "ProviderTraceContext",
+    "ModelSelectionPort",
+    "ProviderTelemetryPort",
+    "StructuredInferenceRequest",
+    "StructuredInferencePort",
+    "EmbeddingResult",
+    "EmbeddingPort",
+]
 
 # Provider payloads are normalized at the adapter boundary.
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false

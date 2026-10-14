@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aura_core.domains.execution.runs.dto import Run, RunClaimLost, RunError, RunStatus
 from aura_core.domains.execution.runs.events import RunEvent, validate_tool_status
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
-from aura_core.domains.interaction.conversations.dto import DocumentCitation, now
+from aura_core.domains.interaction.conversations.dto import AttachmentSummary, DocumentCitation, now
 
 
 class SqlRunRepository:
@@ -64,6 +64,22 @@ class SqlRunRepository:
             document_search_used=row.document_search_used,
             branch_id=row.branch_id,
             regenerated_from_run_id=row.regenerated_from_run_id,
+            attachments=tuple(
+                AttachmentSummary(
+                    UUID(str(item["linkId"])),
+                    str(item["kind"]),
+                    UUID(str(item["sourceId"])),
+                    str(item["displayFilename"]),
+                    str(item["mediaType"]),
+                    int(cast(Any, item["byteCount"])),
+                    str(item.get("availability", "unavailable")),
+                    int(cast(Any, item["width"])) if item.get("width") is not None else None,
+                    int(cast(Any, item["height"])) if item.get("height") is not None else None,
+                )
+                for item in (row.attachments or [])
+                if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
+                <= set(item)
+            ),
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -187,6 +203,20 @@ class SqlRunRepository:
                 finished_at=run.finished_at,
                 branch_id=run.branch_id,
                 regenerated_from_run_id=run.regenerated_from_run_id,
+                attachments=[
+                    {
+                        "linkId": str(item.link_id),
+                        "kind": item.kind,
+                        "sourceId": str(item.source_id),
+                        "displayFilename": item.display_filename,
+                        "mediaType": item.media_type,
+                        "byteCount": item.byte_count,
+                        "availability": item.availability,
+                        "width": item.width,
+                        "height": item.height,
+                    }
+                    for item in run.attachments
+                ],
             )
         )
 
@@ -222,6 +252,20 @@ class SqlRunRepository:
             for item in run.citations
         ]
         row.document_search_used = run.document_search_used
+        row.attachments = [
+            {
+                "linkId": str(item.link_id),
+                "kind": item.kind,
+                "sourceId": str(item.source_id),
+                "displayFilename": item.display_filename,
+                "mediaType": item.media_type,
+                "byteCount": item.byte_count,
+                "availability": item.availability,
+                "width": item.width,
+                "height": item.height,
+            }
+            for item in run.attachments
+        ]
 
     async def increment_tool_calls(
         self, session: AsyncSession, run_id: UUID, attempt_id: UUID

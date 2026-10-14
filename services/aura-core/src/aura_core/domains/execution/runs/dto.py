@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
     from aura_core.domains.interaction.conversations.dto import (
+        AttachmentSummary,
         Conversation,
         DocumentCitation,
         Message,
@@ -88,6 +89,8 @@ class Run:
     # Optional lineage fields preserve compatibility with pre-branch runs.
     branch_id: UUID | None = None
     regenerated_from_run_id: UUID | None = None
+    # Immutable resource summaries admitted with the source user message.
+    attachments: tuple[AttachmentSummary, ...] = ()
 
 
 class RunClaim(NamedTuple):

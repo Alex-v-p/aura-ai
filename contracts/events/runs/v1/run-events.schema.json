@@ -31,6 +31,50 @@
         "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
       }
     },
+    "AttachmentAvailability": { "type": "string", "enum": ["available", "unavailable"] },
+    "AttachmentSummaryMediaType": {
+      "type": "string",
+      "enum": ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/markdown", "text/plain", "image/png", "image/jpeg", "image/webp"]
+    },
+    "AvailableMessageAttachmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Owner-authorized presentation data for an available source, included only in direct no-store run snapshots. It is excluded from lifecycle events, audit, logs, traces, metrics, evaluation capture, and provider diagnostics.",
+      "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+      "properties": {
+        "linkId": { "$ref": "#/$defs/Uuid" },
+        "kind": { "type": "string", "enum": ["document", "image"] },
+        "sourceId": { "$ref": "#/$defs/Uuid" },
+        "displayFilename": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "mediaType": { "$ref": "#/$defs/AttachmentSummaryMediaType" },
+        "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+        "availability": { "type": "string", "const": "available" },
+        "width": { "type": "integer", "minimum": 1, "maximum": 40000000 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 40000000 }
+      }
+    },
+    "UnavailableMessageAttachmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-free historical tombstone. The original filename, media type, byte count, dimensions, content, and preview are unavailable.",
+      "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+      "properties": {
+        "linkId": { "$ref": "#/$defs/Uuid" },
+        "kind": { "type": "string", "enum": ["document", "image"] },
+        "sourceId": { "$ref": "#/$defs/Uuid" },
+        "displayFilename": { "type": "string", "const": "Attachment unavailable" },
+        "mediaType": { "type": "string", "const": "application/octet-stream" },
+        "byteCount": { "type": "integer", "const": 0 },
+        "availability": { "type": "string", "const": "unavailable" }
+      }
+    },
+    "MessageAttachmentSummary": {
+      "oneOf": [
+        { "$ref": "#/$defs/AvailableMessageAttachmentSummary" },
+        { "$ref": "#/$defs/UnavailableMessageAttachmentSummary" }
+      ],
+      "description": "Owner-authorized presentation data included only in direct no-store run snapshots. Deleted sources are represented only by content-free unavailable tombstones."
+    },
     "BaseProperties": {
       "type": "object",
       "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"],
@@ -64,6 +108,7 @@
         "pendingToolCallId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
         "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/$defs/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
         "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run." },
+        "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional snapshot of the admitted source user message's immutable attachment links. Historical producers may omit it." },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
@@ -89,6 +134,7 @@
         "branchId": { "$ref": "#/$defs/Uuid", "description": "Opaque branch on which this immutable message was created. Optional for compatibility with pre-1.17 producers." },
         "parentMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Previous message in this immutable ancestor path. Optional for compatibility with pre-1.17 producers." },
         "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property." },
+        "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional immutable attachment-link summaries for a user message. Historical and assistant messages may omit this property." },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "updatedAt": { "$ref": "#/$defs/Timestamp" }
       }

@@ -1,0 +1,121 @@
+agent: frontend_worker
+work_item: AURA-0076
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0076_frontend
+  worktree: dev
+scope:
+  ownership_zone: aura-web.interaction.conversations, aura-web.knowledge.documents, aura-web.e2e
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/interaction/conversations/src/index.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-api.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-attachments.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-attachments.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-attachment-readiness.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/knowledge/documents/src/lib/documents-models.ts
+  - frontend/libs/aura/knowledge/documents/src/lib/documents-pages.component.html
+  - frontend/libs/aura/knowledge/documents/src/lib/documents-store-state.ts
+  - frontend/libs/aura/knowledge/documents/src/lib/documents-store.spec.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - work-items/handoffs/AURA-0076-frontend.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - pnpm --dir frontend exec vitest run --config vitest.workspace.ts libs/aura/interaction/conversations (9 files, 150 tests)
+    - Focused conversation regression run after bootstrap/upload fixes: conversation-store and panel specs (2 files, 109 tests), all passing; targeted ESLint passed with pre-existing warnings only
+    - pnpm --dir frontend exec vitest run --config vitest.workspace.ts (25 files, 243 tests)
+    - pnpm --dir frontend exec vitest run --config vitest.workspace.ts libs/aura/knowledge/documents (2 files, 21 tests)
+    - pnpm --dir frontend exec eslint libs/aura/interaction/conversations (no errors; existing warnings only)
+    - NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx build aura-web --configuration=production
+    - NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx run storybook:build-storybook
+    - NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx run storybook:storybook --host 127.0.0.1 --port 6300 (HTTP 200; corrected attachment union stories compiled)
+    - NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx run storybook:storybook --host 127.0.0.1 --port 6300 (HTTP 200)
+    - pnpm --dir frontend exec eslint apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/full-stack.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts apps/storybook/src/conversation-panel.stories.ts
+    - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts --list --grep 'attachment|vision|document' --project=desktop (6 tests discovered, including direct-document readiness/retry and model-vision recovery)
+    - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/full-stack.spec.ts --list --grep 'attachments' --project=desktop (1 test discovered)
+    - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts --list --grep 'attachment' --project=desktop (12 tests discovered)
+    - git diff --check
+    - generated attachment operations consumed from aura-api-client: listAttachments, createAttachmentUpload, uploadAttachmentContent, getAttachmentPreview, deleteAttachment
+    - Re-verified with image-library deletion retry behavior, scoped model_vision_required state, readiness reconciliation, picker tab semantics, and explicit sibling image controls
+    - Focused Playwright smoke on fresh ports: conversation shell bootstrap and desktop picker keyboard/focus scenarios passed with NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false and one worker
+    - Added server-current deletion version refresh and delayed upload/delete/preview reset guards with abort-signal propagation tests
+    - Added one shared submissionBlocked predicate for button and Enter/submit paths, covering model vision conflicts, direct upload rows, and selected document readiness
+    - Reconciled document upload rows through queued, processing, ready, and failed states; processing retries use the current document version and retain Remove for failures
+    - Corrected direct-document Playwright selectors to target the document-only input and changed the 409 fixture's non-admission handler to fall through the existing API fake; the Storybook build was re-run after the generated attachment-union fixture correction
+    - Focused conversation attachment/store regression run after final selection/deletion changes: 3 files, 119 tests, all passing
+    - Final targeted ESLint run covering attachment store, panel, specs, and Aura attachment E2E passed with no errors
+    - Final Aura Web production build after attachment selection/deletion changes passed
+    - Final reusable-image deletion correction: panel/store focused run (2 files, 24 tests) and targeted ESLint passed; successful deletion now removes the selected image from the active draft and branch selection
+    - Deletion outcome refinement: accepted asynchronous deletion preserves an unavailable `deleting` library row while synchronizing the draft selection away; focused panel/attachment tests remain 24 passing
+    - Reviewer correction suite: conversation store, attachment store, and panel specs pass 122 tests, including delayed acceptance across conversation switches, principal replacement with zero conversations, logout clearing, bootstrap isolation, and accepted deletion with refresh failure
+    - Reviewer correction lint and production verification passed; Playwright listing confirms the six affected desktop/tablet/mobile image and composer-readiness scenarios are discoverable
+  failed: []
+  not_run:
+    - A final single-flow image deletion and composer-readiness browser retry was attempted with `NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts --grep='image upload auto-selects|supports Enter and Shift' --workers=1 --timeout=60000`; Playwright again could not start the configured webServer and exited with `Process from config.webServer was not able to start. Exit code: 1` before executing tests. The parent-provided unrestricted run had reached 271 passed, 367 skipped, and 1 failed before these corrections; the sole failure was the accepted asynchronous image-deletion chip case.
+    - Storybook browser/axe runtime was not rerun after the tombstone/model-vision fixture correction because the paired Playwright webServer could not start `aura-web:serve:development`; the Storybook production build passed. The exact standalone command was `NX_NO_CLOUD=true NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx serve aura-web --configuration=development --host=127.0.0.1 --port=4392 --verbose`, which exited with `aura-web:serve:development` failed after 522ms without a renderer or page console error
+    - full-stack attachment acceptance runtime: not executed after the dev-server diagnosis; the fixture test was discovered successfully
+    - repository-wide architecture, Core, and contract checks (integration-owned)
+    - paired Nx builder trial (`@nx/angular:application` plus `@nx/angular:dev-server`): production build passed and standalone serve printed `Local at http://127.0.0.1:4300/` with `curl` HTTP 200, but the focused Playwright harness exited when its Storybook webServer failed webpack compilation; a bounded headless probe against the standalone server hung after browser launch/navigation and emitted no console or pageerror events before termination, so the build executor was reverted
+decisions:
+  - Retained the existing Aura Web Angular dev-server/build executors after a reversible Nx executor trial did not provide a verified rendered shell; the production build remains green and focused Playwright now verifies the shell and picker on fresh ports.
+  - Added an owner-scoped attachment store with bounded client-side image validation, signature checks, pixel guard, upload progress, retry/removal, selected-set limits, and in-memory object URL cleanup.
+  - Kept transport types in the generated client and used its finalized attachment operations; the conversation feature only owns presentation state and bounded selection view models.
+  - Added accessible Upload, Documents, and Images picker views, ready-document selection, image reuse, chips, immutable transcript cards, authorized preview, unavailable tombstone presentation, responsive styling, and capability guidance.
+  - Attachment selection remains in session memory until Core acceptance. The typed model_vision_required rejection keeps the draft and selected attachment set intact and presents safe recovery guidance without changing the selected model.
+  - Edit-and-branch preloads and owns a separate editable attachment set, so removing a branch attachment cannot mutate the original transcript or the regular composer draft; regeneration continues through the server-owned immutable source set.
+  - Direct PDF/DOCX uploads reuse DocumentsStore's 100 MB lifecycle and readiness state; Send remains gated while either image or document uploads/processes, and pre-send removal deletes accepted document/image objects before removing the chip.
+  - The picker is a focus-trapped dialog with Escape and return-focus behavior, live limit errors, selected-state semantics, authorized thumbnail previews, governed image deletion, and controlled preview URL revocation.
+  - Picker state hydrates per conversation and branch-edit state is independently preselected and editable; direct document and image uploads can be removed before send through their owning lifecycle APIs.
+  - Vision guidance is derived from selectable models advertising the freshly returned vision capability; recommendation names are shown only when those verified model IDs are present.
+  - Document gating reconciles selected attachment IDs against DocumentsStore readiness, while successful image uploads synchronize the active conversation draft immediately.
+  - Reusable-image deletion requires confirmation, preserves rows for deleting/failed/storage responses, uses the server attachment version, and revokes its thumbnail only after terminal removal; preview focus returns to its actual opener and stale preview requests revoke late object URLs.
+  - Model vision conflicts are keyed by conversation and selected model; changing model clears stale guidance, and the picker exposes native sibling controls with tablist/tabpanel semantics and filename-specific labels.
+  - Model-vision guidance excludes the currently rejected model and only clears after switching to a different selectable model advertising freshly verified vision capability; the mocked 409 flow now retries through Qwen and Gemma.
+  - Document readiness derives from the selected document's reconciled status, so stale queued upload rows do not permanently block a ready document while processing and failed/missing documents remain blocked; this has a focused readiness unit test.
+  - Direct document upload rows reconcile against document polling, preserve document id/version and retryability, and offer safe processing retry or Remove after post-upload failures.
+  - Attachment list, upload, preview, and thumbnail work is invalidated by reset epochs and abort controllers; principal changes close previews, revoke URLs, and prevent delayed responses from repopulating owner-private state.
+  - Document upload status and retry/remove actions remain visible beneath the composer after the picker closes, and picker hydration no longer tears down a user-opened picker during the draft-to-conversation bootstrap transition.
+  - Bootstrap migration carries text and selected attachments from the ephemeral draft id onto the first loaded conversation, preserving a user’s early composer input and allowing the Send gate to reconcile once documents become ready.
+  - Successful direct image uploads explicitly publish their auto-selected set to the active conversation draft, including non-branch composer flows; this keeps the chip and admission payload synchronized after asynchronous upload completion.
+  - A confirmed terminal image deletion also removes its completed upload-history row; failed, storage-unavailable, or deferred deletion rows remain visible with their retry controls.
+  - Reusable-image deletion synchronizes the successful terminal result into both the picker selection and owning conversation draft, so no stale selected chip remains after the library row is removed.
+  - Image deletion distinguishes `removed`, accepted asynchronous `deleting`, and `failed`; accepted deletion clears unsent selection immediately but retains an unavailable library status row, while failed deletion keeps the selection and retry controls.
+  - Attachment acceptance publishes the accepted conversation identity alongside its revision; the panel clears its picker only when that identity is still selected, and store cleanup is addressed by conversation ID rather than the current selection.
+  - Owner identity changes and logout clear conversations, drafts, attachment IDs, model-vision admission state, run state, subscriptions, and selection before the next owner hydrates; same-principal CSRF rotation does not discard drafts.
+  - Bootstrap draft migration runs only when the draft is replacing the active selection; an independently retained draft cannot leak text or attachment IDs into the first persisted conversation.
+  - An accepted deletion receipt is authoritative even when best-effort library refresh fails; epoch/abort guards still prevent a late refresh failure from repopulating reset state.
+  - Attachment browser flows wait for the composer readiness marker before filling or opening controls, keeping bootstrap timing out of the feature assertions; the draft handoff remains covered by deterministic store/component tests.
+  - Live composer text is handed off from the textarea before a bootstrap selected-conversation transition can apply a new `[value]` binding; configuration open/model selection and submit also synchronize the live control value into the owning draft map.
+  - Selected direct-document readiness consults the reconciled upload row's terminal state, while nonterminal and failed rows remain blocking even if a stale library summary reports ready.
+  - Initial conversation loading retains an actively edited draft (text or attachments) as the selected conversation instead of replacing it with the first persisted conversation; this makes bootstrap preservation deterministic rather than timing-dependent.
+  - Storage deletion failures preserve image library rows and their delete/retry controls when owner-scoped items remain; global storage fallback is rendered only for an empty library. Vision guidance explicitly identifies failed verification and names verified alternatives.
+  - Bootstrap owner reset is transition-only: initial auth loading does not reset attachment signals, while logout and issuer+subject changes still clear private state; selection hydration reads the attachment map untracked and compares opaque keys before publishing.
+  - Deletion confirmation is a trapped alertdialog with filename-specific actions and focus restoration; failed/storage/deleting rows remain visible and retry with their current server version and fresh idempotency key.
+  - Full-stack attachment acceptance asserts a non-empty image-grounded assistant response and non-empty citations, waits for branch completion, regenerates with the refreshed version, waits for regeneration completion, and only then deletes with a freshly read attachment version.
+  - Direct document readiness and model_vision_required Playwright fixtures use DOMContentLoaded navigation to avoid the local dev server's unresolved load-event resources while still exercising the rendered shell when available.
+  - Added a direct-document browser fixture that asserts the upload row reconciles to failed processing, exposes Retry processing, preserves the selected chip and Send gating, then returns to ready after retry.
+  - Added Storybook attachment states for uploading, processing, failed, ready, unavailable tombstone, and model-vision guidance; the browser accessibility matrix runs each in light and dark themes and verifies preview focus restoration.
+  - Updated Storybook attachment fixtures for the generated discriminated union: available summaries retain media, byte count, and image dimensions, while unavailable summaries are content-free with the literal unavailable display label, octet-stream media type, and zero byte count; the tombstone accessibility assertion covers that presentation.
+  - Added responsive Playwright fixtures for picker keyboard/focus behavior, image auto-selection and deletion recovery, 409 draft preservation/model recovery, and full-stack PDF/DOCX/PNG/JPEG/WebP upload, grounding, vision admission, branching, regeneration, and tombstone deletion.
+risks:
+  - The browser cannot guarantee full decompression-bomb detection before upload; Core remains authoritative for bounded decode, animation, and megapixel rejection.
+  - Full responsive attachment matrix, Storybook browser/axe runtime, and full-stack acceptance remain for integration execution; focused desktop shell and picker coverage is now passing locally.
+unresolved: []

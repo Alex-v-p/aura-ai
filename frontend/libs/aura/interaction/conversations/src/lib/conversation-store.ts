@@ -2,6 +2,7 @@ import { Inject, Injectable, InjectionToken, Optional, computed, signal } from '
 import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationBranchDetail, type ConversationBranchPage, type ConversationBranchRunAccepted, type ConversationBranchSummary, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
+import type { AttachmentSelection, AttachmentSummary } from './conversation-attachments';
 
 // Memory processing can legitimately wait behind a provider run. Keep the
 // background reconciliation horizon aligned with the configured 300-second
@@ -38,7 +39,7 @@ export function normalizeDocumentCitations(value: unknown): ReadonlyArray<Docume
   return result;
 }
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; }
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly attachments?: ReadonlyArray<AttachmentSummary>; }
 export interface ConversationBranchState {
   readonly summaries: ReadonlyArray<ConversationBranchSummary>;
   readonly activeId: string | null;
@@ -58,6 +59,7 @@ interface BranchIntent {
   readonly sourceBranchId?: string;
   readonly text?: string;
   readonly runId?: string;
+  readonly attachments?: ReadonlyArray<AttachmentSelection>;
 }
 export type BranchRetryAction = { readonly kind: 'list' } | { readonly kind: 'edit'; readonly messageId: string } | { readonly kind: 'regenerate'; readonly messageId: string } | { readonly kind: 'select'; readonly branchId: string };
 export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: MemoryDetail } | { readonly kind: 'candidate'; readonly detail: MemoryCandidateDetail };
@@ -146,6 +148,7 @@ export class ConversationStore {
   readonly hasMoreConversations = computed(() => this.libraryNextCursor() !== null);
   readonly selectedId = signal(emptyDraft.id);
   readonly drafts = signal<Readonly<Record<string, string>>>({ [emptyDraft.id]: '' });
+  readonly draftAttachments = signal<Readonly<Record<string, ReadonlyArray<AttachmentSelection>>>>({ [emptyDraft.id]: [] });
   readonly notices = signal<Readonly<Record<string, string | null>>>({});
   /** Provider discovery is advisory: it must not replace a conversation error. */
   readonly modelCatalogNotice = signal<string | null>(null);
@@ -167,6 +170,14 @@ export class ConversationStore {
     const conversation = this.selected();
     return conversation.id.startsWith('draft-') && !conversation.agent ? this.defaultDraftAgentError() : null;
   });
+  readonly selectedAttachments = computed(() => this.draftAttachments()[this.selectedId()] ?? []);
+  readonly attachmentAcceptanceRevision = signal(0);
+  /** Conversation identity paired with the latest accepted attachment set. */
+  readonly attachmentAcceptanceConversationId = signal<string | null>(null);
+  private readonly modelVisionRequiredState = signal<Readonly<Record<string, string>>>({});
+  /** The admission conflict is scoped to the conversation and model that
+   * produced it. Switching either context clears the stale guidance. */
+  readonly modelVisionRequired = computed(() => this.modelVisionRequiredFor());
   readonly pendingAgent = signal<AgentReference | null>(null);
   readonly pendingAgentAction = signal<'switch' | 'upgrade'>('switch');
   readonly pendingPersona = signal<PersonaReference | null>(null);
@@ -238,7 +249,13 @@ export class ConversationStore {
     try {
       const session = await this.api.getSession();
       if (loadGeneration !== this.loadGeneration) return;
+      const previousSession = this.session();
+      const principalChanged = Boolean(previousSession && (previousSession.principal.issuer !== session.principal.issuer || previousSession.principal.subject !== session.principal.subject));
       const fingerprint = this.sessionFingerprint(session);
+      if (principalChanged) {
+        this.sessionEpoch += 1;
+        this.clearOwnerScopedConversationState();
+      }
       if (this.acceptedSessionFingerprint !== fingerprint) {
         this.sessionEpoch += 1;
         if (this.acceptedSessionFingerprint !== null) this.resetManagementState();
@@ -256,7 +273,13 @@ export class ConversationStore {
       const loaded = pageItems.map((item) => this.fromSummary(item));
       if (loaded.length === 0) this.ensureDraftModel();
       else {
-        this.conversations.set(loaded); this.selectedId.set(loaded[0].id);
+        const loadedId = loaded[0].id;
+        const activeId = this.selectedId();
+        const activeDraft = this.find(activeId);
+        const preserveActiveDraft = Boolean(activeDraft?.id.startsWith('draft-') && this.hasDraftComposerState(activeId));
+        if (!preserveActiveDraft) this.migrateDraftComposerState(activeId, loadedId);
+        this.conversations.set(preserveActiveDraft && activeDraft ? [activeDraft, ...loaded] : loaded);
+        if (!preserveActiveDraft) this.selectedId.set(loadedId);
         for (const conversation of loaded) if (conversation.currentRun) this.subscribe(conversation.currentRun);
         await this.refresh(loaded[0].id);
         if (this.conversationListWarning) this.setNotice(loaded[0].id, 'Some older conversations could not be loaded. Please refresh and try again.');
@@ -392,6 +415,7 @@ export class ConversationStore {
     this.sessionEpoch += 1;
     ++this.loadGeneration;
     ++this.modelCatalogRequestGeneration;
+    this.clearOwnerScopedConversationState();
     this.resetManagementState();
     this.acceptedSessionFingerprint = null;
     this.session.set(null);
@@ -426,7 +450,7 @@ export class ConversationStore {
 
   cancelEditMessage(): void { this.updateBranchState({ editingMessageId: null, editDraft: '' }); }
 
-  async editAndBranch(): Promise<boolean> {
+  async editAndBranch(explicitAttachments?: ReadonlyArray<AttachmentSelection>): Promise<boolean> {
     const conversation = this.selected();
     const branch = this.selectedBranch();
     const messageId = branch.editingMessageId;
@@ -440,10 +464,11 @@ export class ConversationStore {
       clientTimeZone: this.clientTimeZone(),
       sourceBranchId: conversation.branch?.activeId ?? undefined,
       text,
+      attachments: explicitAttachments ?? turnAttachments(conversation, messageId),
     });
     this.updateBranchState({ loading: true, error: null });
     try {
-      const accepted = await this.api.createConversationBranch(conversation.id, messageId, intent.text ?? text, intent.version, intent.key, intent.clientTimeZone, intent.sourceBranchId);
+      const accepted = await this.api.createConversationBranch(conversation.id, messageId, intent.text ?? text, intent.version, intent.key, intent.clientTimeZone, intent.sourceBranchId, intent.attachments);
       const applied = await this.applyAcceptedBranch(conversation.id, accepted, { kind: 'edit', messageId });
       if (applied) {
         this.clearBranchIntent(conversation.id);
@@ -651,6 +676,22 @@ export class ConversationStore {
   }
 
   updateDraft(value: string): void { const id = this.selectedId(); this.drafts.update((drafts) => ({ ...drafts, [id]: value })); if (value.trim()) this.setNotice(id, null); }
+  setDraftAttachments(items: ReadonlyArray<AttachmentSelection>): void { const id = this.selectedId(); const current = this.draftAttachments()[id] ?? []; if (sameAttachmentSelections(current, items)) return; this.draftAttachments.update((attachments) => ({ ...attachments, [id]: [...items] })); }
+  setDraftAttachmentsFor(conversationId: string, items: ReadonlyArray<AttachmentSelection>): void { this.draftAttachments.update((attachments) => ({ ...attachments, [conversationId]: [...items] })); }
+  attachmentsFor(conversationId: string): ReadonlyArray<AttachmentSelection> { return this.draftAttachments()[conversationId] ?? []; }
+  attachmentsForTurn(messageId: string): ReadonlyArray<AttachmentSelection> { return turnAttachments(this.selected(), messageId); }
+  modelVisionRequiredFor(conversationId = this.selectedId(), modelId = this.selectedModelId()): boolean {
+    return Boolean(modelId && this.modelVisionRequiredState()[conversationId] === modelId);
+  }
+  private clearModelVisionRequired(conversationId: string, modelId?: string): void {
+    this.modelVisionRequiredState.update((states) => {
+      if (!states[conversationId] || (modelId && states[conversationId] !== modelId)) return states;
+      const next = { ...states };
+      delete next[conversationId];
+      return next;
+    });
+  }
+  announceAttachmentNotice(message: string): void { this.setNotice(this.selectedId(), message); }
 
   async selectModel(modelId: string): Promise<void> {
     const model = this.models().find((item) => item.id === modelId); if (!model || !model.selectable) return;
@@ -658,9 +699,9 @@ export class ConversationStore {
     if (this.selected().archivedAt) { this.setNotice(this.selectedId(), 'Restore this archived conversation before changing its configuration.'); return; }
     if (this.selectedBranch().loading) { this.setNotice(this.selectedId(), 'Wait for the conversation branch to finish loading before changing its configuration.'); return; }
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
-    const conversation = this.selected(); const previous = conversation.modelId; this.replaceConversation({ ...conversation, modelId });
-    if (conversation.id.startsWith('draft-')) return;
-    try { const summary = await this.api.updateConversation(conversation.id, modelId, conversation.version, this.key()); this.replaceConversation(this.mergeSummary(summary, conversation)); }
+    const conversation = this.selected(); const previous = conversation.modelId; const selectedModelIsFreshlyVerifiedVision = model.capabilities.includes('vision'); this.replaceConversation({ ...conversation, modelId });
+    if (conversation.id.startsWith('draft-')) { if (selectedModelIsFreshlyVerifiedVision && previous !== modelId) this.clearModelVisionRequired(conversation.id, previous); return; }
+    try { const summary = await this.api.updateConversation(conversation.id, modelId, conversation.version, this.key()); this.replaceConversation(this.mergeSummary(summary, conversation)); if (selectedModelIsFreshlyVerifiedVision && previous !== modelId) this.clearModelVisionRequired(conversation.id, previous); }
     catch (error: unknown) { this.replaceConversation({ ...conversation, modelId: previous }); this.setNotice(conversation.id, this.toApiError(error).message); }
   }
 
@@ -929,11 +970,11 @@ export class ConversationStore {
   private async createPersisted(draftId: string, text: string): Promise<void> {
     const guard = this.captureSessionGuard();
     try {
-      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId, clientTimeZone); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
+      const draftConversation = this.find(draftId); const selectedRevisionId = draftConversation?.agent?.revisionId || undefined; const selectedPersonaRevisionId = draftConversation?.personaOverride ? draftConversation.persona?.revisionId : undefined; const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; const accepted = await this.api.createConversation(text, this.modelFor(draftId), this.key(), selectedRevisionId, selectedPersonaRevisionId, clientTimeZone, this.attachmentsFor(draftId)); const draft = draftConversation; const persisted = this.fromSummary(accepted.conversation);
       if (!this.matchesSessionGuard(guard)) return;
       const submission = this.pendingSubmissions.get(draftId);
       this.conversations.update((items) => [persisted, ...items.filter((item) => item.id !== draftId)]);
-      this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
+      this.drafts.update((drafts) => { const next = { ...drafts }; delete next[draftId]; next[persisted.id] = this.draftValueAfterAcceptance(draftId, submission?.draft); return next; }); this.draftAttachments.update((attachments) => { const next = { ...attachments }; delete next[draftId]; next[persisted.id] = []; return next; }); this.runStates.update((states) => { const next = { ...states }; delete next[draftId]; next[persisted.id] = this.statusToState(accepted.run.status); return next; }); this.lastPersistedDraftId.set(draftId); if (this.selectedId() === draftId) this.selectedId.set(persisted.id);
       if (draft) {
         const fallbackTitle = draft.turns.find((turn) => turn.role === 'user')?.text;
         this.replaceConversation({
@@ -942,7 +983,7 @@ export class ConversationStore {
           title: persisted.title === 'New conversation' && fallbackTitle ? this.makeTitle(fallbackTitle) : persisted.title,
         });
       }
-      this.pendingSubmissions.delete(draftId); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
+      this.pendingSubmissions.delete(draftId); this.publishAttachmentAcceptance(persisted.id); this.acceptRun(persisted.id, accepted, submission?.pendingTurnId);
     } catch (error: unknown) { this.rejectSubmission(draftId, error, guard); }
   }
 
@@ -951,9 +992,9 @@ export class ConversationStore {
     const guard = this.captureSessionGuard();
     try {
       const submission = this.pendingSubmissions.get(id); const clientTimeZone = this.clientTimeZone();
-      const accepted = await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone, conversation.branch?.activeId ?? undefined);
+      const accepted = await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone, conversation.branch?.activeId ?? undefined, this.attachmentsFor(id));
       if (!this.matchesSessionGuard(guard)) return;
-      this.acceptRun(id, accepted, submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id);
+      this.acceptRun(id, accepted, submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.setDraftAttachmentsFor(id, []); this.publishAttachmentAcceptance(id); this.pendingSubmissions.delete(id);
     } catch (error: unknown) { this.rejectSubmission(id, error, guard); }
   }
 
@@ -1247,6 +1288,11 @@ export class ConversationStore {
       void this.refresh(id);
       return;
     }
+    if (apiError.code === 'model_vision_required') {
+      this.modelVisionRequiredState.update((states) => ({ ...states, [id]: this.find(id)?.modelId ?? this.selectedModelId() }));
+      this.setNotice(id, 'The selected model is not verified for image understanding. Your draft and attachments are preserved; choose a verified vision model and try again.');
+      return;
+    }
     this.setNotice(id, apiError.message || 'We could not complete this request. Your message is still here.');
   }
 
@@ -1263,6 +1309,50 @@ export class ConversationStore {
     this.resettingManagementState = true;
     try { this.managementSession?.resetSessionState(); }
     finally { this.resettingManagementState = false; }
+  }
+
+  private clearOwnerScopedConversationState(): void {
+    this.subscriptions.forEach((subscription) => subscription.close());
+    this.subscriptions.clear();
+    this.toolReplaySubscriptions.forEach((subscription) => subscription.close());
+    this.toolReplaySubscriptions.clear();
+    this.reconnectTimers.forEach((timer) => clearTimeout(timer));
+    this.reconnectTimers.clear();
+    this.memoryActivityRetryTimers.forEach((timer) => clearTimeout(timer));
+    this.memoryActivityRetryTimers.clear();
+    this.memoryActivityRetryAttempts.clear();
+    this.lastEventIds.clear();
+    this.expiredCursorRecoveries.clear();
+    if (this.filterTimer) clearTimeout(this.filterTimer);
+    this.filterTimer = null;
+    this.pendingSubmissions.clear();
+    this.branchIntents.clear();
+    this.conversations.set([emptyDraft]);
+    this.selectedId.set(emptyDraft.id);
+    this.drafts.set({ [emptyDraft.id]: '' });
+    this.draftAttachments.set({ [emptyDraft.id]: [] });
+    this.attachmentAcceptanceConversationId.set(null);
+    this.notices.set({});
+    this.runStates.set({ [emptyDraft.id]: 'idle' });
+    this.modelVisionRequiredState.set({});
+    this.modelThinking.set({});
+    this.branchAnnouncements.set({});
+    this.memoryActivityNotices.set({});
+    this.memoryPopupRecords.set({});
+    this.memoryPopupLoading.set({});
+    this.memoryPopupErrors.set({});
+    this.lastPersistedDraftId.set(null);
+    this.pendingConfiguration.set(null);
+    this.pendingAgent.set(null);
+    this.pendingPersona.set(null);
+    this.pendingPersonaReset.set(false);
+    this.defaultDraftAgentResolution.set('pending');
+    this.defaultDraftAgentError.set(null);
+  }
+
+  private publishAttachmentAcceptance(conversationId: string): void {
+    this.attachmentAcceptanceConversationId.set(conversationId);
+    this.attachmentAcceptanceRevision.update((value) => value + 1);
   }
 
   private handleManagementAuthorizationFailure(status: SessionAuthorizationStatus): void {
@@ -1284,6 +1374,7 @@ export class ConversationStore {
   private invalidateSession(status: SessionAuthorizationStatus): void {
     this.sessionEpoch += 1;
     ++this.modelCatalogRequestGeneration;
+    if (status === 401) this.clearOwnerScopedConversationState();
     this.resetManagementState();
     if (status === 401) {
       this.acceptedSessionFingerprint = null;
@@ -1316,7 +1407,7 @@ export class ConversationStore {
   private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
-  private fromMessage(message: Message): ConversationTurn { const citations = normalizeDocumentCitations((message as Message & { readonly citations?: unknown }).citations); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}) }; }
+  private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly attachments?: unknown }; const citations = normalizeDocumentCitations(raw.citations); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(attachments.length ? { attachments } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
       if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;
@@ -1423,6 +1514,14 @@ export class ConversationStore {
   memoryPopupError(activityId: string): string | null { return this.memoryPopupErrors()[activityId] ?? null; }
   private find(id: string): Conversation | undefined { return this.conversations().find((conversation) => conversation.id === id); }
   private replaceConversation(conversation: Conversation): void { this.conversations.update((items) => items.map((item) => item.id === conversation.id ? { ...conversation, updatedAt: conversation.updatedAt || Date.now() } : item)); }
+  private migrateDraftComposerState(fromId: string, toId: string): void {
+    if (fromId === toId || !fromId.startsWith('draft-')) return;
+    const draftText = this.drafts()[fromId];
+    const draftAttachments = this.draftAttachments()[fromId];
+    if (draftText !== undefined && !(this.drafts()[toId]?.trim())) this.drafts.update((drafts) => ({ ...drafts, [toId]: draftText }));
+    if (draftAttachments?.length && !(this.draftAttachments()[toId]?.length)) this.draftAttachments.update((attachments) => ({ ...attachments, [toId]: [...draftAttachments] }));
+  }
+  private hasDraftComposerState(id: string): boolean { return Boolean(this.drafts()[id]?.trim() || this.draftAttachments()[id]?.length); }
   private upsertConversation(conversation: Conversation): void {
     this.conversations.update((items) => {
       const index = items.findIndex((item) => item.id === conversation.id);
@@ -1545,4 +1644,24 @@ export class ConversationStore {
   private key(): string { return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `aura-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
   private toApiError(error: unknown): ConversationApiError { return error && typeof error === 'object' && 'message' in error ? error as ConversationApiError : { message: 'We could not connect to Aura. Your draft is still here.', retryable: true }; }
   private makeTitle(text: string): string { return text.length > 32 ? `${text.slice(0, 32).trimEnd()}…` : text; }
+}
+
+function normalizeAttachments(value: unknown): ReadonlyArray<AttachmentSummary> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is AttachmentSummary => Boolean(item && typeof item === 'object' && (item as AttachmentSummary).kind && (item as AttachmentSummary).sourceId && (item as AttachmentSummary).displayFilename)).slice(0, 8);
+}
+
+function turnAttachments(conversation: Conversation, messageId: string): ReadonlyArray<AttachmentSelection> {
+  const turn = conversation.turns.find((item) => item.id === messageId);
+  return (turn?.attachments ?? []).map((item): AttachmentSelection => item.kind === 'document' ? { kind: 'document', documentId: item.sourceId } : { kind: 'image', attachmentId: item.sourceId });
+}
+
+function sameAttachmentSelections(current: ReadonlyArray<AttachmentSelection>, next: ReadonlyArray<AttachmentSelection>): boolean {
+  return current.length === next.length && current.every((item, index) => {
+    const candidate = next[index];
+    if (!candidate || item.kind !== candidate.kind) return false;
+    if (item.kind === 'document' && candidate.kind === 'document') return item.documentId === candidate.documentId;
+    if (item.kind === 'image' && candidate.kind === 'image') return item.attachmentId === candidate.attachmentId;
+    return false;
+  });
 }

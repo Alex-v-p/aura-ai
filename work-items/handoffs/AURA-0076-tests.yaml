@@ -1,0 +1,134 @@
+agent: test_evaluation_engineer
+work_item: AURA-0076
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0076_tests
+  worktree: dev
+scope:
+  ownership_zone: evaluation.conversation-attachments, aura-core tests, deploy.compose.e2e test paths
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_ollama_vision_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-attachments.spec.ts
+  - work-items/handoffs/AURA-0076-tests.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run ruff check
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_ollama_vision_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pyright
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_ollama_vision_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pytest
+      services/aura-core/tests/test_ollama_vision_attachments.py -q
+      (8 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pytest
+      services/aura-core/tests/test_conversation_attachments.py -q
+      (23 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pytest
+      services/aura-core/tests/test_document_contract.py -q
+      (7 passed; includes available/unavailable tombstone oneOf acceptance and
+      rejection cases)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pytest
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_ollama_vision_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/test_migrations.py -q (56 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run pytest
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_ollama_vision_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/test_migrations.py
+      services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/test_tool_evaluation.py
+      services/aura-core/tests/system/test_production_adapters.py -q
+      (122 passed, 19 skipped, 1 AuthlibDeprecationWarning)
+    - >-
+      Full Core test suite: 1,011 passed, 101 skipped.
+    - >-
+      Deployment pytest fixture: 1 passed.
+    - >-
+      npm test -- --run libs/aura/interaction/conversations
+      (9 files, 148 passed; attachment file 9 passed)
+    - >-
+      Full frontend unit suite: 245 passed.
+    - >-
+      pnpm exec eslint apps/aura-web-e2e/src/aura-web.spec.ts
+      apps/aura-web-e2e/src/full-stack.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      apps/storybook/src/conversation-panel.stories.ts
+      libs/aura/interaction/conversations/src/lib/conversation-attachments.spec.ts
+      (passed)
+    - >-
+      Required frontend non-browser lint, generated-client synchronization,
+      production build, and Storybook checks passed.
+    - >-
+      Attachment Storybook coverage: 12 passed, 24 expected skips.
+    - >-
+      Focused browser attachment, vision, document, and composer coverage:
+      15/15 passed after final fixes.
+    - >-
+      Required Playwright run before final fixes: 271 passed, 367 skipped, and
+      1 startup-race failure; the affected Enter/Shift+Enter case was rerun
+      successfully in all 3 viewports after the final fix.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0076-tests-uv-cache uv run python3
+      tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0076.yaml (passed; 92 changed paths)
+    - >-
+      Architecture validators and their 52-test validation set passed.
+    - git diff --check (passed)
+  failed:
+    - >-
+      Full-stack compose acceptance was attempted but service startup was
+      blocked by an overlapping Docker network pool; no full-stack assertions
+      were accepted from that run.
+  not_run:
+    - Full-stack compose assertions remain not run to completion because service startup was blocked by the Docker network pool overlap.
+    - No new deploy fixture was added; the existing deployment pytest fixture passed without introducing a model identifier or routing behavior.
+decisions:
+  - Updated all four pre-existing OpenAPI 1.17.0 assertions in the document and system contract tests to the additive 1.18.0 contract version.
+  - Added content-free attachment service tests for owner isolation, idempotent upload/delete, original and derivative cleanup, storage failure, MIME/signature rejection, animation, pixel limits, and lifecycle-event redaction.
+  - Added conversation tests for atomic admission, explicit edit-and-branch attachment replacement, regeneration reuse, count and duplicate limits, active-branch-only bounded selection, and attachment-scoped document search.
+  - Added additive migration and historical-row decoding checks plus generated-client and event-contract redaction checks.
+  - Added Ollama text-only compatibility, image preservation through title synthesis, cancellation propagation, malformed identity rejection, capability normalization, and base64 serialization coverage.
+  - Added SQL metadata checks for owner-digest and upload-session idempotency uniqueness, durable expiry fields, cross-domain source-link isolation, and migration availability.
+  - Added upload-session expiry/replay/version-conflict and metadata-only lifecycle telemetry checks.
+  - Added deterministic pre-inference grounding/citation coverage and production-seam manifest checks for branch isolation, capture redaction, vision preservation, and attached-document grounding.
+  - Added frontend preview URL revocation/reset and capability-guidance unit coverage.
+  - Updated the contract regression to validate the additive available/unavailable attachment-summary oneOf, and added persistent schema checks for valid content-free tombstones plus rejection of dimensions, ready media, or nonzero bytes on unavailable summaries.
+risks:
+  - Full-stack image runs remain dependent on a verified provider descriptor and configured image-capable Ollama model; no model identifier was introduced into fixtures.
+  - Full-stack compose remains dependent on a Docker network configuration without overlapping address pools.
+unresolved:
+  - >-
+    Integration environment must resolve the overlapping Docker network pool
+    before full-stack compose acceptance can be completed.

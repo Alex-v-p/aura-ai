@@ -32,6 +32,7 @@ from aura_core.runtime.models.ports import (
     ModelDescriptor,
     ModelStreamCompleted,
     ModelToolCall,
+    ProviderTraceContext,
 )
 from aura_core.runtime.streaming.publisher import EventPublisher
 
@@ -442,8 +443,10 @@ async def test_regeneration_freshness_evaluator_observes_store_and_coordinator_p
             query: str,
             *,
             limit: int,
-            context: object | None = None,
+            allowed_document_ids: tuple[UUID, ...] | None = None,
+            context: ProviderTraceContext | None = None,
         ) -> list[DocumentSearchHit]:
+            del allowed_document_ids
             assert (issuer, subject, query, limit, context is not None) == (
                 "https://issuer",
                 "owner",

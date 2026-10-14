@@ -72,6 +72,7 @@ from aura_core.runtime.models.ports import (
     ModelTextDelta,
     ModelThinkingDelta,
     ModelToolCall,
+    ProviderTraceContext,
 )
 from aura_core.runtime.streaming.publisher import EventPublisher
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -208,8 +209,10 @@ async def test_document_search_run_is_owner_bound_and_consumes_one_call_before_s
             query: str,
             *,
             limit: int,
-            context: object | None = None,
+            allowed_document_ids: tuple[UUID, ...] | None = None,
+            context: ProviderTraceContext | None = None,
         ) -> list[dict[str, object]]:
+            del allowed_document_ids
             observed.append((issuer, subject, query, str(limit)))
             assert context is not None
             return [
@@ -341,8 +344,10 @@ async def test_failed_document_run_publishes_only_sanitized_terminal_snapshot() 
             query: str,
             *,
             limit: int,
-            context: object | None = None,
+            allowed_document_ids: tuple[UUID, ...] | None = None,
+            context: ProviderTraceContext | None = None,
         ) -> list[dict[str, object]]:
+            del allowed_document_ids
             del issuer, subject, query, limit, context
             return [
                 {

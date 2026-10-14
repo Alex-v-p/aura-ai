@@ -5,12 +5,13 @@
 
 from datetime import datetime
 from time import perf_counter
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aura_core.domains.artifacts.attachments.public import AttachmentAdmissionError
 from aura_core.domains.execution.runs.public import Run, RunStatus, message_payload, run_payload
 from aura_core.domains.interaction.agents.public import AgentCatalog
 from aura_core.domains.interaction.conversations.public import (
@@ -20,6 +21,7 @@ from aura_core.domains.interaction.conversations.public import (
     ArchivedConversationConflict,
     Conversation,
     ConversationArchiveState,
+    ConversationAttachmentReference,
     ConversationBranch,
     ConversationListFilters,
     ConversationNotFound,
@@ -27,6 +29,7 @@ from aura_core.domains.interaction.conversations.public import (
     InvalidConversationCursor,
     InvalidConversationMetadata,
     ModelUnavailable,
+    ModelVisionRequiredError,
     PersonaUnavailable,
     VersionConflict,
     branch_message_ids,
@@ -41,6 +44,23 @@ from aura_core.runtime.models.ports import ModelDescriptor
 router = APIRouter(prefix="/api/v1/conversations", tags=["Conversations"])
 
 
+class DocumentAttachmentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["document"]
+    documentId: UUID
+
+
+class ImageAttachmentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["image"]
+    attachmentId: UUID
+
+
+AttachmentInput = Annotated[
+    DocumentAttachmentInput | ImageAttachmentInput, Field(discriminator="kind")
+]
+
+
 class CreateConversationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=32768)
@@ -48,6 +68,7 @@ class CreateConversationRequest(BaseModel):
     agentRevisionId: UUID | None = None
     personaRevisionId: UUID | None = None
     clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
+    attachments: list[AttachmentInput] | None = Field(default=None, max_length=8)
 
 
 class UpdateConversationRequest(BaseModel):
@@ -72,6 +93,7 @@ class CreateRunRequest(BaseModel):
     conversationVersion: int = Field(ge=1)
     branchId: UUID | None = None
     clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
+    attachments: list[AttachmentInput] | None = Field(default=None, max_length=8)
 
 
 class CreateBranchRequest(BaseModel):
@@ -81,6 +103,21 @@ class CreateBranchRequest(BaseModel):
     conversationVersion: int = Field(ge=1)
     branchId: UUID | None = None
     clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
+    attachments: list[AttachmentInput] | None = Field(default=None, max_length=8)
+
+
+def _attachment_references(
+    values: list[AttachmentInput] | None,
+) -> tuple[ConversationAttachmentReference, ...] | None:
+    if values is None:
+        return None
+    return tuple(
+        ConversationAttachmentReference(
+            item.kind,
+            item.documentId if isinstance(item, DocumentAttachmentInput) else item.attachmentId,
+        )
+        for item in values
+    )
 
 
 class UpdateConversationMetadataRequest(BaseModel):
@@ -549,11 +586,16 @@ async def create_conversation(
             body.agentRevisionId,
             body.personaRevisionId,
             body.clientTimeZone,
+            _attachment_references(body.attachments),
         )
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
     except ModelUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ModelVisionRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    except AttachmentAdmissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AgentUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PersonaUnavailable as exc:
@@ -734,6 +776,7 @@ async def create_branch(
             session.principal.issuer,
             body.clientTimeZone,
             body.branchId,
+            _attachment_references(body.attachments),
         )
     except ConversationNotFound as exc:
         _record_branch_outcome(
@@ -751,6 +794,10 @@ async def create_branch(
             root_span_id=root_span_id,
         )
         raise HTTPException(status_code=409, detail="conversation version conflict") from exc
+    except ModelVisionRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    except AttachmentAdmissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IdempotencyConflict as exc:
         _record_branch_outcome(
             request,
@@ -1055,6 +1102,7 @@ async def create_run(
             session.principal.issuer,
             body.clientTimeZone,
             body.branchId,
+            _attachment_references(body.attachments),
         )
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
@@ -1068,6 +1116,10 @@ async def create_run(
     ) as exc:
         if isinstance(exc, InvalidConversationMetadata):
             timezone_outcome = "invalid"
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ModelVisionRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    except AttachmentAdmissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     finally:
         state(request).metrics.increment(

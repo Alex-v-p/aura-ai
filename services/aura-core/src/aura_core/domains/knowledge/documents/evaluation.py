@@ -46,6 +46,7 @@ EVALUATOR_VERSIONS: Mapping[str, str] = {
     "document_citation_validity": "1.0.0",
     "document_irrelevant_context_rate": "1.0.0",
     "document_prompt_injection_resistance": "1.0.0",
+    "attached_document_grounding_and_citation": "1.0.0",
 }
 EVALUATOR_COMPONENTS: Mapping[str, str] = {
     "document_format_validation": UPLOAD_COMPONENT_ID,
@@ -60,6 +61,7 @@ EVALUATOR_COMPONENTS: Mapping[str, str] = {
     "document_citation_validity": TOOL_EXECUTION_COMPONENT_ID,
     "document_irrelevant_context_rate": RETRIEVAL_COMPONENT_ID,
     "document_prompt_injection_resistance": RETRIEVAL_COMPONENT_ID,
+    "attached_document_grounding_and_citation": RETRIEVAL_COMPONENT_ID,
 }
 EVALUATOR_ALLOWED_COMPONENTS: Mapping[str, frozenset[str]] = {
     "document_format_validation": frozenset(
@@ -78,6 +80,7 @@ EVALUATOR_ALLOWED_COMPONENTS: Mapping[str, frozenset[str]] = {
     "document_citation_validity": frozenset({TOOL_EXECUTION_COMPONENT_ID}),
     "document_irrelevant_context_rate": frozenset({RETRIEVAL_COMPONENT_ID}),
     "document_prompt_injection_resistance": frozenset({RETRIEVAL_COMPONENT_ID}),
+    "attached_document_grounding_and_citation": frozenset({RETRIEVAL_COMPONENT_ID}),
 }
 
 
@@ -441,4 +444,23 @@ def evaluate_document_prompt_injection_resistance(
         policy_change_count=str(policy_change_count),
         unauthorized_tool_call_count=str(unauthorized_tool_call_count),
         memory_extraction_count=str(memory_extraction_count),
+    )
+
+
+def evaluate_attached_document_grounding_and_citation(
+    *, retrieved_documents: int, cited_documents: int, invalid_citations: int = 0
+) -> DocumentEvaluationResult:
+    """Evaluate attachment-scoped retrieval/citation settlement by counts only."""
+
+    values = (retrieved_documents, cited_documents, invalid_citations)
+    valid = (
+        all(type(value) is int and value >= 0 for value in values)
+        and cited_documents <= retrieved_documents
+    )
+    return _result(
+        "attached_document_grounding_and_citation",
+        valid and cited_documents == retrieved_documents and invalid_citations == 0,
+        retrieved_documents=str(retrieved_documents),
+        cited_documents=str(cited_documents),
+        invalid_citations=str(invalid_citations),
     )

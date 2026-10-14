@@ -5,6 +5,7 @@
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnknownMemberType=false
 
 import asyncio
+import base64
 import json
 import math
 import re
@@ -50,6 +51,8 @@ EMBEDDING_RESPONSE_MAX_BYTES = 512 * 1024
 MAX_EMBEDDING_DIMENSION = 16_384
 EMBEDDING_DIMENSION_PROBE_INPUT = "aura embedding dimension probe"
 THINKING_DELTA_MAX_CHARS = 4096
+MAX_REQUEST_IMAGES = 4
+MAX_REQUEST_IMAGE_BYTES = 32 * 1024 * 1024
 
 
 class OllamaUnavailable(RuntimeError):
@@ -70,6 +73,48 @@ def _bounded_thinking_chunks(value: str) -> tuple[str, ...]:
         value[offset : offset + THINKING_DELTA_MAX_CHARS]
         for offset in range(0, len(value), THINKING_DELTA_MAX_CHARS)
     )
+
+
+def _serialize_messages(messages: Sequence[ChatMessage]) -> list[dict[str, object]]:
+    """Translate the neutral message shape into Ollama's native image form.
+
+    Ollama accepts image inputs as base64 strings in a message-level
+    ``images`` array.  Media types and all attachment metadata intentionally
+    stop at the Core boundary; the adapter only forwards normalized bytes.
+    The aggregate bound protects callers that accidentally attach too many
+    images to a provider request even when each individual part is valid.
+    """
+
+    image_count = 0
+    image_bytes = 0
+    serialized: list[dict[str, object]] = []
+    for message in messages:
+        payload: dict[str, object] = {"role": message.role, "content": message.content}
+        if message.image_parts:
+            if len(message.image_parts) + image_count > MAX_REQUEST_IMAGES:
+                raise ValueError("model request exceeds image count limit")
+            image_count += len(message.image_parts)
+            encoded: list[str] = []
+            for image in message.image_parts:
+                image_bytes += len(image.normalized_bytes)
+                if image_bytes > MAX_REQUEST_IMAGE_BYTES:
+                    raise ValueError("model request exceeds image byte limit")
+                encoded.append(base64.b64encode(image.normalized_bytes).decode("ascii"))
+            payload["images"] = encoded
+        serialized.append(payload)
+    return serialized
+
+
+def _decode_stream_line(line: str) -> dict[str, Any]:
+    """Decode one Ollama stream frame without provider data in exceptions."""
+
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise OllamaUnavailable("provider returned malformed stream") from exc
+    if not isinstance(value, dict):
+        raise OllamaUnavailable("provider returned malformed stream")
+    return cast(dict[str, Any], value)
 
 
 class OllamaAdapter:
@@ -97,7 +142,7 @@ class OllamaAdapter:
         self._telemetry = telemetry
         self._inventory_cache: tuple[float, tuple[ModelDescriptor, ...]] | None = None
         self._inventory_lock = asyncio.Lock()
-        self._verification_cache: dict[tuple[str, str, str], ModelDescriptor | None] = {}
+        self._verification_cache: dict[tuple[str, str, str, str], ModelDescriptor | None] = {}
 
     async def list_models(
         self, *, context: ProviderTraceContext | None = None
@@ -319,11 +364,15 @@ class OllamaAdapter:
         """Verify one selected memory model after metadata-based discovery."""
 
         started = monotonic()
-        # The memory application service performs one explicit fresh scan at
-        # the save boundary. Reuse that short-lived snapshot for both selected
-        # capability checks so saving two models does not rescan Ollama.
+        # Vision admission is security-sensitive: always obtain a fresh
+        # provider descriptor before accepting image input. Other capabilities
+        # retain the existing short-lived inventory behavior.
         try:
-            models = await self.list_models(context=context)
+            models = (
+                await self.refresh_models(context=context)
+                if capability == "vision"
+                else await self.list_models(context=context)
+            )
         except OllamaUnavailable:
             self._record_verification_telemetry(
                 started, "error", error_class="provider", context=context
@@ -335,7 +384,7 @@ class OllamaAdapter:
                 started, "error", error_class="validation", context=context
             )
             return None
-        key = (model_id, selected.model_digest, capability)
+        key = (model_id, selected.model_digest, selected.model_revision, capability)
         cached = self._verification_cache.get(key)
         if cached is not None:
             self._record_verification_telemetry(
@@ -344,7 +393,12 @@ class OllamaAdapter:
             return cached
         verified: ModelDescriptor | None = None
         verification_error_class = "provider"
-        if capability == "structured_output":
+        if capability == "vision" and "vision" in selected.capabilities:
+            # A descriptor is verified only when both immutable provider
+            # identity fields are present (checked above) and Ollama itself
+            # advertises the canonical capability.
+            verified = selected
+        elif capability == "structured_output":
             supported, verification_error_class = await self._supports_structured_output(model_id)
             if supported:
                 verified = replace(
@@ -580,9 +634,7 @@ class OllamaAdapter:
     ) -> AsyncIterator[str]:
         body = {
             "model": model_id,
-            "messages": [
-                {"role": message.role, "content": message.content} for message in messages
-            ],
+            "messages": _serialize_messages(messages),
             "stream": True,
         }
         try:
@@ -592,10 +644,7 @@ class OllamaAdapter:
                     async for line in response.aiter_lines():
                         if not line:
                             continue
-                        try:
-                            payload = cast(dict[str, Any], json.loads(line))
-                        except json.JSONDecodeError:
-                            raise OllamaUnavailable("provider returned malformed stream") from None
+                        payload = _decode_stream_line(line)
                         message = cast(dict[str, Any] | None, payload.get("message"))
                         if isinstance(message, dict) and isinstance(message.get("content"), str):
                             yield message["content"]
@@ -615,9 +664,7 @@ class OllamaAdapter:
 
         body = {
             "model": model_id,
-            "messages": [
-                {"role": message.role, "content": message.content} for message in messages
-            ],
+            "messages": _serialize_messages(messages),
             "stream": True,
             "think": True,
         }
@@ -628,10 +675,7 @@ class OllamaAdapter:
                     async for line in response.aiter_lines():
                         if not line:
                             continue
-                        try:
-                            payload = cast(dict[str, Any], json.loads(line))
-                        except json.JSONDecodeError as exc:
-                            raise OllamaUnavailable("provider returned malformed stream") from exc
+                        payload = _decode_stream_line(line)
                         message = payload.get("message")
                         if isinstance(message, dict):
                             thinking = message.get("thinking")
@@ -656,9 +700,7 @@ class OllamaAdapter:
 
         body = {
             "model": model_id,
-            "messages": [
-                {"role": message.role, "content": message.content} for message in messages
-            ],
+            "messages": _serialize_messages(messages),
             "tools": list(tools),
             "stream": True,
             "think": True,
@@ -670,10 +712,7 @@ class OllamaAdapter:
                     async for line in response.aiter_lines():
                         if not line:
                             continue
-                        try:
-                            payload = cast(dict[str, Any], json.loads(line))
-                        except json.JSONDecodeError as exc:
-                            raise OllamaUnavailable("provider returned malformed stream") from exc
+                        payload = _decode_stream_line(line)
                         message = payload.get("message")
                         if not isinstance(message, dict):
                             continue
@@ -1001,9 +1040,7 @@ class OllamaAdapter:
 
         body = {
             "model": model_id,
-            "messages": [
-                {"role": message.role, "content": message.content} for message in messages
-            ],
+            "messages": _serialize_messages(messages),
             "stream": False,
             "think": False,
             "options": {"num_predict": TITLE_MAX_PREDICT},
@@ -1139,7 +1176,7 @@ def _parse_capabilities(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
     result = {
-        item
+        _normalize_capability(item)
         for item in value[:MAX_MODEL_CAPABILITIES]
         if isinstance(item, str)
         and 1 <= len(item) <= 64
@@ -1148,6 +1185,17 @@ def _parse_capabilities(value: object) -> set[str]:
     if "tools" in result:
         result.add("tool_calling")
     return result
+
+
+def _normalize_capability(value: str) -> str:
+    """Map provider spellings to the small Core capability vocabulary."""
+
+    normalized = value.strip().casefold().replace("-", "_")
+    if normalized in {"multimodal", "multimodal_chat", "image", "images", "visual"}:
+        return "vision"
+    if normalized in {"tool", "tool_use", "tool_use_calling"}:
+        return "tool_calling"
+    return normalized
 
 
 def _parse_dimension(value: object) -> int | None:

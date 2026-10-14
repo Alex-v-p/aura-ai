@@ -5,6 +5,7 @@ This coordinator owns the transaction and cross-domain sequencing, but never
 imports or manipulates another domain's ORM mapping.
 """
 
+import copy
 import hashlib
 import inspect
 import json
@@ -17,6 +18,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aura_core.domains.artifacts.attachments.ports import AttachmentReadPort
+from aura_core.domains.artifacts.attachments.public import (
+    MAX_ATTACHMENTS_PER_MESSAGE,
+    MAX_IMAGES_PER_MESSAGE,
+    AttachmentAdmissionError,
+    AttachmentNotFound,
+    AttachmentStatus,
+)
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.public import (
     Run,
@@ -48,7 +57,9 @@ from aura_core.domains.interaction.conversations.public import (
     AgentUnavailable,
     ArchivedConversationConflict,
     AssignmentReason,
+    AttachmentSummary,
     Conversation,
+    ConversationAttachmentReference,
     ConversationBranch,
     ConversationBranchOrigin,
     ConversationListFilters,
@@ -62,6 +73,7 @@ from aura_core.domains.interaction.conversations.public import (
     MessageRole,
     MessageState,
     ModelUnavailable,
+    ModelVisionRequiredError,
     PendingTitle,
     PersonaAssignment,
     PersonaAssignmentReason,
@@ -91,6 +103,8 @@ from aura_core.domains.interaction.personas.public import (
     PersonaConfigurationQueryPort,
     PersonaRevisionQueryPort,
 )
+from aura_core.domains.knowledge.documents.ports import DocumentReadPort
+from aura_core.domains.knowledge.documents.public import DocumentStatus
 from aura_core.domains.knowledge.memory.recall import (
     MemoryRecallPurpose,
     MemoryRecallRequest,
@@ -99,7 +113,7 @@ from aura_core.domains.knowledge.memory.recall import (
 from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
-from aura_core.runtime.models.ports import ModelDescriptor
+from aura_core.runtime.models.ports import ModelDescriptor, ModelSelectionPort
 from aura_core.runtime.prompting.public import PromptCompilation, PromptMetricsPort
 
 
@@ -111,6 +125,8 @@ class SqlConversationStore:
         *,
         persona_query: PersonaRevisionQueryPort | None = None,
         persona_admission: PersonaConfigurationQueryPort | None = None,
+        attachment_service: AttachmentReadPort | None = None,
+        document_service: DocumentReadPort | None = None,
     ) -> None:
         self.sessions = sessions
         self.identities = SqlIdentityRepository()
@@ -121,6 +137,9 @@ class SqlConversationStore:
         self.agents = agents or AgentCatalog()
         self.persona_query = persona_query
         self.persona_admission = persona_admission
+        self.attachment_service = attachment_service
+        self.document_service = document_service
+        self.model_selection: ModelSelectionPort | None = None
         self.agent_store: Any = None
         self.prompt_metrics: PromptMetricsPort | None = None
         self.memory_command_factory: (
@@ -128,6 +147,163 @@ class SqlConversationStore:
         ) = None
         self.memory_recall: object | None = None
         self.memory_activity_repository: object | None = None
+
+    def set_attachment_services(
+        self,
+        attachment_service: AttachmentReadPort | None,
+        document_service: DocumentReadPort | None,
+    ) -> None:
+        self.attachment_service = attachment_service
+        self.document_service = document_service
+
+    def set_model_selection(self, model_selection: ModelSelectionPort | None) -> None:
+        self.model_selection = model_selection
+
+    async def resolve_attachment_availability(self, conversation: Conversation) -> Conversation:
+        """Project source-domain deletions as read-time conversation tombstones."""
+
+        if self.attachment_service is None and self.document_service is None:
+            return conversation
+
+        async def resolve_summaries(
+            summaries: Sequence[AttachmentSummary],
+        ) -> tuple[AttachmentSummary, ...]:
+            resolved: list[AttachmentSummary] = []
+            for summary in summaries:
+                available = summary.availability == "available"
+                if available and summary.kind == "image":
+                    if self.attachment_service is None:
+                        available = False
+                    else:
+                        try:
+                            value = await self.attachment_service.get(
+                                conversation.principal_issuer,
+                                conversation.principal_subject,
+                                summary.source_id,
+                            )
+                        except AttachmentNotFound:
+                            available = False
+                        else:
+                            available = value.status is AttachmentStatus.READY
+                elif available and summary.kind == "document":
+                    if self.document_service is None:
+                        available = False
+                    else:
+                        value = await self.document_service.get(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            summary.source_id,
+                        )
+                        available = value is not None and value.status is DocumentStatus.READY
+                resolved.append(summary if available else summary.unavailable())
+            return tuple(resolved)
+
+        messages: list[Message] = []
+        changed = False
+        for message in conversation.messages:
+            resolved: list[AttachmentSummary] = []
+            resolved.extend(await resolve_summaries(message.attachments))
+            changed = changed or tuple(resolved) != message.attachments
+            if tuple(resolved) != message.attachments:
+                copied = copy.copy(message)
+                copied.attachments = tuple(resolved)
+                messages.append(copied)
+            else:
+                messages.append(message)
+        runs: list[Run] = []
+        for run in conversation.runs:
+            attachments = await resolve_summaries(run.attachments)
+            changed = changed or attachments != run.attachments
+            if attachments != run.attachments:
+                copied_run = copy.copy(run)
+                copied_run.attachments = attachments
+                runs.append(copied_run)
+            else:
+                runs.append(run)
+        if not changed:
+            return conversation
+        projection = copy.copy(conversation)
+        projection.messages = messages
+        projection.runs = runs
+        return projection
+
+    async def _require_vision(
+        self,
+        model_id: str,
+        refs: Sequence[ConversationAttachmentReference | AttachmentSummary] | None,
+        models: Iterable[ModelDescriptor] | None = None,
+    ) -> None:
+        if not any(item.kind == "image" for item in refs or ()):
+            return
+        descriptor: ModelDescriptor | None = None
+        verifier = self.model_selection
+        if verifier is not None:
+            descriptor = await verifier.verify_model(model_id, "vision")
+        if verifier is None and models is not None:
+            descriptor = next((item for item in models if item.id == model_id), None)
+        if (
+            descriptor is None
+            or descriptor.availability != "available"
+            or not descriptor.selectable
+            or "vision" not in descriptor.capabilities
+            or not descriptor.model_digest
+            or not descriptor.model_revision
+        ):
+            raise ModelVisionRequiredError(model_id)
+
+    async def _admit_attachments(
+        self, issuer: str, subject: str, refs: Sequence[ConversationAttachmentReference] | None
+    ) -> tuple[AttachmentSummary, ...]:
+        selected = tuple(refs or ())
+        if len(selected) > MAX_ATTACHMENTS_PER_MESSAGE:
+            raise AttachmentAdmissionError("attachment limit exceeded")
+        if len({(item.kind, item.source_id) for item in selected}) != len(selected):
+            raise AttachmentAdmissionError("duplicate attachment")
+        if sum(item.kind == "image" for item in selected) > MAX_IMAGES_PER_MESSAGE:
+            raise AttachmentAdmissionError("image attachment limit exceeded")
+        result: list[AttachmentSummary] = []
+        for item in selected:
+            link_id = uuid4()
+            if item.kind == "image":
+                if self.attachment_service is None:
+                    raise AttachmentAdmissionError("image attachment service unavailable")
+                try:
+                    value = await self.attachment_service.get(issuer, subject, item.source_id)
+                except AttachmentNotFound:
+                    raise AttachmentAdmissionError("image attachment is unavailable") from None
+                if value.status is not AttachmentStatus.READY:
+                    raise AttachmentAdmissionError("image attachment is not ready")
+                result.append(
+                    AttachmentSummary(
+                        link_id,
+                        "image",
+                        item.source_id,
+                        value.filename,
+                        value.media_type,
+                        value.byte_count,
+                        "available",
+                        value.width,
+                        value.height,
+                    )
+                )
+            else:
+                if self.document_service is None:
+                    raise AttachmentAdmissionError("document attachment service unavailable")
+                value = await self.document_service.get(issuer, subject, item.source_id)
+                if value is None or value.status is not DocumentStatus.READY:
+                    raise AttachmentAdmissionError("document attachment is not ready")
+                result.append(
+                    AttachmentSummary(
+                        link_id,
+                        "document",
+                        item.source_id,
+                        value.filename,
+                        value.media_type,
+                        value.byte_count,
+                        "available",
+                    )
+                )
+        return tuple(result)
 
     def set_memory_command_factory(
         self,
@@ -608,8 +784,12 @@ class SqlConversationStore:
         agent_revision_id: UUID | None = None,
         persona_revision_id: UUID | None = None,
         client_time_zone: str | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run]:
+        if not message.strip():
+            raise InvalidConversationMetadata("message must not be empty")
         self._validate_model(model_id, models)
+        await self._require_vision(model_id, attachments, models)
         client_time_zone = validate_client_time_zone(client_time_zone)
         fingerprint = _fingerprint(
             "create",
@@ -618,6 +798,7 @@ class SqlConversationStore:
             agent_revision_id,
             persona_revision_id,
             client_time_zone,
+            tuple((item.kind, item.source_id) for item in attachments or ()),
         )
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
@@ -641,6 +822,7 @@ class SqlConversationStore:
                 await self._resolve_active_persona(session, persona_revision_id)
                 effective_persona = persona_revision_id
             principal = await self.identities.resolve(session, issuer, subject)
+            admitted_attachments = await self._admit_attachments(issuer, subject, attachments)
             conversation_id = UUID(
                 int=UUID(
                     bytes=hashlib.sha256(f"{subject}:{idempotency_key}".encode()).digest()[:16]
@@ -679,6 +861,7 @@ class SqlConversationStore:
                 created_at=created,
                 updated_at=created,
                 branch_id=root_branch.id,
+                attachments=admitted_attachments,
             )
             (
                 tool_policy_id,
@@ -702,6 +885,7 @@ class SqlConversationStore:
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=client_time_zone,
                 branch_id=root_branch.id,
+                attachments=admitted_attachments,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -979,7 +1163,7 @@ class SqlConversationStore:
         async with self.sessions() as session:
             row = await self._row(session, conversation_id, subject, issuer, lock=True)
             conversation = await self._load(session, row)
-            return conversation
+            return await self.resolve_attachment_availability(conversation)
 
     async def list(
         self,
@@ -1395,7 +1579,10 @@ class SqlConversationStore:
         issuer: str | None = None,
         client_time_zone: str | None = None,
         branch_id: UUID | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run]:
+        if not message.strip():
+            raise InvalidConversationMetadata("message must not be empty")
         if self.agent_store is not None:
             await self.agent_store.refresh()
         client_time_zone = validate_client_time_zone(client_time_zone)
@@ -1413,7 +1600,8 @@ class SqlConversationStore:
                 )
                 pinned_time_zone = client_time_zone or prior_row.client_time_zone
                 fingerprint = hashlib.sha256(
-                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
+                    f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}:"
+                    f"{tuple((item.kind, item.source_id) for item in attachments or ())}".encode()
                 ).hexdigest()
                 if prior.fingerprint != fingerprint:
                     raise IdempotencyConflict
@@ -1429,11 +1617,14 @@ class SqlConversationStore:
                 raise ArchivedConversationConflict
             pinned_time_zone = client_time_zone or row.client_time_zone
             fingerprint = hashlib.sha256(
-                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}:"
+                f"{tuple((item.kind, item.source_id) for item in attachments or ())}".encode()
             ).hexdigest()
             active = await self.runs.active(session, conversation_id, lock=True)
             if row.version != expected_version or active is not None:
                 raise VersionConflict if row.version != expected_version else ActiveRunConflict
+            await self._require_vision(row.model_id, attachments)
+            admitted_attachments = await self._admit_attachments(issuer, subject, attachments)
             # Resolve the assignment while the conversation row is locked.  A
             # SQL-backed configuration port may perform its active-status
             # check in this same transaction; the in-memory fallback keeps the
@@ -1464,6 +1655,7 @@ class SqlConversationStore:
                 updated_at=created,
                 branch_id=selected_branch.id,
                 parent_message_id=selected_branch.head_message_id,
+                attachments=admitted_attachments,
             )
             (
                 tool_policy_id,
@@ -1487,6 +1679,7 @@ class SqlConversationStore:
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=pinned_time_zone,
                 branch_id=selected_branch.id,
+                attachments=admitted_attachments,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1554,7 +1747,8 @@ class SqlConversationStore:
             row = await self._row(session, conversation_id, subject, issuer)
             loaded = await self._load(session, row)
             allowed = branch_message_ids(loaded, branch_id) or set()
-            return [message for message in loaded.messages if message.id in allowed]
+            projected = await self.resolve_attachment_availability(loaded)
+            return [message for message in projected.messages if message.id in allowed]
 
     async def branch_runs(
         self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
@@ -1566,7 +1760,8 @@ class SqlConversationStore:
             loaded = await self._load(session, row)
             if not any(branch.id == branch_id for branch in loaded.branches):
                 raise ConversationNotFound
-            return [run for run in loaded.runs if run.branch_id == branch_id]
+            projected = await self.resolve_attachment_availability(loaded)
+            return [run for run in projected.runs if run.branch_id == branch_id]
 
     async def create_branch(
         self,
@@ -1579,9 +1774,12 @@ class SqlConversationStore:
         issuer: str | None = None,
         client_time_zone: str | None = None,
         source_branch_id: UUID | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run, ConversationBranch]:
         if issuer is None:
             raise ValueError("issuer is required")
+        if not corrected_message.strip():
+            raise InvalidConversationMetadata("message must not be empty")
         fingerprint = _fingerprint(
             "branch",
             conversation_id,
@@ -1590,6 +1788,7 @@ class SqlConversationStore:
             expected_version,
             client_time_zone,
             source_branch_id,
+            tuple((item.kind, item.source_id) for item in attachments or ()),
         )
         async with self.sessions() as session, session.begin():
             await self._lock_command(session, issuer, subject, idempotency_key)
@@ -1634,6 +1833,8 @@ class SqlConversationStore:
             source_path = [item for item in loaded.messages if item.id in allowed]
             index = next((i for i, item in enumerate(source_path) if item.id == source.id), 0)
             parent = source_path[index - 1] if index else None
+            admitted_attachments = await self._admit_attachments(issuer, subject, attachments)
+            await self._require_vision(row.model_id, attachments)
             branch = ConversationBranch(
                 conversation_id,
                 parent.branch_id if parent is not None else source.branch_id,
@@ -1655,6 +1856,7 @@ class SqlConversationStore:
                 updated_at=created,
                 branch_id=branch.id,
                 parent_message_id=parent.id if parent else None,
+                attachments=admitted_attachments,
             )
             tool_policy_id, call_limit, timeout_ms, retry_limit = await self._tool_policy_snapshot(
                 issuer, subject, revision
@@ -1677,6 +1879,7 @@ class SqlConversationStore:
                     client_time_zone or row.client_time_zone
                 ),
                 branch_id=branch.id,
+                attachments=admitted_attachments,
             )
             run.persona_revision_id, run.prompt_bundle_revision_id, run.prompt_hash = (
                 self._provenance(run.agent_revision_id, effective_persona)
@@ -1781,6 +1984,13 @@ class SqlConversationStore:
             source_user = await self.conversations.message(session, prior.user_message_id)
             if source_user is None:
                 raise ConversationNotFound
+            source_refs = tuple(
+                ConversationAttachmentReference(item.kind, item.source_id)
+                for item in source_user.attachments
+            )
+            await self._admit_attachments(issuer, subject, source_refs)
+            admitted_attachments = source_user.attachments
+            await self._require_vision(row.model_id, admitted_attachments)
             branch = ConversationBranch(
                 prior.conversation_id,
                 source_user.branch_id,
@@ -1814,6 +2024,7 @@ class SqlConversationStore:
                 ),
                 branch_id=branch.id,
                 regenerated_from_run_id=prior.id,
+                attachments=admitted_attachments,
             )
             (
                 regenerated.persona_revision_id,
@@ -1954,6 +2165,13 @@ class SqlConversationStore:
             active = await self.runs.active(session, prior.conversation_id)
             if active is not None:
                 raise ActiveRunConflict
+            source_refs = tuple(
+                ConversationAttachmentReference(item.kind, item.source_id)
+                for item in prior.attachments
+            )
+            await self._admit_attachments(issuer, subject, source_refs)
+            admitted_attachments = prior.attachments
+            await self._require_vision(prior.model_id, admitted_attachments)
             # Retry keeps the historical revision and model policy, but the
             # profile must be active at the atomic admission boundary.
             await self._resolve_active_agent_for_run(session, prior.agent_revision_id)
@@ -1989,6 +2207,7 @@ class SqlConversationStore:
                 tool_retry_limit=prior.tool_retry_limit,
                 client_time_zone=prior.client_time_zone,
                 branch_id=prior.branch_id,
+                attachments=admitted_attachments,
             )
             self.runs.stage(session, retried)
             await session.flush()
@@ -2240,16 +2459,20 @@ class SqlConversationStore:
             if run is None:
                 raise ConversationNotFound
             row = await self._row(session, run.conversation_id, subject, issuer)
-            return await self._load(session, row), run
+            loaded = await self._load(session, row)
+            projected = await self.resolve_attachment_availability(loaded)
+            return projected, next(item for item in projected.runs if item.id == run.id)
 
     async def find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]:
         async with self.sessions() as session:
             run = await self.runs.get(session, run_id)
             if run is None:
                 raise ConversationNotFound
-            return await self._load(
+            loaded = await self._load(
                 session, await self.conversations.get(session, run.conversation_id)
-            ), run
+            )
+            projected = await self.resolve_attachment_availability(loaded)
+            return projected, next(item for item in projected.runs if item.id == run.id)
 
     async def start_run(
         self,

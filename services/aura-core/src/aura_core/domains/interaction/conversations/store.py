@@ -14,10 +14,18 @@ import json
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from time import perf_counter
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from aura_core.domains.artifacts.attachments.ports import AttachmentReadPort
+from aura_core.domains.artifacts.attachments.public import (
+    MAX_ATTACHMENTS_PER_MESSAGE,
+    MAX_IMAGES_PER_MESSAGE,
+    AttachmentAdmissionError,
+    AttachmentNotFound,
+    AttachmentStatus,
+)
 from aura_core.domains.execution.runs.dto import (
     Run,
     RunClaim,
@@ -43,8 +51,10 @@ from aura_core.domains.interaction.conversations.context import (
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
+    AttachmentSummary,
     Conversation,
     ConversationArchiveState,
+    ConversationAttachmentReference,
     ConversationBranch,
     ConversationBranchOrigin,
     ConversationListFilters,
@@ -69,11 +79,13 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaRevisionQueryPort,
 )
+from aura_core.domains.knowledge.documents.ports import DocumentReadPort
+from aura_core.domains.knowledge.documents.public import DocumentStatus
 from aura_core.domains.knowledge.memory.recall import MemoryRecallRequest, MemoryRecallResult
 from aura_core.platform.outbox import OutboxCommand
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
-from aura_core.runtime.models.ports import ModelDescriptor
+from aura_core.runtime.models.ports import ModelDescriptor, ModelSelectionPort
 from aura_core.runtime.prompting.public import PromptCompilation, PromptMetricsPort
 
 NAMESPACE = UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
@@ -88,6 +100,17 @@ GENERAL_AGENT = SeededAgent(
 
 class ConversationNotFound(LookupError):
     pass
+
+
+class ModelVisionRequiredError(RuntimeError):
+    """The selected model has no fresh, provider-verified vision capability."""
+
+    code = "model_vision_required"
+    status_code = 409
+
+    def __init__(self, model_id: str) -> None:
+        super().__init__("the selected model does not provide verified vision capability")
+        self.model_id = model_id
 
 
 class InvalidConversationCursor(ValueError):
@@ -187,6 +210,8 @@ class ConversationStore:
         agents: AgentCatalog | None = None,
         personas: PersonaRevisionQueryPort | None = None,
         memory_recall: object | None = None,
+        attachment_service: AttachmentReadPort | None = None,
+        document_service: DocumentReadPort | None = None,
     ) -> None:
         self.default_model = default_model
         self.agents = agents or AgentCatalog()
@@ -203,6 +228,128 @@ class ConversationStore:
         ) = None
         self.memory_outbox: object | None = None
         self.memory_recall = memory_recall
+        self.attachment_service = attachment_service
+        self.document_service = document_service
+        self.model_selection: ModelSelectionPort | None = None
+
+    def set_model_selection(self, model_selection: ModelSelectionPort | None) -> None:
+        self.model_selection = model_selection
+
+    async def _require_vision(
+        self,
+        model_id: str,
+        refs: Sequence[ConversationAttachmentReference | AttachmentSummary] | None,
+        models: Iterable[ModelDescriptor] | None = None,
+    ) -> None:
+        if not any(item.kind == "image" for item in refs or ()):
+            return
+        descriptor: ModelDescriptor | None = None
+        verifier = self.model_selection
+        if verifier is not None:
+            descriptor = await verifier.verify_model(model_id, "vision")
+        if verifier is None and models is not None:
+            descriptor = next((item for item in models if item.id == model_id), None)
+        if (
+            descriptor is None
+            or descriptor.availability != "available"
+            or not descriptor.selectable
+            or "vision" not in descriptor.capabilities
+            or not descriptor.model_digest
+            or not descriptor.model_revision
+        ):
+            if self.prompt_metrics is not None:
+                cast(Any, self.prompt_metrics).increment(
+                    "aura.models.inference",
+                    "model_vision_verification_outcome",
+                    outcome="rejected",
+                    dependency="model_provider",
+                )
+            raise ModelVisionRequiredError(model_id)
+        if self.prompt_metrics is not None:
+            cast(Any, self.prompt_metrics).increment(
+                "aura.models.inference",
+                "model_vision_verification_outcome",
+                outcome="verified",
+                dependency="model_provider",
+            )
+
+    def set_attachment_services(
+        self,
+        attachment_service: AttachmentReadPort | None,
+        document_service: DocumentReadPort | None,
+    ) -> None:
+        """Attach public owner-scoped resource query ports at composition time."""
+
+        self.attachment_service = attachment_service
+        self.document_service = document_service
+
+    async def _admit_attachments(
+        self,
+        issuer: str,
+        subject: str,
+        attachments: Sequence[ConversationAttachmentReference] | None,
+    ) -> tuple[AttachmentSummary, ...]:
+        refs = tuple(attachments or ())
+        if len(refs) > MAX_ATTACHMENTS_PER_MESSAGE:
+            raise AttachmentAdmissionError("attachment limit exceeded")
+        if len({(ref.kind, ref.source_id) for ref in refs}) != len(refs):
+            raise AttachmentAdmissionError("duplicate attachment")
+        if sum(ref.kind == "image" for ref in refs) > MAX_IMAGES_PER_MESSAGE:
+            raise AttachmentAdmissionError("image attachment limit exceeded")
+        result: list[AttachmentSummary] = []
+        image_service = self.attachment_service
+        document_service = self.document_service
+        for ref in refs:
+            # Link identity is unique to this admitted message; source IDs are
+            # intentionally reusable across messages and branches.
+            link_id = uuid4()
+            if ref.kind == "image":
+                if image_service is None:
+                    raise AttachmentAdmissionError("image attachment service unavailable")
+                try:
+                    value = await image_service.get(issuer, subject, ref.source_id)
+                except AttachmentNotFound:
+                    raise AttachmentAdmissionError("image attachment is unavailable") from None
+                if value.status is not AttachmentStatus.READY:
+                    raise AttachmentAdmissionError("image attachment is not ready")
+                result.append(
+                    AttachmentSummary(
+                        link_id,
+                        "image",
+                        ref.source_id,
+                        value.filename,
+                        value.media_type,
+                        value.byte_count,
+                        "available",
+                        value.width,
+                        value.height,
+                    )
+                )
+                continue
+            if document_service is None:
+                raise AttachmentAdmissionError("document attachment service unavailable")
+            value = await document_service.get(issuer, subject, ref.source_id)
+            if value is None or value.status is not DocumentStatus.READY:
+                raise AttachmentAdmissionError("document attachment is not ready")
+            result.append(
+                AttachmentSummary(
+                    link_id,
+                    "document",
+                    ref.source_id,
+                    value.filename,
+                    value.media_type,
+                    value.byte_count,
+                    "available",
+                )
+            )
+        if self.prompt_metrics is not None:
+            cast(Any, self.prompt_metrics).increment(
+                "aura.interaction.conversation_persistence",
+                "conversation_attachment_admission_outcome",
+                outcome="accepted",
+                dependency="attachment_store",
+            )
+        return tuple(result)
 
     def set_memory_command_factory(
         self,
@@ -370,6 +517,78 @@ class ConversationStore:
             raise ConversationNotFound
         return conversation
 
+    async def resolve_attachment_availability(self, conversation: Conversation) -> Conversation:
+        """Resolve current resource state without mutating conversation history.
+
+        Lifecycle deletion is owned by the source domain.  Conversation reads
+        project deleted or non-ready sources to content-free link tombstones;
+        the durable message row remains immutable.
+        """
+
+        if self.attachment_service is None and self.document_service is None:
+            return conversation
+
+        async def resolve_summaries(
+            summaries: Sequence[AttachmentSummary],
+        ) -> tuple[AttachmentSummary, ...]:
+            resolved: list[AttachmentSummary] = []
+            for summary in summaries:
+                available = summary.availability == "available"
+                if available and summary.kind == "image":
+                    if self.attachment_service is None:
+                        available = False
+                    else:
+                        try:
+                            value = await self.attachment_service.get(
+                                conversation.principal_issuer,
+                                conversation.principal_subject,
+                                summary.source_id,
+                            )
+                        except AttachmentNotFound:
+                            available = False
+                        else:
+                            available = value.status is AttachmentStatus.READY
+                elif available and summary.kind == "document":
+                    if self.document_service is None:
+                        available = False
+                    else:
+                        value = await self.document_service.get(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            summary.source_id,
+                        )
+                        available = value is not None and value.status is DocumentStatus.READY
+                resolved.append(summary if available else summary.unavailable())
+            return tuple(resolved)
+
+        changed = False
+        messages: list[Message] = []
+        for message in conversation.messages:
+            attachments = list(await resolve_summaries(message.attachments))
+            changed = changed or tuple(attachments) != message.attachments
+            if attachments != list(message.attachments):
+                copied = copy.copy(message)
+                copied.attachments = tuple(attachments)
+                messages.append(copied)
+            else:
+                messages.append(message)
+        runs: list[Run] = []
+        for run in conversation.runs:
+            attachments = await resolve_summaries(run.attachments)
+            changed = changed or attachments != run.attachments
+            if attachments != run.attachments:
+                copied_run = copy.copy(run)
+                copied_run.attachments = attachments
+                runs.append(copied_run)
+            else:
+                runs.append(run)
+        if not changed:
+            return conversation
+        projection = copy.copy(conversation)
+        projection.messages = messages
+        projection.runs = runs
+        return projection
+
     async def get(
         self, conversation_id: UUID, subject: str, issuer: str | None = None
     ) -> Conversation:
@@ -386,23 +605,21 @@ class ConversationStore:
             None,
         )
         if root is None:
-            return conversation
+            return await self.resolve_attachment_availability(conversation)
         from aura_core.domains.interaction.conversations.context import branch_message_ids
 
         visible_ids = branch_message_ids(conversation, root.id) or set()
         if all(run.branch_id in {None, root.id} for run in conversation.runs):
-            return conversation
+            return await self.resolve_attachment_availability(conversation)
         projection = copy.copy(conversation)
         projection.messages = [
             message for message in conversation.messages if message.id in visible_ids
         ]
         projection.runs = [
-            run
-            for run in conversation.runs
-            if run.branch_id is None or run.branch_id == root.id
+            run for run in conversation.runs if run.branch_id is None or run.branch_id == root.id
         ]
         projection.active_branch_id = root.id
-        return projection
+        return await self.resolve_attachment_availability(projection)
 
     @staticmethod
     def _activity_key(item: Conversation) -> tuple[datetime, UUID]:
@@ -577,7 +794,10 @@ class ConversationStore:
         agent_revision_id: UUID | None = None,
         persona_revision_id: UUID | None = None,
         client_time_zone: str | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run]:
+        if not message.strip():
+            raise InvalidConversationMetadata("message must not be empty")
         key = (issuer, subject, idempotency_key)
         fingerprint = _fingerprint(
             "create",
@@ -586,6 +806,7 @@ class ConversationStore:
             agent_revision_id,
             persona_revision_id,
             client_time_zone,
+            tuple((item.kind, item.source_id) for item in attachments or ()),
         )
         existing = self._idempotency.get(key)
         if existing is not None:
@@ -595,8 +816,10 @@ class ConversationStore:
                 raise IdempotencyConflict
             return cast(CommandResult, existing)
         self._validate_model(model_id, models)
+        await self._require_vision(model_id, attachments, models)
         revision = self._resolve_agent(agent_revision_id)
         client_time_zone = validate_client_time_zone(client_time_zone)
+        admitted_attachments = await self._admit_attachments(issuer, subject, attachments)
         effective_persona = persona_revision_id or revision.persona_revision_id
         if persona_revision_id is not None:
             self._resolve_active_persona(persona_revision_id)
@@ -620,7 +843,13 @@ class ConversationStore:
         root_branch = ConversationBranch(conversation.id)
         conversation.branches.append(root_branch)
         conversation.active_branch_id = root_branch.id
-        user_message = Message(conversation.id, MessageRole.USER, message, branch_id=root_branch.id)
+        user_message = Message(
+            conversation.id,
+            MessageRole.USER,
+            message,
+            branch_id=root_branch.id,
+            attachments=admitted_attachments,
+        )
         run = Run(
             conversation_id=conversation.id,
             user_message_id=user_message.id,
@@ -638,6 +867,7 @@ class ConversationStore:
             tool_retry_limit=tool_retry_limit,
             client_time_zone=client_time_zone,
             branch_id=root_branch.id,
+            attachments=admitted_attachments,
         )
         user_message.run_id = run.id
         conversation.messages.append(user_message)
@@ -675,7 +905,8 @@ class ConversationStore:
         from aura_core.domains.interaction.conversations.context import branch_message_ids
 
         allowed = branch_message_ids(conversation, branch_id) or set()
-        return [message for message in conversation.messages if message.id in allowed]
+        projected = await self.resolve_attachment_availability(conversation)
+        return [message for message in projected.messages if message.id in allowed]
 
     async def branch_runs(
         self, conversation_id: UUID, branch_id: UUID, subject: str, issuer: str | None = None
@@ -685,7 +916,8 @@ class ConversationStore:
         conversation = await self._get_raw(conversation_id, subject, issuer)
         if not any(branch.id == branch_id for branch in conversation.branches):
             raise ConversationNotFound
-        return [run for run in conversation.runs if run.branch_id == branch_id]
+        projected = await self.resolve_attachment_availability(conversation)
+        return [run for run in projected.runs if run.branch_id == branch_id]
 
     async def create_branch(
         self,
@@ -698,9 +930,12 @@ class ConversationStore:
         issuer: str | None = None,
         client_time_zone: str | None = None,
         source_branch_id: UUID | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run, ConversationBranch]:
         if issuer is None:
             raise ValueError("issuer is required")
+        if not corrected_message.strip():
+            raise InvalidConversationMetadata("message must not be empty")
         key = (issuer, subject, idempotency_key)
         fingerprint = _fingerprint(
             "branch",
@@ -710,6 +945,7 @@ class ConversationStore:
             expected_version,
             client_time_zone,
             source_branch_id,
+            tuple((item.kind, item.source_id) for item in attachments or ()),
         )
         existing = self._idempotency.get(key)
         if existing is not None:
@@ -748,6 +984,10 @@ class ConversationStore:
         parent_branch_id = (
             parent_message.branch_id if parent_message is not None else source.branch_id
         )
+        admitted_attachments = await self._admit_attachments(
+            subject=subject, issuer=issuer, attachments=attachments
+        )
+        await self._require_vision(conversation.model_id, attachments)
         branch = ConversationBranch(
             conversation_id,
             parent_branch_id=parent_branch_id,
@@ -769,6 +1009,7 @@ class ConversationStore:
             updated_at=created,
             branch_id=branch.id,
             parent_message_id=parent_message.id if parent_message else None,
+            attachments=admitted_attachments,
         )
         run = Run(
             conversation_id=conversation.id,
@@ -789,6 +1030,7 @@ class ConversationStore:
                 client_time_zone or conversation.client_time_zone
             ),
             branch_id=branch.id,
+            attachments=admitted_attachments,
         )
         user.run_id = run.id
         branch.head_message_id = user.id
@@ -829,6 +1071,19 @@ class ConversationStore:
         source_user = next(
             item for item in conversation.messages if item.id == source_run.user_message_id
         )
+        # Regeneration is a new admission boundary.  Re-authorize every
+        # copied source reference before creating the branch/run so a deleted
+        # resource can never yield a new run from historical summaries.
+        source_refs = tuple(
+            ConversationAttachmentReference(item.kind, item.source_id)
+            for item in source_user.attachments
+        )
+        await self._admit_attachments(issuer, subject, source_refs)
+        # The source user message owns the immutable link snapshots.  The
+        # admission above is authorization only; a regenerated run reuses
+        # that explicit set rather than minting new message links.
+        admitted_attachments = source_user.attachments
+        await self._require_vision(conversation.model_id, admitted_attachments)
         branch = ConversationBranch(
             conversation.id,
             parent_branch_id=source_user.branch_id,
@@ -860,6 +1115,7 @@ class ConversationStore:
             ),
             branch_id=branch.id,
             regenerated_from_run_id=source_run.id,
+            attachments=admitted_attachments,
         )
         branch.head_message_id = source_user.id
         conversation.branches.append(branch)
@@ -1267,6 +1523,7 @@ class ConversationStore:
         issuer: str | None = None,
         client_time_zone: str | None = None,
         branch_id: UUID | None = None,
+        attachments: Sequence[ConversationAttachmentReference] | None = None,
     ) -> tuple[Conversation, Message, Run]:
         if issuer is None:
             raise ValueError("issuer is required")
@@ -1279,13 +1536,15 @@ class ConversationStore:
         existing = self._idempotency.get(key)
         if existing is not None:
             fingerprint = hashlib.sha256(
-                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
+                f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}:"
+                f"{tuple((item.kind, item.source_id) for item in attachments or ())}".encode()
             ).hexdigest()
             if self._idempotency_fingerprints.get(key) != fingerprint:
                 raise IdempotencyConflict
             if not isinstance(existing, tuple) or len(cast(tuple[object, ...], existing)) != 3:
                 raise IdempotencyConflict
             return cast(CommandResult, existing)
+        await self._require_vision(conversation.model_id, attachments)
         async with await self._lock_for(conversation_id):
             if conversation.version != expected_version:
                 raise VersionConflict
@@ -1305,11 +1564,7 @@ class ConversationStore:
                 next((item for item in conversation.branches if item.id == branch_id), None)
                 if branch_id
                 else next(
-                    (
-                        item
-                        for item in conversation.branches
-                        if item.parent_branch_id is None
-                    ),
+                    (item for item in conversation.branches if item.parent_branch_id is None),
                     None,
                 )
             )
@@ -1321,6 +1576,7 @@ class ConversationStore:
                 message,
                 branch_id=selected_branch.id,
                 parent_message_id=selected_branch.head_message_id,
+                attachments=await self._admit_attachments(issuer, subject, attachments),
             )
             run = Run(
                 conversation_id=conversation.id,
@@ -1341,6 +1597,7 @@ class ConversationStore:
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=pinned_time_zone,
                 branch_id=selected_branch.id,
+                attachments=user_message.attachments,
             )
             user_message.run_id = run.id
             selected_branch.head_message_id = user_message.id
@@ -1351,7 +1608,8 @@ class ConversationStore:
         result = (conversation, user_message, run)
         self._idempotency[key] = result
         self._idempotency_fingerprints[key] = hashlib.sha256(
-            f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}".encode()
+            f"run:{conversation_id}:{message}:{expected_version}:{pinned_time_zone}:{branch_id}:"
+            f"{tuple((item.kind, item.source_id) for item in attachments or ())}".encode()
         ).hexdigest()
         return result
 
@@ -1386,6 +1644,16 @@ class ConversationStore:
         if conversation.archived_at is not None:
             raise ArchivedConversationConflict
         prior = next(run for run in conversation.runs if run.id == run_id)
+        user_message = next(
+            item for item in conversation.messages if item.id == prior.user_message_id
+        )
+        source_refs = tuple(
+            ConversationAttachmentReference(item.kind, item.source_id)
+            for item in user_message.attachments
+        )
+        await self._admit_attachments(issuer, subject, source_refs)
+        admitted_attachments = user_message.attachments
+        await self._require_vision(conversation.model_id, admitted_attachments)
         self._resolve_agent(prior.agent_revision_id)
         # Legacy runs may predate persisted prompt provenance.  Retry remains
         # pinned to the historical revision/model policy, while the new run
@@ -1412,9 +1680,6 @@ class ConversationStore:
         async with await self._lock_for(conversation.id):
             if conversation.current_run is not None:
                 raise ActiveRunConflict
-            user_message = next(
-                message for message in conversation.messages if message.id == prior.user_message_id
-            )
             run = Run(
                 conversation_id=conversation.id,
                 user_message_id=user_message.id,
@@ -1433,6 +1698,7 @@ class ConversationStore:
                 tool_retry_limit=tool_retry_limit,
                 client_time_zone=prior.client_time_zone,
                 branch_id=prior.branch_id,
+                attachments=admitted_attachments,
             )
             conversation.runs.append(run)
             conversation.version += 1
@@ -1489,7 +1755,9 @@ class ConversationStore:
     ) -> tuple[Conversation, Run]:
         if issuer is None:
             raise ValueError("issuer is required")
-        return await self._find_run(run_id, subject, issuer)
+        conversation, run = await self._find_run(run_id, subject, issuer)
+        projected = await self.resolve_attachment_availability(conversation)
+        return projected, next(item for item in projected.runs if item.id == run.id)
 
     async def start_run(
         self,
@@ -1761,7 +2029,9 @@ class ConversationStore:
         raise ConversationNotFound
 
     async def find_run_any(self, run_id: UUID) -> tuple[Conversation, Run]:
-        return await self._find_run_any(run_id)
+        conversation, run = await self._find_run_any(run_id)
+        projected = await self.resolve_attachment_availability(conversation)
+        return projected, next(item for item in projected.runs if item.id == run.id)
 
     async def context(
         self,

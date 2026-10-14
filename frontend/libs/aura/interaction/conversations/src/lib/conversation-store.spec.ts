@@ -86,11 +86,15 @@ describe('ConversationStore', () => {
     };
     const logoutStore = new ConversationStore(api, management.port);
     await vi.waitFor(() => expect(logoutStore.authState()).toBe('authenticated'));
+    logoutStore.updateDraft('private before logout');
+    logoutStore.setDraftAttachments([{ kind: 'document', documentId: 'private-document' }, { kind: 'image', attachmentId: 'private-image' }]);
 
     const pending = logoutStore.logout();
     expect(resetCountAtLogout).toBe(1);
     expect(logoutStore.session()).toBeNull();
     expect(logoutStore.authState()).toBe('unauthenticated');
+    expect(logoutStore.draft()).toBe('');
+    expect(logoutStore.selectedAttachments()).toEqual([]);
     releaseLogout();
     await pending;
   });
@@ -142,6 +146,31 @@ describe('ConversationStore', () => {
     await sessionStore.load();
     expect(management.resetCount()).toBe(1);
     expect(sessionStore.session()).toEqual(nextSession);
+  });
+
+  it('clears owner-scoped drafts and admission state before hydrating a new owner', async () => {
+    let currentSession = session;
+    let ownerItems: ReadonlyArray<ConversationSummary> = [summary('owner-conversation')];
+    const detail = { ...summary('owner-conversation'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: ownerItems, nextCursor: null }), [detail]);
+    api.getSession = async () => currentSession;
+    api.createRun = async () => { throw { status: 409, code: 'model_vision_required', message: 'vision required' }; };
+    const ownerStore = new ConversationStore(api);
+    await vi.waitFor(() => expect(ownerStore.selectedId()).toBe('owner-conversation'));
+    ownerStore.updateDraft('owner-private draft');
+    ownerStore.setDraftAttachments([{ kind: 'document', documentId: 'owner-document' }, { kind: 'image', attachmentId: 'owner-image' }]);
+    expect(ownerStore.send()).toBe(true);
+    await vi.waitFor(() => expect(ownerStore.modelVisionRequiredFor('owner-conversation')).toBe(true));
+
+    currentSession = { ...session, principal: { ...session.principal, subject: 'new-owner' }, csrfToken: 'new-owner-csrf' };
+    ownerItems = [];
+    await ownerStore.load();
+
+    expect(ownerStore.session()?.principal.subject).toBe('new-owner');
+    expect(ownerStore.conversations().map((conversation) => conversation.id)).toEqual(['draft-welcome']);
+    expect(ownerStore.draft()).toBe('');
+    expect(ownerStore.selectedAttachments()).toEqual([]);
+    expect(ownerStore.modelVisionRequiredFor()).toBe(false);
   });
 
   it.each([401, 403] as const)('keeps management authorization recovery explicit for %s responses', async (status) => {
@@ -270,6 +299,18 @@ describe('ConversationStore', () => {
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); hydrateDefaultAgent(store); });
 
   it('keeps drafts in memory and validates empty sends', () => { store.updateDraft(''); expect(store.send()).toBe(false); expect(store.notice()).toContain('Write a message'); });
+  it('migrates text and attachments typed during bootstrap when a persisted conversation replaces the draft', async () => {
+    const detail = { ...summary('bootstrapped-conversation'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const bootstrapped = new ConversationStore(fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]));
+    bootstrapped.updateDraft('Typed before conversation hydration');
+    bootstrapped.setDraftAttachments([{ kind: 'document', documentId: 'document-during-bootstrap' }]);
+    await vi.waitFor(() => expect(bootstrapped.conversations().some((conversation) => conversation.id === 'bootstrapped-conversation')).toBe(true));
+    expect(bootstrapped.draft()).toBe('Typed before conversation hydration');
+    expect(bootstrapped.selectedAttachments()).toEqual([{ kind: 'document', documentId: 'document-during-bootstrap' }]);
+    bootstrapped.select('bootstrapped-conversation');
+    expect(bootstrapped.draft()).toBe('');
+    expect(bootstrapped.selectedAttachments()).toEqual([]);
+  });
   it('blocks keyboard-style sends while the current agent is disabled', async () => {
     const disabled = { profileId: 'agent-profile', revisionId: 'agent-revision-1', revision: 1, displayName: 'Aura', status: 'disabled' as const };
     const detail = { ...summary('disabled-conversation'), agent: disabled, agentAssignments: [], messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
@@ -465,6 +506,29 @@ describe('ConversationStore', () => {
     expect(acceptedStore.selectedId()).toMatch(/^conversation-/);
     expect(acceptedStore.conversations().filter((conversation) => !conversation.id.startsWith('draft-'))).toHaveLength(1);
     expect(acceptedStore.conversations().filter((conversation) => conversation.id.startsWith('draft-'))).toHaveLength(0);
+  });
+  it('does not clear a second conversation when an earlier run is accepted late', async () => {
+    const first = { ...summary('conversation-a'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('conversation-b'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]);
+    let release!: () => void;
+    api.createRun = async (id, message, version) => new Promise((resolve) => {
+      release = () => { void fakeApi().createRun(id, message, version).then(resolve); };
+    });
+    const delayedStore = new ConversationStore(api);
+    await vi.waitFor(() => expect(delayedStore.selectedId()).toBe('conversation-a'));
+    delayedStore.updateDraft('first conversation');
+    delayedStore.setDraftAttachments([{ kind: 'image', attachmentId: 'image-a' }]);
+    expect(delayedStore.send()).toBe(true);
+    delayedStore.select('conversation-b');
+    delayedStore.updateDraft('second conversation');
+    delayedStore.setDraftAttachments([{ kind: 'document', documentId: 'document-b' }]);
+
+    release();
+    await vi.waitFor(() => expect(delayedStore.attachmentAcceptanceConversationId()).toBe('conversation-a'));
+    expect(delayedStore.selectedId()).toBe('conversation-b');
+    expect(delayedStore.draft()).toBe('second conversation');
+    expect(delayedStore.selectedAttachments()).toEqual([{ kind: 'document', documentId: 'document-b' }]);
   });
   it.each([
     { name: 'missing', defaultModelId: null },

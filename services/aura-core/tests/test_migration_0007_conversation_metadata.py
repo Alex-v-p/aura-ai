@@ -66,7 +66,7 @@ def test_conversation_component_manifest_matches_versioned_metadata_contract() -
     capture = cast(dict[str, Any], output["capture"])
     assert component["id"] == "aura.interaction.conversation_persistence"
     assert component["version"] == COMPONENT_VERSIONS[component["id"]]
-    assert component["version"] == "1.6.0"
+    assert component["version"] == "1.7.0"
     assert capture["content"] == "none"
     assert output["schema"] == "core-conversation-record-v2"
     assert {

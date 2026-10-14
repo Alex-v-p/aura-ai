@@ -5,17 +5,23 @@ is not folded into the system prompt or conversation messages, so a provider
 cannot mistake recalled text for Aura governance or tool instructions.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 from uuid import UUID
 
 from aura_core.domains.interaction.conversations.dto import (
+    AttachmentSummary,
     Conversation,
     ConversationBranchOrigin,
     Message,
     MessageRole,
     MessageState,
+)
+from aura_core.domains.knowledge.documents.ports import (
+    DocumentSearchHitPort,
+    DocumentSearchPort,
+    DocumentSearchResult,
 )
 from aura_core.runtime.models.capacity import estimate_tokens
 
@@ -38,6 +44,10 @@ class MemoryAdmissionMetrics(Protocol):
         conversation_id: str | None = None,
         **trace_attributes: str,
     ) -> None: ...
+
+
+class _SearchResultPort(Protocol):
+    hits: Sequence[DocumentSearchHitPort]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +159,7 @@ def normalize_memory_evidence(items: Sequence[object], *, limit: int = 8) -> lis
                     ),
                 )
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             # Retrieval is advisory.  A malformed result is excluded rather
             # than allowed to widen context or break the conversational run.
             continue
@@ -470,3 +480,98 @@ def branch_message_ids(conversation: Conversation, branch_id: UUID | None) -> se
             break
         current = parent
     return result
+
+
+def select_attachment_context(
+    conversation: Conversation,
+    branch_id: UUID | None,
+    *,
+    current_message_id: UUID | None = None,
+    max_images: int = 4,
+    max_documents: int = 8,
+) -> tuple[tuple[AttachmentSummary, ...], tuple[AttachmentSummary, ...]]:
+    """Select only active-branch ancestor links for one run.
+
+    The current user turn is considered first, followed by newest ancestors;
+    source links are deduplicated by kind and opaque source ID.  This helper
+    returns metadata only.  Callers re-authorize and load bytes separately for
+    every run.
+    """
+
+    allowed = branch_message_ids(conversation, branch_id)
+    messages = [
+        message for message in conversation.messages if allowed is None or message.id in allowed
+    ]
+    current = [message for message in messages if message.id == current_message_id]
+    remaining = [message for message in reversed(messages) if message.id != current_message_id]
+    ordered = current + remaining
+    images: list[AttachmentSummary] = []
+    documents: list[AttachmentSummary] = []
+    image_ids: set[UUID] = set()
+    document_ids: set[UUID] = set()
+    for message in ordered:
+        for attachment in message.attachments:
+            if attachment.kind == "image":
+                if attachment.source_id in image_ids or len(images) >= max_images:
+                    continue
+                image_ids.add(attachment.source_id)
+                if attachment.available:
+                    images.append(attachment)
+            elif attachment.kind == "document":
+                if attachment.source_id in document_ids or len(documents) >= max_documents:
+                    continue
+                document_ids.add(attachment.source_id)
+                if attachment.available:
+                    documents.append(attachment)
+        if len(images) >= max_images and len(documents) >= max_documents:
+            break
+    return tuple(images), tuple(documents)
+
+
+async def search_attached_documents(
+    document_service: DocumentSearchPort,
+    owner: tuple[str, str],
+    query: str,
+    document_ids: Sequence[UUID],
+    *,
+    limit: int = 8,
+) -> Sequence[object]:
+    """Search only the explicitly authorized document set.
+
+    Retrieval is explicitly bounded by the authorized source IDs.  The
+    document port owns result shaping; this boundary never falls back to a
+    whole-library query.
+    """
+
+    ids = tuple(dict.fromkeys(document_ids))[:8]
+    if not ids:
+        return ()
+    search = cast(
+        Callable[..., Awaitable[Sequence[DocumentSearchHitPort]]],
+        document_service.search,  # type: ignore[reportUnknownMemberType]
+    )
+    result = await search(
+        owner[0],
+        owner[1],
+        query,
+        limit=limit,
+        allowed_document_ids=ids,
+    )
+    raw_result = cast(object, result)
+    if isinstance(raw_result, DocumentSearchResult):
+        hits: Sequence[object] = cast(Sequence[object], raw_result.hits)
+    elif isinstance(raw_result, Sequence):
+        hits = cast(Sequence[object], raw_result)
+    else:
+        hits = cast(Sequence[object], cast(_SearchResultPort, raw_result).hits)
+    allowed = set(ids)
+    selected: list[object] = []
+    for hit in hits:
+        if isinstance(hit, Mapping):
+            mapping = cast(Mapping[str, object], hit)
+            document_id = UUID(str(mapping["documentId"])) if "documentId" in mapping else None
+        else:
+            document_id = cast(DocumentSearchHitPort, hit).document_id
+        if document_id is not None and document_id in allowed:
+            selected.append(cast(object, hit))
+    return tuple(selected[:limit])

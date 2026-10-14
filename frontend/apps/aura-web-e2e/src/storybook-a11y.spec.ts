@@ -15,6 +15,12 @@ const stories = [
   'completed',
   'archived-recovery',
   'run-inspector',
+  'attachment-uploading',
+  'attachment-processing',
+  'attachment-failed',
+  'attachment-ready',
+  'attachment-tombstone',
+  'attachment-model-vision',
 ] as const;
 const themes = ['light', 'dark'] as const;
 const memoryStories = [
@@ -171,6 +177,24 @@ for (const story of stories) {
         await expect(page.getByRole('region', { name: 'Tool activity' })).toBeVisible();
         await expect(page.getByText('memory.search v1')).toBeVisible();
         await expect(page.getByText('2 authorized results')).toBeVisible();
+      }
+      if (story === 'attachment-ready') {
+        await expect(page.getByText('inspection.png', { exact: true })).toBeVisible();
+        await expect(page.getByText('grounding.pdf', { exact: true })).toBeVisible();
+        const preview = page.getByRole('button', { name: 'Preview inspection.png' });
+        await expect(preview).toBeVisible();
+        await preview.click();
+        await expect(page.getByRole('dialog', { name: 'inspection.png' })).toBeVisible();
+        await page.getByRole('button', { name: 'Close image preview' }).click();
+        await expect(preview).toBeFocused();
+      }
+      if (story === 'attachment-model-vision') {
+        await expect(page.getByRole('alert')).toContainText(/verified vision model/i);
+      }
+      if (story === 'attachment-tombstone') {
+        await expect(page.getByText('Attachment unavailable is unavailable', { exact: true })).toHaveCount(2);
+        await expect(page.getByText('Unavailable', { exact: true })).toHaveCount(2);
+        await expect(page.getByText('application/pdf', { exact: true })).toHaveCount(0);
       }
       const results = await new AxeBuilder({ page }).include('aura-conversation-panel').analyze();
       expect(results.violations).toEqual([]);

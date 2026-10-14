@@ -23,6 +23,7 @@ import {
   type RunMemoryActivitySnapshot,
   type Session,
 } from '@aura/aura-api-client';
+import type { AttachmentSelection } from './conversation-attachments';
 
 export type ConversationBranchSummary = ApiConversationBranchSummary;
 export type ConversationBranchDetail = ApiConversationBranchDetail;
@@ -82,14 +83,14 @@ export interface ConversationApi {
   listConversations(cursor?: string, filters?: ConversationListFilters): Promise<ConversationPage>;
   getConversation(conversationId: string): Promise<ConversationDetail>;
   updateConversationMetadata?(conversationId: string, metadata: { readonly title?: string; readonly archived?: boolean; readonly version: number }, idempotencyKey: string): Promise<ConversationSummary>;
-  createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string): Promise<ConversationRunAccepted>;
+  createConversation(message: string, modelId: string, idempotencyKey: string, agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationRunAccepted>;
   updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey: string, agentRevisionId?: string, transcriptSharingConfirmed?: boolean, personaRevisionId?: string, useAgentDefaultPersona?: boolean): Promise<ConversationSummary>;
-  createRun(conversationId: string, message: string, version: number, idempotencyKey: string, clientTimeZone?: string, branchId?: string): Promise<ConversationRunAccepted>;
+  createRun(conversationId: string, message: string, version: number, idempotencyKey: string, clientTimeZone?: string, branchId?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationRunAccepted>;
   cancelRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<Run>;
   retryRun(runId: string, csrfToken: string, idempotencyKey: string): Promise<ConversationRunAccepted>;
   listConversationBranches?(conversationId: string, cursor?: string): Promise<ConversationBranchPage>;
   getConversationBranch?(conversationId: string, branchId: string): Promise<ConversationBranchDetail>;
-  createConversationBranch?(conversationId: string, sourceUserMessageId: string, message: string, version: number, idempotencyKey: string, clientTimeZone?: string, branchId?: string): Promise<ConversationBranchRunAccepted>;
+  createConversationBranch?(conversationId: string, sourceUserMessageId: string, message: string, version: number, idempotencyKey: string, clientTimeZone?: string, branchId?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationBranchRunAccepted>;
   regenerateRun?(conversationId: string, runId: string, version: number, idempotencyKey: string, clientTimeZone?: string): Promise<ConversationBranchRunAccepted>;
   getRunMemoryActivity?(runId: string): Promise<RunMemoryActivitySnapshot>;
   /** Owner-authorized popup detail reads; content remains in session memory. */
@@ -143,16 +144,16 @@ export class AuraConversationApi implements ConversationApi {
     return this.client.execute('updateConversationMetadata', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: metadata });
   }
 
-  createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string): Promise<ConversationRunAccepted> {
-    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}) } as never });
+  createConversation(message: string, modelId: string, idempotencyKey = randomKey(), agentRevisionId?: string, personaRevisionId?: string, clientTimeZone?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationRunAccepted> {
+    return this.client.execute('createConversation', { ...emptyInput(), headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, modelId, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}), ...(attachments?.length ? { attachments } : {}) } as never });
   }
 
   updateConversation(conversationId: string, modelId: string, version: number, idempotencyKey = randomKey(), agentRevisionId?: string, transcriptSharingConfirmed?: boolean, personaRevisionId?: string, useAgentDefaultPersona?: boolean): Promise<ConversationSummary> {
     return this.client.execute('updateConversation', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { ...(modelId ? { modelId } : {}), version, ...(agentRevisionId ? { agentRevisionId } : {}), ...(personaRevisionId ? { personaRevisionId } : {}), ...(useAgentDefaultPersona ? { useAgentDefaultPersona: true } : {}), ...(transcriptSharingConfirmed ? { transcriptSharingConfirmed } : {}) } as never });
   }
 
-  createRun(conversationId: string, message: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string, branchId?: string): Promise<ConversationRunAccepted> {
-    return this.client.execute('createRun', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, conversationVersion: version, ...(branchId ? { branchId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}) } as never });
+  createRun(conversationId: string, message: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string, branchId?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationRunAccepted> {
+    return this.client.execute('createRun', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { message, conversationVersion: version, ...(branchId ? { branchId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}), ...(attachments?.length ? { attachments } : {}) } as never });
   }
 
   cancelRun(runId: string, csrfToken = this.csrfToken(), idempotencyKey = randomKey()): Promise<Run> {
@@ -171,8 +172,8 @@ export class AuraConversationApi implements ConversationApi {
     return this.client.execute('getConversationBranch', { ...emptyInput(), path: { conversation_id: conversationId, branch_id: branchId } });
   }
 
-  createConversationBranch(conversationId: string, sourceUserMessageId: string, message: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string, branchId?: string): Promise<ConversationBranchRunAccepted> {
-    return this.client.execute('createConversationBranch', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { sourceUserMessageId, message, conversationVersion: version, ...(branchId ? { branchId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}) } });
+  createConversationBranch(conversationId: string, sourceUserMessageId: string, message: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string, branchId?: string, attachments?: ReadonlyArray<AttachmentSelection>): Promise<ConversationBranchRunAccepted> {
+    return this.client.execute('createConversationBranch', { ...emptyInput(), path: { conversation_id: conversationId }, headers: { 'X-CSRF-Token': this.csrfToken(), 'Idempotency-Key': idempotencyKey }, body: { sourceUserMessageId, message, conversationVersion: version, ...(branchId ? { branchId } : {}), ...(clientTimeZone ? { clientTimeZone } : {}), ...(attachments?.length ? { attachments } : {}) } });
   }
 
   regenerateRun(_conversationId: string, runId: string, version: number, idempotencyKey = randomKey(), clientTimeZone?: string): Promise<ConversationBranchRunAccepted> {

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
+    AttachmentSummary,
     ConversationArchiveState,
     ConversationBranch,
     ConversationBranchOrigin,
@@ -31,6 +32,7 @@ from aura_core.domains.interaction.conversations.persistence import (
     ConversationPersonaAssignmentRow,
     ConversationRow,
     IdempotencyRow,
+    MessageAttachmentRow,
     MessageRow,
 )
 
@@ -105,6 +107,22 @@ class SqlConversationRepository:
             citations,
             row.branch_id,
             row.parent_message_id,
+            tuple(
+                AttachmentSummary(
+                    UUID(str(item["linkId"])),
+                    str(item["kind"]),
+                    UUID(str(item["sourceId"])),
+                    str(item["displayFilename"]),
+                    str(item["mediaType"]),
+                    int(cast(Any, item["byteCount"])),
+                    str(item.get("availability", "unavailable")),
+                    int(cast(Any, item["width"])) if item.get("width") is not None else None,
+                    int(cast(Any, item["height"])) if item.get("height") is not None else None,
+                )
+                for item in (row.attachments or [])
+                if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
+                <= set(item)
+            ),
         )
 
     @staticmethod
@@ -333,8 +351,37 @@ class SqlConversationRepository:
                 updated_at=message.updated_at,
                 branch_id=message.branch_id,
                 parent_message_id=message.parent_message_id,
+                attachments=[
+                    {
+                        "linkId": str(item.link_id),
+                        "kind": item.kind,
+                        "sourceId": str(item.source_id),
+                        "displayFilename": item.display_filename,
+                        "mediaType": item.media_type,
+                        "byteCount": item.byte_count,
+                        "availability": item.availability,
+                        "width": item.width,
+                        "height": item.height,
+                    }
+                    for item in message.attachments
+                ],
             )
         )
+        for item in message.attachments:
+            session.add(
+                MessageAttachmentRow(
+                    id=item.link_id,
+                    message_id=message.id,
+                    kind=item.kind,
+                    source_id=item.source_id,
+                    display_filename=item.display_filename,
+                    media_type=item.media_type,
+                    byte_count=item.byte_count,
+                    availability=item.availability,
+                    width=item.width,
+                    height=item.height,
+                )
+            )
 
     def stage_branch(self, session: AsyncSession, branch: ConversationBranch) -> None:
         session.add(

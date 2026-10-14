@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.17.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, content hashes, and embedding vectors are never exposed by this API."
+    "version": "1.18.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -17,6 +17,7 @@
     { "name": "Tools" },
     { "name": "Memories" },
     { "name": "Documents" },
+    { "name": "Attachments" },
     { "name": "Reminders" },
     { "name": "Notifications" },
     { "name": "Approvals" },
@@ -284,11 +285,11 @@
         "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConversationRequest" } } } },
         "responses": {
-          "202": { "description": "Conversation, first message, and queued run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "202": { "description": "Conversation, first message, its explicit attachment set, and queued run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "409": { "$ref": "#/components/responses/RunAdmissionConflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
@@ -345,12 +346,12 @@
         "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConversationBranchRequest" } } } },
         "responses": {
-          "202": { "description": "Immutable edited-message branch and newly governed run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "202": { "description": "Immutable edited-message branch, its newly explicit attachment set, and newly governed run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "409": { "$ref": "#/components/responses/RunAdmissionConflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
@@ -376,12 +377,12 @@
         "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRunRequest" } } } },
         "responses": {
-          "202": { "description": "User message persisted and run queued atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "202": { "description": "User message, its explicit attachment set, and queued run persisted atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "409": { "$ref": "#/components/responses/RunAdmissionConflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
@@ -424,11 +425,11 @@
         "tags": ["Runs"],
         "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "responses": {
-          "202": { "description": "Linked retry queued without duplicating the user message", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "202": { "description": "Linked retry queued after re-authorizing the source user message's immutable attachment set, without duplicating that message", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "409": { "$ref": "#/components/responses/RunAdmissionConflict" }
         }
       }
     },
@@ -439,12 +440,12 @@
         "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegenerateRunRequest" } } } },
         "responses": {
-          "202": { "description": "Immutable alternative branch and fresh governed run queued from the source run's preceding user-message path", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "202": { "description": "Immutable alternative branch and fresh governed run queued after re-authorizing the source user message's immutable attachment set", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
+          "409": { "$ref": "#/components/responses/RunAdmissionConflict" },
           "422": { "$ref": "#/components/responses/UnprocessableEntity" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
@@ -1198,6 +1199,134 @@
         }
       }
     },
+    "/api/v1/attachments/uploads": {
+      "post": {
+        "operationId": "createAttachmentUpload",
+        "tags": ["Attachments"],
+        "description": "Creates an owner-bound short-lived image upload session. The response contains no object-store key, endpoint, bucket, credential, checksum, or image bytes.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAttachmentUploadRequest" } } } },
+        "responses": {
+          "201": { "description": "Owner-bound image upload session created", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentUploadSession" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/attachments/uploads/{upload_id}/content": {
+      "put": {
+        "operationId": "uploadAttachmentContent",
+        "tags": ["Attachments"],
+        "description": "Streams one bounded image through Aura Core for signature verification and bounded decoding. PNG, JPEG, and non-animated WebP are accepted; malformed images, animation, decompression bombs, and images above forty megapixels are rejected. This is not a direct object-store upload.",
+        "parameters": [
+          { "$ref": "#/components/parameters/AttachmentUploadId" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/ExpectedVersion" },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 25000000 } },
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "$ref": "#/components/schemas/AttachmentMediaType" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary", "maxLength": 25000000 } } } },
+        "responses": {
+          "202": { "description": "Image accepted for bounded inspection and derivative creation", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentUploadReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "description": "Upload exceeds the exact 25000000-byte limit", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "415": { "description": "Declared type, filename extension, content signature, or decoded image format is unsupported or inconsistent", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/attachments": {
+      "get": {
+        "operationId": "listAttachments",
+        "tags": ["Attachments"],
+        "description": "Lists owner-private reusable image attachment metadata without image bytes, checksums, EXIF, storage internals, or credentials.",
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AttachmentStatus" } },
+          { "name": "mediaType", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AttachmentMediaType" } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-authorized image attachment page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachment_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/AttachmentId" }],
+      "get": {
+        "operationId": "getAttachment",
+        "tags": ["Attachments"],
+        "responses": {
+          "200": { "description": "Owner-authorized image attachment metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAttachment",
+        "tags": ["Attachments"],
+        "description": "Immediately makes an owner-scoped image unavailable and schedules deletion of its original and derivative objects. Exact idempotency-key replays return the original receipt; historical message links remain content-free unavailable tombstones.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentTransitionRequest" } } } },
+        "responses": {
+          "202": { "description": "Idempotent deletion accepted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AttachmentDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachment_id}/content": {
+      "get": {
+        "operationId": "downloadAttachment",
+        "tags": ["Attachments"],
+        "description": "Streams the owner-authorized original image. Responses are never browser-cacheable.",
+        "parameters": [{ "$ref": "#/components/parameters/AttachmentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized original image stream", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 25000000 } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/AttachmentMediaType" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachment_id}/preview": {
+      "get": {
+        "operationId": "getAttachmentPreview",
+        "tags": ["Attachments"],
+        "description": "Streams the metadata-free color-normalized derivative used for owner preview and model input. The longest edge is at most 2048 pixels and responses are never browser-cacheable.",
+        "parameters": [{ "$ref": "#/components/parameters/AttachmentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized normalized image derivative", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 25000000 } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/AttachmentMediaType" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/documents/uploads": {
       "post": {
         "operationId": "createDocumentUpload",
@@ -1398,6 +1527,8 @@
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentId": { "name": "document_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "AttachmentId": { "name": "attachment_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped image attachment identifier." },
+      "AttachmentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped image upload-session identifier." },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -1412,6 +1543,7 @@
       "Forbidden": { "description": "Authenticated subject is not the configured owner or command validation failed", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "NotFound": { "description": "Resource not found for this principal", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "Conflict": { "description": "Version conflict, active run conflict, or idempotency-key payload conflict", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "RunAdmissionConflict": { "description": "Run admission conflict. model_vision_required is returned when the explicit attachment set contains an image and the selected model lacks a fresh digest-identified vision capability; Aura does not change the selected model or persist the message or run.", "content": { "application/problem+json": { "schema": { "oneOf": [{ "$ref": "#/components/schemas/ErrorEnvelope" }, { "$ref": "#/components/schemas/ModelVisionRequiredError" }] } } } },
       "UnprocessableEntity": { "description": "Semantically invalid command", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "ServiceUnavailable": { "description": "Required dependency unavailable", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
     },
@@ -2259,7 +2391,8 @@
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "agentRevisionId": { "type": "string", "format": "uuid" },
           "personaRevisionId": { "type": "string", "format": "uuid", "description": "Optional conversation persona override. Omission uses the selected agent revision's default persona." },
-          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." },
+          "attachments": { "$ref": "#/components/schemas/MessageAttachmentInput", "description": "Optional explicit owner-private attachment set for the first immutable user message. Omission is equivalent to an empty set for backward compatibility." }
         }
       },
       "UpdateConversationRequest": {
@@ -2301,7 +2434,8 @@
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "conversationVersion": { "type": "integer", "minimum": 1 },
           "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch to extend. Omission preserves the pre-1.17 default linear conversation behavior." },
-          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." },
+          "attachments": { "$ref": "#/components/schemas/MessageAttachmentInput", "description": "Optional explicit owner-private attachment set for this immutable user message. Omission is equivalent to an empty set for backward compatibility." }
         }
       },
       "CreateConversationBranchRequest": {
@@ -2312,7 +2446,8 @@
           "message": { "type": "string", "minLength": 1, "maxLength": 32768, "description": "Corrected user content for the new branch. The source message remains unchanged." },
           "conversationVersion": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." },
           "branchId": { "type": "string", "format": "uuid", "description": "Opaque source branch containing the edited message. Omission selects the message's authoritative creation lineage for backward compatibility." },
-          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." }
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." },
+          "attachments": { "$ref": "#/components/schemas/MessageAttachmentInput", "description": "Optional new explicit set for the replacement user message. Omission is an empty set; clients preselecting source attachments must submit them explicitly." }
         }
       },
       "RegenerateRunRequest": {
@@ -2457,6 +2592,7 @@
           "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch on which this immutable message was created. Optional for backward compatibility with pre-1.17 producers." },
           "parentMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Previous message in this message's immutable ancestor path. Optional for backward compatibility with pre-1.17 producers." },
           "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are excluded." },
+          "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/MessageAttachmentSummary" }, "description": "Optional immutable attachment-link summaries for a user message. Historical messages and assistant messages may omit this property. Deleted sources remain as unavailable content-free summaries." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
@@ -2480,6 +2616,7 @@
           "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
           "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
           "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run. Historical runs and runs without validated document evidence may omit this property." },
+          "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/MessageAttachmentSummary" }, "description": "Optional snapshot of the admitted source user message's immutable attachment links. Historical runs may omit it." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -2965,6 +3102,165 @@
           "occurredAt": { "type": "string", "format": "date-time" }
         }
       },
+      "DocumentAttachmentReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "documentId"],
+        "properties": {
+          "kind": { "type": "string", "const": "document" },
+          "documentId": { "type": "string", "format": "uuid", "description": "Opaque owner-scoped ready document identifier." }
+        }
+      },
+      "ImageAttachmentReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "attachmentId"],
+        "properties": {
+          "kind": { "type": "string", "const": "image" },
+          "attachmentId": { "type": "string", "format": "uuid", "description": "Opaque owner-scoped ready image attachment identifier." }
+        }
+      },
+      "AttachmentReference": {
+        "oneOf": [{ "$ref": "#/components/schemas/DocumentAttachmentReference" }, { "$ref": "#/components/schemas/ImageAttachmentReference" }],
+        "discriminator": { "propertyName": "kind" },
+        "description": "An explicit owner-private source reference. Core resolves and authorizes the opaque source identifier through the owning domain; no cross-domain database foreign key is implied."
+      },
+      "MessageAttachmentInput": {
+        "type": "array", "maxItems": 8, "uniqueItems": true,
+        "items": { "$ref": "#/components/schemas/AttachmentReference" },
+        "description": "At most eight unique sources, including at most four images. Core enforces readiness, ownership, per-kind counts, and duplicate source identifiers atomically at run admission."
+      },
+      "AttachmentAvailability": {
+        "type": "string", "enum": ["available", "unavailable"]
+      },
+      "AttachmentSummaryMediaType": {
+        "oneOf": [{ "$ref": "#/components/schemas/DocumentMediaType" }, { "$ref": "#/components/schemas/AttachmentMediaType" }]
+      },
+      "AvailableMessageAttachmentSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized immutable message-link presentation for a source that remains available.",
+        "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+        "properties": {
+          "linkId": { "type": "string", "format": "uuid" },
+          "kind": { "type": "string", "enum": ["document", "image"] },
+          "sourceId": { "type": "string", "format": "uuid" },
+          "displayFilename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/AttachmentSummaryMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "availability": { "type": "string", "const": "available" },
+          "width": { "type": "integer", "minimum": 1, "maximum": 40000000, "description": "Original image width when kind is image; omitted for documents." },
+          "height": { "type": "integer", "minimum": 1, "maximum": 40000000, "description": "Original image height when kind is image; omitted for documents." }
+        }
+      },
+      "UnavailableMessageAttachmentSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free historical tombstone. The original filename, media type, byte count, dimensions, content, and preview are unavailable.",
+        "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+        "properties": {
+          "linkId": { "type": "string", "format": "uuid" },
+          "kind": { "type": "string", "enum": ["document", "image"] },
+          "sourceId": { "type": "string", "format": "uuid" },
+          "displayFilename": { "type": "string", "const": "Attachment unavailable" },
+          "mediaType": { "type": "string", "const": "application/octet-stream" },
+          "byteCount": { "type": "integer", "const": 0 },
+          "availability": { "type": "string", "const": "unavailable" }
+        }
+      },
+      "MessageAttachmentSummary": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/AvailableMessageAttachmentSummary" },
+          { "$ref": "#/components/schemas/UnavailableMessageAttachmentSummary" }
+        ],
+        "discriminator": { "propertyName": "availability" },
+        "description": "Owner-authorized immutable message-link presentation. Deleted sources are represented only by content-free unavailable tombstones."
+      },
+      "AttachmentStatus": {
+        "type": "string",
+        "enum": ["uploading", "processing", "ready", "failed", "deleting"]
+      },
+      "AttachmentMediaType": {
+        "type": "string",
+        "enum": ["image/png", "image/jpeg", "image/webp"]
+      },
+      "AttachmentFailure": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-visible failure classification. Filenames, image bytes, EXIF, checksums, object keys, credentials, and decoder diagnostics are never returned.",
+        "required": ["code", "retryable"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "CreateAttachmentUploadRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["filename", "mediaType", "byteCount"],
+        "properties": {
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\u0000]+$", "description": "Owner-private display filename. Path components and NUL characters are rejected." },
+          "mediaType": { "$ref": "#/components/schemas/AttachmentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 25000000 }
+        }
+      },
+      "AttachmentUploadSession": {
+        "type": "object", "additionalProperties": false,
+        "description": "Opaque owner-bound Aura upload session. It is not an object-store grant and exposes no storage internals.",
+        "required": ["id", "attachmentId", "filename", "mediaType", "byteCount", "status", "version", "createdAt", "expiresAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "attachmentId": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/AttachmentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 25000000 },
+          "status": { "type": "string", "const": "uploading" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AttachmentPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/AttachmentDetail" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "AttachmentDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized image metadata. Owner identity, checksums, EXIF, image bytes, object keys, storage credentials, and decoder diagnostics are omitted.",
+        "required": ["id", "filename", "mediaType", "byteCount", "status", "failure", "version", "width", "height", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/AttachmentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 25000000 },
+          "status": { "$ref": "#/components/schemas/AttachmentStatus" },
+          "failure": { "oneOf": [{ "$ref": "#/components/schemas/AttachmentFailure" }, { "type": "null" }] },
+          "version": { "type": "integer", "minimum": 1 },
+          "width": { "type": ["integer", "null"], "minimum": 1, "maximum": 40000000 },
+          "height": { "type": ["integer", "null"], "minimum": 1, "maximum": 40000000 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AttachmentUploadReceipt": {
+        "type": "object", "additionalProperties": false,
+        "required": ["attachment"],
+        "properties": { "attachment": { "$ref": "#/components/schemas/AttachmentDetail" } }
+      },
+      "AttachmentTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "AttachmentDeletionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free idempotent deletion acknowledgement. Original and derivative cleanup may continue asynchronously and is safe to replay with the same idempotency key.",
+        "required": ["attachmentId", "status", "version", "acceptedAt"],
+        "properties": {
+          "attachmentId": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "const": "deleting" },
+          "version": { "type": "integer", "minimum": 1 },
+          "acceptedAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "DocumentStatus": {
         "type": "string",
         "enum": ["uploading", "queued", "processing", "ready", "failed", "deleting"]
@@ -3144,6 +3440,21 @@
           "status": { "type": "string", "const": "deleting" },
           "version": { "type": "integer", "minimum": 1 },
           "acceptedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ModelVisionRequiredError": {
+        "type": "object", "additionalProperties": false,
+        "description": "Typed atomic run-admission failure returned only when the submitted or reused attachment set contains an image and the explicitly selected model has no fresh digest-identified verified vision capability. No message, links, or run are created and the client retains its draft and selection.",
+        "required": ["type", "title", "status", "code", "detail", "retryable", "traceId", "resource"],
+        "properties": {
+          "type": { "type": "string", "format": "uri" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "status": { "type": "integer", "const": 409 },
+          "code": { "type": "string", "const": "model_vision_required" },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "retryable": { "type": "boolean", "const": false },
+          "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+          "resource": { "type": ["string", "null"], "maxLength": 255 }
         }
       },
       "ErrorEnvelope": {

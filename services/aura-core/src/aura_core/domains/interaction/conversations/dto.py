@@ -8,6 +8,64 @@ from uuid import UUID, uuid4
 from aura_core.domains.execution.runs.dto import Run, RunStatus
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationAttachmentReference:
+    """Typed cross-domain source selection owned by conversation admission."""
+
+    kind: str
+    source_id: UUID
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"document", "image"}:
+            raise ValueError("attachment kind must be document or image")
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentSummary:
+    """Cross-kind attachment link DTO owned by the conversation boundary."""
+
+    link_id: UUID
+    kind: str
+    source_id: UUID
+    display_filename: str
+    media_type: str
+    byte_count: int
+    availability: str
+    width: int | None = None
+    height: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"document", "image"}:
+            raise ValueError("attachment kind must be document or image")
+        if self.availability not in {"available", "unavailable"}:
+            raise ValueError("invalid attachment availability")
+        if self.byte_count < 0:
+            raise ValueError("attachment byte count must be non-negative")
+
+    @property
+    def attachment_id(self) -> UUID:
+        return self.source_id
+
+    @property
+    def available(self) -> bool:
+        return self.availability == "available"
+
+    def unavailable(self) -> AttachmentSummary:
+        """Return a content-free historical tombstone representation."""
+
+        return AttachmentSummary(
+            self.link_id,
+            self.kind,
+            self.source_id,
+            "Attachment unavailable",
+            "application/octet-stream",
+            0,
+            "unavailable",
+            None,
+            None,
+        )
+
+
 class AssignmentReason(StrEnum):
     """Why an immutable agent assignment became effective."""
 
@@ -159,6 +217,9 @@ class Message:
     # branch by migration/bootstrap and may still be read by old clients.
     branch_id: UUID | None = None
     parent_message_id: UUID | None = None
+    # Immutable, owner-authorized resources explicitly submitted with this
+    # message.  Historical rows may omit this additive field.
+    attachments: tuple[AttachmentSummary, ...] = ()
 
 
 @dataclass(slots=True)

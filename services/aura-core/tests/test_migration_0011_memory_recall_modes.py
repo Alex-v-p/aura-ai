@@ -109,10 +109,18 @@ def test_new_sql_custom_agent_defaults_are_off_and_conservative() -> None:
         / "src/aura_core/domains/interaction/agents/adapters/sql_store.py"
     ).read_text()
 
-    assert 'recall_mode="off"' in source
-    assert "max_memories=2" in source
-    assert "context_budget_fraction=0.05" in source
-    assert "automatic_recall_threshold=0.7" in source
+    assert 'recall_mode=policy_values.recall_mode.value if policy_values else "off"' in source
+    assert "max_memories=policy_values.max_memories if policy_values else 2" in source
+    assert (
+        "context_budget_fraction=policy_values.context_budget_fraction"
+        in source
+        and "else 0.05" in source
+    )
+    assert (
+        "automatic_recall_threshold=policy_values.automatic_recall_threshold"
+        in source
+        and "else 0.7" in source
+    )
 
 
 def test_recall_mode_migration_executes_successors_grants_and_replay_idempotently() -> None:

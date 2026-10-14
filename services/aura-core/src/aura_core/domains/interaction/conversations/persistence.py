@@ -55,10 +55,30 @@ class MessageRow(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     citations: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
+    attachments: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
     parent_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+
+
+class MessageAttachmentRow(Base):
+    """Immutable message-to-resource link; source_id has no cross-domain FK."""
+
+    __tablename__ = "message_attachments"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    display_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    byte_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    availability: Mapped[str] = mapped_column(String(16), nullable=False, default="available")
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class IdempotencyRow(Base):

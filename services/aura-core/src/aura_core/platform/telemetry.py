@@ -30,6 +30,10 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
+    "aura.artifacts.attachment_upload": "1.0.0",
+    "aura.artifacts.attachment_processing": "1.0.0",
+    "aura.artifacts.attachment_deletion": "1.0.0",
+    "aura.models.inference": "1.0.0",
     "aura.runtime.tool_selection": "1.4.0",
     "aura.runtime.policy_evaluation": "1.1.0",
     "aura.runtime.tool_execution": "1.3.0",
@@ -131,6 +135,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "model_selection_persisted",
             "persistence_duration_ms",
             "title_persistence_duration_ms",
+            "conversation_attachment_admission_outcome",
         }
     ),
     "aura.runtime.model_inference": frozenset(
@@ -144,7 +149,15 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "title_input_size",
             "title_output_size",
             "time_to_first_token_ms",
+            "model_vision_verification_outcome",
+            "vision_inference_outcome",
         }
+    ),
+    "aura.artifacts.attachment_upload": frozenset({"attachment_upload_outcome"}),
+    "aura.artifacts.attachment_processing": frozenset({"attachment_processing_outcome"}),
+    "aura.artifacts.attachment_deletion": frozenset({"attachment_deletion_outcome"}),
+    "aura.models.inference": frozenset(
+        {"model_vision_verification_outcome", "vision_inference_outcome", "inference_duration_ms"}
     ),
     "aura.runtime.model_routing": frozenset(
         {"errors", "model_routed", "model_routing_duration_ms", "model_selection_persisted"}
@@ -375,6 +388,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "document_retrieval_duration_ms",
             "document_retrieval_outcome",
             "document_retrieval_candidate_count",
+            "attached_document_retrieval_outcome",
         }
     ),
     "aura.knowledge.document_deletion": frozenset(
@@ -392,6 +406,10 @@ _METRICS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "aura.artifacts.attachment_upload": frozenset({"attachment.upload"}),
+    "aura.artifacts.attachment_processing": frozenset({"attachment.process"}),
+    "aura.artifacts.attachment_deletion": frozenset({"attachment.delete"}),
+    "aura.models.inference": frozenset({"model.infer"}),
     "aura.runtime.tool_selection": frozenset({"tool.select"}),
     "aura.runtime.policy_evaluation": frozenset({"tool.policy.evaluate"}),
     "aura.runtime.tool_execution": frozenset({"tool.execute"}),
@@ -593,6 +611,10 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.knowledge.document_processing": "document_processing_duration_ms",
     "aura.knowledge.document_retrieval": "document_retrieval_duration_ms",
     "aura.knowledge.document_deletion": "document_deletion_duration_ms",
+    "aura.artifacts.attachment_upload": "attachment_upload_duration_ms",
+    "aura.artifacts.attachment_processing": "attachment_processing_duration_ms",
+    "aura.artifacts.attachment_deletion": "attachment_deletion_duration_ms",
+    "aura.models.inference": "inference_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -758,6 +780,7 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "approval_version",
         "idempotency",
         "document_id",
+        "attachment_id",
         "evidence_id",
     }
 )
@@ -796,6 +819,7 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "proposal_id",
         "tool_call_id",
         "document_id",
+        "attachment_id",
         "evidence_id",
     }
 )
@@ -836,6 +860,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "embedding_provider",
             "parser",
             "object_storage",
+            "attachment_store",
+            "document_store",
             "query_embedding",
             "nats_transient",
             "memory_worker",
@@ -963,6 +989,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "clarification",
             "failure",
             "validation",
+            "verified",
+            "ready",
+            "storage_unavailable",
         }
     ),
     "operation": frozenset(

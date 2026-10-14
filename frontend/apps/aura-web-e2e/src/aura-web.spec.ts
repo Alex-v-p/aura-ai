@@ -63,6 +63,16 @@ async function waitForMobileDrawer(page: Page, desired: 'open' | 'closed'): Prom
     .toBe(desired);
 }
 
+async function waitForConversationReady(page: Page): Promise<void> {
+  await expect(
+    page.locator('form.composer-wrap[data-conversation-ready="true"]'),
+  ).toBeVisible({ timeout: 15_000 });
+}
+
+async function waitForAttachmentComposerReady(page: Page): Promise<void> {
+  await waitForConversationReady(page);
+}
+
 async function openConversationLibrary(
   page: Page,
   testInfo: { readonly project: { readonly name: string } },
@@ -780,6 +790,162 @@ test.beforeEach(async ({ page }, testInfo) => {
   });
 });
 
+async function installAttachmentFixture(page: Page, options: { readonly rejectVisionRun?: boolean; readonly documentProcessing?: boolean; readonly documentProcessingFailure?: boolean } = {}): Promise<void> {
+  let deleted = false;
+  let deleteAttempts = 0;
+  let visionAttempts = 0;
+  let documentAccepted = false;
+  let documentPolls = 0;
+  let documentRetryAttempts = 0;
+  const now = (): string => new Date().toISOString();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const attachment = (id: string, filename: string, status = 'ready'): Record<string, unknown> => ({ id, filename, mediaType: 'image/png', byteCount: png.byteLength, status, failure: null, version: status === 'ready' ? 1 : 2, width: 1, height: 1, createdAt: now(), updatedAt: now() });
+  await page.route('**/api/v1/models', async (route) => route.fulfill({ json: { models: [{ id: 'qwen2.5vl:7b', displayName: 'Qwen 2.5 VL', provider: 'ollama', capabilities: ['chat', 'vision'], availability: 'available', selectable: true, disabledReason: null }, { id: 'gemma3:12b', displayName: 'Gemma 3', provider: 'ollama', capabilities: ['chat', 'vision'], availability: 'available', selectable: true, disabledReason: null }, { id: 'fixture-chat', displayName: 'Fixture text model', provider: 'fake', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }], defaultModelId: 'fixture-chat', observedAt: now() } }));
+  await page.route('**/api/v1/attachments**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/api/v1/attachments' && request.method() === 'GET') return route.fulfill({ json: { items: deleted ? [] : [attachment('fixture-image', 'inspection.png')], nextCursor: null } });
+    if (url.pathname === '/api/v1/attachments/uploads' && request.method() === 'POST') return route.fulfill({ status: 201, json: { id: 'fixture-upload', attachmentId: 'fixture-image', filename: 'inspection.png', mediaType: 'image/png', byteCount: png.byteLength, status: 'uploading', version: 1, createdAt: now(), expiresAt: now() } });
+    if (url.pathname === '/api/v1/attachments/uploads/fixture-upload/content' && request.method() === 'PUT') return route.fulfill({ status: 202, json: { attachment: attachment('fixture-image', 'inspection.png') } });
+    if (url.pathname === '/api/v1/attachments/fixture-image/preview' && request.method() === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: png, headers: { 'Cache-Control': 'no-store' } });
+    if (url.pathname === '/api/v1/attachments/fixture-image' && request.method() === 'GET') return deleted ? route.fulfill({ status: 404, json: { detail: 'Not found' } }) : route.fulfill({ json: attachment('fixture-image', 'inspection.png') });
+    if (url.pathname === '/api/v1/attachments/fixture-image' && request.method() === 'DELETE') { deleteAttempts += 1; if (deleteAttempts === 1) return route.fulfill({ status: 503, json: { detail: 'Storage unavailable' } }); deleted = true; return route.fulfill({ status: 202, json: { attachmentId: 'fixture-image', status: 'deleting', version: 2, acceptedAt: now() } }); }
+    return route.continue();
+  });
+  await page.route('**/api/v1/documents**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const documentStatus = (): 'processing' | 'ready' | 'failed' => {
+      if (!documentAccepted) return 'ready';
+      if (options.documentProcessingFailure && documentRetryAttempts === 0) return documentPolls < 2 ? 'processing' : 'failed';
+      return options.documentProcessing && documentPolls < 2 ? 'processing' : 'ready';
+    };
+    const documentStatusValue = documentStatus();
+    const document = { id: 'fixture-document', filename: 'grounding.pdf', mediaType: 'application/pdf', byteCount: 42_000, status: documentStatusValue, failure: documentStatusValue === 'failed' ? { code: 'parse_failed', retryable: true } : null, version: documentRetryAttempts === 0 ? (documentStatusValue === 'failed' ? 3 : 1) : (documentStatusValue === 'ready' ? 5 : 4), extractedTextLength: 64, chunkCount: 1, createdAt: now(), updatedAt: now() };
+    if (url.pathname === '/api/v1/documents' && request.method() === 'GET') return route.fulfill({ json: { items: [document], nextCursor: null } });
+    if (url.pathname === '/api/v1/documents/fixture-document' && request.method() === 'GET') { if (documentAccepted) documentPolls += 1; const status = documentStatus(); return route.fulfill({ json: { ...document, status, failure: status === 'failed' ? { code: 'parse_failed', retryable: true } : null, version: documentRetryAttempts === 0 ? (status === 'failed' ? 3 : 1) : (status === 'ready' ? 5 : 4) } }); }
+    if (url.pathname === '/api/v1/documents/uploads' && request.method() === 'POST') return route.fulfill({ status: 201, json: { id: 'fixture-document-upload', documentId: 'fixture-document', filename: 'grounding.pdf', mediaType: 'application/pdf', byteCount: 42_000, status: 'uploading', version: 1, createdAt: now(), expiresAt: now() } });
+    if (url.pathname === '/api/v1/documents/uploads/fixture-document-upload/content' && request.method() === 'PUT') { documentAccepted = true; return route.fulfill({ status: 202, json: { duplicate: false, document: { ...document, status: options.documentProcessing || options.documentProcessingFailure ? 'processing' : 'ready', failure: null, version: 1 } } }); }
+    if (url.pathname === '/api/v1/documents/fixture-document/retry' && request.method() === 'POST') { documentRetryAttempts += 1; documentPolls = 0; return route.fulfill({ status: 202, json: { ...document, status: 'processing', failure: null, version: 4 } }); }
+    return route.continue();
+  });
+  if (options.rejectVisionRun) await page.route('**/api/v1/conversations**', async (route) => { const path = new URL(route.request().url()).pathname; const admission = route.request().method() === 'POST' && (path === '/api/v1/conversations' || /\/conversations\/[^/]+\/runs$/u.test(path)); if (!admission) return route.fallback(); visionAttempts += 1; if (visionAttempts === 1) return route.fulfill({ status: 409, contentType: 'application/problem+json', json: { status: 409, code: 'model_vision_required', retryable: false, title: 'Vision verification required', detail: 'The selected model is not verified for image understanding.' } }); return route.fallback(); });
+}
+
+test('conversation shell bootstraps to the composer before attachment flows', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible({ timeout: 10_000 });
+});
+
+test('attachment picker has keyboard tabs and restores focus across desktop, tablet, and mobile', async ({ page }, testInfo) => {
+  await installAttachmentFixture(page);
+  if (testInfo.project.name === 'mobile') await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForAttachmentComposerReady(page);
+  const trigger = page.getByRole('button', { name: 'Add attachments' });
+  await trigger.click();
+  const picker = page.getByRole('dialog', { name: 'Add attachments' });
+  await expect(picker).toBeVisible();
+  const tabs = picker.getByRole('tab');
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await tabs.nth(0).press('ArrowRight');
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await tabs.nth(1).press('End');
+  await expect(tabs.nth(2)).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(picker).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test('image upload auto-selects and recovers from reusable-image deletion failure', async ({ page }) => {
+  await installAttachmentFixture(page);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForAttachmentComposerReady(page);
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('Inspect the image');
+  await page.getByRole('button', { name: 'Add attachments' }).click();
+  const imageInput = page.locator('input[type="file"][accept*="image/png"]');
+  await imageInput.setInputFiles({ name: 'inspection.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') });
+  await expect(page.getByText('inspection.png', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.selected-attachments')).toContainText('inspection.png');
+  await page.getByRole('tab', { name: 'Images' }).click();
+  await expect(page.getByRole('button', { name: 'Select inspection.png' })).toBeVisible();
+  await page.getByRole('button', { name: 'Delete inspection.png' }).click();
+  await page.getByRole('button', { name: 'Confirm deletion of inspection.png' }).click();
+  await expect(page.getByText('Could not delete inspection.png. Try again.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Delete inspection.png' }).click();
+  await page.getByRole('button', { name: 'Confirm deletion of inspection.png' }).click();
+  await expect(page.getByRole('button', { name: 'Delete inspection.png' })).toHaveCount(0);
+  await expect(page.locator('.selected-attachments')).toHaveCount(0);
+});
+
+test('keeps Send gated during direct document processing and enables it when ready', async ({ page }) => {
+  await installAttachmentFixture(page, { documentProcessing: true });
+  let documentDetailPolls = 0;
+  page.on('request', (request) => { if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/documents/fixture-document') documentDetailPolls += 1; });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForAttachmentComposerReady(page);
+  await page.getByRole('textbox', { name: 'Message Aura' }).fill('Ground this answer in my document');
+  await page.getByRole('button', { name: 'Add attachments' }).click();
+  await page.getByRole('button', { name: 'Choose PDF or DOCX documents' }).click();
+  await page.locator('input[type="file"][accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"]').setInputFiles({ name: 'grounding.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 fixture') });
+  await expect(page.locator('.selected-attachments')).toContainText('grounding.pdf');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await expect.poll(() => documentDetailPolls, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled({ timeout: 7_000 });
+});
+
+test('reconciles a failed direct document upload row and retries processing with its current version', async ({ page }) => {
+  await installAttachmentFixture(page, { documentProcessingFailure: true });
+  let documentDetailPolls = 0;
+  page.on('request', (request) => { if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/documents/fixture-document') documentDetailPolls += 1; });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForAttachmentComposerReady(page);
+  await page.getByRole('textbox', { name: 'Message Aura' }).fill('Retry this document after processing failure');
+  await page.getByRole('button', { name: 'Add attachments' }).click();
+  await page.getByRole('button', { name: 'Choose PDF or DOCX documents' }).click();
+  await page.locator('input[type="file"][accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"]').setInputFiles({ name: 'grounding.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 fixture') });
+  await expect(page.locator('.selected-attachments')).toContainText('grounding.pdf');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await expect.poll(() => documentDetailPolls, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  const retry = page.locator('form.composer-wrap').getByRole('button', { name: 'Retry processing' });
+  await expect(retry).toBeVisible({ timeout: 7_000 });
+  await retry.click();
+  await expect(retry).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled({ timeout: 7_000 });
+});
+
+test('preserves image draft after model_vision_required and exposes verified model recovery', async ({ page }) => {
+  await installAttachmentFixture(page, { rejectVisionRun: true });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await waitForAttachmentComposerReady(page);
+  await page.getByRole('textbox', { name: 'Message Aura' }).fill('Describe this image');
+  await page.getByRole('button', { name: 'Add attachments' }).click();
+  await page.getByRole('tab', { name: 'Images' }).click();
+  await page.getByRole('button', { name: 'Select inspection.png' }).click();
+  await page.getByRole('button', { name: 'Close attachment picker' }).click();
+  await page.getByRole('button', { name: 'Conversation options' }).click();
+  const model = page.getByRole('dialog', { name: 'Conversation options' }).getByLabel('Model');
+  await model.selectOption('qwen2.5vl:7b');
+  await expect(model).toHaveValue('qwen2.5vl:7b');
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByRole('alert')).toContainText(/verified vision model/i);
+  await expect(page.locator('.selected-attachments')).toContainText('inspection.png');
+  await expect(page.getByRole('alert')).not.toContainText(/Qwen/i);
+  await page.getByRole('button', { name: 'Conversation options' }).click();
+  const retryModel = page.getByRole('dialog', { name: 'Conversation options' }).getByLabel('Model');
+  await expect(retryModel).toHaveValue('qwen2.5vl:7b');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await retryModel.selectOption('gemma3:12b');
+  await expect(retryModel).toHaveValue('gemma3:12b');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.locator('.selected-attachments')).toHaveCount(0);
+});
+
 test('opens with a new-conversation title surface', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible();
@@ -788,6 +954,7 @@ test('opens with a new-conversation title surface', async ({ page }) => {
 
 test('supports Enter and Shift+Enter composer behavior', async ({ page }) => {
   await page.goto('/');
+  await waitForConversationReady(page);
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('A first line');
   await composer.press('Shift+Enter');
