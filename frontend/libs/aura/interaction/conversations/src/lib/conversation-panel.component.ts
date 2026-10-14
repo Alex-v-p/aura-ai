@@ -14,6 +14,7 @@ import { SafeMarkdownComponent } from './safe-markdown.component';
 import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/approvals';
 import { branchNavigationAvailable } from './branch-navigation';
 import { focusBranchEditTarget, retryBranchActionAndFocus, type BranchEditFocusRequest } from './branch-edit-focus';
+import { focusBranchAction } from './branch-action-focus';
 
 export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
   return useAgentDefault ? '' : reference?.revisionId ?? '';
@@ -178,6 +179,16 @@ export class ConversationPanelComponent implements AfterViewChecked {
     const action = this.store.selectedBranch().errorAction;
     await retryBranchActionAndFocus(action?.kind, () => this.store.retryBranchAction(), () => this.requestBranchEditFocus());
   }
+  async navigateBranch(direction: -1 | 1, event: Event): Promise<void> {
+    const trigger = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
+    const moved = await this.store.navigateBranch(direction);
+    if (moved) this.restoreBranchActionFocus(trigger);
+  }
+  async regenerateAssistant(messageId: string, event: Event): Promise<void> {
+    const trigger = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
+    const regenerated = await this.store.regenerateAssistant(messageId);
+    if (regenerated) this.restoreBranchActionFocus(trigger);
+  }
   beginEditMessage(messageId: string): void {
     this.branchEditTriggerId = `edit-branch-${messageId}`;
     this.store.beginEditMessage(messageId);
@@ -209,6 +220,10 @@ export class ConversationPanelComponent implements AfterViewChecked {
     const branch = this.store.selectedBranch();
     const index = branch.summaries.findIndex((item) => item.id === branch.activeId);
     return index >= 0 ? `Branch ${index + 1} of ${branch.summaries.length}` : 'Branch';
+  }
+  branchLiveStatus(): string { return this.store.branchAnnouncement(); }
+  private restoreBranchActionFocus(trigger: HTMLButtonElement | null): void {
+    queueMicrotask(() => focusBranchAction(trigger));
   }
   retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }
   defaultAgentReady(): boolean { const conversation = this.store.selected(); return !conversation.id.startsWith('draft-') || Boolean(conversation.agent) || this.store.defaultDraftAgentResolution() === 'resolved'; }
@@ -280,7 +295,7 @@ export class ConversationPanelComponent implements AfterViewChecked {
 
   hasNewerAgentRevision(): boolean { return this.agentOptions().some((item) => item.newerRevisionAvailable); }
   hasNewerPersonaRevision(): boolean { return this.personaOptions().some((item) => item.newerRevisionAvailable); }
-  controlsDisabled(): boolean { return ['working', 'waiting'].includes(this.store.runState()) || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt); }
+  controlsDisabled(): boolean { return ['working', 'waiting'].includes(this.store.runState()) || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt) || this.store.selectedBranch().loading; }
   stagedConfigurationChanged(): boolean {
     const conversation = this.store.selected();
     return (this.stagedAgent()?.revisionId ?? null) !== (conversation.agent?.revisionId ?? null)

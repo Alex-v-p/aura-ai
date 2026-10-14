@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0071
+status: integrated
+integrated_commits:
+  - 215454c5be3d0873d756272b0919fd45045330ff
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0071-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0071-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0071-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0071-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0071-ux-ui.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0071-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0071.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0071.yaml (validated before archival)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0071.yaml (skipped: no uncommitted contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0071.yaml (skipped: no protected baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run pyright services/aura-core (0 errors, 0 warnings)
+    - UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py
+    - UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run pytest deploy/compose/e2e/test_fake_provider.py (1 passed)
+    - UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run pytest AURA-0071 backend aggregate suite (188 passed, 18 skipped)
+    - NX_DAEMON=false pnpm --dir frontend exec nx check-generated aura-api-client
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-api-client
+    - NX_DAEMON=false pnpm --dir frontend exec nx test aura-conversations
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-conversations
+    - NX_DAEMON=false pnpm --dir frontend run lint (13 projects passed)
+    - NX_DAEMON=false pnpm --dir frontend run test (24 files, 228 passed)
+    - NX_DAEMON=false pnpm --dir frontend run build:production
+    - NX_DAEMON=false pnpm --dir frontend run build-storybook
+    - pnpm --dir frontend exec playwright test AURA-0071 browser scope (241 passed, 343 skipped; one transient responsive retry passed)
+    - git diff --check
+    - schema validation for all four AURA-0071 implementation handoffs and five review verdicts
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - Required bash ./deploy/compose/run-full-stack-e2e.sh was attempted in sandbox and with host Docker access; both runs were blocked before test execution, first by Docker Desktop socket permission and then by the daemon error "invalid pool request: Pool overlaps with other one on this address space".
+  - The aggregate browser run recorded one transient desktop responsive live-resize failure; its immediate focused rerun passed 1/1 and no AURA-0071 scenario remained failing.

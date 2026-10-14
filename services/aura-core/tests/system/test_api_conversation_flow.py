@@ -655,7 +655,22 @@ async def test_regeneration_emits_success_and_conflict_telemetry(api_app: FastAP
             and dict(item.dimensions).get("outcome") == "ok"
         ]
         assert success_spans
-        assert dict(success_spans[-1].trace_attributes)["run_id"] == regenerated.json()["run"]["id"]
+        success_trace = dict(success_spans[-1].trace_attributes)
+        assert success_trace["run_id"] == regenerated.json()["run"]["id"]
+        assert success_trace["conversation_id"] == conversation_id
+        assert success_trace["branch_id"] == regenerated.json()["run"]["branchId"]
+        assert success_trace["regenerated_from_run_id"] == source_run_id
+        assert success_spans[-1].trace_id != source_run_id.replace("-", "")
+        assert success_spans[-1].parent_span_id is None
+        persistence_spans = [
+            item
+            for item in success_metrics
+            if item.kind == "span"
+            and item.trace_id == success_spans[-1].trace_id
+            and dict(item.trace_attributes).get("operation") == "conversation.persist"
+        ]
+        assert persistence_spans
+        assert persistence_spans[-1].parent_span_id == success_spans[-1].span_id
 
         failed = await client.post(
             f"/api/v1/runs/{source_run_id}/regenerate",
@@ -669,6 +684,13 @@ async def test_regeneration_emits_success_and_conflict_telemetry(api_app: FastAP
             if item.metric == "conversation_regeneration_outcome"
         }
         assert {"ok", "conflict"} <= outcomes
+        regeneration_outcomes = [
+            item
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric == "conversation_regeneration_outcome"
+        ]
+        assert len({item.trace_id for item in regeneration_outcomes}) >= 2
+        assert regeneration_outcomes[-1].trace_id != regeneration_outcomes[-2].trace_id
         assert all(
             not any(
                 forbidden in repr(item).lower()
@@ -768,6 +790,34 @@ async def test_branch_telemetry_records_replay_load_conflict_and_cursor_outcomes
             and dict(item.dimensions).get("outcome") == "ok"
             for item in metrics
         ) >= 2
+        branch_spans = [
+            item
+            for item in metrics
+            if item.kind == "span"
+            and dict(item.trace_attributes).get("operation") == "conversation.branch.create"
+        ]
+        assert len({item.trace_id for item in branch_spans}) >= 2
+        successful_branch_span = next(
+            item
+            for item in branch_spans
+            if dict(item.dimensions).get("outcome") == "ok"
+        )
+        successful_branch_trace = dict(successful_branch_span.trace_attributes)
+        assert successful_branch_trace["conversation_id"] == conversation_id
+        assert successful_branch_trace["branch_id"] == branch.json()["branch"]["id"]
+        assert successful_branch_trace["run_id"] == branch.json()["run"]["id"]
+        assert successful_branch_span.parent_span_id is None
+        assert not any(
+            item.kind == "span"
+            and item.trace_id == successful_branch_span.trace_id
+            and dict(item.trace_attributes).get("operation") == "conversation.branch.request"
+            for item in metrics
+        )
+        assert not any(
+            item.metric == "persistence_duration_ms"
+            and dict(item.trace_attributes).get("operation") == "conversation.branch.request"
+            for item in metrics
+        )
         assert api_app.state.aura.metrics.stats().rejected == 0
         assert all(
             not any(
@@ -778,6 +828,57 @@ async def test_branch_telemetry_records_replay_load_conflict_and_cursor_outcomes
             if item.metric
             in {"conversation_branch_load_outcome", "conversation_branch_creation_outcome"}
         )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_create_run_without_branch_id_extends_root_branch(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "root question", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(accepted["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={
+                "sourceUserMessageId": accepted["userMessage"]["id"],
+                "message": "alternative question",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert branch.status_code == 202
+        alternative_run_id = branch.json()["run"]["id"]
+        alternative_branch_id = branch.json()["branch"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(alternative_run_id), api_app.state.aura.provider
+        )
+        current = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        legacy = await client.post(
+            f"/api/v1/conversations/{conversation_id}/runs",
+            headers=headers(str(uuid4())),
+            json={"message": "legacy root follow-up", "conversationVersion": current["version"]},
+        )
+        assert legacy.status_code == 202
+        root_run = legacy.json()["run"]
+        assert root_run["branchId"] in {
+            item["id"] for item in current["branches"] if item["parentBranchId"] is None
+        }
+        assert root_run["branchId"] != alternative_branch_id
+        assert root_run["id"] != alternative_run_id
     finally:
         await client.aclose()
 

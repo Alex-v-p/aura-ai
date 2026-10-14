@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationApi, ConversationBranchDetail, ConversationBranchSummary, RunEventSubscription } from './conversation-api';
+import type { ConversationApi, ConversationBranchDetail, ConversationBranchRunAccepted, ConversationBranchSummary, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
 import { ConversationStore, memoryActivityIndicators, normalizeDocumentCitations, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
 
@@ -602,6 +602,138 @@ describe('ConversationStore', () => {
 
     expect(branchStore.selectedBranch().editingMessageId).toBe(sourceUserId);
     expect(branchStore.selectedBranch().editDraft).toBe('Keep this correction');
+  });
+  it('replays the exact branch request after a lost response and version refresh', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-lost-response';
+    const sourceUserId = 'branch-lost-user';
+    const sourceUser = { id: sourceUserId, conversationId, role: 'user' as const, content: 'Original question', state: 'complete' as const, runId: 'branch-lost-root-run', createdAt: now, updatedAt: now };
+    const rootBranch: ConversationBranchSummary = { id: 'branch-lost-root', conversationId, parentBranchId: null, forkedFromMessageId: null, headMessageId: sourceUserId, origin: 'root', createdAt: now };
+    let serverVersion = 7;
+    const detail = (): ConversationDetail => ({ ...summary(conversationId), version: serverVersion, messages: [sourceUser], recentRuns: [], currentRun: null });
+    const api = fakeApi(async () => ({ items: [detail()], nextCursor: null }), [detail()]);
+    api.getConversation = async () => detail();
+    api.listConversationBranches = async () => ({ items: [rootBranch], nextCursor: null });
+    const requests: Array<{ readonly version: number; readonly key: string; readonly message: string; readonly clientTimeZone?: string; readonly branchId?: string }> = [];
+    let attempts = 0;
+    api.createConversationBranch = async (_id, _sourceUserMessageId, message, version, key, clientTimeZone, branchId): Promise<ConversationBranchRunAccepted> => {
+      requests.push({ version, key, message, clientTimeZone, branchId });
+      attempts += 1;
+      if (attempts === 1) {
+        serverVersion = 8;
+        throw { status: 503, message: 'transport outcome unknown', retryable: true };
+      }
+      const run: Run = { id: 'branch-lost-run', conversationId, userMessageId: 'branch-lost-edited-user', assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+      const branch: ConversationBranchSummary = { id: 'branch-lost-alternative', conversationId, parentBranchId: rootBranch.id, forkedFromMessageId: sourceUserId, headMessageId: run.id, origin: 'edited_message', createdAt: now };
+      return { conversation: { ...summary(conversationId), version: serverVersion, currentRun: run }, branch, run, userMessage: { ...sourceUser, id: 'branch-lost-edited-user', content: message, runId: run.id } };
+    };
+    const store = new ConversationStore(api);
+    await store.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(store.selectedBranch().summaries).toHaveLength(1));
+    store.beginEditMessage(sourceUserId);
+    store.updateEditDraft('Corrected question');
+
+    await expect(store.editAndBranch()).resolves.toBe(false);
+    expect(store.selectedBranch().error).toContain('could not confirm');
+    await expect(store.retryBranchAction()).resolves.toBe(true);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[0]?.version).toBe(7);
+    expect(requests[0]?.key).toBeTruthy();
+  });
+  it('keeps forbidden branch failures separate from authentication copy', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-forbidden';
+    const detail = { ...summary(conversationId), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    api.listConversationBranches = async () => { throw { status: 403, message: 'raw permission detail', retryable: false }; };
+    const store = new ConversationStore(api);
+    await store.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(store.selectedBranch().error).toBe('You do not have permission to view conversation branches.'));
+    expect(store.selectedBranch().error).not.toContain('raw permission detail');
+    expect(store.selectedBranch().errorAction).toBeNull();
+  });
+  it('clears an edit intent and suppresses retry after definitive permission rejection', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-edit-forbidden';
+    const sourceUser = { id: 'branch-edit-user', conversationId, role: 'user' as const, content: 'Original question', state: 'complete' as const, runId: 'branch-edit-run', createdAt: now, updatedAt: now };
+    const assistant = { id: 'branch-edit-assistant', conversationId, role: 'assistant' as const, content: 'Original answer', state: 'complete' as const, runId: 'branch-edit-run', createdAt: now, updatedAt: now };
+    const rootBranch: ConversationBranchSummary = { id: 'branch-edit-root', conversationId, parentBranchId: null, forkedFromMessageId: null, headMessageId: assistant.id, origin: 'root', createdAt: now };
+    const detail = { ...summary(conversationId), messages: [sourceUser, assistant], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    api.listConversationBranches = async () => ({ items: [rootBranch], nextCursor: null });
+    api.createConversationBranch = async () => { throw { status: 403, message: 'raw edit permission', retryable: false }; };
+    const store = new ConversationStore(api);
+    await store.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(store.selectedBranch().summaries).toHaveLength(1));
+    store.beginEditMessage(sourceUser.id);
+    store.updateEditDraft('Edited question');
+
+    await expect(store.editAndBranch()).resolves.toBe(false);
+    expect(store.selectedBranch().error).toBe('You do not have permission to edit this conversation.');
+    expect(store.selectedBranch().errorAction).toBeNull();
+    await expect(store.retryBranchAction()).resolves.toBe(false);
+  });
+  it('clears a regeneration intent and suppresses retry after definitive permission rejection', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-regenerate-forbidden';
+    const sourceUser = { id: 'branch-regenerate-user', conversationId, role: 'user' as const, content: 'Original question', state: 'complete' as const, runId: 'branch-regenerate-run', createdAt: now, updatedAt: now };
+    const assistant = { id: 'branch-regenerate-assistant', conversationId, role: 'assistant' as const, content: 'Original answer', state: 'complete' as const, runId: 'branch-regenerate-run', createdAt: now, updatedAt: now };
+    const rootBranch: ConversationBranchSummary = { id: 'branch-regenerate-root', conversationId, parentBranchId: null, forkedFromMessageId: null, headMessageId: assistant.id, origin: 'root', createdAt: now };
+    const detail = { ...summary(conversationId), messages: [sourceUser, assistant], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    api.listConversationBranches = async () => ({ items: [rootBranch], nextCursor: null });
+    api.regenerateRun = async () => { throw { status: 403, message: 'raw regenerate permission', retryable: false }; };
+    const store = new ConversationStore(api);
+    await store.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(store.selectedBranch().summaries).toHaveLength(1));
+
+    await expect(store.regenerateAssistant(assistant.id)).resolves.toBe(false);
+    expect(store.selectedBranch().error).toBe('You do not have permission to regenerate this response.');
+    expect(store.selectedBranch().errorAction).toBeNull();
+    await expect(store.retryBranchAction()).resolves.toBe(false);
+  });
+  it('replays regeneration with the exact original payload after an unknown outcome', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-regenerate-replay';
+    const runId = 'branch-regenerate-original-run';
+    const sourceUser = { id: 'branch-regenerate-replay-user', conversationId, role: 'user' as const, content: 'Original question', state: 'complete' as const, runId, createdAt: now, updatedAt: now };
+    const assistant = { id: 'branch-regenerate-replay-assistant', conversationId, role: 'assistant' as const, content: 'Original answer', state: 'complete' as const, runId, createdAt: now, updatedAt: now };
+    const rootBranch: ConversationBranchSummary = { id: 'branch-regenerate-replay-root', conversationId, parentBranchId: null, forkedFromMessageId: null, headMessageId: assistant.id, origin: 'root', createdAt: now };
+    const detail = { ...summary(conversationId), messages: [sourceUser, assistant], recentRuns: [], currentRun: null } as ConversationDetail;
+    const api = fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]);
+    api.listConversationBranches = async () => ({ items: [rootBranch], nextCursor: null });
+    const requests: Array<{ readonly runId: string; readonly version: number; readonly key: string; readonly clientTimeZone?: string }> = [];
+    let attempts = 0;
+    let acceptedBranchReady = false;
+    const branchRun: Run = { id: 'branch-regenerate-new-run', conversationId, userMessageId: sourceUser.id, assistantMessageId: null, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: runId, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const branch: ConversationBranchSummary = { id: 'branch-regenerate-alternative', conversationId, parentBranchId: rootBranch.id, forkedFromMessageId: sourceUser.id, headMessageId: branchRun.id, origin: 'regenerated_response', createdAt: now };
+    api.regenerateRun = async (_id, nextRunId, version, key, clientTimeZone): Promise<ConversationBranchRunAccepted> => {
+      requests.push({ runId: nextRunId, version, key, clientTimeZone });
+      attempts += 1;
+      if (attempts === 1) throw { status: 503, message: 'transport outcome unknown', retryable: true };
+      acceptedBranchReady = true;
+      return { conversation: { ...summary(conversationId), currentRun: branchRun }, userMessage: sourceUser, run: branchRun, branch };
+    };
+    api.getConversationBranch = async () => acceptedBranchReady
+      ? { branch, messages: [sourceUser, { ...assistant, id: 'branch-regenerate-new-assistant', runId: branchRun.id, content: 'Alternative answer' }], recentRuns: [branchRun] }
+      : { branch: rootBranch, messages: [sourceUser, assistant], recentRuns: [] };
+    const store = new ConversationStore(api);
+    await store.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(store.selectedBranch().summaries).toHaveLength(1));
+
+    await expect(store.regenerateAssistant(assistant.id)).resolves.toBe(false);
+    expect(store.selectedBranch().errorAction).toEqual({ kind: 'regenerate', messageId: assistant.id });
+    expect(store.selectedBranch().loading).toBe(false);
+    expect(store.runState()).toBe('idle');
+    expect(store.selected().turns.find((turn) => turn.id === assistant.id)?.runId).toBe(runId);
+    await expect(store.retryBranchAction()).resolves.toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[0]?.runId).toBe(runId);
+    expect(requests[0]?.version).toBe(1);
+    expect(requests[0]?.key).toBeTruthy();
   });
   it('loads a generated title when a persisted conversation is opened directly', async () => {
     const detail = { ...summary('generated-route'), title: 'Generated observatory topic', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;

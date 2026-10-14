@@ -115,6 +115,7 @@ def state(request: Request) -> AppState:
 
 
 async def _branch_session(request: Request) -> Session:
+    trace_id, root_span_id = _branch_request_trace(request)
     try:
         return await require_session(request)
     except HTTPException as exc:
@@ -125,11 +126,14 @@ async def _branch_session(request: Request) -> Session:
             "denied",
             0.0,
             error_class="authorization" if exc.status_code in {401, 403} else "persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise
 
 
 async def _branch_csrf(request: Request) -> Session:
+    trace_id, root_span_id = _branch_request_trace(request)
     try:
         session = await require_session(request)
         return await require_csrf(request, session, request.headers.get("x-csrf-token"))
@@ -141,6 +145,8 @@ async def _branch_csrf(request: Request) -> Session:
             "denied",
             0.0,
             error_class="authorization" if exc.status_code in {401, 403} else "persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise
 
@@ -154,6 +160,20 @@ def _path_uuid(request: Request, index: int) -> UUID:
         except ValueError:
             continue
     return UUID(int=0)
+
+
+def _branch_request_trace(request: Request) -> tuple[str, str]:
+    """Create one trace and root span shared by a branch request."""
+
+    trace_id = getattr(request.state, "conversation_branch_trace_id", None)
+    root_span_id = getattr(request.state, "conversation_branch_root_span_id", None)
+    if not isinstance(trace_id, str):
+        trace_id = uuid4().hex
+        request.state.conversation_branch_trace_id = trace_id
+    if not isinstance(root_span_id, str):
+        root_span_id = new_span_id()
+        request.state.conversation_branch_root_span_id = root_span_id
+    return trace_id, root_span_id
 
 
 def conversation_payload(
@@ -359,9 +379,24 @@ def _record_branch_outcome(
     *,
     error_class: str | None = None,
     result_count: int | None = None,
+    trace_id: str | None = None,
+    root_span_id: str | None = None,
+    branch_id: UUID | None = None,
+    run_id: UUID | None = None,
+    regenerated_from_run_id: UUID | None = None,
 ) -> None:
-    trace_id = conversation_id.hex
-    trace_attributes: dict[str, str] = {}
+    trace_id = trace_id or uuid4().hex
+    lineage_attributes = {
+        "conversation_id": str(conversation_id),
+        **({"branch_id": str(branch_id)} if branch_id is not None else {}),
+        **({"run_id": str(run_id)} if run_id is not None else {}),
+        **(
+            {"regenerated_from_run_id": str(regenerated_from_run_id)}
+            if regenerated_from_run_id is not None
+            else {}
+        ),
+    }
+    trace_attributes: dict[str, str] = dict(lineage_attributes)
     if result_count is not None:
         trace_attributes["result_count"] = str(result_count)
     state(request).metrics.record_span(
@@ -374,7 +409,6 @@ def _record_branch_outcome(
         dependency="conversation_store",
         outcome=outcome,
         error_class=error_class,
-        conversation_id=str(conversation_id),
         **trace_attributes,
     )
     metric_attributes: dict[str, str] = {}
@@ -386,8 +420,8 @@ def _record_branch_outcome(
         if operation == "conversation.branch.create"
         else "conversation_branch_load_outcome",
         trace_id=trace_id,
-        conversation_id=str(conversation_id),
         outcome=outcome,
+        **lineage_attributes,
         **metric_attributes,
     )
 
@@ -558,6 +592,7 @@ async def list_branches(
     cursor: str | None = Query(default=None, min_length=1, max_length=1024),
     limit: int = Query(default=30, ge=1, le=100),
 ) -> dict[str, object]:
+    trace_id, root_span_id = _branch_request_trace(request)
     timer = Stopwatch()
     try:
         branches = await state(request).store.list_branches(
@@ -567,12 +602,16 @@ async def list_branches(
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.list", "not_found", timer.elapsed_ms(),
             error_class="not_found",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except Exception:
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.list", "error", timer.elapsed_ms(),
             error_class="persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise
     branches.sort(key=lambda item: (item.created_at, item.id))
@@ -585,6 +624,8 @@ async def list_branches(
             _record_branch_outcome(
                 request, conversation_id, "conversation.branch.list", "error",
                 timer.elapsed_ms(), error_class="invalid_cursor",
+                trace_id=trace_id,
+                root_span_id=root_span_id,
             )
             raise HTTPException(status_code=400, detail="invalid branch cursor") from exc
     page = branches[:limit]
@@ -592,6 +633,8 @@ async def list_branches(
     _record_branch_outcome(
         request, conversation_id, "conversation.branch.list", "ok", timer.elapsed_ms(),
         result_count=len(page),
+        trace_id=trace_id,
+        root_span_id=root_span_id,
     )
     return {"items": [branch_payload(branch) for branch in page], "nextCursor": next_cursor}
 
@@ -603,6 +646,7 @@ async def get_branch(
     branch_id: UUID,
     session: Session = Depends(_branch_session),
 ) -> dict[str, object]:
+    trace_id, root_span_id = _branch_request_trace(request)
     timer = Stopwatch()
     try:
         branches = await state(request).store.list_branches(
@@ -616,12 +660,18 @@ async def get_branch(
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.get", "not_found", timer.elapsed_ms(),
             error_class="not_found",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
+            branch_id=branch_id,
         )
         raise HTTPException(status_code=404, detail="branch not found") from exc
     except Exception:
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.get", "error", timer.elapsed_ms(),
             error_class="persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
+            branch_id=branch_id,
         )
         raise
     try:
@@ -635,17 +685,26 @@ async def get_branch(
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.get", "not_found", timer.elapsed_ms(),
             error_class="not_found",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
+            branch_id=branch_id,
         )
         raise HTTPException(status_code=404, detail="branch not found") from exc
     except Exception:
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.get", "error", timer.elapsed_ms(),
             error_class="persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
+            branch_id=branch_id,
         )
         raise
     _record_branch_outcome(
         request, conversation_id, "conversation.branch.get", "ok", timer.elapsed_ms(),
         result_count=len(messages),
+        trace_id=trace_id,
+        root_span_id=root_span_id,
+        branch_id=branch_id,
     )
     return {
         "branch": branch_payload(branch),
@@ -662,6 +721,7 @@ async def create_branch(
     session: Session = Depends(_branch_csrf),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> dict[str, object]:
+    trace_id, root_span_id = _branch_request_trace(request)
     timer = Stopwatch()
     try:
         conversation, message, run, branch = await state(request).store.create_branch(
@@ -679,12 +739,16 @@ async def create_branch(
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.create", "not_found", timer.elapsed_ms(),
             error_class="not_found",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.create", "conflict", timer.elapsed_ms(),
             error_class="conflict",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise HTTPException(status_code=409, detail="conversation version conflict") from exc
     except IdempotencyConflict as exc:
@@ -695,16 +759,24 @@ async def create_branch(
             "idempotent",
             timer.elapsed_ms(),
             error_class="idempotency",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
     except Exception:
         _record_branch_outcome(
             request, conversation_id, "conversation.branch.create", "error", timer.elapsed_ms(),
             error_class="persistence",
+            trace_id=trace_id,
+            root_span_id=root_span_id,
         )
         raise
     _record_branch_outcome(
         request, conversation_id, "conversation.branch.create", "ok", timer.elapsed_ms(),
+        trace_id=trace_id,
+        root_span_id=root_span_id,
+        branch_id=branch.id,
+        run_id=run.id,
     )
     await state(request).coordinator.enqueue(run)
     return {

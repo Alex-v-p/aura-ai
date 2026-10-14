@@ -658,6 +658,137 @@ async def test_sql_create_add_and_retry_stage_foreign_keys_in_order(
 
 
 @pytest.mark.asyncio
+async def test_sql_legacy_add_run_without_branch_id_extends_root_after_alternative_branch(
+    sql_store: SqlConversationStore,
+) -> None:
+    issuer = "https://identity.integration.example"
+    owner = "root-extension-owner"
+    conversation, source, original = await sql_store.create(
+        issuer, owner, "original question", "chat", MODELS, str(uuid4())
+    )
+    await sql_store.finish_run(original.id, RunStatus.COMPLETED)
+    conversation, corrected, branch_run, branch = await sql_store.create_branch(
+        conversation.id,
+        source.id,
+        "corrected question",
+        conversation.version,
+        str(uuid4()),
+        owner,
+        issuer,
+    )
+    await sql_store.finish_run(branch_run.id, RunStatus.COMPLETED)
+    before = await sql_store.get(conversation.id, owner, issuer)
+    root = next(item for item in before.branches if item.parent_branch_id is None)
+    root_head = root.head_message_id
+    alternative_head = branch.head_message_id
+    after, root_user, root_run = await sql_store.add_run(
+        conversation.id,
+        owner,
+        "legacy root follow-up",
+        before.version,
+        str(uuid4()),
+        issuer,
+    )
+
+    assert root_user.branch_id == root.id
+    assert root_run.branch_id == root.id
+    persisted_root = next(item for item in after.branches if item.id == root.id)
+    persisted_alternative = next(item for item in after.branches if item.id == branch.id)
+    assert persisted_root.head_message_id != root_head
+    assert persisted_alternative.head_message_id == alternative_head == corrected.id
+
+
+@pytest.mark.asyncio
+async def test_sql_branch_and_regeneration_audits_are_principal_bound_and_idempotent(
+    sql_store: SqlConversationStore,
+) -> None:
+    issuer = "https://identity.integration.example"
+    owner = "audit-branch-owner"
+    conversation, source, original = await sql_store.create(
+        issuer, owner, "private source content", "chat", MODELS, str(uuid4())
+    )
+    await sql_store.finish_run(original.id, RunStatus.COMPLETED)
+    before = await sql_store.get(conversation.id, owner, issuer)
+    branch_key = str(uuid4())
+    branched = await sql_store.create_branch(
+        conversation.id,
+        source.id,
+        "private corrected content",
+        before.version,
+        branch_key,
+        owner,
+        issuer,
+    )
+    replayed_branch = await sql_store.create_branch(
+        conversation.id,
+        source.id,
+        "private corrected content",
+        before.version,
+        branch_key,
+        owner,
+        issuer,
+    )
+    assert replayed_branch[3].id == branched[3].id
+    await sql_store.finish_run(branched[2].id, RunStatus.COMPLETED)
+
+    regeneration_key = str(uuid4())
+    regenerated = await sql_store.regenerate(
+        original.id,
+        branched[0].version,
+        regeneration_key,
+        owner,
+        issuer,
+    )
+    replayed_regeneration = await sql_store.regenerate(
+        original.id,
+        branched[0].version,
+        regeneration_key,
+        owner,
+        issuer,
+    )
+    assert replayed_regeneration[2].id == regenerated[2].id
+
+    async with sql_store.sessions() as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT action, resource, principal_id, metadata
+                    FROM audit_log
+                    WHERE resource = :conversation_id
+                      AND action IN ('conversation.branch.create', 'conversation.run.regenerate')
+                    ORDER BY occurred_at, id
+                    """
+                ),
+                {"conversation_id": str(conversation.id)},
+            )
+        ).mappings().all()
+    assert [row["action"] for row in rows] == [
+        "conversation.branch.create",
+        "conversation.run.regenerate",
+    ]
+    assert all(row["principal_id"] is not None for row in rows)
+    branch_metadata = rows[0]["metadata"]
+    regeneration_metadata = rows[1]["metadata"]
+    assert set(branch_metadata) == {
+        "conversationId",
+        "branchId",
+        "runId",
+        "sourceUserMessageId",
+    }
+    assert set(regeneration_metadata) == {
+        "conversationId",
+        "branchId",
+        "runId",
+        "regeneratedFromRunId",
+        "sourceUserMessageId",
+    }
+    rendered = repr(rows).lower()
+    assert "private source content" not in rendered
+    assert "private corrected content" not in rendered
+
+
+@pytest.mark.asyncio
 async def test_sql_edit_branch_orders_message_before_run_and_rolls_back_atomically(
     sql_store: SqlConversationStore,
     monkeypatch: pytest.MonkeyPatch,

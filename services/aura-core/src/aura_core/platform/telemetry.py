@@ -416,6 +416,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "conversation.list.request",
             "conversation.metadata.request",
             "conversation.persist",
+            "conversation.branch.request",
             "conversation.branch.create",
             "conversation.branch.get",
             "conversation.branch.list",

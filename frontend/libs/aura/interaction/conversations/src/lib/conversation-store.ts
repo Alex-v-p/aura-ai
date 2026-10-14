@@ -49,6 +49,16 @@ export interface ConversationBranchState {
   readonly editingMessageId: string | null;
   readonly editDraft: string;
 }
+interface BranchIntent {
+  readonly kind: 'edit' | 'regenerate';
+  readonly messageId: string;
+  readonly key: string;
+  readonly version: number;
+  readonly clientTimeZone?: string;
+  readonly sourceBranchId?: string;
+  readonly text?: string;
+  readonly runId?: string;
+}
 export type BranchRetryAction = { readonly kind: 'list' } | { readonly kind: 'edit'; readonly messageId: string } | { readonly kind: 'regenerate'; readonly messageId: string } | { readonly kind: 'select'; readonly branchId: string };
 export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: MemoryDetail } | { readonly kind: 'candidate'; readonly detail: MemoryCandidateDetail };
 export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): { readonly recalled: boolean; readonly updated: boolean } {
@@ -148,7 +158,7 @@ export class ConversationStore {
   readonly selectedModelId = computed(() => this.selected().modelId);
   readonly selectedAgent = computed(() => this.selected().agent ?? draftAgent);
   readonly selectedPersona = computed(() => this.selected().persona);
-  readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && !this.selected().archivedAt && this.modelFor(this.selectedId()) && !['working', 'waiting'].includes(this.runState()) && this.canRunWithSelectedAgent(this.selectedId())));
+  readonly canSend = computed(() => Boolean(this.draft().trim() && this.authenticated() && !this.selected().archivedAt && !this.selectedBranch().loading && this.modelFor(this.selectedId()) && !['working', 'waiting'].includes(this.runState()) && this.canRunWithSelectedAgent(this.selectedId())));
   /** Every agentless draft starts unresolved. The shell must hydrate the
    * built-in agent's current revision before a first send can be accepted. */
   readonly defaultDraftAgentResolution = signal<'resolved' | 'pending' | 'failed'>('pending');
@@ -177,6 +187,7 @@ export class ConversationStore {
   readonly modelThinking = signal<Readonly<Record<string, ModelThinkingState>>>({});
   readonly selectedBranch = computed(() => this.selected().branch ?? emptyBranchState());
   readonly branchEditing = computed(() => this.selectedBranch().editingMessageId !== null);
+  readonly branchAnnouncement = computed(() => this.branchAnnouncements()[this.selectedId()] ?? '');
 
   toolActivitiesForRun(runId: string): ReadonlyArray<ToolStatusData> { return this.find(this.selectedId())?.toolActivities?.[runId] ?? []; }
   thinkingForRun(runId: string): ModelThinkingState | null { return this.modelThinking()[runId] ?? null; }
@@ -196,6 +207,8 @@ export class ConversationStore {
   private readonly memoryActivityRetryAttempts = new Map<string, number>();
   private readonly thinkingRunConversations = new Map<string, string>();
   private readonly pendingSubmissions = new Map<string, { readonly draft: string; readonly pendingTurnId: string }>();
+  private readonly branchIntents = new Map<string, BranchIntent>();
+  private readonly branchAnnouncements = signal<Readonly<Record<string, string>>>({});
   private draftCounter = 0;
   private conversationListWarning = false;
   private filterTimer: ReturnType<typeof setTimeout> | null = null;
@@ -401,10 +414,15 @@ export class ConversationStore {
   beginEditMessage(messageId: string): void {
     const turn = this.selected().turns.find((item) => item.id === messageId && item.role === 'user');
     if (!turn || this.controlsBlockedForBranch()) return;
+    this.clearBranchIntent(this.selectedId());
     this.updateBranchState({ editingMessageId: messageId, editDraft: turn.text, error: null });
   }
 
-  updateEditDraft(value: string): void { if (this.selectedBranch().editingMessageId) this.updateBranchState({ editDraft: value }); }
+  updateEditDraft(value: string): void {
+    if (!this.selectedBranch().editingMessageId) return;
+    this.clearBranchIntent(this.selectedId());
+    this.updateBranchState({ editDraft: value });
+  }
 
   cancelEditMessage(): void { this.updateBranchState({ editingMessageId: null, editDraft: '' }); }
 
@@ -415,11 +433,20 @@ export class ConversationStore {
     const text = branch.editDraft.trim();
     if (!messageId || !text) { this.updateBranchState({ error: 'Write a replacement message before creating a branch.' }); return false; }
     if (!this.api.createConversationBranch || this.controlsBlockedForBranch()) return false;
+    const intent = this.branchIntent(conversation.id, {
+      kind: 'edit',
+      messageId,
+      version: conversation.version,
+      clientTimeZone: this.clientTimeZone(),
+      sourceBranchId: conversation.branch?.activeId ?? undefined,
+      text,
+    });
     this.updateBranchState({ loading: true, error: null });
     try {
-      const accepted = await this.api.createConversationBranch(conversation.id, messageId, text, conversation.version, this.key(), this.clientTimeZone(), conversation.branch?.activeId ?? undefined);
+      const accepted = await this.api.createConversationBranch(conversation.id, messageId, intent.text ?? text, intent.version, intent.key, intent.clientTimeZone, intent.sourceBranchId);
       const applied = await this.applyAcceptedBranch(conversation.id, accepted, { kind: 'edit', messageId });
       if (applied) {
+        this.clearBranchIntent(conversation.id);
         this.updateBranchState({ loading: false, editingMessageId: null, editDraft: '', errorAction: null });
         return true;
       }
@@ -427,10 +454,17 @@ export class ConversationStore {
     } catch (error: unknown) {
       const apiError = this.toApiError(error);
       if (apiError.status === 409) {
+        this.clearBranchIntent(conversation.id);
         await this.recoverBranchConflict(conversation.id, { kind: 'edit', messageId });
         return false;
       }
-      this.updateBranchState({ loading: false, error: apiError.message, errorAction: { kind: 'edit', messageId } });
+      if (this.isDefinitiveBranchFailure(apiError)) {
+        this.clearBranchIntent(conversation.id);
+        this.updateBranchState({ loading: false, error: this.branchErrorMessage(apiError, 'edit'), errorAction: null });
+        return false;
+      }
+      const reconciled = await this.refresh(conversation.id);
+      this.updateBranchState({ loading: false, error: this.unknownBranchOutcomeMessage(reconciled), errorAction: { kind: 'edit', messageId } });
       return false;
     }
   }
@@ -440,11 +474,19 @@ export class ConversationStore {
     const turn = conversation.turns.find((item) => item.id === messageId && item.role === 'assistant');
     const runId = turn?.runId;
     if (!runId || !this.api.regenerateRun || this.controlsBlockedForBranch()) return false;
+    const intent = this.branchIntent(conversation.id, {
+      kind: 'regenerate',
+      messageId,
+      version: conversation.version,
+      clientTimeZone: this.clientTimeZone(),
+      runId,
+    });
     this.updateBranchState({ loading: true, error: null });
     try {
-      const accepted = await this.api.regenerateRun(conversation.id, runId, conversation.version, this.key(), this.clientTimeZone());
+      const accepted = await this.api.regenerateRun(conversation.id, intent.runId ?? runId, intent.version, intent.key, intent.clientTimeZone);
       const applied = await this.applyAcceptedBranch(conversation.id, accepted, { kind: 'regenerate', messageId });
       if (applied) {
+        this.clearBranchIntent(conversation.id);
         this.updateBranchState({ loading: false, errorAction: null });
         return true;
       }
@@ -452,10 +494,17 @@ export class ConversationStore {
     } catch (error: unknown) {
       const apiError = this.toApiError(error);
       if (apiError.status === 409) {
+        this.clearBranchIntent(conversation.id);
         await this.recoverBranchConflict(conversation.id, { kind: 'regenerate', messageId });
         return false;
       }
-      this.updateBranchState({ loading: false, error: apiError.message, errorAction: { kind: 'regenerate', messageId } });
+      if (this.isDefinitiveBranchFailure(apiError)) {
+        this.clearBranchIntent(conversation.id);
+        this.updateBranchState({ loading: false, error: this.branchErrorMessage(apiError, 'regenerate'), errorAction: null });
+        return false;
+      }
+      const reconciled = await this.refresh(conversation.id);
+      this.updateBranchState({ loading: false, error: this.unknownBranchOutcomeMessage(reconciled), errorAction: { kind: 'regenerate', messageId } });
       return false;
     }
   }
@@ -484,7 +533,7 @@ export class ConversationStore {
         : summaries.find((item) => item.parentBranchId === null)?.id ?? summaries[0]?.id ?? null;
       this.updateBranchState({ loading: false, summaries, activeId, nextCursor: null }, conversationId);
     } catch (error: unknown) {
-      this.updateBranchState({ loading: false, error: this.toApiError(error).message, errorAction: { kind: 'list' } }, conversationId);
+      this.updateBranchState({ loading: false, error: this.branchErrorMessage(error, 'list'), errorAction: this.retryActionFor(error, { kind: 'list' }) }, conversationId);
     }
   }
 
@@ -499,25 +548,27 @@ export class ConversationStore {
 
   async selectBranch(branchId: string): Promise<boolean> {
     const conversation = this.selected();
-    if (!conversation.branch?.summaries.some((item) => item.id === branchId) || !this.api.getConversationBranch || branchId === conversation.branch.activeId) return false;
+    if (conversation.branch?.loading || !conversation.branch?.summaries.some((item) => item.id === branchId) || !this.api.getConversationBranch || branchId === conversation.branch.activeId) return false;
     this.updateBranchState({ loading: true, error: null });
     try {
       const detail = await this.api.getConversationBranch(conversation.id, branchId);
       const next = this.fromBranchDetail(detail, conversation);
       this.replaceConversation(next);
       this.updateBranchState({ loading: false, activeId: branchId }, conversation.id);
+      this.setBranchAnnouncement(conversation.id, 'Conversation branch loaded.');
       return true;
     } catch (error: unknown) {
-      this.updateBranchState({ loading: false, error: this.toApiError(error).message, errorAction: { kind: 'select', branchId } });
+      this.updateBranchState({ loading: false, error: this.branchErrorMessage(error, 'select'), errorAction: this.retryActionFor(error, { kind: 'select', branchId }) });
       return false;
     }
   }
 
-  navigateBranch(direction: -1 | 1): void {
+  async navigateBranch(direction: -1 | 1): Promise<boolean> {
+    if (this.selectedBranch().loading) return false;
     const branches = this.selectedBranch().summaries;
     const index = branches.findIndex((item) => item.id === this.selectedBranch().activeId);
     const next = branches[index + direction];
-    if (next) void this.selectBranch(next.id);
+    return next ? this.selectBranch(next.id) : false;
   }
 
   async selectFromRoute(id: string, isCurrent: () => boolean = () => true): Promise<ConversationRouteSelection> {
@@ -605,6 +656,7 @@ export class ConversationStore {
     const model = this.models().find((item) => item.id === modelId); if (!model || !model.selectable) return;
     if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
     if (this.selected().archivedAt) { this.setNotice(this.selectedId(), 'Restore this archived conversation before changing its configuration.'); return; }
+    if (this.selectedBranch().loading) { this.setNotice(this.selectedId(), 'Wait for the conversation branch to finish loading before changing its configuration.'); return; }
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     const conversation = this.selected(); const previous = conversation.modelId; this.replaceConversation({ ...conversation, modelId });
     if (conversation.id.startsWith('draft-')) return;
@@ -617,6 +669,7 @@ export class ConversationStore {
     if (!agent.revisionId || agent.revisionId === current.revisionId) return;
     if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
     if (this.selected().archivedAt) { this.setNotice(this.selectedId(), 'Restore this archived conversation before changing its configuration.'); return; }
+    if (this.selectedBranch().loading) { this.setNotice(this.selectedId(), 'Wait for the conversation branch to finish loading before changing its configuration.'); return; }
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), agent });
@@ -633,6 +686,7 @@ export class ConversationStore {
     if (current?.revisionId === persona.revisionId && this.selected().personaOverride) return;
     if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
     if (this.selected().archivedAt) { this.setNotice(this.selectedId(), 'Restore this archived conversation before changing its configuration.'); return; }
+    if (this.selectedBranch().loading) { this.setNotice(this.selectedId(), 'Wait for the conversation branch to finish loading before changing its configuration.'); return; }
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), persona, personaOverride: true });
@@ -646,6 +700,7 @@ export class ConversationStore {
     if (!this.selected().personaOverride) return;
     if (this.authState() !== 'authenticated') { this.setNotice(this.selectedId(), 'Sign in before changing conversation settings.'); return; }
     if (this.selected().archivedAt) { this.setNotice(this.selectedId(), 'Restore this archived conversation before changing its configuration.'); return; }
+    if (this.selectedBranch().loading) { this.setNotice(this.selectedId(), 'Wait for the conversation branch to finish loading before changing its configuration.'); return; }
     if (this.runState() === 'working') { this.setNotice(this.selectedId(), 'Wait for the active run to finish before changing conversation settings.'); return; }
     if (this.selected().id.startsWith('draft-')) {
       this.replaceConversation({ ...this.selected(), persona: null, personaOverride: false });
@@ -659,6 +714,10 @@ export class ConversationStore {
     const conversation = this.selected();
     if (this.authState() !== 'authenticated') { this.setNotice(conversation.id, 'Sign in before changing conversation settings.'); return; }
     if (conversation.archivedAt) { this.setNotice(conversation.id, 'Restore this archived conversation before changing its configuration.'); return; }
+    if (this.selectedBranch().loading) {
+      this.setNotice(conversation.id, 'Wait for the conversation branch to finish loading before changing its configuration.');
+      return;
+    }
     if (this.runState() === 'working') {
       this.setNotice(conversation.id, 'Wait for the active run to finish before changing conversation settings.');
       return;
@@ -702,8 +761,8 @@ export class ConversationStore {
       this.setNotice(conversation.id, 'This conversation changed while the configuration was waiting. Review and try again.');
       return;
     }
-    if (this.authState() !== 'authenticated' || this.runStates()[conversation.id] === 'working') {
-      this.setNotice(conversation.id, this.authState() !== 'authenticated' ? 'Sign in before changing conversation settings.' : 'Wait for the active run to finish before changing conversation settings.');
+    if (this.authState() !== 'authenticated' || this.runStates()[conversation.id] === 'working' || conversation.branch?.loading) {
+      this.setNotice(conversation.id, this.authState() !== 'authenticated' ? 'Sign in before changing conversation settings.' : conversation.branch?.loading ? 'Wait for the conversation branch to finish loading before changing its configuration.' : 'Wait for the active run to finish before changing conversation settings.');
       this.pendingConfiguration.set(null);
       return;
     }
@@ -944,6 +1003,7 @@ export class ConversationStore {
         const detail = await this.api.getConversationBranch(id, branch.id);
         this.replaceConversation(this.fromBranchDetail(detail, this.find(id) ?? existing));
         this.setRunState(id, this.statusToState(detail.recentRuns.at(-1)?.status ?? accepted.run.status));
+        this.setBranchAnnouncement(id, 'New conversation branch loaded.');
       } catch {
         this.updateBranchState({ loading: false, error: 'The branch was created, but its transcript is not available yet.', errorAction: { kind: 'select', branchId: branch.id } }, id);
         return false;
@@ -977,9 +1037,54 @@ export class ConversationStore {
     const conversation = this.selected();
     if (conversation.id.startsWith('draft-')) { this.setNotice(conversation.id, 'Branching is available after the conversation is saved.'); return true; }
     if (conversation.archivedAt) { this.setNotice(conversation.id, 'Restore this conversation before creating a branch.'); return true; }
+    if (this.selectedBranch().loading) { this.setNotice(conversation.id, 'Wait for the conversation branch to finish loading.'); return true; }
     if (this.runState() === 'working' || this.runState() === 'waiting') { this.setNotice(conversation.id, 'Wait for the active response to finish before creating a branch.'); return true; }
     if (this.authState() !== 'authenticated') { this.setNotice(conversation.id, 'Sign in before creating a branch.'); return true; }
     return false;
+  }
+
+  private branchIntent(conversationId: string, next: Omit<BranchIntent, 'key'>): BranchIntent {
+    const existing = this.branchIntents.get(conversationId);
+    // Replay the exact original request after an unknown outcome. Reconciled
+    // state may have a newer version, but Core's idempotency fingerprint is
+    // keyed by the original body and expected version.
+    if (existing?.kind === next.kind && existing.messageId === next.messageId) return existing;
+    const intent = { ...next, key: this.key() };
+    this.branchIntents.set(conversationId, intent);
+    return intent;
+  }
+
+  private clearBranchIntent(conversationId: string): void { this.branchIntents.delete(conversationId); }
+
+  private unknownBranchOutcomeMessage(reconciled: boolean): string {
+    return reconciled
+      ? 'We could not confirm that branch action. Your latest conversation is loaded; review it and retry safely.'
+      : 'We could not confirm that branch action. Your conversation is preserved; retry when it is available.';
+  }
+
+  private isDefinitiveBranchFailure(error: unknown): boolean {
+    const status = this.toApiError(error).status;
+    return status === 401 || status === 403 || status === 404;
+  }
+
+  private retryActionFor(error: unknown, action: BranchRetryAction): BranchRetryAction | null {
+    return this.isDefinitiveBranchFailure(error) ? null : action;
+  }
+
+  private branchErrorMessage(error: unknown, action: 'list' | 'select' | 'edit' | 'regenerate' = 'list'): string {
+    const apiError = this.toApiError(error);
+    if (apiError.status === 401) return action === 'edit'
+      ? 'Sign in again before editing this conversation.'
+      : action === 'regenerate' ? 'Sign in again before regenerating this response.' : 'Sign in again before changing conversation branches.';
+    if (apiError.status === 403) return action === 'edit'
+      ? 'You do not have permission to edit this conversation.'
+      : action === 'regenerate' ? 'You do not have permission to regenerate this response.' : 'You do not have permission to view conversation branches.';
+    if (apiError.status === 404) return action === 'edit'
+      ? 'That message is no longer available for editing.'
+      : action === 'regenerate' ? 'That response is no longer available for regeneration.' : 'That conversation branch is no longer available.';
+    if (apiError.status === 409) return 'This conversation changed. Reload it before trying that branch action again.';
+    if (apiError.status === 429) return 'Aura is busy. Try the branch action again in a moment.';
+    return 'Aura could not complete that branch action. Your conversation is preserved; try again.';
   }
 
   private updateBranchState(patch: Partial<ConversationBranchState>, conversationId = this.selectedId()): void {
@@ -1342,6 +1447,7 @@ export class ConversationStore {
   private appendAssistantDelta(id: string, messageId: string, offset: number, text: string, runId: string): void { const conversation = this.find(id); if (!conversation) return; const existing = conversation.turns.find((turn) => turn.id === messageId); const content = existing?.text ?? ''; const next = offset <= content.length ? `${content.slice(0, offset)}${text}` : `${content}${text}`; this.upsertTurn(id, { id: messageId, role: 'assistant', text: next, state: 'partial', runId }); }
   private setRunState(id: string, state: RunState): void { this.runStates.update((states) => ({ ...states, [id]: state })); }
   private setNotice(id: string, notice: string | null): void { this.notices.update((notices) => ({ ...notices, [id]: notice })); }
+  private setBranchAnnouncement(id: string, announcement: string): void { this.branchAnnouncements.update((items) => ({ ...items, [id]: announcement })); }
   private setMemoryActivityNotice(id: string, notice: string | null): void { this.memoryActivityNotices.update((notices) => ({ ...notices, [id]: notice })); }
   private clearThinkingForConversation(conversationId: string): void {
     const current = this.modelThinking();

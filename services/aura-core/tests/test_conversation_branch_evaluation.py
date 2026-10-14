@@ -9,17 +9,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
+from aura_core.domains.execution.runs.public import Run, RunCoordinator, RunRepository
+from aura_core.domains.interaction.conversations.dto import DocumentCitation
+from aura_core.domains.interaction.conversations.public import (
+    Conversation,
+    ConversationNotFound,
+    ConversationStore,
+)
+from aura_core.domains.knowledge.documents.public import DocumentSearchHit
+from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
 from aura_core.platform.telemetry import COMPONENT_VERSIONS
+from aura_core.providers.models.ollama.fake import FakeChatModel
+from aura_core.runtime.models.ports import (
+    ChatMessage,
+    ModelDescriptor,
+    ModelStreamCompleted,
+    ModelToolCall,
+)
+from aura_core.runtime.streaming.publisher import EventPublisher
 
-FIXTURE_REVISION = "conversation-branching-eval-fixtures-v1"
+FIXTURE_REVISION = "conversation-branching-eval-fixtures-v2"
 EVALUATOR_VERSIONS = {
-    "conversation_branch_context_isolation": "1.0.0",
-    "conversation_regeneration_evidence_freshness": "1.0.0",
+    "conversation_branch_context_isolation": "1.1.0",
+    "conversation_regeneration_evidence_freshness": "1.1.0",
 }
 EVALUATOR_COMPONENTS = {
     "conversation_branch_context_isolation": "aura.interaction.conversation_persistence",
@@ -117,21 +136,25 @@ def evaluate_conversation_branch_context_isolation(
 
 def evaluate_conversation_regeneration_evidence_freshness(
     *,
-    source_evidence_count: int,
-    regenerated_evidence_count: int,
-    reused_source_evidence_count: int,
+    source_evidence_handles: Iterable[UUID],
+    regenerated_evidence_handles: Iterable[UUID],
     invalid_citation_count: int,
     historical_memory_reprocessed_count: int,
     new_owner_evidence_count: int = 0,
 ) -> EvaluationResult:
     """Evaluate that regenerated evidence is independently validated.
 
-    A regenerated run has no new owner-authored evidence, so its expected
-    source evidence count is zero.  The evaluator accepts the new-owner count
-    as metadata to make edited-branch fixtures explicit without retaining any
-    text or identifier.
+    The source run may contain cited evidence.  Freshness is established by
+    proving that the regenerated run has its own disjoint evidence set and no
+    stale citations or duplicate historical processing.  Only bounded counts
+    enter the evaluator result; evidence identifiers never do.
     """
 
+    source_handles = set(source_evidence_handles)
+    regenerated_handles = set(regenerated_evidence_handles)
+    reused_source_evidence_count = len(source_handles & regenerated_handles)
+    source_evidence_count = len(source_handles)
+    regenerated_evidence_count = len(regenerated_handles)
     passed = (
         min(
             source_evidence_count,
@@ -145,7 +168,6 @@ def evaluate_conversation_regeneration_evidence_freshness(
         and reused_source_evidence_count == 0
         and invalid_citation_count == 0
         and historical_memory_reprocessed_count == 0
-        and source_evidence_count == 0
     )
     return _result(
         "conversation_regeneration_evidence_freshness",
@@ -174,14 +196,16 @@ def test_branch_evaluators_have_stable_attribution_and_replay_keys() -> None:
     )
     assert first.replay_key == second.replay_key
     assert first.case_id == second.case_id
-    assert first.evaluator_version == "1.0.0"
+    assert first.evaluator_version == "1.1.0"
     assert first.component_id == "aura.interaction.conversation_persistence"
     assert first.component_version == COMPONENT_VERSIONS[first.component_id]
 
     freshness = evaluate_conversation_regeneration_evidence_freshness(
-        source_evidence_count=0,
-        regenerated_evidence_count=2,
-        reused_source_evidence_count=0,
+        source_evidence_handles=(),
+        regenerated_evidence_handles={
+            uuid5(NAMESPACE_URL, "fresh-1"),
+            uuid5(NAMESPACE_URL, "fresh-2"),
+        },
         invalid_citation_count=0,
         historical_memory_reprocessed_count=0,
     )
@@ -203,16 +227,14 @@ def test_branch_evaluators_cover_positive_and_negative_fixtures() -> None:
         foreign_owner_results=0,
     )
     fresh = evaluate_conversation_regeneration_evidence_freshness(
-        source_evidence_count=0,
-        regenerated_evidence_count=1,
-        reused_source_evidence_count=0,
+        source_evidence_handles=(),
+        regenerated_evidence_handles={uuid5(NAMESPACE_URL, "fresh")},
         invalid_citation_count=0,
         historical_memory_reprocessed_count=0,
     )
     stale = evaluate_conversation_regeneration_evidence_freshness(
-        source_evidence_count=1,
-        regenerated_evidence_count=1,
-        reused_source_evidence_count=1,
+        source_evidence_handles={uuid5(NAMESPACE_URL, "stale")},
+        regenerated_evidence_handles={uuid5(NAMESPACE_URL, "stale")},
         invalid_citation_count=1,
         historical_memory_reprocessed_count=1,
     )
@@ -233,9 +255,11 @@ def test_branch_evaluator_payloads_are_metadata_only_and_redacted() -> None:
             foreign_owner_results=0,
         ),
         evaluate_conversation_regeneration_evidence_freshness(
-            source_evidence_count=0,
-            regenerated_evidence_count=2,
-            reused_source_evidence_count=0,
+            source_evidence_handles=(),
+            regenerated_evidence_handles={
+                uuid5(NAMESPACE_URL, "payload-1"),
+                uuid5(NAMESPACE_URL, "payload-2"),
+            },
             invalid_citation_count=0,
             historical_memory_reprocessed_count=0,
         ),
@@ -285,10 +309,204 @@ def test_branch_context_evaluator_rejects_invalid_or_foreign_fixture(
 
 def test_regeneration_evaluator_rejects_stale_evidence_or_reprocessed_history() -> None:
     result = evaluate_conversation_regeneration_evidence_freshness(
-        source_evidence_count=0,
-        regenerated_evidence_count=1,
-        reused_source_evidence_count=0,
+        source_evidence_handles=(),
+        regenerated_evidence_handles={uuid5(NAMESPACE_URL, "history")},
         invalid_citation_count=0,
         historical_memory_reprocessed_count=1,
     )
     assert result.outcome == "fail"
+
+
+def test_regeneration_evaluator_uses_run_handles_not_document_identity() -> None:
+    source_handle = uuid5(NAMESPACE_URL, "same-document-source-handle")
+    regenerated_handle = uuid5(NAMESPACE_URL, "same-document-regenerated-handle")
+    fresh = evaluate_conversation_regeneration_evidence_freshness(
+        source_evidence_handles={source_handle},
+        regenerated_evidence_handles={regenerated_handle},
+        invalid_citation_count=0,
+        historical_memory_reprocessed_count=0,
+    )
+    reused = evaluate_conversation_regeneration_evidence_freshness(
+        source_evidence_handles={source_handle},
+        regenerated_evidence_handles={source_handle},
+        invalid_citation_count=0,
+        historical_memory_reprocessed_count=0,
+    )
+    assert fresh.outcome == "pass"
+    assert reused.outcome == "fail"
+
+
+class _EvaluationPublisher:
+    async def publish(self, _command: OutboxCommand) -> bool:
+        return True
+
+
+class _GovernedDocumentSearchProvider:
+    """Provider fixture that completes search and cites the normal protocol."""
+
+    _HANDLE_RE = re.compile(r"Valid same-run evidenceId values: ([0-9a-f-]+)")
+
+    def __init__(self) -> None:
+        self.handles_by_run: list[set[UUID]] = []
+
+    async def list_models(self) -> tuple[ModelDescriptor, ...]:
+        return (
+            ModelDescriptor(
+                "eval-doc-model",
+                "Evaluation document model",
+                "fixture",
+                ("chat", "tool_calling"),
+            ),
+        )
+
+    async def is_ready(self, model_id: str | None = None) -> bool:
+        return model_id in (None, "eval-doc-model")
+
+    async def stream_chat_with_tools(
+        self, model_id: str, messages: object, tools: object
+    ) -> object:
+        del model_id, messages, tools
+        yield ModelToolCall("document.search", {"query": "retention policy"})
+        yield ModelStreamCompleted()
+
+    async def stream_chat(self, model_id: str, messages: list[ChatMessage]) -> object:
+        del model_id
+        rendered = "\n".join(message.content for message in messages)
+        match = self._HANDLE_RE.search(rendered)
+        if match is None:
+            raise AssertionError("governed synthesis did not receive a run-scoped evidence handle")
+        handle = UUID(match.group(1))
+        self.handles_by_run.append({handle})
+        yield f"Grounded answer [[document:{handle}]]."
+
+
+@pytest.mark.asyncio
+async def test_context_isolation_evaluator_observes_conversation_store_branch_path() -> None:
+    models = await FakeChatModel().list_models()
+    store = ConversationStore()
+    conversation, root_user, root_run = await store.create(
+        "https://issuer", "owner", "root question", "fake", models, "eval-root"
+    )
+    coordinator = RunCoordinator(cast(RunRepository, store), EventPublisher(), InMemoryOutbox())
+    await coordinator.execute(root_run.id, FakeChatModel())
+    conversation, sibling_user, sibling_run = await store.add_run(
+        conversation.id,
+        "owner",
+        "sibling question",
+        conversation.version,
+        "eval-sibling",
+        "https://issuer",
+    )
+    await coordinator.execute(sibling_run.id, FakeChatModel())
+    conversation, corrected, _branch_run, branch = await store.create_branch(
+        conversation.id,
+        sibling_user.id,
+        "corrected question",
+        conversation.version,
+        "eval-branch",
+        "owner",
+        "https://issuer",
+    )
+    path = await store.branch_path(conversation.id, branch.id, "owner", "https://issuer")
+    allowed_ids = {root_user.id, root_run.assistant_message_id, corrected.id}
+    sibling_ids = {sibling_user.id, sibling_run.assistant_message_id}
+    foreign_owner_results = 0
+    try:
+        foreign_path = await store.branch_path(
+            conversation.id, branch.id, "other-owner", "https://issuer"
+        )
+        foreign_owner_results = len(foreign_path)
+    except ConversationNotFound:
+        pass
+    observed = evaluate_conversation_branch_context_isolation(
+        expected_ancestor_count=len(allowed_ids),
+        observed_ancestor_count=len(path),
+        leaked_sibling_count=len({item.id for item in path} & sibling_ids),
+        foreign_owner_results=foreign_owner_results,
+    )
+    assert observed.outcome == "pass"
+
+
+@pytest.mark.asyncio
+async def test_regeneration_freshness_evaluator_observes_store_and_coordinator_paths() -> None:
+    provider = _GovernedDocumentSearchProvider()
+    models = await provider.list_models()
+    document_id = uuid5(NAMESPACE_URL, "aura-eval-same-document")
+    chunk_id = uuid5(NAMESPACE_URL, "aura-eval-stable-adapter-chunk")
+
+    class DocumentServiceFixture:
+        async def search(
+            self,
+            issuer: str,
+            subject: str,
+            query: str,
+            *,
+            limit: int,
+            context: object | None = None,
+        ) -> list[DocumentSearchHit]:
+            assert (issuer, subject, query, limit, context is not None) == (
+                "https://issuer",
+                "owner",
+                "retention policy",
+                8,
+                True,
+            )
+            return [
+                DocumentSearchHit(
+                    chunk_id,
+                    document_id,
+                    "private.pdf",
+                    "bounded owner document excerpt",
+                    "page-1",
+                    0.9,
+                )
+            ]
+
+    store = ConversationStore()
+    memory_commands: list[tuple[UUID, UUID | None]] = []
+
+    def memory_factory(_conversation: Conversation, run: Run, message: object) -> OutboxCommand:
+        memory_commands.append((run.id, getattr(message, "id", None)))
+        return cast(OutboxCommand, object())
+
+    store.set_memory_command_factory(memory_factory, _EvaluationPublisher())
+    conversation, _source_user, source_run = await store.create(
+        "https://issuer", "owner", "cited source", "eval-doc-model", models, "eval-source"
+    )
+    coordinator = RunCoordinator(
+        cast(RunRepository, store),
+        EventPublisher(),
+        InMemoryOutbox(),
+        document_service=DocumentServiceFixture(),
+    )
+    await coordinator.execute(source_run.id, provider)
+    _conversation, _regenerated_user, regenerated_run, _branch = await store.regenerate(
+        source_run.id,
+        conversation.version,
+        "eval-regeneration",
+        "owner",
+        "https://issuer",
+    )
+    await coordinator.execute(regenerated_run.id, provider)
+    _owner, source = await store.find_run_any(source_run.id)
+    _owner, regenerated = await store.find_run_any(regenerated_run.id)
+    source_handles, regenerated_handles = provider.handles_by_run
+    invalid_citation_count = int(
+        source.citations != (DocumentCitation(document_id, "Document source", "page-1"),)
+        or regenerated.citations
+        != (DocumentCitation(document_id, "Document source", "page-1"),)
+    )
+    result = evaluate_conversation_regeneration_evidence_freshness(
+        source_evidence_handles=source_handles,
+        regenerated_evidence_handles=regenerated_handles,
+        invalid_citation_count=invalid_citation_count,
+        historical_memory_reprocessed_count=max(0, len(memory_commands) - 1),
+    )
+    assert source_handles
+    assert regenerated_handles
+    assert source_handles.isdisjoint(regenerated_handles)
+    assert source.citations and regenerated.citations
+    assert source.citations[0].document_id == regenerated.citations[0].document_id
+    assert invalid_citation_count == 0
+    assert result.outcome == "pass"
+    assert memory_commands == []

@@ -1684,8 +1684,11 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
 }, testInfo) => {
   await page.goto('/conversation?fixture=deferred-create');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await expect(page.locator('.composer-wrap')).toHaveAttribute('data-conversation-ready', 'true');
   await composer.fill('Background acceptance should not steal selection.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  const send = page.getByRole('button', { name: 'Send' });
+  await expect(send).toBeEnabled({ timeout: 15_000 });
+  await send.click();
   await expect
     .poll(async () =>
       page.evaluate(() =>
@@ -1883,8 +1886,11 @@ test('recovers an invalid conversation route without discarding an unrelated dra
 test('sends a local message and allows interruption', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await expect(page.locator('.composer-wrap')).toHaveAttribute('data-conversation-ready', 'true');
   await composer.fill('A small local thought');
-  await page.getByRole('button', { name: 'Send' }).click();
+  const send = page.getByRole('button', { name: 'Send' });
+  await expect(send).toBeEnabled({ timeout: 15_000 });
+  await send.click();
   await expect(
     page.getByRole('article', { name: 'Your message' }).getByText('A small local thought'),
   ).toBeVisible();
@@ -1898,8 +1904,11 @@ test('sends a local message and allows interruption', async ({ page }) => {
 test('renders a completed local reply', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await expect(page.locator('.composer-wrap')).toHaveAttribute('data-conversation-ready', 'true');
   await composer.fill('A completed local thought');
-  await page.getByRole('button', { name: 'Send' }).click();
+  const send = page.getByRole('button', { name: 'Send' });
+  await expect(send).toBeEnabled({ timeout: 15_000 });
+  await send.click();
   await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText(
     'A completed local thought',
   );
@@ -2171,7 +2180,9 @@ test('shows a branch-list error and retries the branch action', async ({ page })
   await page.goto('/conversation/branch-error');
   await expect(page.getByRole('alert')).toContainText(/branch/i);
   await page.getByRole('button', { name: 'Retry branch action' }).click();
-  await expect(page.getByText('Branch 1 of 1', { exact: true })).toBeVisible();
+  // A recovered root-only branch has no actionable navigation, so the
+  // toolbar is intentionally removed once recovery is complete.
+  await expect(page.getByText('Branch 1 of 1', { exact: true })).not.toBeVisible();
   expect(attempts).toBe(2);
 });
 

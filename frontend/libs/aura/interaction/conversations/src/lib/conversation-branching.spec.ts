@@ -82,11 +82,15 @@ describe('conversation branching web contract', () => {
     expect(readFileSync(resolve(sourceRoot, 'branch-edit-focus.ts'), 'utf8')).toContain('const succeeded = await retry();');
     expect(readFileSync(resolve(sourceRoot, 'branch-edit-focus.ts'), 'utf8')).toContain('if (isEdit && succeeded) requestFocus();');
     expect(storeSource).toContain('async retryBranchAction(): Promise<boolean>');
-    expect(storeSource).toContain("errorAction: { kind: 'list' }");
+    expect(storeSource).toContain("retryActionFor(error, { kind: 'list' })");
     expect(storeSource).toContain("errorAction: { kind: 'edit', messageId }");
     expect(storeSource).toContain("errorAction: { kind: 'regenerate', messageId }");
-    expect(storeSource).toContain("errorAction: { kind: 'select', branchId }");
+    expect(storeSource).toContain("retryActionFor(error, { kind: 'select', branchId })");
     expect(storeSource).toContain('page.nextCursor');
+    expect(storeSource).toContain('retryActionFor(error, { kind: \'list\' })');
+    expect(storeSource).toContain('retryActionFor(error, { kind: \'select\', branchId })');
+    expect(storeSource).toContain('isDefinitiveBranchFailure');
+    expect(storeSource).toContain('errorAction: null');
   });
 
   it('refreshes optimistic versions before offering a conflict retry', () => {
@@ -109,5 +113,41 @@ describe('conversation branching web contract', () => {
     expect(storeSource).toContain('detail.messages');
     expect(storeSource).toContain('slice(0, Math.max(0');
     expect(storeSource).toContain('activeId: branch.id');
+  });
+
+  it('reuses intent keys across ambiguous transport retries and reconciles first', () => {
+    expect(storeSource).toContain('const intent = this.branchIntent(conversation.id, {');
+    expect(storeSource).toContain('Replay the exact original request after an unknown outcome.');
+    expect(storeSource).toContain('intent.version');
+    expect(storeSource).toContain('intent.sourceBranchId');
+    expect(storeSource).toContain('const reconciled = await this.refresh(conversation.id);');
+    expect(storeSource).toContain('unknownBranchOutcomeMessage(reconciled)');
+    expect(storeSource).toContain('clearBranchIntent(conversation.id);');
+  });
+
+  it('gates send and configuration while branch state is loading without disabling drafting', () => {
+    expect(storeSource).toContain('!this.selectedBranch().loading');
+    expect(panelSource).toContain('selectedBranch().loading');
+    expect(template).toContain('[value]="store.draft()"');
+    expect(template).not.toContain('[disabled]="store.selectedBranch().loading" (input)');
+  });
+
+  it('maps branch failures to safe copy and uses a dedicated announcement', () => {
+    expect(storeSource).toContain("private branchErrorMessage(error: unknown, action: 'list' | 'select' | 'edit' | 'regenerate' = 'list')");
+    expect(storeSource).toContain('You do not have permission to edit this conversation.');
+    expect(storeSource).toContain('You do not have permission to regenerate this response.');
+    expect(storeSource).toContain('Aura could not complete that branch action.');
+    expect(template).toContain('role="status" aria-live="polite"');
+    expect(template).not.toContain('<div class="transcript" aria-live=');
+    expect(template).toContain('summaries.length > 1 || store.selectedBranch().error || store.selectedBranch().loading');
+  });
+
+  it('restores navigation and regeneration focus and exposes touch-sized actions', () => {
+    expect(panelSource).toContain('private restoreBranchActionFocus(trigger: HTMLButtonElement | null)');
+    expect(readFileSync(resolve(sourceRoot, 'branch-action-focus.ts'), 'utf8')).toContain("document.getElementById(fallbackId)?.focus()");
+    expect(template).toContain('(click)="navigateBranch(-1, $event)"');
+    expect(template).toContain('(click)="regenerateAssistant(turn.id, $event)"');
+    expect(styles).toContain('min-height: 2.25rem');
+    expect(styles).toContain('min-width: 2.25rem');
   });
 });

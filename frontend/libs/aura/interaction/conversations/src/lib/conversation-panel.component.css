@@ -34,7 +34,7 @@ h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); letter-spacing: -.045em; line-heig
 .user-turn { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 1rem; margin-left: 2rem; padding: 1rem 1.15rem; }
 .turn-meta { align-items: center; color: var(--text); display: flex; font-size: .78rem; font-weight: 700; gap: .5rem; margin-bottom: .55rem; }
 .turn-actions { align-items: center; display: inline-flex; gap: .35rem; margin-left: auto; }
-.turn-actions .inline-action { font-size: .72rem; padding: .25rem .45rem; }
+.turn-actions .inline-action { font-size: .72rem; min-height: 2.25rem; min-width: 2.25rem; padding: .25rem .45rem; }
 .branch-toolbar { align-items: center; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: .8rem; display: flex; gap: 1rem; justify-content: space-between; margin: 0 auto 1rem; max-width: 720px; padding: .7rem .85rem; width: 100%; }
 .branch-toolbar-copy { display: grid; gap: .15rem; min-width: 0; }
 .branch-toolbar-copy span { color: var(--text-muted); font-size: .78rem; }

@@ -235,7 +235,13 @@ async def test_document_search_run_is_owner_bound_and_consumes_one_call_before_s
             del model_id
             self.synthesis_calls += 1
             self.synthesis_messages = list(messages)
-            yield f"Grounded answer [[document:{evidence_id}]]."
+            protocol = next(
+                message.content
+                for message in messages
+                if "Valid same-run evidenceId values:" in message.content
+            )
+            handle = protocol.split("Valid same-run evidenceId values: ", 1)[1].split(". ", 1)[0]
+            yield f"Grounded answer [[document:{handle}]]."
 
     provider = CitationProvider(selection_events=provider.selection_events)
     models = await provider.list_models()
@@ -3265,6 +3271,42 @@ async def test_branch_creation_is_idempotent_and_rejects_stale_or_cross_owner_co
         await store.create_branch(
             conversation.id, source.id, "cross-owner", conversation.version, "other-key", "other", "https://issuer"
         )
+
+
+@pytest.mark.asyncio
+async def test_legacy_add_run_without_branch_id_always_extends_root_branch() -> None:
+    models = await FakeChatModel().list_models()
+    store = ConversationStore()
+    conversation, source, original = await store.create(
+        "https://issuer", "owner", "original", "fake", models, str(uuid4())
+    )
+    await _completed_exchange(store, original.id, "original answer")
+    conversation, _corrected, branch_run, branch = await store.create_branch(
+        conversation.id,
+        source.id,
+        "corrected",
+        conversation.version,
+        "root-extension-branch",
+        "owner",
+        "https://issuer",
+    )
+    await _completed_exchange(store, branch_run.id, "alternative answer")
+    root = next(item for item in conversation.branches if item.parent_branch_id is None)
+    root_head = root.head_message_id
+    alternative_head = branch.head_message_id
+    conversation, root_user, root_run = await store.add_run(
+        conversation.id,
+        "owner",
+        "legacy root follow-up",
+        conversation.version,
+        "root-extension-run",
+        "https://issuer",
+    )
+
+    assert root_user.branch_id == root.id
+    assert root_run.branch_id == root.id
+    assert root.head_message_id != root_head
+    assert branch.head_message_id == alternative_head
 
 
 @pytest.mark.asyncio

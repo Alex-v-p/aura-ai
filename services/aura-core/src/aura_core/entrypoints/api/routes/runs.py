@@ -41,6 +41,7 @@ class RegenerateRunRequest(BaseModel):
 
 async def _regenerate_csrf(request: Request) -> Session:
     run_id = _path_uuid(request)
+    trace_id = _regeneration_trace(request)
     try:
         session = await require_session(request)
         return await require_csrf(request, session, request.headers.get("x-csrf-token"))
@@ -49,7 +50,7 @@ async def _regenerate_csrf(request: Request) -> Session:
             "aura.execution.run_coordinator",
             "run.regenerate",
             0.0,
-            trace_id=run_id.hex,
+            trace_id=trace_id,
             span_id=new_span_id(),
             parent_span_id=None,
             dependency="identity_authorization",
@@ -60,7 +61,7 @@ async def _regenerate_csrf(request: Request) -> Session:
         state(request).metrics.increment(
             "aura.execution.run_coordinator",
             "conversation_regeneration_outcome",
-            trace_id=run_id.hex,
+            trace_id=trace_id,
             run_id=str(run_id),
             outcome="denied",
         )
@@ -74,6 +75,16 @@ def _path_uuid(request: Request) -> UUID:
         except ValueError:
             continue
     return UUID(int=0)
+
+
+def _regeneration_trace(request: Request) -> str:
+    """Create one fresh trace shared by a regeneration request."""
+
+    trace_id = getattr(request.state, "regeneration_trace_id", None)
+    if not isinstance(trace_id, str):
+        trace_id = uuid4().hex
+        request.state.regeneration_trace_id = trace_id
+    return trace_id
 
 
 _MEMORY_ACTIVITY_NAMESPACE = UUID("ab5a2cd0-6ce9-4b69-a6c7-c7d0f9f840a2")
@@ -346,6 +357,7 @@ async def regenerate_run(
     session: Session = Depends(_regenerate_csrf),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> dict[str, object]:
+    trace_id = _regeneration_trace(request)
     timer = Stopwatch()
     try:
         conversation, message, run, branch = await state(request).store.regenerate(
@@ -357,25 +369,62 @@ async def regenerate_run(
             body.clientTimeZone,
         )
     except ConversationNotFound as exc:
-        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "not_found")
-        _record_regeneration_outcome(request, run_id, "not_found")
+        _record_command_error(
+            request,
+            run_id,
+            "run.regenerate",
+            timer.elapsed_ms(),
+            "not_found",
+            trace_id,
+        )
+        _record_regeneration_outcome(request, run_id, "not_found", trace_id=trace_id)
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
-        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "conflict")
-        _record_regeneration_outcome(request, run_id, "conflict")
+        _record_command_error(
+            request,
+            run_id,
+            "run.regenerate",
+            timer.elapsed_ms(),
+            "conflict",
+            trace_id,
+        )
+        _record_regeneration_outcome(request, run_id, "conflict", trace_id=trace_id)
         raise HTTPException(status_code=409, detail="conversation version conflict") from exc
     except IdempotencyConflict as exc:
-        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "idempotency")
-        _record_regeneration_outcome(request, run_id, "idempotent")
+        _record_command_error(
+            request,
+            run_id,
+            "run.regenerate",
+            timer.elapsed_ms(),
+            "idempotency",
+            trace_id,
+        )
+        _record_regeneration_outcome(request, run_id, "idempotent", trace_id=trace_id)
         raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
     except Exception:
-        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms())
-        _record_regeneration_outcome(request, run_id, "error")
+        _record_command_error(
+            request,
+            run_id,
+            "run.regenerate",
+            timer.elapsed_ms(),
+            trace_id=trace_id,
+        )
+        _record_regeneration_outcome(request, run_id, "error", trace_id=trace_id)
         raise
-    _record_run_command(request, run.id, conversation.id, "run.regenerate", timer.elapsed_ms())
+    _record_run_command(
+        request,
+        run.id,
+        conversation.id,
+        "run.regenerate",
+        timer.elapsed_ms(),
+        trace_id=trace_id,
+        branch_id=branch.id,
+        regenerated_from_run_id=run.regenerated_from_run_id,
+    )
     state(request).metrics.increment(
         "aura.execution.run_coordinator",
         "conversation_regeneration_outcome",
+        trace_id=trace_id,
         outcome="ok",
         conversation_id=str(conversation.id),
         run_id=str(run.id),
@@ -745,14 +794,16 @@ def _record_command_error(
     operation: str,
     duration_ms: float,
     error_class: str | None = None,
+    trace_id: str | None = None,
+    parent_span_id: str | None = None,
 ) -> None:
     state(request).metrics.record_span(
         "aura.execution.run_coordinator",
         operation,
         duration_ms,
-        trace_id=run_id.hex,
+        trace_id=trace_id or run_id.hex,
         span_id=new_span_id(),
-        parent_span_id=None,
+        parent_span_id=parent_span_id,
         dependency="conversation_store",
         outcome="error",
         error_class=error_class or ("cancel" if operation == "run.cancel" else "persistence"),
@@ -760,13 +811,31 @@ def _record_command_error(
     )
 
 
-def _record_regeneration_outcome(request: Request, run_id: UUID, outcome: str) -> None:
+def _record_regeneration_outcome(
+    request: Request,
+    run_id: UUID,
+    outcome: str,
+    *,
+    trace_id: str | None = None,
+    conversation_id: UUID | None = None,
+    branch_id: UUID | None = None,
+    created_run_id: UUID | None = None,
+    regenerated_from_run_id: UUID | None = None,
+) -> None:
+    attributes: dict[str, str] = {
+        "trace_id": trace_id or run_id.hex,
+        "run_id": str(created_run_id or run_id),
+        "regenerated_from_run_id": str(regenerated_from_run_id or run_id),
+        "outcome": outcome,
+    }
+    if conversation_id is not None:
+        attributes["conversation_id"] = str(conversation_id)
+    if branch_id is not None:
+        attributes["branch_id"] = str(branch_id)
     state(request).metrics.increment(
         "aura.execution.run_coordinator",
         "conversation_regeneration_outcome",
-        trace_id=run_id.hex,
-        run_id=str(run_id),
-        outcome=outcome,
+        **attributes,
     )
 
 
@@ -776,8 +845,13 @@ def _record_run_command(
     conversation_id: UUID,
     operation: str,
     duration_ms: float,
+    *,
+    trace_id: str | None = None,
+    parent_span_id: str | None = None,
+    branch_id: UUID | None = None,
+    regenerated_from_run_id: UUID | None = None,
 ) -> None:
-    trace_id = run_id.hex
+    trace_id = trace_id or run_id.hex
     root_id = new_span_id()
     state(request).metrics.record_span(
         "aura.execution.run_coordinator",
@@ -785,11 +859,17 @@ def _record_run_command(
         duration_ms,
         trace_id=trace_id,
         span_id=root_id,
-        parent_span_id=None,
+        parent_span_id=parent_span_id,
         dependency="conversation_store",
         outcome="ok",
         run_id=str(run_id),
         conversation_id=str(conversation_id),
+        **({"branch_id": str(branch_id)} if branch_id else {}),
+        **(
+            {"regenerated_from_run_id": str(regenerated_from_run_id)}
+            if regenerated_from_run_id
+            else {}
+        ),
     )
     state(request).metrics.record_span(
         "aura.interaction.conversation_persistence",
@@ -802,6 +882,12 @@ def _record_run_command(
         outcome="ok",
         run_id=str(run_id),
         conversation_id=str(conversation_id),
+        **({"branch_id": str(branch_id)} if branch_id else {}),
+        **(
+            {"regenerated_from_run_id": str(regenerated_from_run_id)}
+            if regenerated_from_run_id
+            else {}
+        ),
     )
 
 

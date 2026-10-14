@@ -1,0 +1,141 @@
+agent: test_evaluation_engineer
+work_item: AURA-0071
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/handoff_0071_tests
+  worktree: dev
+scope:
+  ownership_zone: evaluation.conversation-branching, aura-core tests, aura-web e2e evaluation
+  allowed_paths_respected: true
+commits: []
+files_changed: []
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.interaction.conversation_persistence
+    - aura.execution.run_coordinator
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0071.yaml
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0071.yaml --path
+      services/aura-core/tests/test_conversation_branch_evaluation.py --path
+      services/aura-core/tests/system/test_api_conversation_flow.py --path
+      frontend/apps/aura-web-e2e/src/aura-web.spec.ts --path
+      frontend/apps/aura-web-e2e/src/full-stack.spec.ts --path
+      frontend/libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3 tooling/architecture/validate-contract-changes.py
+      --work-item work-items/active/AURA-0071.yaml (skipped: no uncommitted
+      contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0071.yaml
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0071.yaml (skipped: no protected
+      baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - >-
+      AURA_WORK_ITEM=AURA-0071 UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run pytest
+      services/aura-core/tests/test_conversations.py
+      services/aura-core/tests/test_conversation_branch_evaluation.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/test_migration_0021_conversation_branching.py
+      services/aura-core/tests/test_run_events.py
+      services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/system/test_api_conversation_flow.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/system/test_production_adapters.py -q (188
+      passed, 18 skipped)
+    - >-
+      AURA_WORK_ITEM=AURA-0071 UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run
+      pyright services/aura-core (0 errors, 0 warnings)
+    - >-
+      AURA_WORK_ITEM=AURA-0071 UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run
+      ruff check services/aura-core/src services/aura-core/tests
+      deploy/compose/e2e/fake_provider.py (passed)
+    - >-
+      AURA_WORK_ITEM=AURA-0071 UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run
+      pytest deploy/compose/e2e/test_fake_provider.py -q (1 passed)
+    - >-
+      NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx test
+      aura-conversations (passed after the shared target-path correction)
+    - >-
+      NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx lint
+      aura-conversations
+    - >-
+      pnpm --dir frontend exec vitest run --config vitest.workspace.ts
+      libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts
+      libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+      libs/aura/interaction/conversations/src/lib/conversation-panel.security.spec.ts
+      libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+      libs/aura/interaction/conversations/src/lib/conversation-api.spec.ts
+      libs/aura/interaction/conversations/src/lib/branch-edit-focus.spec.ts
+      (current focused conversation files passed)
+    - pnpm --dir frontend run test (24 files, 224 passed)
+    - NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend run lint (13 projects passed)
+    - NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend run build:production
+    - NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend run build-storybook
+    - NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm --dir frontend exec nx check-generated aura-api-client
+    - >-
+      Root browser evidence: focused completed-local-reply Playwright acceptance
+      passed; the all-project Playwright run reached 241 passed before one
+      unrelated tablet Shift+Enter flake, and the immediate focused tablet
+      rerun passed.
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      bash ./deploy/compose/run-full-stack-e2e.sh (attempted; exits before test
+      execution because this host is denied access to
+      unix:///home/alexa/.docker/desktop/docker.sock)
+    - >-
+      AURA_WORK_ITEM=AURA-0071 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0071.yaml (whole-tree invocation is blocked by
+      sibling untracked work-items/handoffs/*.yaml artifacts outside
+      allowed_paths; the scoped ownership paths pass)
+    - >-
+      The required Compose-backed authenticated browser flow could not be
+      independently exercised after the Docker permission failure; browser
+      acceptance evidence above covers the completed local and tablet rerun.
+decisions:
+  - >-
+    The branch evaluator remains metadata-only: it uses bounded counts,
+    booleans, outcome labels, stable evaluator versions, and replay keys; no
+    conversation content, owner identity, citations, evidence, or lineage
+    payloads are retained.
+  - >-
+    Existing backend and frontend branch/regeneration tests were audited and
+    executed without changing production behavior, test fixtures, evaluation
+    fixtures, golden results, or protected baselines; the final focused
+    aggregate is 188 backend passes and 224 frontend passes.
+  - >-
+    The previously failing aura-conversations Nx test target was corrected by
+    the shared frontend worker; this handoff records the post-correction pass
+    and does not modify that worker-owned file.
+risks:
+  - >-
+    Compose-backed authenticated full-stack acceptance remains environment
+    blocked by Docker Desktop socket permissions; no product assertion failed.
+  - >-
+    Whole-tree changed-path validation remains noisy while sibling handoff
+    artifacts are untracked; scoped work-item paths validate successfully.
+unresolved: []

@@ -1,6 +1,6 @@
 id: AURA-0071
 title: Add immutable conversation branching and regeneration
-status: review
+status: integrated
 change_class: repository_governance
 intent: >
   Let an authenticated owner correct an earlier user message or regenerate an
@@ -59,6 +59,9 @@ ownership_zones:
 allowed_paths:
   - work-items/active/AURA-0071.yaml
   - work-items/archived/AURA-0071.yaml
+  - work-items/handoffs/AURA-0071-*.yaml
+  - work-items/reviews/AURA-0071-*.yaml
+  - work-items/integration/AURA-0071.yaml
   - docs/specifications/agents-and-execution.md
   - contracts/openapi/aura-v1.yaml
   - contracts/events/runs/v1/run-events.schema.json

@@ -1822,7 +1822,13 @@ class RunCoordinator:
                                 query,
                                 limit=8,
                             )
-                        return result
+                        # Document adapters identify chunks, but citation
+                        # handles are an execution concern.  Re-key every
+                        # returned item for this run before it reaches the
+                        # governed tool serializer so a later run can never
+                        # cite a prior run's handle, even for the same
+                        # document and chunk.
+                        return _run_scoped_document_evidence(result)
                     except asyncio.CancelledError:
                         raise
                     except ToolExecutionError:
@@ -3041,6 +3047,42 @@ def _document_search_failure_outcome(error_code: str | None, *, status: str | No
     if any(token in normalized for token in ("denied", "not_granted", "permission", "owner")):
         return "denied"
     return "unavailable"
+
+
+def _run_scoped_document_evidence(result: object) -> list[dict[str, object]]:
+    """Assign fresh opaque citation handles to one run's search result.
+
+    Document search adapters expose stable chunk identifiers for retrieval,
+    while the model-facing citation protocol requires handles scoped to the
+    current governed run.  Only the bounded public result fields are copied;
+    the adapter's identifier is deliberately not reused as ``evidenceId``.
+    """
+
+    if not isinstance(result, Sequence) or isinstance(result, (str, bytes)):
+        return []
+    scoped: list[dict[str, object]] = []
+    for hit in result[:8]:
+        if isinstance(hit, Mapping):
+            values = hit
+        else:
+            values = {
+                "documentId": getattr(hit, "document_id", None),
+                "displayName": getattr(hit, "filename", None),
+                "excerpt": getattr(hit, "excerpt", None),
+                "locator": getattr(hit, "locator", None),
+                "score": getattr(hit, "score", None),
+            }
+        scoped.append(
+            {
+                "evidenceId": str(uuid4()),
+                "documentId": values.get("documentId", values.get("document_id")),
+                "displayName": values.get("displayName", values.get("filename")),
+                "excerpt": values.get("excerpt"),
+                "locator": values.get("locator"),
+                "score": values.get("score"),
+            }
+        )
+    return scoped
 
 
 _DOCUMENT_MARKER_RE = re.compile(

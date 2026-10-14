@@ -1308,7 +1308,7 @@ class ConversationStore:
                     (
                         item
                         for item in conversation.branches
-                        if item.id == conversation.active_branch_id
+                        if item.parent_branch_id is None
                     ),
                     None,
                 )
@@ -1343,6 +1343,7 @@ class ConversationStore:
                 branch_id=selected_branch.id,
             )
             user_message.run_id = run.id
+            selected_branch.head_message_id = user_message.id
             conversation.messages.append(user_message)
             conversation.runs.append(run)
             conversation.version += 1

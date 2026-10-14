@@ -1,11 +1,32 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { focusBranchAction } from './branch-action-focus';
 
 const template = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.html'), 'utf8');
 const componentSource = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts'), 'utf8');
 
 describe('conversation configuration select bindings', () => {
+  it('keeps branch focus on the action when connected and falls back after replacement', () => {
+    const fallback = document.createElement('button');
+    fallback.id = 'branch-toolbar-heading';
+    document.body.append(fallback);
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+
+    focusBranchAction(trigger);
+    expect(document.activeElement).toBe(trigger);
+
+    trigger.disabled = true;
+    focusBranchAction(trigger);
+    expect(document.activeElement).toBe(fallback);
+
+    trigger.remove();
+    focusBranchAction(trigger);
+    expect(document.activeElement).toBe(fallback);
+    fallback.remove();
+  });
+
   it('binds Agent and Persona controls through ngModel so async options retain persisted revisions', () => {
     expect(template).toContain('[ngModel]="configurationRevisionValue(stagedAgent())"');
     expect(template).toContain('(ngModelChange)="chooseAgent($event)"');
@@ -56,5 +77,10 @@ describe('conversation configuration select bindings', () => {
     expect(template).toContain('[attr.aria-busy]="conversationReady() ? \'false\' : \'true\'"');
     expect(componentSource).toContain('this.store.models().some((model) => model.selectable)');
     expect(componentSource).toContain('!this.agentStore.loading() && this.defaultAgentReady()');
+  });
+
+  it('renders a branch retry only when the store exposes a retryable action', () => {
+    expect(template).toContain('@if (store.selectedBranch().errorAction)');
+    expect(template).not.toContain('{{ branchError }} <button type="button" class="inline-action" (click)="retryBranchAction()">');
   });
 });

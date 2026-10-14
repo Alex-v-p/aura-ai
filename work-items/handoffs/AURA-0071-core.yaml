@@ -1,0 +1,144 @@
+agent: core_worker
+work_item: AURA-0071
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: dev
+scope:
+  ownership_zone: aura-core.interaction.conversations, aura-core.execution.runs, aura-core.bootstrap, aura-core.migrations, aura-core.entrypoints.api, aura-core.platform.telemetry
+  allowed_paths_respected: true
+commits:
+  - 215454c5be3d0873d756272b0919fd45045330ff
+files_changed:
+  - work-items/active/AURA-0071.yaml
+  - services/aura-core/migrations/versions/0021_conversation_branching.py
+  - services/aura-core/resources/component-manifests/conversation-persistence.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/dto.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/titles.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - services/aura-core/tests/test_conversation_branch_evaluation.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_migration_0021_conversation_branching.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_telemetry.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  files:
+    - services/aura-core/migrations/versions/0021_conversation_branching.py
+observability:
+  components:
+    - aura.interaction.conversation_persistence
+    - aura.execution.run_coordinator
+    - aura.runtime.stream_delivery
+  metrics_added:
+    - conversation_branch_creation_outcome
+    - conversation_branch_load_outcome
+    - conversation_regeneration_outcome
+verification:
+  passed:
+    - >-
+      Observability review corrections: production-path branch isolation and
+      regeneration freshness fixtures now exercise ConversationStore and
+      RunCoordinator and derive bounded observed counts; source evidence may
+      be non-zero while regenerated evidence must be disjoint.
+    - >-
+      Observability review corrections: branch list/load/create and regenerate
+      requests now use request-scoped trace IDs, valid parent topology, lineage-
+      only trace attributes, and matching outcome metric trace IDs; branch
+      persistence spans no longer mislabel unparented request latency as
+      persistence duration.
+    - >-
+      Observability re-review correction: document-search fixtures execute the
+      governed search, synthesis, and citation-validation path; each run gets
+      independently generated evidence handles, overlap is derived from those
+      handles, and same-document distinct handles pass while handle reuse fails.
+    - >-
+      Observability re-review correction: regeneration is a root run.regenerate
+      span with parented conversation persistence, and regression assertions
+      verify every recorded parent resolves within the same trace.
+    - >-
+      General review correction: legacy add_run without branchId now selects
+      the unique root branch in both in-memory and SQL stores; API, in-memory,
+      and SQL integration regression coverage was added.
+    - >-
+      Security review correction: SQL create_branch and regenerate stage one
+      principal-bound metadata-only audit record on first success, with
+      idempotent replay deduplication and opaque-ID-only metadata.
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0071.yaml (no working-tree changes; committed paths audited against allowed_paths)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0071.yaml (no working-tree contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0071.yaml (no protected baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core (0 errors, 0 warnings)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_conversations.py services/aura-core/tests/test_conversation_branch_evaluation.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_migration_0021_conversation_branching.py services/aura-core/tests/test_run_events.py services/aura-core/tests/test_telemetry.py -q (148 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_conversation_branch_evaluation.py -q (9 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_conversations.py -q (72 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_telemetry.py -q (44 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_run_events.py -q (13 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/system/test_api_conversation_flow.py -q (26 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/system/test_contract_and_deployment.py -q (12 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/system/test_production_adapters.py -q (2 passed, 17 skipped)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest deploy/compose/e2e/test_fake_provider.py -q (1 passed)
+    - git show --check 215454c5be3d0873d756272b0919fd45045330ff
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0071.yaml (shared dev worktree contains four
+      concurrent AURA-0071 handoff files outside this work item's allowed
+      paths; all Core implementation paths in this handoff are allowed).
+    - >-
+      SQL integration execution for new root-extension and audit tests (17
+      production-adapter tests skipped because disposable PostgreSQL was not
+      configured; tests are included in the affected suite).
+    - Frontend Nx, Storybook, Playwright, and full-stack E2E checks (owned by frontend/test-evaluation zones)
+decisions:
+  - Branching is represented by immutable opaque branch and lineage identifiers, with root-branch backfill in migration 0021 and no destructive downgrade.
+  - Branch context is reconstructed from the selected branch ancestor path; source and sibling messages, runs, citations, and side effects are not copied into a new branch.
+  - Edit-and-branch creates a fresh governed run and normal memory processing for the new turn; regeneration creates a fresh governed run while suppressing automatic memory extraction.
+  - Regeneration and branch mutations use owner-scoped optimistic versions and idempotency records, preserving failed-run retry semantics.
+  - Branching telemetry and evaluations record only bounded identifiers, outcomes, counts, timings, and failure classes; private conversation and document content remain excluded.
+  - Omitted branchId on legacy create-run requests intentionally targets the unique root branch, preserving compatibility while explicit branchId remains available for branch-aware clients.
+  - Branch request telemetry uses a fresh request trace; the authorized conversation persistence span is the trace root, avoiding a request-latency sample under persistence_duration_ms, while lineage IDs remain trace-only and outcome metrics reuse the same trace ID.
+  - Document-search citation handles are regenerated per governed run after owner-scoped retrieval; durable citations retain only the resolved document metadata, never the adapter chunk identifier or a prior run handle.
+  - Regeneration telemetry makes run.regenerate the trace root and parents conversation.persist beneath it, with no unresolved synthetic request parent.
+  - SQL branch and regeneration audit entries are staged inside the existing transaction only after idempotency lookup confirms a first execution; replay returns the existing command without another audit row.
+risks:
+  - Full production-adapter coverage remains environment-dependent; 17 adapter tests were skipped by their existing service availability guards.
+  - The required UV cache path is read-only in this host; checks passed with the task-scoped writable cache at /tmp/aura-uv-cache.
+unresolved: []

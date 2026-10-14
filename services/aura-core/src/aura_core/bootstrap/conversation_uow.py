@@ -1444,7 +1444,10 @@ class SqlConversationStore:
             selected_branch = (
                 next((item for item in loaded_before.branches if item.id == branch_id), None)
                 if branch_id
-                else (loaded_before.branches[-1] if loaded_before.branches else None)
+                else next(
+                    (item for item in loaded_before.branches if item.parent_branch_id is None),
+                    None,
+                )
             )
             if selected_branch is None:
                 raise ConversationNotFound
@@ -1711,6 +1714,18 @@ class SqlConversationStore:
                     "branchId": str(branch.id),
                 },
             )
+            self._audit(
+                session,
+                row.principal_id,
+                "conversation.branch.create",
+                str(conversation_id),
+                {
+                    "conversationId": str(conversation_id),
+                    "branchId": str(branch.id),
+                    "runId": str(run.id),
+                    "sourceUserMessageId": str(source_user_message_id),
+                },
+            )
             await session.flush()
             loaded = await self._load(session, row)
             return loaded, user, run, branch
@@ -1829,6 +1844,19 @@ class SqlConversationStore:
                     "messageId": str(source_user.id),
                     "runId": str(new_id),
                     "branchId": str(branch.id),
+                },
+            )
+            self._audit(
+                session,
+                row.principal_id,
+                "conversation.run.regenerate",
+                str(prior.conversation_id),
+                {
+                    "conversationId": str(prior.conversation_id),
+                    "branchId": str(branch.id),
+                    "runId": str(new_id),
+                    "regeneratedFromRunId": str(prior.id),
+                    "sourceUserMessageId": str(source_user.id),
                 },
             )
             await session.flush()
