@@ -26,6 +26,7 @@ from aura_core.domains.interaction.agents.persistence import (
 )
 from aura_core.domains.interaction.agents.public import (
     GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
+    GENERAL_DOCUMENT_TOOL_POLICY_ID,
     GENERAL_MEMORY_POLICY_ID,
     GENERAL_PERSONAL_FIRST_MEMORY_POLICY_ID,
     GENERAL_POLICY_ID,
@@ -119,6 +120,7 @@ def _tool_policy_owner_matches(row: ToolPolicyRevisionRow, issuer: str, subject:
             row.id == GENERAL_TOOL_POLICY_ID
             or row.id == GENERAL_SUCCESSOR_TOOL_POLICY_ID
             or row.id == GENERAL_CONVERSATIONAL_TOOL_POLICY_ID
+            or row.id == GENERAL_DOCUMENT_TOOL_POLICY_ID
             or row.id == uuid5(NAMESPACE, f"agent-tool-policy:{row.agent_profile_id}:1")
         )
     )

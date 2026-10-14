@@ -1,7 +1,16 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const DESTINATION_LABELS = ['Conversations', 'Agents', 'Personas', 'Memory', 'Reminders', 'Approvals', 'Notifications'] as const;
+const DESTINATION_LABELS = [
+  'Conversations',
+  'Agents',
+  'Personas',
+  'Memory',
+  'Documents',
+  'Reminders',
+  'Approvals',
+  'Notifications',
+] as const;
 
 async function settleMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
   const navigation = page.locator('#primary-navigation');
@@ -9,7 +18,9 @@ async function settleMobileDrawer(page: Page, desired: 'open' | 'closed'): Promi
   const close = navigation.getByRole('button', { name: 'Close navigation' });
   const state = async (): Promise<'open' | 'closed' | 'transitioning'> => {
     const expanded = await trigger.getAttribute('aria-expanded');
-    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
+    const drawerOpen = await navigation.evaluate((element) =>
+      element.classList.contains('is-mobile-open'),
+    );
     if (expanded === 'true' && drawerOpen) return 'open';
     if (expanded === 'false' && !drawerOpen) return 'closed';
     return 'transitioning';
@@ -37,14 +48,25 @@ async function settleMobileDrawer(page: Page, desired: 'open' | 'closed'): Promi
 async function waitForMobileDrawer(page: Page, desired: 'open' | 'closed'): Promise<void> {
   const navigation = page.locator('#primary-navigation');
   const trigger = page.getByRole('button', { name: 'Open navigation' });
-  await expect.poll(async () => {
-    const expanded = await trigger.getAttribute('aria-expanded');
-    const drawerOpen = await navigation.evaluate((element) => element.classList.contains('is-mobile-open'));
-    return expanded === 'true' && drawerOpen ? 'open' : expanded === 'false' && !drawerOpen ? 'closed' : 'transitioning';
-  }).toBe(desired);
+  await expect
+    .poll(async () => {
+      const expanded = await trigger.getAttribute('aria-expanded');
+      const drawerOpen = await navigation.evaluate((element) =>
+        element.classList.contains('is-mobile-open'),
+      );
+      return expanded === 'true' && drawerOpen
+        ? 'open'
+        : expanded === 'false' && !drawerOpen
+          ? 'closed'
+          : 'transitioning';
+    })
+    .toBe(desired);
 }
 
-async function openConversationLibrary(page: Page, testInfo: { readonly project: { readonly name: string } }): Promise<void> {
+async function openConversationLibrary(
+  page: Page,
+  testInfo: { readonly project: { readonly name: string } },
+): Promise<void> {
   const navigation = page.locator('#primary-navigation');
   if (testInfo.project.name === 'mobile') await settleMobileDrawer(page, 'open');
   if (testInfo.project.name !== 'tablet') {
@@ -59,7 +81,10 @@ async function openConversationLibrary(page: Page, testInfo: { readonly project:
   await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
 }
 
-async function navigateToConversationContext(page: Page, testInfo: { readonly project: { readonly name: string } }): Promise<void> {
+async function navigateToConversationContext(
+  page: Page,
+  testInfo: { readonly project: { readonly name: string } },
+): Promise<void> {
   if (!page.url().match(/\/conversation(?:\/|$)/)) {
     const navigation = page.locator('#primary-navigation');
     if (testInfo.project.name === 'mobile') await settleMobileDrawer(page, 'open');
@@ -108,49 +133,67 @@ async function expectExpandedDestinationTiles(productNav: Locator): Promise<void
 }
 
 async function expectDestinationPresentation(productNav: Locator): Promise<void> {
-  const presentation = await productNav.locator('a').evaluateAll((links) => links.map((link) => {
-    const label = link.querySelector<HTMLElement>('.label');
-    const icon = link.querySelector<SVGElement>('svg');
-    const iconShapes = icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0;
-    const linkStyle = getComputedStyle(link);
-    const before = getComputedStyle(link, '::before');
-    const after = getComputedStyle(link, '::after');
-    const rect = link.getBoundingClientRect();
-    const marker = [before, after].find((style) => style.content !== 'none'
-      && style.display !== 'none'
-      && (style.content !== '""' || style.width !== 'auto' || style.height !== 'auto'
-        || style.borderTopWidth !== '0px' || style.borderRightWidth !== '0px'
-        || style.borderBottomWidth !== '0px' || style.borderLeftWidth !== '0px'));
-    return {
-      accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
-      title: link.getAttribute('title') ?? '',
-      labelText: label?.textContent?.trim() ?? '',
-      labelWhiteSpace: label ? getComputedStyle(label).whiteSpace : '',
-      labelClientWidth: label?.clientWidth ?? 0,
-      labelScrollWidth: label?.scrollWidth ?? 0,
-      iconCount: link.querySelectorAll('svg').length,
-      iconShapes,
-      iconViewBox: icon?.getAttribute('viewBox') ?? '',
-      iconDecorative: Boolean(icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]')),
-      selected: link.getAttribute('aria-current') === 'page',
-      color: linkStyle.color,
-      selectedSurface: linkStyle.backgroundColor,
-      selectedBoxShadow: linkStyle.boxShadow,
-      markerVisible: getComputedStyle(link.querySelector<HTMLElement>('.product-current-marker') ?? link).display !== 'none' || Boolean(marker),
-      left: rect.left,
-      right: rect.right,
-      top: rect.top,
-      height: rect.height,
-      width: rect.width,
-    };
-  }));
+  const presentation = await productNav.locator('a').evaluateAll((links) =>
+    links.map((link) => {
+      const label = link.querySelector<HTMLElement>('.label');
+      const icon = link.querySelector<SVGElement>('svg');
+      const iconShapes =
+        icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0;
+      const linkStyle = getComputedStyle(link);
+      const before = getComputedStyle(link, '::before');
+      const after = getComputedStyle(link, '::after');
+      const rect = link.getBoundingClientRect();
+      const marker = [before, after].find(
+        (style) =>
+          style.content !== 'none' &&
+          style.display !== 'none' &&
+          (style.content !== '""' ||
+            style.width !== 'auto' ||
+            style.height !== 'auto' ||
+            style.borderTopWidth !== '0px' ||
+            style.borderRightWidth !== '0px' ||
+            style.borderBottomWidth !== '0px' ||
+            style.borderLeftWidth !== '0px'),
+      );
+      return {
+        accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
+        title: link.getAttribute('title') ?? '',
+        labelText: label?.textContent?.trim() ?? '',
+        labelWhiteSpace: label ? getComputedStyle(label).whiteSpace : '',
+        labelClientWidth: label?.clientWidth ?? 0,
+        labelScrollWidth: label?.scrollWidth ?? 0,
+        iconCount: link.querySelectorAll('svg').length,
+        iconShapes,
+        iconViewBox: icon?.getAttribute('viewBox') ?? '',
+        iconDecorative: Boolean(
+          icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]'),
+        ),
+        selected: link.getAttribute('aria-current') === 'page',
+        color: linkStyle.color,
+        selectedSurface: linkStyle.backgroundColor,
+        selectedBoxShadow: linkStyle.boxShadow,
+        markerVisible:
+          getComputedStyle(link.querySelector<HTMLElement>('.product-current-marker') ?? link)
+            .display !== 'none' || Boolean(marker),
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        height: rect.height,
+        width: rect.width,
+      };
+    }),
+  );
 
   expect(presentation).toHaveLength(DESTINATION_LABELS.length);
   expect(presentation.map((item) => item.labelText)).toEqual(DESTINATION_LABELS);
   const destinationLabel = new RegExp(`^(${DESTINATION_LABELS.join('|')})$`);
   const trayStyle = await productNav.evaluate((element) => {
     const style = getComputedStyle(element);
-    return { backgroundColor: style.backgroundColor, border: style.border, boxShadow: style.boxShadow };
+    return {
+      backgroundColor: style.backgroundColor,
+      border: style.border,
+      boxShadow: style.boxShadow,
+    };
   });
   expect(trayStyle.backgroundColor).toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
   expect(trayStyle.border).toMatch(/0px/);
@@ -181,20 +224,29 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
 }
 
 async function expectCompactDestinationControls(productNav: Locator): Promise<void> {
-  const controls = await productNav.locator('a').evaluateAll((links) => links.map((link) => {
-    const label = link.querySelector<HTMLElement>('.label');
-    const icon = link.querySelector<SVGElement>('svg');
-    return {
-      labelVisible: Boolean(label && getComputedStyle(label).visibility !== 'hidden' && getComputedStyle(label).display !== 'none'),
-      accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
-      title: link.getAttribute('title') ?? '',
-      iconCount: link.querySelectorAll('svg').length,
-      iconShapes: icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0,
-      iconViewBox: icon?.getAttribute('viewBox') ?? '',
-      iconDecorative: Boolean(icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]')),
-      current: link.getAttribute('aria-current') === 'page',
-    };
-  }));
+  const controls = await productNav.locator('a').evaluateAll((links) =>
+    links.map((link) => {
+      const label = link.querySelector<HTMLElement>('.label');
+      const icon = link.querySelector<SVGElement>('svg');
+      return {
+        labelVisible: Boolean(
+          label &&
+          getComputedStyle(label).visibility !== 'hidden' &&
+          getComputedStyle(label).display !== 'none',
+        ),
+        accessibleName: link.getAttribute('aria-label') ?? link.textContent?.trim() ?? '',
+        title: link.getAttribute('title') ?? '',
+        iconCount: link.querySelectorAll('svg').length,
+        iconShapes:
+          icon?.querySelectorAll('path, rect, polygon, polyline, line, ellipse').length ?? 0,
+        iconViewBox: icon?.getAttribute('viewBox') ?? '',
+        iconDecorative: Boolean(
+          icon?.matches('[aria-hidden="true"]') || icon?.closest('[aria-hidden="true"]'),
+        ),
+        current: link.getAttribute('aria-current') === 'page',
+      };
+    }),
+  );
 
   expect(controls).toHaveLength(DESTINATION_LABELS.length);
   for (const control of controls) {
@@ -263,15 +315,29 @@ async function installApiFake(
       revisions: [currentRevision],
     };
   };
-  const summary = (): Record<string, unknown> => ({ id: 'welcome', title: 'A thoughtful beginning', agentProfileId: 'general', agentRevisionId: 'agent-rev-1', modelId: selectedModel, version, createdAt: now(), updatedAt: now(), currentRun: activeRun });
+  const summary = (): Record<string, unknown> => ({
+    id: 'welcome',
+    title: 'A thoughtful beginning',
+    agentProfileId: 'general',
+    agentRevisionId: 'agent-rev-1',
+    modelId: selectedModel,
+    version,
+    createdAt: now(),
+    updatedAt: now(),
+    currentRun: activeRun,
+  });
   // A terminal run belongs in recentRuns, not currentRun. This keeps the
   // browser fixture from re-subscribing to a closed SSE stream after refresh.
   const currentRunForDetail = (): Record<string, unknown> | null => {
     const status = activeRun?.['status'];
-    return activeRun && (status === 'queued' || status === 'running' || status === 'cancel_requested') ? activeRun : null;
+    return activeRun &&
+      (status === 'queued' || status === 'running' || status === 'cancel_requested')
+      ? activeRun
+      : null;
   };
   const isLongSidebarFixture = (): boolean => page.url().includes('fixture=long-sidebar');
-  const isOrderingFixture = (): boolean => orderingFixture || page.url().includes('fixture=ordering');
+  const isOrderingFixture = (): boolean =>
+    orderingFixture || page.url().includes('fixture=ordering');
   const isRouteRaceFixture = (): boolean => page.url().includes('fixture=route-race');
   const orderingSummary = (id: string): Record<string, unknown> => ({
     ...summary(),
@@ -290,13 +356,27 @@ async function installApiFake(
   });
   const recentConversationSummaries = (): Array<Record<string, unknown>> => {
     if (isOrderingFixture()) return orderingIds.map((id) => orderingSummary(id));
-    if (isLongSidebarFixture()) return Array.from({ length: 48 }, (_, index) => ({ ...summary(), id: index === 0 ? 'welcome' : `recent-${index}`, title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`, active: index === 0 }));
+    if (isLongSidebarFixture())
+      return Array.from({ length: 48 }, (_, index) => ({
+        ...summary(),
+        id: index === 0 ? 'welcome' : `recent-${index}`,
+        title: index === 0 ? 'A thoughtful beginning' : `Recent conversation ${index}`,
+        active: index === 0,
+      }));
     return [summary()];
   };
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' }, csrfToken: 'csrf', idleExpiresAt: now(), absoluteExpiresAt: now() } });
+    if (url.pathname === '/api/v1/auth/session')
+      return route.fulfill({
+        json: {
+          principal: { issuer: 'https://authentik.test', subject: 'owner', displayName: 'Owner' },
+          csrfToken: 'csrf',
+          idleExpiresAt: now(),
+          absoluteExpiresAt: now(),
+        },
+      });
     if (url.pathname === '/api/v1/test/release' && request.method() === 'GET') {
       const conversationId = url.searchParams.get('conversation');
       deferredConversationResolvers.get(conversationId ?? '')?.();
@@ -305,11 +385,60 @@ async function installApiFake(
     }
     if (url.pathname === '/api/v1/test/state' && request.method() === 'GET') {
       const conversationId = url.searchParams.get('conversation');
-      return route.fulfill({ json: { pending: deferredConversationPending.has(conversationId ?? '') } });
+      return route.fulfill({
+        json: { pending: deferredConversationPending.has(conversationId ?? '') },
+      });
     }
-    if (url.pathname === '/api/v1/models') return route.fulfill({ json: { models: [{ id: 'qwen2.5:7b', displayName: 'Qwen 2.5', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'llama3.2:3b', displayName: 'Llama 3.2', provider: 'ollama', capabilities: ['chat'], availability: 'available', selectable: true, disabledReason: null }, { id: 'embed-only', displayName: 'Embeddings only', provider: 'ollama', capabilities: ['embedding'], availability: 'available', selectable: false, disabledReason: 'This model does not support chat.' }], defaultModelId: 'qwen2.5:7b', observedAt: now() } });
+    if (url.pathname === '/api/v1/models')
+      return route.fulfill({
+        json: {
+          models: [
+            {
+              id: 'qwen2.5:7b',
+              displayName: 'Qwen 2.5',
+              provider: 'ollama',
+              capabilities: ['chat'],
+              availability: 'available',
+              selectable: true,
+              disabledReason: null,
+            },
+            {
+              id: 'llama3.2:3b',
+              displayName: 'Llama 3.2',
+              provider: 'ollama',
+              capabilities: ['chat'],
+              availability: 'available',
+              selectable: true,
+              disabledReason: null,
+            },
+            {
+              id: 'embed-only',
+              displayName: 'Embeddings only',
+              provider: 'ollama',
+              capabilities: ['embedding'],
+              availability: 'available',
+              selectable: false,
+              disabledReason: 'This model does not support chat.',
+            },
+          ],
+          defaultModelId: 'qwen2.5:7b',
+          observedAt: now(),
+        },
+      });
     if (url.pathname === '/api/v1/agents' && request.method() === 'GET') {
-      return route.fulfill({ json: { items: [{ id: 'general', status: 'active', version: 1, currentRevision: builtInAuraRevision(), revisions: [] }] } });
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: 'general',
+              status: 'active',
+              version: 1,
+              currentRevision: builtInAuraRevision(),
+              revisions: [],
+            },
+          ],
+        },
+      });
     }
     if (url.pathname === '/api/v1/agents/general' && request.method() === 'GET') {
       return route.fulfill({ json: builtInAuraDetail() });
@@ -317,10 +446,15 @@ async function installApiFake(
     if (url.pathname === '/api/v1/personas' && request.method() === 'GET') {
       return route.fulfill({ json: { items: [] } });
     }
-    if (url.pathname === '/api/v1/conversations' && request.method() === 'GET') return route.fulfill({ json: { items: recentConversationSummaries(), nextCursor: null } });
+    if (url.pathname === '/api/v1/conversations' && request.method() === 'GET')
+      return route.fulfill({ json: { items: recentConversationSummaries(), nextCursor: null } });
     if (url.pathname === '/api/v1/conversations' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() ?? '{}') as { message?: string; modelId?: string };
-      if (rejectCreateFixture) return route.fulfill({ status: 503, json: { detail: 'Conversation service temporarily unavailable.' } });
+      if (rejectCreateFixture)
+        return route.fulfill({
+          status: 503,
+          json: { detail: 'Conversation service temporarily unavailable.' },
+        });
       if (page.url().includes('fixture=deferred-create')) {
         await new Promise<void>((resolve) => {
           deferredConversationPending.add('create');
@@ -330,10 +464,46 @@ async function installApiFake(
       }
       createdConversationId = 'created-1';
       const runId = `run-${++runNumber}`;
-      const userMessage = { id: `user-${runId}`, conversationId: createdConversationId, role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
-      activeRun = { id: runId, conversationId: createdConversationId, userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: body.modelId ?? selectedModel, retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
+      const userMessage = {
+        id: `user-${runId}`,
+        conversationId: createdConversationId,
+        role: 'user',
+        content: body.message ?? '',
+        state: 'complete',
+        runId,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      activeRun = {
+        id: runId,
+        conversationId: createdConversationId,
+        userMessageId: userMessage.id,
+        assistantMessageId: `assistant-${runId}`,
+        status: 'running',
+        agentRevisionId: 'agent-rev-1',
+        modelPolicyRevisionId: 'policy-1',
+        provider: 'ollama',
+        modelId: body.modelId ?? selectedModel,
+        retryOfRunId: null,
+        createdAt: now(),
+        startedAt: now(),
+        finishedAt: null,
+        error: null,
+      };
       messages = [userMessage];
-      return route.fulfill({ status: 202, json: { conversation: { ...summary(), id: createdConversationId, title: body.message?.slice(0, 30) ?? 'New conversation', version: 1 }, userMessage, run: activeRun } });
+      return route.fulfill({
+        status: 202,
+        json: {
+          conversation: {
+            ...summary(),
+            id: createdConversationId,
+            title: body.message?.slice(0, 30) ?? 'New conversation',
+            version: 1,
+          },
+          userMessage,
+          run: activeRun,
+        },
+      });
     }
     if (url.pathname === '/api/v1/conversations/welcome' && request.method() === 'PATCH') {
       const body = JSON.parse(request.postData() ?? '{}') as { modelId?: string; version?: number };
@@ -354,9 +524,20 @@ async function installApiFake(
           updatedAt: now(),
         }));
       }
-      return route.fulfill({ json: { ...summary(), currentRun: currentRunForDetail(), messages, recentRuns: activeRun ? [activeRun] : [] } });
+      return route.fulfill({
+        json: {
+          ...summary(),
+          currentRun: currentRunForDetail(),
+          messages,
+          recentRuns: activeRun ? [activeRun] : [],
+        },
+      });
     }
-    if (isOrderingFixture() && url.pathname.match(/^\/api\/v1\/conversations\/(first|second)$/) && request.method() === 'GET') {
+    if (
+      isOrderingFixture() &&
+      url.pathname.match(/^\/api\/v1\/conversations\/(first|second)$/) &&
+      request.method() === 'GET'
+    ) {
       const conversationId = url.pathname.split('/').at(-1) ?? 'first';
       return route.fulfill({
         json: {
@@ -366,72 +547,227 @@ async function installApiFake(
         },
       });
     }
-    if (createdConversationId && url.pathname === `/api/v1/conversations/${createdConversationId}` && request.method() === 'GET') return route.fulfill({ json: { ...summary(), id: createdConversationId, title: 'Created conversation', currentRun: currentRunForDetail(), messages, recentRuns: activeRun ? [activeRun] : [] } });
+    if (
+      createdConversationId &&
+      url.pathname === `/api/v1/conversations/${createdConversationId}` &&
+      request.method() === 'GET'
+    )
+      return route.fulfill({
+        json: {
+          ...summary(),
+          id: createdConversationId,
+          title: 'Created conversation',
+          currentRun: currentRunForDetail(),
+          messages,
+          recentRuns: activeRun ? [activeRun] : [],
+        },
+      });
     const detailMatch = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)$/);
     if (detailMatch && request.method() === 'GET') {
       const conversationId = decodeURIComponent(detailMatch[1]);
       if (conversationId === 'route-one' && isRouteRaceFixture()) {
         deferredConversationPending.add(conversationId);
-        await new Promise<void>((resolve) => deferredConversationResolvers.set(conversationId, resolve));
+        await new Promise<void>((resolve) =>
+          deferredConversationResolvers.set(conversationId, resolve),
+        );
         deferredConversationPending.delete(conversationId);
         return route.fulfill({ status: 503, json: { detail: 'Stale route lookup failed.' } });
       }
-      if (conversationId === 'route-two' && isRouteRaceFixture()) return route.fulfill({ json: { ...summary(), id: conversationId, title: 'Route two', messages: [{ id: 'route-two-message', conversationId, role: 'assistant', content: 'Route two response.', state: 'complete', runId: null, createdAt: now(), updatedAt: now() }], recentRuns: [] } });
-      if (conversationId === 'protected' && page.url().includes('fixture=route-401')) return route.fulfill({ status: 401, json: { detail: 'Please sign in to continue.' } });
-      if (conversationId === 'unavailable' && page.url().includes('fixture=route-503')) return route.fulfill({ status: 503, json: { detail: 'Conversation service temporarily unavailable.' } });
+      if (conversationId === 'route-two' && isRouteRaceFixture())
+        return route.fulfill({
+          json: {
+            ...summary(),
+            id: conversationId,
+            title: 'Route two',
+            messages: [
+              {
+                id: 'route-two-message',
+                conversationId,
+                role: 'assistant',
+                content: 'Route two response.',
+                state: 'complete',
+                runId: null,
+                createdAt: now(),
+                updatedAt: now(),
+              },
+            ],
+            recentRuns: [],
+          },
+        });
+      if (conversationId === 'protected' && page.url().includes('fixture=route-401'))
+        return route.fulfill({ status: 401, json: { detail: 'Please sign in to continue.' } });
+      if (conversationId === 'unavailable' && page.url().includes('fixture=route-503'))
+        return route.fulfill({
+          status: 503,
+          json: { detail: 'Conversation service temporarily unavailable.' },
+        });
     }
-    if (url.pathname.startsWith('/api/v1/conversations/') && request.method() === 'GET') return route.fulfill({ status: 404, json: { detail: 'Conversation not found.' } });
+    if (url.pathname.startsWith('/api/v1/conversations/') && request.method() === 'GET')
+      return route.fulfill({ status: 404, json: { detail: 'Conversation not found.' } });
     if (url.pathname.endsWith('/runs') && request.method() === 'POST') {
       // Use the current document URL as a second source so the fixture does
       // not depend on the relative ordering of `framenavigated` and the
       // application's first API request.
-      if (errorOnce || page.url().includes('fixture=error')) { errorOnce = false; failNextStream = true; }
+      if (errorOnce || page.url().includes('fixture=error')) {
+        errorOnce = false;
+        failNextStream = true;
+      }
       const body = JSON.parse(request.postData() ?? '{}') as { message?: string };
       const runPath = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)\/runs$/);
-      const runConversationId = isOrderingFixture() ? runPath?.[1] ?? 'first' : 'welcome';
+      const runConversationId = isOrderingFixture() ? (runPath?.[1] ?? 'first') : 'welcome';
       const runId = `run-${++runNumber}`;
-      const userMessage = { id: `user-${runId}`, conversationId: runConversationId, role: 'user', content: body.message ?? '', state: 'complete', runId, createdAt: now(), updatedAt: now() };
-      activeRun = { id: runId, conversationId: runConversationId, userMessageId: userMessage.id, assistantMessageId: `assistant-${runId}`, status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: 'qwen2.5:7b', retryOfRunId: null, createdAt: now(), startedAt: now(), finishedAt: null, error: null };
-      if (isOrderingFixture()) orderingIds = [runConversationId, ...orderingIds.filter((id) => id !== runConversationId)];
-      messages = [...messages, userMessage]; version += 1;
-      return route.fulfill({ status: 202, json: { conversation: isOrderingFixture() ? orderingSummary(runConversationId) : summary(), userMessage, run: activeRun } });
+      const userMessage = {
+        id: `user-${runId}`,
+        conversationId: runConversationId,
+        role: 'user',
+        content: body.message ?? '',
+        state: 'complete',
+        runId,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      activeRun = {
+        id: runId,
+        conversationId: runConversationId,
+        userMessageId: userMessage.id,
+        assistantMessageId: `assistant-${runId}`,
+        status: 'running',
+        agentRevisionId: 'agent-rev-1',
+        modelPolicyRevisionId: 'policy-1',
+        provider: 'ollama',
+        modelId: 'qwen2.5:7b',
+        retryOfRunId: null,
+        createdAt: now(),
+        startedAt: now(),
+        finishedAt: null,
+        error: null,
+      };
+      if (isOrderingFixture())
+        orderingIds = [runConversationId, ...orderingIds.filter((id) => id !== runConversationId)];
+      messages = [...messages, userMessage];
+      version += 1;
+      return route.fulfill({
+        status: 202,
+        json: {
+          conversation: isOrderingFixture() ? orderingSummary(runConversationId) : summary(),
+          userMessage,
+          run: activeRun,
+        },
+      });
     }
-    if (url.pathname.endsWith('/cancel') && request.method() === 'POST') { activeRun = activeRun ? { ...activeRun, status: 'canceled', finishedAt: now() } : null; return route.fulfill({ json: activeRun }); }
+    if (url.pathname.endsWith('/cancel') && request.method() === 'POST') {
+      activeRun = activeRun ? { ...activeRun, status: 'canceled', finishedAt: now() } : null;
+      return route.fulfill({ json: activeRun });
+    }
     if (url.pathname.endsWith('/retry') && request.method() === 'POST') {
-      const runId = `run-${++runNumber}`; activeRun = { ...(activeRun ?? {}), id: runId, status: 'running', createdAt: now(), startedAt: now(), finishedAt: null, retryOfRunId: activeRun?.['id'] ?? null }; return route.fulfill({ status: 202, json: { conversation: summary(), userMessage: messages.at(-1), run: activeRun } });
+      const runId = `run-${++runNumber}`;
+      activeRun = {
+        ...(activeRun ?? {}),
+        id: runId,
+        status: 'running',
+        createdAt: now(),
+        startedAt: now(),
+        finishedAt: null,
+        retryOfRunId: activeRun?.['id'] ?? null,
+      };
+      return route.fulfill({
+        status: 202,
+        json: { conversation: summary(), userMessage: messages.at(-1), run: activeRun },
+      });
     }
     if (url.pathname.includes('/events')) {
-      const run = activeRun; const lastUser = messages.filter((message) => message['role'] === 'user').at(-1)?.['content'] ?? 'your thought';
+      const run = activeRun;
+      const lastUser =
+        messages.filter((message) => message['role'] === 'user').at(-1)?.['content'] ??
+        'your thought';
       const eventConversationId = String(run?.['conversationId'] ?? 'welcome');
-      if (String(lastUser).includes('small local thought') && activeRun?.['status'] !== 'canceled') {
+      if (
+        String(lastUser).includes('small local thought') &&
+        activeRun?.['status'] !== 'canceled'
+      ) {
         const deadline = Date.now() + 5_000;
         while (activeRun?.['status'] !== 'canceled' && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       }
       if (activeRun?.['status'] === 'canceled') {
-        const partial = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: eventConversationId, role: 'assistant', content: 'A partial response from the provider.', state: 'interrupted', runId: activeRun['id'], createdAt: now(), updatedAt: now() };
+        const partial = {
+          id: String(run?.['assistantMessageId'] ?? 'assistant-run'),
+          conversationId: eventConversationId,
+          role: 'assistant',
+          content: 'A partial response from the provider.',
+          state: 'interrupted',
+          runId: activeRun['id'],
+          createdAt: now(),
+          updatedAt: now(),
+        };
         messages = [...messages.filter((message) => message['id'] !== partial.id), partial];
         const canceledEvent = [
           'retry: 86400000\n\n',
           `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-partial', sequence: 1, eventType: 'assistant.snapshot', runId: activeRun['id'], conversationId: eventConversationId, occurredAt: now(), data: { message: partial } })}\n\n`,
           `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-canceled', sequence: 2, eventType: 'run.status', runId: activeRun['id'], conversationId: eventConversationId, occurredAt: now(), data: { status: 'canceled', startedAt: activeRun['startedAt'], finishedAt: activeRun['finishedAt'] } })}\n\n`,
         ].join('');
-        return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: canceledEvent });
+        return route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+          body: canceledEvent,
+        });
       }
-      const assistant = { id: String(run?.['assistantMessageId'] ?? 'assistant-run'), conversationId: eventConversationId, role: 'assistant', content: `A server response with your thought: ${lastUser}`, state: 'complete', runId: run?.['id'] ?? 'run', createdAt: now(), updatedAt: now() };
+      const assistant = {
+        id: String(run?.['assistantMessageId'] ?? 'assistant-run'),
+        conversationId: eventConversationId,
+        role: 'assistant',
+        content: `A server response with your thought: ${lastUser}`,
+        state: 'complete',
+        runId: run?.['id'] ?? 'run',
+        createdAt: now(),
+        updatedAt: now(),
+        ...(page.url().includes('fixture=citations')
+          ? {
+              citations: [
+                {
+                  documentId: '11111111-1111-4111-8111-111111111111',
+                  displayLabel: 'Document source',
+                  locator: 'page:2',
+                },
+              ],
+            }
+          : {}),
+      };
       if (failNextStream) {
-        failNextStream = false; activeRun = run ? { ...run, status: 'failed', finishedAt: now(), error: { code: 'provider_unavailable', message: 'Aura could not reach the selected provider.', retryable: true, traceId: 'trace-test' } } : null;
+        failNextStream = false;
+        activeRun = run
+          ? {
+              ...run,
+              status: 'failed',
+              finishedAt: now(),
+              error: {
+                code: 'provider_unavailable',
+                message: 'Aura could not reach the selected provider.',
+                retryable: true,
+                traceId: 'trace-test',
+              },
+            }
+          : null;
         const errorEvent = `retry: 86400000\n\nid: 1\nevent: run.error\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-error', sequence: 1, eventType: 'run.error', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: activeRun?.['error'] })}\n\n`;
-        return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: errorEvent });
+        return route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+          body: errorEvent,
+        });
       }
-      messages = [...messages.filter((message) => message['id'] !== assistant.id), assistant]; activeRun = run ? { ...run, status: 'completed', finishedAt: now() } : null;
+      messages = [...messages.filter((message) => message['id'] !== assistant.id), assistant];
+      activeRun = run ? { ...run, status: 'completed', finishedAt: now() } : null;
       const events = [
         'retry: 86400000\n\n',
         `id: 1\nevent: assistant.snapshot\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-1', sequence: 1, eventType: 'assistant.snapshot', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: { message: assistant } })}\n\n`,
         `id: 2\nevent: run.status\ndata: ${JSON.stringify({ schemaVersion: 1, eventId: 'event-2', sequence: 2, eventType: 'run.status', runId: run?.['id'] ?? 'run', conversationId: eventConversationId, occurredAt: now(), data: { status: 'completed', startedAt: run?.['startedAt'] ?? now(), finishedAt: now() } })}\n\n`,
       ].join('');
-      return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: events });
+      return route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: events,
+      });
     }
     return route.continue();
   });
@@ -458,11 +794,16 @@ test('supports Enter and Shift+Enter composer behavior', async ({ page }) => {
   await expect(composer).toHaveValue('A first line\n');
   await composer.fill('Send with Enter');
   await composer.press('Enter');
-  await expect(page.getByRole('article', { name: 'Your message' })).toContainText('Send with Enter');
+  await expect(page.getByRole('article', { name: 'Your message' })).toContainText(
+    'Send with Enter',
+  );
 });
 
 test('persists the selected theme preference', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Theme persistence is covered once in the desktop project.');
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Theme persistence is covered once in the desktop project.',
+  );
   await page.goto('/');
   await page.getByRole('button', { name: 'Preferences' }).click();
   await page.getByRole('radio', { name: 'Dark' }).check();
@@ -474,7 +815,10 @@ test('persists the selected theme preference', async ({ page }, testInfo) => {
 });
 
 test('supports desktop collapse and tablet rail navigation', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet', 'Navigation geometry is covered by desktop and tablet projects.');
+  test.skip(
+    testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet',
+    'Navigation geometry is covered by desktop and tablet projects.',
+  );
   const navigation = page.locator('#primary-navigation');
   if (testInfo.project.name === 'desktop') {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -516,7 +860,9 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     expect(Math.abs(compactAlignment.plus - compactAlignment.axis)).toBeLessThanOrEqual(5);
     await navigation.getByRole('button', { name: 'Expand navigation' }).click();
     await page.waitForTimeout(60);
-    const expansionWidth = await navigation.evaluate((element) => element.getBoundingClientRect().width);
+    const expansionWidth = await navigation.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
     expect(expansionWidth).toBeLessThan(280);
     await expect(navigation).not.toHaveClass(/is-collapsed/);
     await expect(navigation).toHaveCSS('flex-basis', '280px');
@@ -525,7 +871,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
     await navigation.getByRole('button', { name: 'Preferences' }).click();
     await expect(navigation.getByRole('radio', { name: 'Dark' })).toBeVisible();
     await expect(navigation.locator('.wordmark-text')).toBeVisible();
-  await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
+    await expect(navigation.locator('button.new-conversation').locator('.label')).toBeVisible();
     await expect(navigation.locator('.wordmark')).toHaveCSS('gap', '8.8px');
     await expect(navigation.locator('button.new-conversation')).toHaveCSS('gap', '8px');
     return;
@@ -535,23 +881,46 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   await expect(navigation).toHaveCSS('flex-basis', '72px');
   await expect(navigation.locator('.product-nav')).toBeVisible();
   await expect(navigation.locator('.product-nav a')).toHaveCount(DESTINATION_LABELS.length);
-  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toBeVisible();
-  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Agents$/i })).toBeVisible();
-  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i })).toBeVisible();
-  await expect(navigation.locator('.product-nav').getByRole('link', { name: /^Memory$/i })).toBeVisible();
+  await expect(
+    navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i }),
+  ).toBeVisible();
+  await expect(
+    navigation.locator('.product-nav').getByRole('link', { name: /^Agents$/i }),
+  ).toBeVisible();
+  await expect(
+    navigation.locator('.product-nav').getByRole('link', { name: /^Personas$/i }),
+  ).toBeVisible();
+  await expect(
+    navigation.locator('.product-nav').getByRole('link', { name: /^Memory$/i }),
+  ).toBeVisible();
+  await expect(
+    navigation.locator('.product-nav').getByRole('link', { name: /^Documents$/i }),
+  ).toBeVisible();
   await expectCompactDestinationControls(navigation.locator('.product-nav'));
   await expect(navigation.getByRole('button', { name: 'Preferences' })).toBeVisible();
   await expect(navigation.locator('button.new-conversation')).toBeVisible();
   await expect(navigation.locator('.conversation-nav')).toHaveCount(0);
   await navigation.getByRole('button', { name: 'Conversation library' }).click();
   await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
-  await expect(navigation.locator('button.new-conversation')).toHaveAttribute('title', 'New conversation');
-  await expect(page.locator('.conversation-link')).toHaveAttribute('title', 'A thoughtful beginning');
+  await expect(navigation.locator('button.new-conversation')).toHaveAttribute(
+    'title',
+    'New conversation',
+  );
+  await expect(page.locator('.conversation-link')).toHaveAttribute(
+    'title',
+    'A thoughtful beginning',
+  );
   const geometry = await page.evaluate(() => {
-    const conversationNav = document.querySelector<HTMLElement>('.conversation-library-context .conversation-nav');
-    const conversationLink = document.querySelector<HTMLElement>('.conversation-library-context .conversation-link');
+    const conversationNav = document.querySelector<HTMLElement>(
+      '.conversation-library-context .conversation-nav',
+    );
+    const conversationLink = document.querySelector<HTMLElement>(
+      '.conversation-library-context .conversation-link',
+    );
     return {
-      navigationWidth: document.querySelector<HTMLElement>('#primary-navigation')?.getBoundingClientRect().width ?? 0,
+      navigationWidth:
+        document.querySelector<HTMLElement>('#primary-navigation')?.getBoundingClientRect().width ??
+        0,
       conversationNavWidth: conversationNav?.getBoundingClientRect().width ?? 0,
       conversationLinkWidth: conversationLink?.getBoundingClientRect().width ?? 0,
     };
@@ -561,8 +930,13 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   expect(geometry.conversationLinkWidth).toBeLessThanOrEqual(geometry.conversationNavWidth);
 });
 
-test('keeps compact destination controls fixed at breakpoint boundaries during live resize', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Breakpoint geometry runs once in the desktop project.');
+test('keeps compact destination controls fixed at breakpoint boundaries during live resize', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Breakpoint geometry runs once in the desktop project.',
+  );
 
   const navigation = page.locator('#primary-navigation');
   const productNav = navigation.locator('.product-nav');
@@ -576,10 +950,26 @@ test('keeps compact destination controls fixed at breakpoint boundaries during l
   async function measureGeometry(): Promise<{
     newConversation: { top: number; bottom: number; width: number; height: number };
     productNav: { top: number; bottom: number; width: number; height: number };
-    links: Array<{ top: number; bottom: number; left: number; right: number; width: number; height: number }>;
+    links: Array<{
+      top: number;
+      bottom: number;
+      left: number;
+      right: number;
+      width: number;
+      height: number;
+    }>;
   }> {
     return page.evaluate(() => {
-      const rect = (element: Element | null): { top: number; bottom: number; left: number; right: number; width: number; height: number } => {
+      const rect = (
+        element: Element | null,
+      ): {
+        top: number;
+        bottom: number;
+        left: number;
+        right: number;
+        width: number;
+        height: number;
+      } => {
         const bounds = element?.getBoundingClientRect();
         return {
           top: bounds?.top ?? 0,
@@ -593,22 +983,38 @@ test('keeps compact destination controls fixed at breakpoint boundaries during l
       return {
         newConversation: rect(document.querySelector('button.new-conversation')),
         productNav: rect(document.querySelector('.product-nav')),
-        links: Array.from(document.querySelectorAll<HTMLElement>('.product-nav a')).map((link) => rect(link)),
+        links: Array.from(document.querySelectorAll<HTMLElement>('.product-nav a')).map((link) =>
+          rect(link),
+        ),
       };
     });
   }
 
-  async function expectDestinationGroup(options: { compact: boolean; mobile: boolean }): Promise<void> {
+  async function expectDestinationGroup(options: {
+    compact: boolean;
+    mobile: boolean;
+  }): Promise<void> {
     await expect(destinationLinks).toHaveCount(DESTINATION_LABELS.length);
     const geometry = await measureGeometry();
     expect(geometry.productNav.top).toBeGreaterThanOrEqual(geometry.newConversation.bottom - 1);
     expect(geometry.productNav.top - geometry.newConversation.bottom).toBeLessThanOrEqual(24);
     expect(geometry.links.every((link) => link.width > 0 && link.height > 0)).toBe(true);
-    expect(geometry.links.every((link, index) => geometry.links.slice(index + 1).every((other) => (
-      link.right <= other.left + 1 || other.right <= link.left + 1 || link.bottom <= other.top + 1 || other.bottom <= link.top + 1
-    )))).toBe(true);
+    expect(
+      geometry.links.every((link, index) =>
+        geometry.links
+          .slice(index + 1)
+          .every(
+            (other) =>
+              link.right <= other.left + 1 ||
+              other.right <= link.left + 1 ||
+              link.bottom <= other.top + 1 ||
+              other.bottom <= link.top + 1,
+          ),
+      ),
+    ).toBe(true);
 
-    if (options.compact) expect(geometry.links.every((link) => link.width >= 44 && link.height >= 44)).toBe(true);
+    if (options.compact)
+      expect(geometry.links.every((link) => link.width >= 44 && link.height >= 44)).toBe(true);
     else expect(geometry.links.every((link) => link.width > 200 && link.height >= 44)).toBe(true);
   }
 
@@ -640,8 +1046,13 @@ test('keeps compact destination controls fixed at breakpoint boundaries during l
   await expect(navigation.getByRole('button', { name: 'Conversation library' })).toBeVisible();
 });
 
-test('closes the tablet conversation library before entering the wide desktop layout', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Breakpoint overlay coverage runs once in the desktop project.');
+test('closes the tablet conversation library before entering the wide desktop layout', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Breakpoint overlay coverage runs once in the desktop project.',
+  );
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/conversation/welcome');
   const navigation = page.locator('#primary-navigation');
@@ -657,8 +1068,13 @@ test('closes the tablet conversation library before entering the wide desktop la
   await expect(navigation.locator('.product-link[aria-current="page"]')).toBeFocused();
 });
 
-test('closes the collapsed desktop conversation library before expanding inline', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Collapsed-to-expanded overlay coverage runs once in the desktop project.');
+test('closes the collapsed desktop conversation library before expanding inline', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Collapsed-to-expanded overlay coverage runs once in the desktop project.',
+  );
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/conversation/welcome');
   const navigation = page.locator('#primary-navigation');
@@ -676,8 +1092,13 @@ test('closes the collapsed desktop conversation library before expanding inline'
   await expect(navigation.locator('.product-link[aria-current="page"]')).toBeFocused();
 });
 
-test('keeps recent conversations as the only sidebar scroll owner while resizing', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Dynamic sidebar scroll ownership runs once in the desktop project.');
+test('keeps recent conversations as the only sidebar scroll owner while resizing', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Dynamic sidebar scroll ownership runs once in the desktop project.',
+  );
 
   const navigation = page.locator('#primary-navigation');
   await page.goto('/conversation/welcome?fixture=long-sidebar');
@@ -698,13 +1119,19 @@ test('keeps recent conversations as the only sidebar scroll owner while resizing
       const theme = document.querySelector<HTMLElement>('.sidebar-bottom');
       const scrollOwners = sidebar
         ? [sidebar, ...Array.from(sidebar.querySelectorAll<HTMLElement>('*'))]
-          .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
-          .map((element) => element.className || element.tagName.toLowerCase())
+            .filter(
+              (element) =>
+                ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) &&
+                element.scrollHeight > element.clientHeight,
+            )
+            .map((element) => element.className || element.tagName.toLowerCase())
         : [];
       const sidebarBounds = sidebar?.getBoundingClientRect();
       const recentBounds = recent?.getBoundingClientRect();
       const themeBounds = theme?.getBoundingClientRect();
-      const contextBounds = document.querySelector<HTMLElement>('.conversation-library-context')?.getBoundingClientRect();
+      const contextBounds = document
+        .querySelector<HTMLElement>('.conversation-library-context')
+        ?.getBoundingClientRect();
       return {
         scrollOwners,
         recentOverflow: recent ? getComputedStyle(recent).overflowY : 'visible',
@@ -731,8 +1158,13 @@ test('keeps recent conversations as the only sidebar scroll owner while resizing
   }
 });
 
-test('keeps primary destinations structurally separate from recent conversations', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Collapsed destination accessibility runs once in the desktop project.');
+test('keeps primary destinations structurally separate from recent conversations', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Collapsed destination accessibility runs once in the desktop project.',
+  );
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   const navigation = page.locator('#primary-navigation');
@@ -745,6 +1177,7 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Memory$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Documents$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expectDestinationPresentation(productNav);
   const conversationsDestination = productNav.getByRole('link', { name: /^Conversations$/i });
@@ -774,12 +1207,16 @@ test('keeps primary destinations structurally separate from recent conversations
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Memory$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Documents$/i })).toBeVisible();
   await expect(productNav.getByRole('link')).toHaveCount(DESTINATION_LABELS.length);
   await expectCompactDestinationControls(productNav);
 });
 
 test('keeps primary destinations available in the mobile drawer', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile drawer navigation runs once in the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile drawer navigation runs once in the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
@@ -794,15 +1231,30 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Memory$/i })).toBeVisible();
+  await expect(productNav.getByRole('link', { name: /^Documents$/i })).toBeVisible();
   await expectExpandedDestinationTiles(productNav);
   await expectDestinationPresentation(productNav);
-  await expect.poll(async () => productNav.locator('a .product-current-marker').evaluateAll((markers) => markers.filter((marker) => getComputedStyle(marker).display !== 'none').length)).toBe(1);
+  await expect
+    .poll(async () =>
+      productNav
+        .locator('a .product-current-marker')
+        .evaluateAll(
+          (markers) =>
+            markers.filter((marker) => getComputedStyle(marker).display !== 'none').length,
+        ),
+    )
+    .toBe(1);
   await expect(recentNav).toBeVisible();
   await expect(recentNav.locator('.conversation-link').first()).toBeVisible();
 });
 
-test('keeps the sidebar viewport-stable while long conversation content scrolls', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet', 'Viewport-stable sidebar coverage runs on desktop and tablet projects.');
+test('keeps the sidebar viewport-stable while long conversation content scrolls', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop' && testInfo.project.name !== 'tablet',
+    'Viewport-stable sidebar coverage runs on desktop and tablet projects.',
+  );
   await page.goto('/conversation/welcome?fixture=long-sidebar');
   const navigation = page.locator('#primary-navigation');
   if (testInfo.project.name === 'tablet') {
@@ -810,14 +1262,18 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
     await navigation.getByRole('button', { name: 'Conversation library' }).click();
     await expect(page.getByRole('dialog', { name: /conversation library/i })).toBeVisible();
   }
-  const recentNav = testInfo.project.name === 'tablet'
-    ? page.locator('.conversation-library-context .conversation-nav')
-    : navigation.locator('.conversation-nav');
+  const recentNav =
+    testInfo.project.name === 'tablet'
+      ? page.locator('.conversation-library-context .conversation-nav')
+      : navigation.locator('.conversation-nav');
   const mainContent = page.locator('#main-content');
   await expect(recentNav.locator('.conversation-link')).toHaveCount(48);
   await expect(page.getByText('Long conversation fixture message 79.')).toBeVisible();
 
-  const recentSelector = testInfo.project.name === 'tablet' ? '.conversation-library-context .conversation-nav' : '.conversation-nav';
+  const recentSelector =
+    testInfo.project.name === 'tablet'
+      ? '.conversation-library-context .conversation-nav'
+      : '.conversation-nav';
   const beforeScroll = await page.evaluate((selector) => {
     const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
     const main = document.querySelector<HTMLElement>('#main-content');
@@ -829,8 +1285,8 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
     };
     const sidebarScrollableDescendants = sidebar
       ? [sidebar, ...Array.from(sidebar.querySelectorAll<HTMLElement>('*'))]
-        .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY))
-        .map((element) => element.className || element.tagName.toLowerCase())
+          .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY))
+          .map((element) => element.className || element.tagName.toLowerCase())
       : [];
     return {
       viewportHeight: window.innerHeight,
@@ -857,10 +1313,16 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   expect(beforeScroll.mainScrollHeight).toBeGreaterThan(beforeScroll.mainClientHeight);
   expect(beforeScroll.recentScrollHeight).toBeGreaterThan(beforeScroll.recentClientHeight);
   expect(['auto', 'scroll']).toContain(beforeScroll.recentOverflowY);
-  expect(beforeScroll.sidebarScrollableDescendants).toEqual(testInfo.project.name === 'tablet' ? [] : ['conversation-nav']);
+  expect(beforeScroll.sidebarScrollableDescendants).toEqual(
+    testInfo.project.name === 'tablet' ? [] : ['conversation-nav'],
+  );
 
-  await mainContent.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  await recentNav.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await mainContent.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await recentNav.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
   const afterScroll = await page.evaluate((selector) => {
     const main = document.querySelector<HTMLElement>('#main-content');
     const recent = document.querySelector<HTMLElement>(selector);
@@ -887,8 +1349,13 @@ test('keeps the sidebar viewport-stable while long conversation content scrolls'
   expect(afterScroll.sidebarBottom.bottom).toBeCloseTo(beforeScroll.sidebarBottom.bottom, 0);
 });
 
-test('scrolls the desktop main canvas when the pointer is over conversation content', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop wheel ownership runs once in the desktop project.');
+test('scrolls the desktop main canvas when the pointer is over conversation content', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Desktop wheel ownership runs once in the desktop project.',
+  );
   await page.goto('/conversation/welcome?fixture=long-sidebar');
   const conversation = page.locator('.conversation');
   const mainContent = page.locator('#main-content');
@@ -905,7 +1372,11 @@ test('scrolls the desktop main canvas when the pointer is over conversation cont
     ];
     return candidates
       .filter((element): element is HTMLElement => element !== null)
-      .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
+      .filter(
+        (element) =>
+          ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) &&
+          element.scrollHeight > element.clientHeight,
+      )
       .map((element) => element.id || element.className);
   });
   expect(ownersBeforeWheel).toEqual(['main-content']);
@@ -916,14 +1387,20 @@ test('scrolls the desktop main canvas when the pointer is over conversation cont
 
   await transcript.hover({ position: { x: 12, y: 120 } });
   await page.mouse.wheel(0, 900);
-  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(async () => mainContent.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   await expect.poll(async () => transcript.evaluate((element) => element.scrollTop)).toBe(0);
 
-  await mainContent.evaluate((element) => { element.scrollTop = 0; });
+  await mainContent.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await mainContent.focus();
   await expect(mainContent).toBeFocused();
   await page.keyboard.press('PageDown');
-  await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(async () => mainContent.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   await expect.poll(async () => transcript.evaluate((element) => element.scrollTop)).toBe(0);
 
   const afterWheel = await page.evaluate(() => {
@@ -944,8 +1421,13 @@ test('scrolls the desktop main canvas when the pointer is over conversation cont
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
 });
 
-test('keeps mobile conversation scrolling contained in the conversation panel', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile contained scrolling runs once in the mobile project.');
+test('keeps mobile conversation scrolling contained in the conversation panel', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile contained scrolling runs once in the mobile project.',
+  );
   await page.goto('/conversation/welcome?fixture=long-sidebar');
   const conversation = page.locator('.conversation');
   const mainContent = page.locator('#main-content');
@@ -959,7 +1441,9 @@ test('keeps mobile conversation scrolling contained in the conversation panel', 
     const transcriptElement = document.querySelector<HTMLElement>('.transcript');
     const candidates = [main, conversationElement, transcriptElement];
     return {
-      conversationOverflowY: conversationElement ? getComputedStyle(conversationElement).overflowY : 'visible',
+      conversationOverflowY: conversationElement
+        ? getComputedStyle(conversationElement).overflowY
+        : 'visible',
       conversationClientHeight: conversationElement?.clientHeight ?? 0,
       conversationScrollHeight: conversationElement?.scrollHeight ?? 0,
       mainScrollTop: main?.scrollTop ?? 0,
@@ -967,7 +1451,11 @@ test('keeps mobile conversation scrolling contained in the conversation panel', 
       documentClientHeight: document.documentElement.clientHeight,
       owners: candidates
         .filter((element): element is HTMLElement => element !== null)
-        .filter((element) => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)
+        .filter(
+          (element) =>
+            ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) &&
+            element.scrollHeight > element.clientHeight,
+        )
         .map((element) => element.className || element.id),
     };
   });
@@ -989,34 +1477,52 @@ test('keeps mobile conversation scrolling contained in the conversation panel', 
   expect(metrics.mainScrollTop).toBe(0);
   await transcript.hover({ position: { x: 12, y: 120 } });
   await page.mouse.wheel(0, 900);
-  await expect.poll(async () => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(async () => conversation.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBe(0);
 
-  await conversation.evaluate((element) => { element.scrollTop = 0; });
+  await conversation.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   const conversationBounds = await conversation.boundingBox();
-  if (!conversationBounds) throw new Error('Conversation panel is not measurable for touch scrolling.');
+  if (!conversationBounds)
+    throw new Error('Conversation panel is not measurable for touch scrolling.');
   const touchX = conversationBounds.x + Math.min(160, conversationBounds.width / 2);
-  const touchStartY = conversationBounds.y + Math.min(280, Math.max(32, conversationBounds.height - 32));
+  const touchStartY =
+    conversationBounds.y + Math.min(280, Math.max(32, conversationBounds.height - 32));
   const touchClient = await page.context().newCDPSession(page);
   try {
-    await touchClient.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchStartY }] });
+    await touchClient.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: touchX, y: touchStartY }],
+    });
     for (const offset of [100, 200, 300, 400]) {
-      await touchClient.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchX, y: touchStartY - offset }] });
+      await touchClient.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: touchX, y: touchStartY - offset }],
+      });
     }
     await touchClient.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   } finally {
     await touchClient.detach();
   }
-  await expect.poll(async () => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(async () => conversation.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   await expect.poll(async () => mainContent.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
 });
 
-test('selects a recent conversation in one click from agent and persona routes', async ({ page }, testInfo) => {
+test('selects a recent conversation in one click from agent and persona routes', async ({
+  page,
+}, testInfo) => {
   for (const route of ['/agents', '/personas']) {
     await page.goto(route);
     await navigateToConversationContext(page, testInfo);
-    const recentConversation = page.locator('.conversation-link:visible').filter({ hasText: 'A thoughtful beginning' });
+    const recentConversation = page
+      .locator('.conversation-link:visible')
+      .filter({ hasText: 'A thoughtful beginning' });
     await expect(recentConversation).toBeVisible();
     await recentConversation.click();
     await expect(page).toHaveURL(/\/conversation\/welcome$/);
@@ -1024,7 +1530,9 @@ test('selects a recent conversation in one click from agent and persona routes',
   }
 });
 
-test('keeps selection order stable and promotes only after an accepted message', async ({ page }, testInfo) => {
+test('keeps selection order stable and promotes only after an accepted message', async ({
+  page,
+}, testInfo) => {
   await page.goto('/?fixture=ordering');
   await openConversationLibrary(page, testInfo);
 
@@ -1054,17 +1562,23 @@ test('keeps selection order stable and promotes only after an accepted message',
   await expect.poll(recentTitles).toEqual(['First topic', 'Second topic']);
 });
 
-test('supports direct conversation links, reload, and browser history', async ({ page }, testInfo) => {
+test('supports direct conversation links, reload, and browser history', async ({
+  page,
+}, testInfo) => {
   await page.goto('/conversation/welcome');
   await expect(page).toHaveURL(/\/conversation\/welcome$/);
   await expect(page.getByRole('heading', { name: 'A thoughtful beginning' })).toBeVisible();
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await expect(page.locator('.product-nav').getByRole('link', { name: /^Conversations$/i })).toHaveAttribute('aria-current', 'page');
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(
+    page.locator('.product-nav').getByRole('link', { name: /^Conversations$/i }),
+  ).toHaveAttribute('aria-current', 'page');
 
   await page.reload();
   await expect(page).toHaveURL(/\/conversation\/welcome$/);
   await expect(page.getByRole('heading', { name: 'A thoughtful beginning' })).toBeVisible();
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
 
   await page.goto('/agents');
   await expect(page.getByRole('heading', { name: /agents/i })).toBeVisible();
@@ -1077,30 +1591,44 @@ test('supports direct conversation links, reload, and browser history', async ({
 test('starts a new conversation from configuration routes', async ({ page }, testInfo) => {
   for (const route of ['/agents', '/personas']) {
     await page.goto(route);
-    if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+    if (testInfo.project.name === 'mobile')
+      await page.getByRole('button', { name: 'Open navigation' }).click();
     await page.getByRole('button', { name: /new conversation/i }).click();
     await expect(page).toHaveURL(/\/conversation$/);
     await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeVisible();
   }
 });
 
-test('replaces a new conversation URL with its persisted identifier after acceptance', async ({ page }, testInfo) => {
+test('replaces a new conversation URL with its persisted identifier after acceptance', async ({
+  page,
+}, testInfo) => {
   await page.goto('/agents');
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: /new conversation/i }).click();
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Persist this new conversation.');
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
-  await expect(page.getByRole('article', { name: 'Your message' })).toContainText('Persist this new conversation.');
+  await expect(page.getByRole('article', { name: 'Your message' })).toContainText(
+    'Persist this new conversation.',
+  );
 });
 
-test('keeps the conversation destination active on detail routes and usable in collapsed/mobile navigation', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop' && testInfo.project.name !== 'mobile', 'Detail-route navigation coverage runs on desktop and mobile projects.');
+test('keeps the conversation destination active on detail routes and usable in collapsed/mobile navigation', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop' && testInfo.project.name !== 'mobile',
+    'Detail-route navigation coverage runs on desktop and mobile projects.',
+  );
   await page.goto('/conversation/welcome');
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  const conversationsLink = navigation.locator('.product-nav').getByRole('link', { name: /^Conversations$/i });
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  const conversationsLink = navigation
+    .locator('.product-nav')
+    .getByRole('link', { name: /^Conversations$/i });
   await expect(conversationsLink).toHaveAttribute('aria-current', 'page');
 
   if (testInfo.project.name === 'desktop') {
@@ -1114,15 +1642,28 @@ test('keeps the conversation destination active on detail routes and usable in c
 
   await page.goto('/agents');
   await page.getByRole('button', { name: 'Open navigation' }).click();
-  const mobileConversationsLink = page.getByRole('navigation', { name: 'Primary navigation' }).locator('.product-nav').getByRole('link', { name: /^Conversations$/i });
+  const mobileConversationsLink = page
+    .getByRole('navigation', { name: 'Primary navigation' })
+    .locator('.product-nav')
+    .getByRole('link', { name: /^Conversations$/i });
   await expect(mobileConversationsLink).toBeVisible();
   await mobileConversationsLink.click();
   await expect(page).toHaveURL(/\/conversation$/);
 });
 
-test('applies the latest deep-link selection when an earlier route lookup resolves late', async ({ page }) => {
+test('applies the latest deep-link selection when an earlier route lookup resolves late', async ({
+  page,
+}) => {
   await page.goto('/conversation/route-one?fixture=route-race');
-  await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=route-one').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(true);
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        fetch('/api/v1/test/state?conversation=route-one')
+          .then((response) => response.json())
+          .then((state: { pending: boolean }) => state.pending),
+      ),
+    )
+    .toBe(true);
   await page.evaluate(() => {
     window.history.pushState({}, '', '/conversation/route-two?fixture=route-race');
     window.dispatchEvent(new PopStateEvent('popstate'));
@@ -1130,18 +1671,30 @@ test('applies the latest deep-link selection when an earlier route lookup resolv
   await expect(page).toHaveURL(/\/conversation\/route-two\?fixture=route-race$/);
   await expect(page.getByText('Route two response.')).toBeVisible();
 
-  await page.evaluate(() => { void fetch('/api/v1/test/release?conversation=route-one'); });
+  await page.evaluate(() => {
+    void fetch('/api/v1/test/release?conversation=route-one');
+  });
   await expect(page).toHaveURL(/\/conversation\/route-two\?fixture=route-race$/);
   await expect(page.getByText('Route two response.')).toBeVisible();
   await expect(page.getByText('Route one response.')).toHaveCount(0);
 });
 
-test('keeps the latest routed conversation selected while a prior draft acceptance resolves', async ({ page }, testInfo) => {
+test('keeps the latest routed conversation selected while a prior draft acceptance resolves', async ({
+  page,
+}, testInfo) => {
   await page.goto('/conversation?fixture=deferred-create');
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Background acceptance should not steal selection.');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=create').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(true);
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        fetch('/api/v1/test/state?conversation=create')
+          .then((response) => response.json())
+          .then((state: { pending: boolean }) => state.pending),
+      ),
+    )
+    .toBe(true);
 
   await page.evaluate(() => {
     window.history.pushState({}, '', '/conversation/welcome?fixture=deferred-create');
@@ -1149,9 +1702,19 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
   });
   await expect(page).toHaveURL(/\/conversation\/welcome\?fixture=deferred-create$/);
   await openConversationLibrary(page, testInfo);
-  const welcomeLink = page.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' });
+  const welcomeLink = page
+    .locator('.conversation-link')
+    .filter({ hasText: 'A thoughtful beginning' });
   await page.evaluate(() => fetch('/api/v1/test/release?conversation=create'));
-  await expect.poll(async () => page.evaluate(() => fetch('/api/v1/test/state?conversation=create').then((response) => response.json()).then((state: { pending: boolean }) => state.pending))).toBe(false);
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        fetch('/api/v1/test/state?conversation=create')
+          .then((response) => response.json())
+          .then((state: { pending: boolean }) => state.pending),
+      ),
+    )
+    .toBe(false);
   if (testInfo.project.name === 'mobile') {
     await settleMobileDrawer(page, 'open');
   }
@@ -1160,7 +1723,9 @@ test('keeps the latest routed conversation selected while a prior draft acceptan
   await expect(page.locator('.conversation-link[href="/conversation/created-1"]')).toBeVisible();
 });
 
-test('keeps a new conversation out of the library until its first accepted message', async ({ page }, testInfo) => {
+test('keeps a new conversation out of the library until its first accepted message', async ({
+  page,
+}, testInfo) => {
   await page.goto('/');
   await openConversationLibrary(page, testInfo);
   await page.getByRole('button', { name: /new conversation/i }).click();
@@ -1169,10 +1734,13 @@ test('keeps a new conversation out of the library until its first accepted messa
 
   // New conversation is idempotent while the local draft is unsent. Reopening
   // it must preserve the text and must not create a second hidden library row.
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: /new conversation/i }).click();
   await expect(composer).toHaveValue('Persist this routed draft.');
-  await expect(page.locator('.conversation-link').filter({ hasText: 'New conversation' })).toHaveCount(0);
+  await expect(
+    page.locator('.conversation-link').filter({ hasText: 'New conversation' }),
+  ).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
@@ -1181,39 +1749,61 @@ test('keeps a new conversation out of the library until its first accepted messa
   await expect(durableRows).toHaveCount(1);
   await page.reload();
   await expect(page).toHaveURL(/\/conversation\/created-1$/);
-  await expect(page.getByRole('article', { name: 'Your message' }).getByText('Persist this routed draft.', { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole('article', { name: 'Your message' })
+      .getByText('Persist this routed draft.', { exact: true }),
+  ).toBeVisible();
 });
 
-test('keeps a rejected first send in the local draft and outside the library', async ({ page }, testInfo) => {
+test('keeps a rejected first send in the local draft and outside the library', async ({
+  page,
+}, testInfo) => {
   await page.goto('/?fixture=rejected-create');
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: /new conversation/i }).click();
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Keep this after the rejected first send.');
-  const rejectedCreate = page.waitForResponse((response) => response.url().endsWith('/api/v1/conversations') && response.request().method() === 'POST');
+  const rejectedCreate = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/conversations') && response.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: 'Send' }).click();
   expect((await rejectedCreate).status()).toBe(503);
 
-  await expect(page.locator('#composer-notice')).toContainText(/temporarily unavailable|could not complete|try again/i);
+  await expect(page.locator('#composer-notice')).toContainText(
+    /temporarily unavailable|could not complete|try again/i,
+  );
   await expect(composer).toHaveValue('Keep this after the rejected first send.');
-  await expect(page.locator('.conversation-link').filter({ hasText: 'New conversation' })).toHaveCount(0);
+  await expect(
+    page.locator('.conversation-link').filter({ hasText: 'New conversation' }),
+  ).toHaveCount(0);
   await expect(page.locator('.conversation-link[href^="/conversation/draft-"]')).toHaveCount(0);
 });
 
-test('preserves an unauthorized deep-link URL and surfaces the authentication state', async ({ page }) => {
+test('preserves an unauthorized deep-link URL and surfaces the authentication state', async ({
+  page,
+}) => {
   await page.goto('/conversation/protected?fixture=route-401');
   await expect(page).toHaveURL(/\/conversation\/protected\?fixture=route-401$/);
-  await expect(page.getByRole('status').getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+  await expect(
+    page.getByRole('status').getByRole('heading', { name: 'Sign in to continue' }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: /sign in with authentik/i })).toBeVisible();
 });
 
-test('preserves a failed deep-link URL and surfaces the service failure notice', async ({ page }) => {
+test('preserves a failed deep-link URL and surfaces the service failure notice', async ({
+  page,
+}) => {
   await page.goto('/conversation/unavailable?fixture=route-503');
   await expect(page).toHaveURL(/\/conversation\/unavailable\?fixture=route-503$/);
   await expect(page.getByText(/temporarily unavailable|could not load|try again/i)).toBeVisible();
 });
 
-test('marks only the exact routed destination and conversation link as current', async ({ page }, testInfo) => {
+test('marks only the exact routed destination and conversation link as current', async ({
+  page,
+}, testInfo) => {
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
   const product = (name: RegExp) => navigation.locator('.product-nav').getByRole('link', { name });
   const recent = navigation.locator('.conversation-link');
@@ -1237,6 +1827,13 @@ test('marks only the exact routed destination and conversation link as current',
   await expect(product(/^Personas$/i)).toHaveAttribute('aria-current', 'page');
   await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Agents$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
+  await expect(recent).toHaveCount(0);
+
+  await page.goto('/documents');
+  await openMobileNavigation();
+  await expect(product(/^Documents$/i)).toHaveAttribute('aria-current', 'page');
+  await expect(product(/^Conversations$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(product(/^Memory$/i)).not.toHaveAttribute('aria-current', 'page');
   await expect(recent).toHaveCount(0);
 
@@ -1265,9 +1862,12 @@ test('marks only the exact routed destination and conversation link as current',
   await expect(page.locator('.conversation-link[aria-current="page"]:visible')).toHaveCount(1);
 });
 
-test('recovers an invalid conversation route without discarding an unrelated draft', async ({ page }, testInfo) => {
+test('recovers an invalid conversation route without discarding an unrelated draft', async ({
+  page,
+}, testInfo) => {
   await page.goto('/agents');
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
+  if (testInfo.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: /new conversation/i }).click();
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('Keep this unrelated draft.');
@@ -1285,7 +1885,9 @@ test('sends a local message and allows interruption', async ({ page }) => {
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('A small local thought');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByRole('article', { name: 'Your message' }).getByText('A small local thought')).toBeVisible();
+  await expect(
+    page.getByRole('article', { name: 'Your message' }).getByText('A small local thought'),
+  ).toBeVisible();
   const workingStatus = page.getByRole('status');
   await expect(workingStatus.getByRole('button', { name: 'Stop' })).toBeVisible();
   await workingStatus.getByRole('button', { name: 'Stop' }).click();
@@ -1298,10 +1900,379 @@ test('renders a completed local reply', async ({ page }) => {
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill('A completed local thought');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText('A completed local thought');
+  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText(
+    'A completed local thought',
+  );
 });
 
-test('shows incompatible models as disabled and persists a conversation model change', async ({ page }) => {
+test('navigates immutable conversation branches with keyboard controls and opaque URL state', async ({
+  page,
+}) => {
+  const rootBranch = {
+    id: 'root-branch',
+    conversationId: 'welcome',
+    parentBranchId: null,
+    forkedFromMessageId: null,
+    headMessageId: 'assistant-root',
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+  const alternativeBranch = {
+    id: 'branch-alt',
+    conversationId: 'welcome',
+    parentBranchId: 'root-branch',
+    forkedFromMessageId: 'user-root',
+    headMessageId: 'assistant-alt',
+    createdAt: '2026-01-01T00:01:00Z',
+  };
+  const rootMessages = [
+    {
+      id: 'user-root',
+      conversationId: 'welcome',
+      role: 'user',
+      content: 'Original question',
+      state: 'complete',
+      runId: 'run-root',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+    {
+      id: 'assistant-root',
+      conversationId: 'welcome',
+      role: 'assistant',
+      content: 'Original answer',
+      state: 'complete',
+      runId: 'run-root',
+      createdAt: '2026-01-01T00:00:01Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    },
+  ];
+  const alternativeMessages = [
+    { ...rootMessages[0], id: 'user-alt', content: 'Corrected question', runId: 'run-alt' },
+    { ...rootMessages[1], id: 'assistant-alt', content: 'Alternative answer', runId: 'run-alt' },
+  ];
+  await page.route('**/api/v1/conversations/welcome', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      json: {
+        id: 'welcome',
+        title: 'A thoughtful beginning',
+        agentProfileId: 'general',
+        agentRevisionId: 'agent-rev-1',
+        modelId: 'qwen2.5:7b',
+        version: 2,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:01:00Z',
+        messages: rootMessages,
+        recentRuns: [],
+        currentRun: null,
+      },
+    });
+  });
+  const branchDetail = {
+    branch: alternativeBranch,
+    messages: alternativeMessages,
+    recentRuns: [
+      {
+        id: 'run-alt',
+        conversationId: 'welcome',
+        userMessageId: 'user-alt',
+        assistantMessageId: 'assistant-alt',
+        status: 'completed',
+        agentRevisionId: 'agent-rev-1',
+        modelPolicyRevisionId: 'policy-1',
+        provider: 'ollama',
+        modelId: 'qwen2.5:7b',
+        retryOfRunId: null,
+        branchId: 'branch-alt',
+        regeneratedFromRunId: null,
+        createdAt: '2026-01-01T00:02:00Z',
+        startedAt: '2026-01-01T00:02:00Z',
+        finishedAt: '2026-01-01T00:02:01Z',
+        error: null,
+      },
+    ],
+    currentRun: null,
+  };
+  let branchCreateAttempts = 0;
+  await page.route(
+    (url) => url.pathname === '/api/v1/conversations/welcome/branches',
+    async (route) => {
+      if (route.request().method() === 'POST') {
+        branchCreateAttempts += 1;
+        if (branchCreateAttempts === 1) {
+          return route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Conversation version conflict' }),
+          });
+        }
+        return route.fulfill({
+          status: 202,
+          json: {
+            conversation: {
+              id: 'welcome',
+              title: 'A thoughtful beginning',
+              agentProfileId: 'general',
+              agentRevisionId: 'agent-rev-1',
+              modelId: 'qwen2.5:7b',
+              version: 3,
+              createdAt: '2026-01-01T00:00:00Z',
+              updatedAt: '2026-01-01T00:02:00Z',
+            },
+            branch: alternativeBranch,
+            userMessage: alternativeMessages[0],
+            run: {
+              id: 'run-alt',
+              conversationId: 'welcome',
+              userMessageId: 'user-alt',
+              assistantMessageId: 'assistant-alt',
+              status: 'completed',
+              agentRevisionId: 'agent-rev-1',
+              modelPolicyRevisionId: 'policy-1',
+              provider: 'ollama',
+              modelId: 'qwen2.5:7b',
+              retryOfRunId: null,
+              branchId: 'branch-alt',
+              regeneratedFromRunId: null,
+              createdAt: '2026-01-01T00:02:00Z',
+              startedAt: '2026-01-01T00:02:00Z',
+              finishedAt: '2026-01-01T00:02:01Z',
+              error: null,
+            },
+          },
+        });
+      }
+      if (route.request().method() !== 'GET') return route.continue();
+      return route.fulfill({ json: { items: [rootBranch, alternativeBranch], nextCursor: null } });
+    },
+  );
+  await page.route('**/api/v1/conversations/welcome/branches/**', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/root-branch')) {
+      return route.fulfill({
+        json: { branch: rootBranch, messages: rootMessages, recentRuns: [], currentRun: null },
+      });
+    }
+    return route.fulfill({ json: branchDetail });
+  });
+  // The successful branch detail is already terminal. Keep the generic fake
+  // provider stream from emitting a completion event that would reconcile the
+  // selected alternative against the legacy root projection.
+  await page.route('**/api/v1/runs/run-alt/events**', async (route) =>
+    route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'retry: 86400000\n\n' }),
+  );
+
+  await page.goto('/conversation/welcome?fixture=branches&branch=branch-alt');
+  await expect(page.getByText('Corrected question', { exact: true })).toBeVisible();
+  await expect(page.getByText('Branch 2 of 2', { exact: true })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('branch')).toBe('branch-alt');
+  expect(new URL(page.url()).searchParams.get('fixture')).toBe('branches');
+
+  const previous = page.getByRole('button', { name: 'Previous conversation branch' });
+  const next = page.getByRole('button', { name: 'Next conversation branch' });
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeDisabled();
+  await previous.focus();
+  await expect(previous).toBeFocused();
+  await previous.press('Enter');
+  await expect(page.getByText('Original question', { exact: true })).toBeVisible();
+  await expect(page.getByText('Corrected question', { exact: true })).not.toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get('branch')).toBe('root-branch');
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeEnabled();
+  const edit = page.getByRole('button', { name: 'Edit and branch' }).first();
+  await edit.focus();
+  await expect(edit).toBeFocused();
+  await edit.press('Enter');
+  const editor = page.getByRole('textbox', { name: 'Edit your message' });
+  await expect(editor).toBeVisible();
+  await editor.fill('A canceled correction');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(editor).not.toBeVisible();
+  await expect(edit).toBeFocused();
+  await expect(page.getByText('Original question', { exact: true })).toBeVisible();
+
+  await edit.press('Enter');
+  await editor.fill('A corrected question');
+  await page.getByRole('button', { name: 'Create branch' }).click();
+  await expect(page.getByRole('alert')).toContainText(/latest version|changed/i);
+  await page.getByRole('button', { name: 'Retry branch action' }).click();
+  await expect(page.getByText('Alternative answer', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit and branch' }).first()).toBeFocused();
+  expect(branchCreateAttempts).toBe(2);
+});
+
+test('shows a branch-list error and retries the branch action', async ({ page }) => {
+  const rootBranch = {
+    id: 'root-branch',
+    conversationId: 'branch-error',
+    parentBranchId: null,
+    forkedFromMessageId: null,
+    headMessageId: 'assistant-root',
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+  let attempts = 0;
+  await page.route('**/api/v1/conversations/branch-error', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      json: {
+        id: 'branch-error',
+        title: 'Branch recovery',
+        agentProfileId: 'general',
+        agentRevisionId: 'agent-rev-1',
+        modelId: 'qwen2.5:7b',
+        version: 1,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        messages: [
+          {
+            id: 'user-root',
+            conversationId: 'branch-error',
+            role: 'user',
+            content: 'Root question',
+            state: 'complete',
+            runId: 'run-root',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+          {
+            id: 'assistant-root',
+            conversationId: 'branch-error',
+            role: 'assistant',
+            content: 'Root answer',
+            state: 'complete',
+            runId: 'run-root',
+            createdAt: '2026-01-01T00:00:01Z',
+            updatedAt: '2026-01-01T00:00:01Z',
+          },
+        ],
+        recentRuns: [],
+        currentRun: null,
+      },
+    });
+  });
+  await page.route(
+    (url) => url.pathname === '/api/v1/conversations/branch-error/branches',
+    async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      attempts += 1;
+      if (attempts === 1) {
+        return route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Branch list temporarily unavailable' }),
+        });
+      }
+      return route.fulfill({ json: { items: [rootBranch], nextCursor: null } });
+    },
+  );
+
+  await page.goto('/conversation/branch-error');
+  await expect(page.getByRole('alert')).toContainText(/branch/i);
+  await page.getByRole('button', { name: 'Retry branch action' }).click();
+  await expect(page.getByText('Branch 1 of 1', { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
+test('renders validated document citations as accessible authorized links', async ({ page }) => {
+  const documentId = '11111111-1111-4111-8111-111111111111';
+  const fixtureDocument = {
+    id: documentId,
+    filename: 'Document source',
+    mediaType: 'text/plain',
+    byteCount: 42,
+    status: 'ready',
+    version: 1,
+    failure: null,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    extractedTextLength: 42,
+    chunkCount: 1,
+  };
+  await page.route('**/api/v1/documents**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== 'GET') return route.continue();
+    if (url.pathname === `/api/v1/documents/${documentId}`)
+      return route.fulfill({ json: fixtureDocument });
+    if (url.pathname === `/api/v1/documents/${documentId}/preview`)
+      return route.fulfill({
+        json: {
+          documentId,
+          text: 'Authorized source preview.',
+          truncated: false,
+          totalCharacters: 26,
+        },
+      });
+    if (url.pathname === '/api/v1/documents')
+      return route.fulfill({ json: { items: [fixtureDocument], nextCursor: null } });
+    return route.continue();
+  });
+
+  const expectDocumentDestination = async (): Promise<void> => {
+    await expect(page).toHaveURL(new RegExp(`/documents/${documentId}$`));
+    await expect(page.getByRole('heading', { level: 2, name: 'Document source', exact: true })).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id ?? ''))
+      .toMatch(/^(detail-heading|main-content)$/);
+  };
+
+  const openCitationFixture = async (url: string): Promise<void> => {
+    await page.goto(url);
+    const composerForm = page.locator('form.composer-wrap');
+    await expect(composerForm).toHaveAttribute('data-conversation-ready', 'true');
+    await expect(composerForm).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByRole('textbox', { name: 'Message Aura' })).toBeEditable();
+  };
+
+  await openCitationFixture('/?fixture=citations');
+  const composer = page.getByRole('textbox', { name: 'Message Aura' });
+  await composer.fill('A grounded document question');
+  await expect(composer).toHaveValue('A grounded document question');
+  const firstSend = page.getByRole('button', { name: 'Send' });
+  await expect(firstSend).toBeEnabled();
+  await firstSend.click();
+
+  const citation = page.getByRole('link', {
+    name: 'Open source Document source, Page 2',
+  });
+  await expect(citation).toBeVisible();
+  await expect(citation).toHaveAttribute(
+    'href',
+    `/documents/${documentId}`,
+  );
+  await citation.focus();
+  await expect(citation).toBeFocused();
+  await expect(citation).toHaveText(/Document source/);
+
+  await citation.press('Enter');
+  await expectDocumentDestination();
+
+  // Use a distinct fixture URL for the click pass so the browser performs a
+  // fresh conversation bootstrap after returning from the document detail.
+  await openCitationFixture('/?fixture=citations&round=click');
+  const secondComposer = page.getByRole('textbox', { name: 'Message Aura' });
+  await secondComposer.fill('A grounded document question');
+  await expect(secondComposer).toHaveValue('A grounded document question');
+  const secondSend = page.getByRole('button', { name: 'Send' });
+  // Returning from the document route recreates the draft conversation. Wait
+  // for agent/model hydration before submitting the second interaction; a
+  // click alone can otherwise race the disabled draft send state on narrow
+  // viewports.
+  await expect(secondSend).toBeEnabled();
+  await secondSend.click();
+  const clickableCitation = page.getByRole('link', {
+    name: 'Open source Document source, Page 2',
+  });
+  await expect(clickableCitation).toBeVisible();
+  await clickableCitation.click();
+  await expectDocumentDestination();
+});
+
+test('shows incompatible models as disabled and persists a conversation model change', async ({
+  page,
+}) => {
   await page.goto('/conversation/welcome');
   const optionsButton = page.getByRole('button', { name: 'Conversation options' });
   await optionsButton.click();
@@ -1329,11 +2300,16 @@ test('recovers from a provider error', async ({ page }) => {
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText(/could not reach the selected provider/)).toBeVisible();
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText('A recoverable local thought');
+  await expect(page.getByRole('article', { name: 'Aura response' }).last()).toContainText(
+    'A recoverable local thought',
+  );
 });
 
 test('mobile composer remains sticky and passes axe checks', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile sticky and axe coverage uses the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile sticky and axe coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const composer = page.locator('form.composer-wrap');
@@ -1344,7 +2320,10 @@ test('mobile composer remains sticky and passes axe checks', async ({ page }, te
 });
 
 test('dark theme conversation passes axe checks', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Dark contrast coverage runs once in the desktop project.');
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Dark contrast coverage runs once in the desktop project.',
+  );
   await page.addInitScript(() => localStorage.setItem('aura-theme', 'dark'));
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
@@ -1353,18 +2332,27 @@ test('dark theme conversation passes axe checks', async ({ page }, testInfo) => 
 });
 
 test('mobile navigation returns focus to its trigger', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile overlay focus coverage uses the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile overlay focus coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'Open navigation' });
   await trigger.click();
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible();
-  await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Close navigation' }).click();
+  await page
+    .getByRole('navigation', { name: 'Primary navigation' })
+    .getByRole('button', { name: 'Close navigation' })
+    .click();
   await expect(trigger).toBeFocused();
 });
 
 test('desktop collapse cannot create a collapsed mobile drawer', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop-to-mobile collapse coverage runs once in the desktop project.');
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Desktop-to-mobile collapse coverage runs once in the desktop project.',
+  );
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   const navigation = page.locator('#primary-navigation');
@@ -1385,10 +2373,17 @@ test('desktop collapse cannot create a collapsed mobile drawer', async ({ page }
 });
 
 test('sidebar motion respects reduced-motion preferences', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Motion preference coverage runs once in the desktop project.');
+  test.skip(
+    testInfo.project.name !== 'desktop',
+    'Motion preference coverage runs once in the desktop project.',
+  );
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
-  const transitionDurations = await page.locator('#primary-navigation').evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((duration) => Number.parseFloat(duration)));
+  const transitionDurations = await page.locator('#primary-navigation').evaluate((element) =>
+    getComputedStyle(element)
+      .transitionDuration.split(',')
+      .map((duration) => Number.parseFloat(duration)),
+  );
   expect(transitionDurations.every((duration) => duration <= 0.001)).toBe(true);
   const navigation = page.locator('#primary-navigation');
   await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
@@ -1413,7 +2408,10 @@ test('mobile navigation closes on Escape and restores focus', async ({ page }, t
 });
 
 test('closed mobile navigation is hidden and unreachable by Tab', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Closed drawer keyboard coverage uses the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Closed drawer keyboard coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'Open navigation' });
@@ -1422,27 +2420,44 @@ test('closed mobile navigation is hidden and unreachable by Tab', async ({ page 
   await expect(navigation).toHaveCSS('visibility', 'hidden');
   await expect(navigation).toHaveCSS('pointer-events', 'none');
   await trigger.focus();
-  const focusableCount = await page.locator('a:visible, button:visible, textarea:visible, input:visible, select:visible, [tabindex]:visible').count();
+  const focusableCount = await page
+    .locator(
+      'a:visible, button:visible, textarea:visible, input:visible, select:visible, [tabindex]:visible',
+    )
+    .count();
   for (let index = 0; index < focusableCount + 1; index += 1) {
     await page.keyboard.press('Tab');
-    await expect.poll(() => navigation.evaluate((element) => element.contains(document.activeElement))).toBe(false);
+    await expect
+      .poll(() => navigation.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(false);
   }
 });
 
-test('mobile conversation selection closes navigation and restores focus', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile selection coverage uses the mobile project.');
+test('mobile conversation selection closes navigation and restores focus', async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile selection coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'Open navigation' });
   const navigation = page.locator('#primary-navigation');
   await trigger.click();
-  await navigation.locator('.conversation-link').filter({ hasText: 'A thoughtful beginning' }).click();
+  await navigation
+    .locator('.conversation-link')
+    .filter({ hasText: 'A thoughtful beginning' })
+    .click();
   await expect(navigation).not.toHaveClass(/is-mobile-open/);
   await expect(trigger).toBeFocused();
 });
 
 test('mobile new conversation closes navigation and restores focus', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile new-conversation coverage uses the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Mobile new-conversation coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'Open navigation' });
@@ -1454,7 +2469,10 @@ test('mobile new conversation closes navigation and restores focus', async ({ pa
 });
 
 test('leaving mobile clears the modal drawer without a reload', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Responsive drawer transition coverage uses the mobile project.');
+  test.skip(
+    testInfo.project.name !== 'mobile',
+    'Responsive drawer transition coverage uses the mobile project.',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const trigger = page.getByRole('button', { name: 'Open navigation' });

@@ -30,23 +30,27 @@ from typing import Protocol
 from uuid import UUID
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
-    "aura.runtime.tool_selection": "1.3.0",
+    "aura.runtime.tool_selection": "1.4.0",
     "aura.runtime.policy_evaluation": "1.1.0",
-    "aura.runtime.tool_execution": "1.2.1",
+    "aura.runtime.tool_execution": "1.3.0",
     "aura.interaction.agent_configuration": "1.2.0",
     "aura.interaction.persona_preview": "1.0.0",
-    "aura.execution.run_coordinator": "1.8.0",
-    "aura.interaction.conversation_persistence": "1.6.0",
+    "aura.execution.run_coordinator": "1.9.0",
+    "aura.interaction.conversation_persistence": "1.7.0",
     "aura.runtime.model_inference": "1.5.0",
     "aura.runtime.model_routing": "1.2.0",
     "aura.runtime.prompt_compilation": "1.2.0",
-    "aura.runtime.stream_delivery": "1.4.0",
+    "aura.runtime.stream_delivery": "1.5.0",
     "aura.knowledge.memory_persistence": "1.0.0",
     "aura.knowledge.memory_extraction": "1.2.0",
     "aura.knowledge.memory_maintenance": "1.0.0",
     "aura.runtime.structured_inference": "1.1.0",
     "aura.runtime.embedding_gateway": "1.0.0",
     "aura.knowledge.memory_retrieval": "1.2.0",
+    "aura.knowledge.document_upload": "1.0.0",
+    "aura.knowledge.document_processing": "1.0.0",
+    "aura.knowledge.document_retrieval": "1.2.0",
+    "aura.knowledge.document_deletion": "1.0.0",
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
@@ -60,6 +64,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "tool_selection_outcome",
             "reminder_create_tool_outcome",
             "reminder_tool_selection_outcome",
+            "document_search_tool_selection",
         }
     ),
     "aura.runtime.policy_evaluation": frozenset(
@@ -78,6 +83,8 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "reminder_create_tool_outcome",
             "reminder_tool_resolution_outcome",
             "reminder_command_execution_outcome",
+            "document_search_tool_outcome",
+            "document_citation_validation_outcome",
         }
     ),
     "aura.interaction.agent_configuration": frozenset(
@@ -94,6 +101,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.execution.run_coordinator": frozenset(
         {
             "cancellations",
+            "conversation_regeneration_outcome",
             "consumer_acknowledged",
             "consumer_received",
             "errors",
@@ -104,6 +112,7 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "queue_wait_ms",
             "retries",
             "run_duration_ms",
+            "run.regenerate",
             "run_started",
             "run_status",
         }
@@ -115,6 +124,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "conversation_metadata_mutation_duration_ms",
             "conversation_filter_outcome",
             "conversation_archive_outcome",
+            "conversation_branch_creation_outcome",
+            "conversation_branch_load_outcome",
+            "conversation_regeneration_outcome",
             "errors",
             "model_selection_persisted",
             "persistence_duration_ms",
@@ -237,59 +249,146 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "errors",
         }
     ),
-    "aura.knowledge.memory_extraction": frozenset({
-        "memory_job_outcome", "memory_candidate_outcome", "memory_action_outcome",
-        "memory_extraction_outcome", "memory_candidate_decision",
-        "memory_personal_retention_gate_outcome", "memory_reviewable_candidate_count",
-        "memory_fallback_outcome",
-        "structured_inference_duration_ms", "queue_wait_ms", "retry_count", "backlog", "errors",
-        "provider_errors", "duration_ms", "backlog_depth",
-        "memory_extraction_duration_ms", "memory_job_duration_ms", "memory_job_queue_wait_ms",
-        "memory_policy_duration_ms", "memory_retention_gate_duration_ms",
-        "memory_processing_errors", "memory_retry_count",
-        "missing_embedding_backlog", "embedding_duration_ms", "consumer_received",
-        "consumer_acknowledged",
-        "consumer_redelivered", "outbox_duplicates", "consumer_nacked", "consumer_rejected",
-        "operation_duration_ms",
-        "memory_candidate_review_duration_ms", "memory_candidate_review_outcome",
-    }),
-    "aura.knowledge.memory_maintenance": frozenset({
-        "memory_maintenance_transition", "maintenance_duration_ms", "retry_count", "backlog",
-        "errors", "duration_ms", "backlog_depth",
-        "memory_maintenance_duration_ms", "memory_reindex_backlog",
-        "memory_reindex_chunk_duration_ms", "memory_reindex_progress",
-        "memory_reindex_switch_duration_ms", "missing_embedding_backlog",
-        "embedding_duration_ms", "memory_retry_count", "memory_processing_errors",
-        "operation_duration_ms",
-    }),
-    "aura.runtime.structured_inference": frozenset({
-        "structured_inference_duration_ms", "provider_errors", "errors", "duration_ms",
-        "backlog_depth", "retry_count",
-        "model_inventory_duration_ms", "model_inventory_outcome",
-        "model_inventory_cache_outcome", "model_capability_verification_duration_ms",
-        "model_capability_verification_outcome",
-        "model_capability_verification_cache_outcome",
-    }),
-    "aura.runtime.embedding_gateway": frozenset({
-        "embedding_duration_ms", "provider_errors", "errors", "retry_count", "backlog",
-        "duration_ms", "backlog_depth",
-    }),
+    "aura.knowledge.memory_extraction": frozenset(
+        {
+            "memory_job_outcome",
+            "memory_candidate_outcome",
+            "memory_action_outcome",
+            "memory_extraction_outcome",
+            "memory_candidate_decision",
+            "memory_personal_retention_gate_outcome",
+            "memory_reviewable_candidate_count",
+            "memory_fallback_outcome",
+            "structured_inference_duration_ms",
+            "queue_wait_ms",
+            "retry_count",
+            "backlog",
+            "errors",
+            "provider_errors",
+            "duration_ms",
+            "backlog_depth",
+            "memory_extraction_duration_ms",
+            "memory_job_duration_ms",
+            "memory_job_queue_wait_ms",
+            "memory_policy_duration_ms",
+            "memory_retention_gate_duration_ms",
+            "memory_processing_errors",
+            "memory_retry_count",
+            "missing_embedding_backlog",
+            "embedding_duration_ms",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_redelivered",
+            "outbox_duplicates",
+            "consumer_nacked",
+            "consumer_rejected",
+            "operation_duration_ms",
+            "memory_candidate_review_duration_ms",
+            "memory_candidate_review_outcome",
+        }
+    ),
+    "aura.knowledge.memory_maintenance": frozenset(
+        {
+            "memory_maintenance_transition",
+            "maintenance_duration_ms",
+            "retry_count",
+            "backlog",
+            "errors",
+            "duration_ms",
+            "backlog_depth",
+            "memory_maintenance_duration_ms",
+            "memory_reindex_backlog",
+            "memory_reindex_chunk_duration_ms",
+            "memory_reindex_progress",
+            "memory_reindex_switch_duration_ms",
+            "missing_embedding_backlog",
+            "embedding_duration_ms",
+            "memory_retry_count",
+            "memory_processing_errors",
+            "operation_duration_ms",
+        }
+    ),
+    "aura.runtime.structured_inference": frozenset(
+        {
+            "structured_inference_duration_ms",
+            "provider_errors",
+            "errors",
+            "duration_ms",
+            "backlog_depth",
+            "retry_count",
+            "model_inventory_duration_ms",
+            "model_inventory_outcome",
+            "model_inventory_cache_outcome",
+            "model_capability_verification_duration_ms",
+            "model_capability_verification_outcome",
+            "model_capability_verification_cache_outcome",
+        }
+    ),
+    "aura.runtime.embedding_gateway": frozenset(
+        {
+            "embedding_duration_ms",
+            "provider_errors",
+            "errors",
+            "retry_count",
+            "backlog",
+            "duration_ms",
+            "backlog_depth",
+        }
+    ),
     # Retrieval metrics intentionally contain no memory text, vectors, owner
     # subjects, or provider payloads.  Stage and scope are bounded dimensions;
     # identifiers are retained only as trace attributes where a caller opts in.
-    "aura.knowledge.memory_retrieval": frozenset({
-        "memory_retrieval_duration_ms",
-        "memory_lexical_search_duration_ms",
-        "memory_vector_search_duration_ms",
-        "memory_rerank_duration_ms",
-        "memory_query_embedding_duration_ms",
-        "memory_retrieval_candidate_count",
-        "memory_recall_count",
-        "memory_recall_gate_outcome",
-        "memory_fallback_outcome",
-        "memory_context_tokens",
-        "memory_retrieval_errors",
-    }),
+    "aura.knowledge.memory_retrieval": frozenset(
+        {
+            "memory_retrieval_duration_ms",
+            "memory_lexical_search_duration_ms",
+            "memory_vector_search_duration_ms",
+            "memory_rerank_duration_ms",
+            "memory_query_embedding_duration_ms",
+            "memory_retrieval_candidate_count",
+            "memory_recall_count",
+            "memory_recall_gate_outcome",
+            "memory_fallback_outcome",
+            "memory_context_tokens",
+            "memory_retrieval_errors",
+        }
+    ),
+    "aura.knowledge.document_upload": frozenset(
+        {"document_upload_duration_ms", "document_upload_outcome"}
+    ),
+    "aura.knowledge.document_processing": frozenset(
+        {
+            "document_processing_duration_ms",
+            "document_processing_outcome",
+            "document_chunk_count",
+            "document_retry_count",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
+            "outbox_duplicates",
+        }
+    ),
+    "aura.knowledge.document_retrieval": frozenset(
+        {
+            "document_retrieval_duration_ms",
+            "document_retrieval_outcome",
+            "document_retrieval_candidate_count",
+        }
+    ),
+    "aura.knowledge.document_deletion": frozenset(
+        {
+            "document_deletion_duration_ms",
+            "document_deletion_outcome",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
+            "outbox_duplicates",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -306,6 +405,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "outbox.dispatch",
             "run.cancel",
             "run.execute",
+            "run.regenerate",
             "run.retry",
         }
     ),
@@ -316,6 +416,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "conversation.list.request",
             "conversation.metadata.request",
             "conversation.persist",
+            "conversation.branch.create",
+            "conversation.branch.get",
+            "conversation.branch.list",
             "run.claim",
             "run.finish",
         }
@@ -401,40 +504,67 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
             "approval.decide",
             "approval.expire",
             "approval.resume",
-        "approval.sse.connect",
-        "approval.sse.replay",
-        "approval.sse",
+            "approval.sse.connect",
+            "approval.sse.replay",
+            "approval.sse",
             "outbox.dispatch",
             "outbox.persist",
         }
     ),
-    "aura.knowledge.memory_extraction": frozenset({
-        "memory.job", "memory.job.queue", "memory.extraction", "memory.extract",
-        "memory.candidate", "memory.candidate.approve", "memory.candidate.reject",
-        "memory.action", "memory.policy", "memory.retention_gate", "memory.embedding",
-        "memory.fallback",
-        "memory.retry", "memory.error",
-    }),
-    "aura.knowledge.memory_maintenance": frozenset({
-        "memory.maintenance", "memory.decay", "memory.archive", "memory.reindex.chunk",
-        "memory.reindex.switch", "memory.embedding", "memory.retry", "memory.error",
-    }),
-    "aura.runtime.structured_inference": frozenset({
-        "structured.inference", "model.inventory", "model.capability.verify"
-    }),
+    "aura.knowledge.memory_extraction": frozenset(
+        {
+            "memory.job",
+            "memory.job.queue",
+            "memory.extraction",
+            "memory.extract",
+            "memory.candidate",
+            "memory.candidate.approve",
+            "memory.candidate.reject",
+            "memory.action",
+            "memory.policy",
+            "memory.retention_gate",
+            "memory.embedding",
+            "memory.fallback",
+            "memory.retry",
+            "memory.error",
+        }
+    ),
+    "aura.knowledge.memory_maintenance": frozenset(
+        {
+            "memory.maintenance",
+            "memory.decay",
+            "memory.archive",
+            "memory.reindex.chunk",
+            "memory.reindex.switch",
+            "memory.embedding",
+            "memory.retry",
+            "memory.error",
+        }
+    ),
+    "aura.runtime.structured_inference": frozenset(
+        {"structured.inference", "model.inventory", "model.capability.verify"}
+    ),
     "aura.runtime.embedding_gateway": frozenset({"embedding.generate", "embedding.retry"}),
-    "aura.knowledge.memory_retrieval": frozenset({
-        "memory.retrieval",
-        "memory.query_embedding",
-        "memory.lexical",
-        "memory.vector",
-        "memory.fusion",
-        "memory.rerank",
-        "memory.selection",
-        "memory.context_budget",
-        "memory.fallback",
-        "memory.degradation",
-    }),
+    "aura.knowledge.memory_retrieval": frozenset(
+        {
+            "memory.retrieval",
+            "memory.query_embedding",
+            "memory.lexical",
+            "memory.vector",
+            "memory.fusion",
+            "memory.rerank",
+            "memory.selection",
+            "memory.context_budget",
+            "memory.fallback",
+            "memory.degradation",
+        }
+    ),
+    "aura.knowledge.document_upload": frozenset({"document.upload"}),
+    "aura.knowledge.document_processing": frozenset({"document.process", "document.retry"}),
+    "aura.knowledge.document_retrieval": frozenset(
+        {"document.search", "document.preview", "document.detail"}
+    ),
+    "aura.knowledge.document_deletion": frozenset({"document.delete"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -458,72 +588,93 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
     "aura.runtime.structured_inference": "structured_inference_duration_ms",
     "aura.runtime.embedding_gateway": "embedding_duration_ms",
+    "aura.knowledge.document_upload": "document_upload_duration_ms",
+    "aura.knowledge.document_processing": "document_processing_duration_ms",
+    "aura.knowledge.document_retrieval": "document_retrieval_duration_ms",
+    "aura.knowledge.document_deletion": "document_deletion_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
-    ("aura.runtime.stream_delivery", "memory.activity.publish"):
-        "memory_activity_publication_duration_ms",
+    ("aura.execution.run_coordinator", "run.regenerate"): "run.regenerate",
+    (
+        "aura.runtime.stream_delivery",
+        "memory.activity.publish",
+    ): "memory_activity_publication_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.job.queue"): "memory_job_queue_wait_ms",
     ("aura.knowledge.memory_extraction", "memory.job"): "memory_job_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.extraction"): "memory_extraction_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.extract"): "memory_extraction_duration_ms",
     ("aura.knowledge.memory_extraction", "memory.policy"): "memory_policy_duration_ms",
-    ("aura.knowledge.memory_extraction", "memory.retention_gate"):
-        "memory_retention_gate_duration_ms",
-    ("aura.knowledge.memory_extraction", "memory.fallback"):
-        "operation_duration_ms",
-    ("aura.knowledge.memory_maintenance", "memory.maintenance"):
-        "memory_maintenance_duration_ms",
-    ("aura.knowledge.memory_maintenance", "memory.reindex.chunk"):
-        "memory_reindex_chunk_duration_ms",
-    ("aura.knowledge.memory_maintenance", "memory.reindex.switch"):
-        "memory_reindex_switch_duration_ms",
-    ("aura.knowledge.memory_maintenance", "memory.embedding"):
-        "embedding_duration_ms",
-    ("aura.knowledge.memory_retrieval", "memory.retrieval"):
-        "memory_retrieval_duration_ms",
-    ("aura.knowledge.memory_retrieval", "memory.lexical"):
-        "memory_lexical_search_duration_ms",
-    ("aura.knowledge.memory_retrieval", "memory.vector"):
-        "memory_vector_search_duration_ms",
-    ("aura.knowledge.memory_retrieval", "memory.rerank"):
-        "memory_rerank_duration_ms",
-    ("aura.knowledge.memory_retrieval", "memory.query_embedding"):
-        "memory_query_embedding_duration_ms",
-    ("aura.runtime.structured_inference", "model.inventory"):
-        "model_inventory_duration_ms",
-    ("aura.runtime.structured_inference", "model.capability.verify"):
-        "model_capability_verification_duration_ms",
-    ("aura.automation.reminder_scheduler", "reminder.fire"):
-        "reminder_fire_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.create"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.update"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.pause"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.resume"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.skip"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_management", "reminder.series.cancel"):
-        "reminder_series_command_duration_ms",
-    ("aura.automation.reminder_scheduler", "reminder.series.advance"):
-        "reminder_fire_duration_ms",
-    ("aura.automation.notification_delivery", "notification.sse.replay"):
-        "notification_sse_replay_duration_ms",
-    ("aura.automation.notification_delivery", "notification.acknowledge"):
-        "notification_acknowledgement_duration_ms",
-    ("aura.governance.approval_workflow", "approval.sse.connect"):
-        "approval_sse_duration_ms",
-    ("aura.governance.approval_workflow", "approval.sse.replay"):
-        "approval_sse_replay_duration_ms",
-    ("aura.governance.approval_workflow", "approval.resume"):
-        "approval_resume_duration_ms",
-    ("aura.governance.approval_workflow", "outbox.dispatch"):
-        "approval_outbox_dispatch_duration_ms",
-    ("aura.governance.approval_workflow", "outbox.persist"):
-        "approval_outbox_persist_duration_ms",
+    (
+        "aura.knowledge.memory_extraction",
+        "memory.retention_gate",
+    ): "memory_retention_gate_duration_ms",
+    ("aura.knowledge.memory_extraction", "memory.fallback"): "operation_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.maintenance"): "memory_maintenance_duration_ms",
+    (
+        "aura.knowledge.memory_maintenance",
+        "memory.reindex.chunk",
+    ): "memory_reindex_chunk_duration_ms",
+    (
+        "aura.knowledge.memory_maintenance",
+        "memory.reindex.switch",
+    ): "memory_reindex_switch_duration_ms",
+    ("aura.knowledge.memory_maintenance", "memory.embedding"): "embedding_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.retrieval"): "memory_retrieval_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.lexical"): "memory_lexical_search_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.vector"): "memory_vector_search_duration_ms",
+    ("aura.knowledge.memory_retrieval", "memory.rerank"): "memory_rerank_duration_ms",
+    (
+        "aura.knowledge.memory_retrieval",
+        "memory.query_embedding",
+    ): "memory_query_embedding_duration_ms",
+    ("aura.runtime.structured_inference", "model.inventory"): "model_inventory_duration_ms",
+    (
+        "aura.runtime.structured_inference",
+        "model.capability.verify",
+    ): "model_capability_verification_duration_ms",
+    ("aura.automation.reminder_scheduler", "reminder.fire"): "reminder_fire_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.create",
+    ): "reminder_series_command_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.update",
+    ): "reminder_series_command_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.pause",
+    ): "reminder_series_command_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.resume",
+    ): "reminder_series_command_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.skip",
+    ): "reminder_series_command_duration_ms",
+    (
+        "aura.automation.reminder_management",
+        "reminder.series.cancel",
+    ): "reminder_series_command_duration_ms",
+    ("aura.automation.reminder_scheduler", "reminder.series.advance"): "reminder_fire_duration_ms",
+    (
+        "aura.automation.notification_delivery",
+        "notification.sse.replay",
+    ): "notification_sse_replay_duration_ms",
+    (
+        "aura.automation.notification_delivery",
+        "notification.acknowledge",
+    ): "notification_acknowledgement_duration_ms",
+    ("aura.governance.approval_workflow", "approval.sse.connect"): "approval_sse_duration_ms",
+    ("aura.governance.approval_workflow", "approval.sse.replay"): "approval_sse_replay_duration_ms",
+    ("aura.governance.approval_workflow", "approval.resume"): "approval_resume_duration_ms",
+    (
+        "aura.governance.approval_workflow",
+        "outbox.dispatch",
+    ): "approval_outbox_dispatch_duration_ms",
+    ("aura.governance.approval_workflow", "outbox.persist"): "approval_outbox_persist_duration_ms",
 }
 
 # Dimensions are suitable for metric aggregation and intentionally exclude all
@@ -570,6 +721,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "causation_id",
         "command_id",
         "conversation_id",
+        "branch_id",
+        "regenerated_from_run_id",
         "correlation_id",
         "delivery_count",
         "assistant_message_id",
@@ -603,6 +756,8 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "tool_call_id",
         "approval_version",
         "idempotency",
+        "document_id",
+        "evidence_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -616,6 +771,8 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "causation_id",
         "command_id",
         "conversation_id",
+        "branch_id",
+        "regenerated_from_run_id",
         "correlation_id",
         "assistant_message_id",
         "memory_id",
@@ -637,6 +794,8 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "approval_id",
         "proposal_id",
         "tool_call_id",
+        "document_id",
+        "evidence_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -674,6 +833,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "memory_store",
             "structured_inference",
             "embedding_provider",
+            "parser",
+            "object_storage",
             "query_embedding",
             "nats_transient",
             "memory_worker",
@@ -702,6 +863,12 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "capability",
             "policy",
             "provider_protocol",
+            "parse_failed",
+            "processing_failed",
+            "object_storage_failed",
+            "embedding_unavailable",
+            "upload_cleanup_retryable",
+            "delete_retryable",
             "execution",
             "cancellation",
             "purged",
@@ -721,24 +888,80 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "serialization",
             "unknown",
             "stream_error",
+            "invalid_cursor",
         }
     ),
     "outcome": frozenset(
         {
-            "accepted", "canceled", "conflict", "duplicate", "error", "fallback",
-            "generated", "ignored",
-            "ok", "retryable", "review", "skipped", "used", "not_needed", "hit", "miss",
-            "denied", "degraded", "truncated", "empty", "not_granted", "not_found",
-            "expired", "unknown",
-            "policy_off", "selected", "allowed", "completed", "failed", "rejected",
-            "personal", "explicit_request", "none", "text", "tool_call", "allow", "deny",
-            "invalid", "valid", "capability", "budget_exceeded", "unavailable",
-            "publisher_error", "published", "delivered", "out_of_order",
-            "over_budget", "no_subscriber", "queue_full", "malformed_envelope",
-            "delivery", "transport_error", "transport_published", "offset_unavailable",
-            "created", "pending", "approved", "resumed", "opened", "closed", "omitted",
-            "awaiting_confirmation", "waiting_for_confirmation", "executing",
-            "resolved", "clarification", "failure", "validation",
+            "accepted",
+            "canceled",
+            "conflict",
+            "duplicate",
+            "error",
+            "fallback",
+            "generated",
+            "ignored",
+            "idempotent",
+            "ok",
+            "retryable",
+            "review",
+            "skipped",
+            "used",
+            "not_needed",
+            "hit",
+            "miss",
+            "denied",
+            "degraded",
+            "truncated",
+            "empty",
+            "not_granted",
+            "not_found",
+            "expired",
+            "unknown",
+            "policy_off",
+            "selected",
+            "allowed",
+            "completed",
+            "failed",
+            "rejected",
+            "personal",
+            "explicit_request",
+            "none",
+            "text",
+            "tool_call",
+            "allow",
+            "deny",
+            "invalid",
+            "valid",
+            "capability",
+            "budget_exceeded",
+            "unavailable",
+            "publisher_error",
+            "published",
+            "delivered",
+            "out_of_order",
+            "over_budget",
+            "no_subscriber",
+            "queue_full",
+            "malformed_envelope",
+            "delivery",
+            "transport_error",
+            "transport_published",
+            "offset_unavailable",
+            "created",
+            "pending",
+            "approved",
+            "resumed",
+            "opened",
+            "closed",
+            "omitted",
+            "awaiting_confirmation",
+            "waiting_for_confirmation",
+            "executing",
+            "resolved",
+            "clarification",
+            "failure",
+            "validation",
         }
     ),
     "operation": frozenset(
@@ -782,15 +1005,43 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
-    "scope_type": frozenset({
-        "user", "agent", "owner", "shared_user", "current_agent",
-        "foreign_agent", "unknown",
-    }),
-    "retrieval_stage": frozenset({
-        "primary", "query_embedding", "lexical", "vector", "fusion", "rerank", "selection",
-        "context_budget", "fallback", "degradation", "unknown",
-    }),
-    "degradation": frozenset({"none", "query_embedding", "database", "telemetry", "budget"}),
+    "scope_type": frozenset(
+        {
+            "user",
+            "agent",
+            "owner",
+            "shared_user",
+            "current_agent",
+            "foreign_agent",
+            "unknown",
+        }
+    ),
+    "retrieval_stage": frozenset(
+        {
+            "primary",
+            "query_embedding",
+            "lexical",
+            "vector",
+            "fusion",
+            "rerank",
+            "selection",
+            "context_budget",
+            "fallback",
+            "degradation",
+            "unknown",
+        }
+    ),
+    "degradation": frozenset(
+        {
+            "none",
+            "query_embedding",
+            "database",
+            "telemetry",
+            "budget",
+            "embedding_unavailable",
+            "identity_mismatch",
+        }
+    ),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
@@ -1235,8 +1486,10 @@ class MetadataMetrics:
                 return None
             if key in _UUID_TRACE_ATTRIBUTES and not _valid_uuid(value):
                 return None
-            if key in _COUNT_TRACE_ATTRIBUTES and key != "operation_duration_ms" and (
-                not value.isascii() or not value.isdecimal()
+            if (
+                key in _COUNT_TRACE_ATTRIBUTES
+                and key != "operation_duration_ms"
+                and (not value.isascii() or not value.isdecimal())
             ):
                 return None
             if key == "operation_duration_ms":
@@ -1404,9 +1657,12 @@ def record_memory_operation(
     """Emit the complete memory measurement set under one trace correlation."""
 
     bounded_scope = scope_type if scope_type in {"user", "agent"} else "unknown"
-    bounded_status = lifecycle_status if lifecycle_status in {
-        "active", "dormant", "archived", "disabled", "disputed", "superseded"
-    } else "unknown"
+    bounded_status = (
+        lifecycle_status
+        if lifecycle_status
+        in {"active", "dormant", "archived", "disabled", "disputed", "superseded"}
+        else "unknown"
+    )
     identifiers: dict[str, str] = {}
     if memory_id is not None:
         identifiers["memory_id"] = memory_id
@@ -1415,31 +1671,51 @@ def record_memory_operation(
     if generation_id is not None:
         identifiers["generation_id"] = generation_id
     metrics.record_span(
-        "aura.knowledge.memory_persistence", operation, timer.elapsed_ms(),
+        "aura.knowledge.memory_persistence",
+        operation,
+        timer.elapsed_ms(),
         trace_id=trace_id,
         span_id=span_id or new_span_id(),
         parent_span_id=parent_span_id,
-        dependency=dependency, outcome=outcome, error_class=error_class, **identifiers,
+        dependency=dependency,
+        outcome=outcome,
+        error_class=error_class,
+        **identifiers,
     )
     # ``trace_id`` is a first-class call argument.  Keeping it out of the
     # attribute map avoids an unregistered duplicate trace dimension and
     # prevents valid memory operations from incrementing telemetry rejection.
     common = dict(identifiers)
     metrics.observe(
-        "aura.knowledge.memory_persistence", "memory_operation_duration_ms",
-        timer.elapsed_ms(), trace_id=trace_id, outcome=outcome, dependency=dependency, **common,
+        "aura.knowledge.memory_persistence",
+        "memory_operation_duration_ms",
+        timer.elapsed_ms(),
+        trace_id=trace_id,
+        outcome=outcome,
+        dependency=dependency,
+        **common,
     )
     metrics.increment(
-        "aura.knowledge.memory_persistence", "memory_operation_outcome",
-        trace_id=trace_id, outcome=outcome, dependency=dependency, **common,
+        "aura.knowledge.memory_persistence",
+        "memory_operation_outcome",
+        trace_id=trace_id,
+        outcome=outcome,
+        dependency=dependency,
+        **common,
     )
     metrics.increment(
-        "aura.knowledge.memory_persistence", "memory_lifecycle_status",
-        trace_id=trace_id, status=bounded_status, **common,
+        "aura.knowledge.memory_persistence",
+        "memory_lifecycle_status",
+        trace_id=trace_id,
+        status=bounded_status,
+        **common,
     )
     metrics.increment(
-        "aura.knowledge.memory_persistence", "memory_scope_type",
-        trace_id=trace_id, scope_type=bounded_scope, **common,
+        "aura.knowledge.memory_persistence",
+        "memory_scope_type",
+        trace_id=trace_id,
+        scope_type=bounded_scope,
+        **common,
     )
 
 
@@ -1515,7 +1791,8 @@ def record_memory_processing(
         "memory.decay": ("memory_maintenance_transition",),
         "memory.archive": ("memory_maintenance_transition",),
         "memory.reindex.chunk": (
-            "memory_reindex_progress", "memory_reindex_backlog",
+            "memory_reindex_progress",
+            "memory_reindex_backlog",
         ),
         "memory.reindex.switch": (),
         "memory.retry": ("memory_retry_count",),
@@ -1524,24 +1801,38 @@ def record_memory_processing(
     for semantic_metric in semantic_metrics.get(operation, ()):
         if semantic_metric.endswith("_duration_ms") or semantic_metric.endswith("_wait_ms"):
             metrics.observe(
-                effective_component, semantic_metric, duration_ms, trace_id=trace_id,
-                outcome=outcome, dependency=dependency,
+                effective_component,
+                semantic_metric,
+                duration_ms,
+                trace_id=trace_id,
+                outcome=outcome,
+                dependency=dependency,
             )
         elif semantic_metric.endswith("_progress"):
             metrics.observe(
-                effective_component, semantic_metric,
+                effective_component,
+                semantic_metric,
                 float(progress if progress is not None else 0),
-                trace_id=trace_id, outcome=outcome, dependency=dependency,
+                trace_id=trace_id,
+                outcome=outcome,
+                dependency=dependency,
             )
         elif semantic_metric.endswith("_backlog"):
             metrics.observe(
-                effective_component, semantic_metric, float(max(0, backlog or 0)),
-                trace_id=trace_id, outcome=outcome, dependency=dependency,
+                effective_component,
+                semantic_metric,
+                float(max(0, backlog or 0)),
+                trace_id=trace_id,
+                outcome=outcome,
+                dependency=dependency,
             )
         else:
             metrics.increment(
-                effective_component, semantic_metric, outcome=outcome,
-                dependency=dependency, trace_id=trace_id,
+                effective_component,
+                semantic_metric,
+                outcome=outcome,
+                dependency=dependency,
+                trace_id=trace_id,
             )
     if operation == "memory.candidate" and outcome == "review":
         metrics.increment(
@@ -1553,7 +1844,10 @@ def record_memory_processing(
         )
     if backlog is not None and "backlog" in _METRICS.get(effective_component, frozenset()):
         metrics.observe(
-            effective_component, "backlog", float(max(0, backlog)), trace_id=trace_id,
+            effective_component,
+            "backlog",
+            float(max(0, backlog)),
+            trace_id=trace_id,
             dependency=dependency,
         )
 
@@ -1685,26 +1979,27 @@ def record_memory_retrieval(
         else ("unknown" if fallback_outcome is not None else None)
     )
     bounded_parent = (
-        parent_span_id
-        if parent_span_id is not None and _valid_span_id(parent_span_id)
-        else None
+        parent_span_id if parent_span_id is not None and _valid_span_id(parent_span_id) else None
     )
     # The in-memory recall seam may not have a run trace.  Keep the callback
     # valid without serializing the caller's fallback label as a trace id.
     trace_id = trace_id if _valid_trace_id(trace_id) else secrets.token_hex(16)
 
-    bounded_stage = retrieval_stage or {
-        "memory.retrieval": "primary",
-        "memory.query_embedding": "query_embedding",
-        "memory.lexical": "lexical",
-        "memory.vector": "vector",
-        "memory.fusion": "fusion",
-        "memory.rerank": "rerank",
-        "memory.selection": "selection",
-        "memory.context_budget": "context_budget",
-        "memory.fallback": "fallback",
-        "memory.degradation": "degradation",
-    }[span_operation]
+    bounded_stage = (
+        retrieval_stage
+        or {
+            "memory.retrieval": "primary",
+            "memory.query_embedding": "query_embedding",
+            "memory.lexical": "lexical",
+            "memory.vector": "vector",
+            "memory.fusion": "fusion",
+            "memory.rerank": "rerank",
+            "memory.selection": "selection",
+            "memory.context_budget": "context_budget",
+            "memory.fallback": "fallback",
+            "memory.degradation": "degradation",
+        }[span_operation]
+    )
     trace_attributes: dict[str, str] = {}
     for key, value in {
         "memory_id": memory_id,
@@ -1797,9 +2092,7 @@ def record_memory_retrieval(
             "aura.knowledge.memory_retrieval",
             "memory_recall_gate_outcome",
             outcome=(
-                gate_outcome
-                if gate_outcome in {"policy_off", "selected", "empty"}
-                else "unknown"
+                gate_outcome if gate_outcome in {"policy_off", "selected", "empty"} else "unknown"
             ),
             retrieval_stage="primary",
             dependency=bounded_dependency,

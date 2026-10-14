@@ -1,17 +1,19 @@
 import { OverlayModule, CdkOverlayOrigin, type ConnectedPosition } from '@angular/cdk/overlay';
 import { A11yModule } from '@angular/cdk/a11y';
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
+import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, HostListener, ViewChild, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
 import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
 import { safeRunErrorDisplay, safeTraceReference } from './run-detail-safety';
 import { SafeMarkdownComponent } from './safe-markdown.component';
 import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/approvals';
+import { branchNavigationAvailable } from './branch-navigation';
+import { focusBranchEditTarget, retryBranchActionAndFocus, type BranchEditFocusRequest } from './branch-edit-focus';
 
 export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
   return useAgentDefault ? '' : reference?.revisionId ?? '';
@@ -34,7 +36,8 @@ export function visibleFocusTarget(preferred: HTMLElement | null, fallback: HTML
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',
 })
-export class ConversationPanelComponent {
+export class ConversationPanelComponent implements AfterViewChecked {
+  private readonly changeDetector = inject(ChangeDetectorRef);
   readonly store = inject(ConversationStore);
   readonly agentStore = inject(AgentStore);
   readonly personaStore = inject(PersonaStore);
@@ -65,6 +68,11 @@ export class ConversationPanelComponent {
   private hadPendingConfiguration = false;
   private pendingConfigurationOriginId: string | null = null;
   private opener: HTMLButtonElement | null = null;
+  private requestedBranchId: string | null = null;
+  private lastBranchUrlId: string | null = null;
+  private branchEditTriggerId: string | null = null;
+  private previousBranchEditMessageId: string | null = null;
+  private readonly pendingBranchEditFocus = signal<BranchEditFocusRequest | null>(null);
 
   configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
     return configurationRevisionValue(reference, useAgentDefault);
@@ -112,6 +120,47 @@ export class ConversationPanelComponent {
         queueMicrotask(() => { if (originId && this.store.selectedId() === originId) this.opener?.focus(); });
       }
     });
+    if (typeof window !== 'undefined') {
+      const branchId = new URLSearchParams(window.location.search).get('branch');
+      this.requestedBranchId = branchId && /^[A-Za-z0-9_-]{1,128}$/u.test(branchId) ? branchId : null;
+    }
+    effect(() => {
+      const branch = this.store.selectedBranch();
+      if (this.requestedBranchId) {
+        const requested = this.requestedBranchId;
+        if (branch.summaries.some((item) => item.id === requested)) {
+          if (branch.activeId !== requested) {
+            if (!branch.loading) void this.store.selectBranch(requested);
+            return;
+          }
+          // Keep the requested id pending until the branch detail has become
+          // the rendered state. This prevents the initial root summary from
+          // replacing a deep-link URL before its transcript is hydrated.
+          this.requestedBranchId = null;
+        } else if (branch.loading) {
+          return;
+        } else if (branch.error) {
+          this.requestedBranchId = null;
+        } else if (branch.summaries.length > 0) {
+          // The opaque id is not present in the authorized branch list. Let
+          // the rendered root state become canonical without exposing why it
+          // was not found.
+          this.requestedBranchId = null;
+        } else {
+          return;
+        }
+      }
+      this.syncBranchUrl(branch.activeId);
+    });
+    effect(() => {
+      const editingMessageId = this.store.selectedBranch().editingMessageId;
+      const loading = this.store.selectedBranch().loading;
+      const wasEditing = this.previousBranchEditMessageId;
+      this.previousBranchEditMessageId = editingMessageId;
+      // Keep the committed-state transition as a fallback focus-restoration
+      // seam for retries that complete through a conflict refresh.
+      if (wasEditing && !editingMessageId && !loading) this.requestBranchEditFocus();
+    });
   }
 
   conversationApprovals(): ReadonlyArray<ApprovalSummary> { return this.approvalStore.forConversation(this.store.selectedId()); }
@@ -119,8 +168,61 @@ export class ConversationPanelComponent {
   thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
   submit(event?: Event): void { event?.preventDefault(); if (!this.defaultAgentReady()) return; if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  submitBranchEdit(event: Event): void {
+    event.preventDefault();
+    void this.store.editAndBranch().then(() => {
+      if (!this.store.selectedBranch().editingMessageId) this.requestBranchEditFocus();
+    });
+  }
+  async retryBranchAction(): Promise<void> {
+    const action = this.store.selectedBranch().errorAction;
+    await retryBranchActionAndFocus(action?.kind, () => this.store.retryBranchAction(), () => this.requestBranchEditFocus());
+  }
+  beginEditMessage(messageId: string): void {
+    this.branchEditTriggerId = `edit-branch-${messageId}`;
+    this.store.beginEditMessage(messageId);
+    queueMicrotask(() => { if (typeof document !== 'undefined') document.getElementById(`branch-edit-${messageId}`)?.focus(); });
+  }
+  cancelBranchEdit(): void {
+    this.store.cancelEditMessage();
+    this.requestBranchEditFocus();
+  }
+  handleBranchEditKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) { event.preventDefault(); void this.store.editAndBranch().then(() => { if (!this.store.selectedBranch().editingMessageId) this.requestBranchEditFocus(); }); } }
+  canNavigateBranch(direction: -1 | 1): boolean {
+    const branch = this.store.selectedBranch();
+    if (branch.loading || branch.summaries.length < 2) return false;
+    return branchNavigationAvailable(branch.summaries, branch.activeId, direction);
+  }
+  private requestBranchEditFocus(): void {
+    const triggerId = this.branchEditTriggerId;
+    if (triggerId) {
+      this.pendingBranchEditFocus.set({ triggerId, fallback: 'first-edit-or-toolbar' });
+      this.changeDetector.markForCheck();
+    }
+  }
+  ngAfterViewChecked(): void {
+    const request = this.pendingBranchEditFocus();
+    if (!request || typeof document === 'undefined') return;
+    if (focusBranchEditTarget(request)) this.pendingBranchEditFocus.set(null);
+  }
+  branchPositionLabel(): string {
+    const branch = this.store.selectedBranch();
+    const index = branch.summaries.findIndex((item) => item.id === branch.activeId);
+    return index >= 0 ? `Branch ${index + 1} of ${branch.summaries.length}` : 'Branch';
+  }
   retryDefaultAgent(): void { this.store.requireDefaultDraftAgent(); void this.agentStore.load(); }
   defaultAgentReady(): boolean { const conversation = this.store.selected(); return !conversation.id.startsWith('draft-') || Boolean(conversation.agent) || this.store.defaultDraftAgentResolution() === 'resolved'; }
+  /**
+   * Signals that asynchronous bootstrap has settled before the composer is
+   * used.  The draft value is intentionally not part of this signal: callers
+   * can wait for the form to be ready before filling it without having their
+   * input replaced by model or agent hydration.
+   */
+  conversationReady(): boolean {
+    const modelHydrated = this.store.models().some((model) => model.selectable);
+    const agentHydrated = !this.agentStore.loading() && this.defaultAgentReady();
+    return this.store.authState() === 'authenticated' && !this.store.loading() && modelHydrated && agentHydrated;
+  }
   handleKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.submit(event); } }
   chooseAgent(revisionId: string): void {
     if (this.controlsDisabled()) return;
@@ -251,6 +353,29 @@ export class ConversationPanelComponent {
     return record.kind === 'memory' ? `Memory ${record.detail.id} · revision ${record.detail.currentRevision?.id ?? 'unavailable'}` : `Candidate ${record.detail.id}`;
   }
   memoryActivityIsProcessing(activity: import('@aura/aura-api-client').MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
+  citationLocator(citation: DocumentCitation): string { const [kind, ordinal] = citation.locator.split(':', 2); return `${kind === 'page' ? 'Page' : 'Section'} ${ordinal}`; }
+  citationAccessibleLabel(citation: DocumentCitation): string { return `Open source ${citation.displayLabel}, ${this.citationLocator(citation)}`; }
+  /** Route activation can replace this panel before the browser picks a new focus target. */
+  focusCitationDestination(): void {
+    if (typeof document === 'undefined') return;
+    const focus = (): void => {
+      const target = document.getElementById('detail-heading') ?? document.getElementById('main-content');
+      if (!(target instanceof HTMLElement)) return;
+      if (target.id === 'detail-heading') target.tabIndex = -1;
+      target.focus();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focus);
+    else setTimeout(focus, 0);
+  }
+
+  private syncBranchUrl(branchId: string | null): void {
+    if (typeof window === 'undefined' || this.lastBranchUrlId === branchId) return;
+    this.lastBranchUrlId = branchId;
+    const url = new URL(window.location.href);
+    if (branchId && /^[A-Za-z0-9_-]{1,128}$/u.test(branchId)) url.searchParams.set('branch', branchId);
+    else url.searchParams.delete('branch');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }
   runDuration(run: { readonly createdAt: string; readonly startedAt: string | null; readonly finishedAt: string | null }): string {
     if (!run.startedAt || !run.finishedAt) return '—';
     const milliseconds = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt));

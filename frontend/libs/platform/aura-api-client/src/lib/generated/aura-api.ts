@@ -1,5 +1,14 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 2db23d1fcaa1ec140d17ae8fcc9889d8a2f3d4e50fcd7dacb75da3342b7bb63c
+// Contract SHA-256: 68465a574b80a0d5873ed5f82bf1c90fa1c420061e88696da80d18b7d6f1d0c7
+
+export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
+
+export interface AuraBinaryResponse {
+  readonly body: ReadableStream<Uint8Array>;
+  readonly contentType: string;
+  readonly contentLength: number;
+  readonly contentDisposition: string;
+}
 
 export type Session = { readonly "principal": Principal; readonly "csrfToken": string; readonly "idleExpiresAt": string; readonly "absoluteExpiresAt": string; };
 
@@ -193,11 +202,23 @@ export type UpdateConversationRequest = { readonly "modelId"?: string; readonly 
 
 export type UpdateConversationMetadataRequest = { readonly "title"?: string; readonly "archived"?: boolean; readonly "version": number; };
 
-export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
+export type CreateRunRequest = { readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+
+export type CreateConversationBranchRequest = { readonly "sourceUserMessageId": string; readonly "message": string; readonly "conversationVersion": number; readonly "branchId"?: string; readonly "clientTimeZone"?: ClientTimeZone; };
+
+export type RegenerateRunRequest = { readonly "conversationVersion": number; readonly "clientTimeZone"?: ClientTimeZone; };
 
 export type ConversationPage = { readonly "items": ReadonlyArray<ConversationSummary>; readonly "nextCursor": string | null; };
 
 export type ConversationSummary = { readonly "id": string; readonly "title": string; readonly "agentProfileId": string; readonly "agentRevisionId": string; readonly "agent"?: AgentReference; readonly "agentAssignments"?: ReadonlyArray<AgentAssignment>; readonly "persona"?: PersonaReference; readonly "personaOverride"?: boolean; readonly "personaAssignments"?: ReadonlyArray<PersonaAssignment>; readonly "modelId": string; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "archivedAt"?: string | null; readonly "currentRun": Run | null; };
+
+export type ConversationBranchOrigin = "root" | "edited_message" | "regenerated_response";
+
+export type ConversationBranchSummary = { readonly "id": string; readonly "conversationId": string; readonly "parentBranchId": string | null; readonly "forkedFromMessageId": string | null; readonly "headMessageId": string | null; readonly "origin": ConversationBranchOrigin; readonly "createdAt": string; };
+
+export type ConversationBranchPage = { readonly "items": ReadonlyArray<ConversationBranchSummary>; readonly "nextCursor": string | null; };
+
+export type ConversationBranchDetail = { readonly "branch": ConversationBranchSummary; readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; };
 
 export type AgentReference = { readonly "profileId": string; readonly "revisionId": string; readonly "displayName": string; readonly "revision": number; readonly "status": ProfileStatus; readonly "newerRevisionAvailable": boolean; };
 
@@ -207,11 +228,11 @@ export type PersonaReference = { readonly "profileId": string; readonly "revisio
 
 export type PersonaAssignment = { readonly "id": string; readonly "persona": PersonaReference; readonly "source": "agent_default" | "conversation_override"; readonly "reason": "initial" | "agent_switch" | "agent_revision_upgrade" | "manual_override" | "reset_to_agent_default"; readonly "effectiveAfterMessageId": string | null; readonly "createdAt": string; };
 
-export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; };
+export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; readonly "branches"?: ReadonlyArray<ConversationBranchSummary>; };
 
-export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "createdAt": string; readonly "updatedAt": string; };
+export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -223,7 +244,7 @@ export type ConversationArchiveState = "active" | "archived" | "all";
 
 export type RunError = { readonly "code": string; readonly "message": string; readonly "retryable": boolean; readonly "traceId": string; };
 
-export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; };
+export type ConversationRunAccepted = { readonly "conversation": ConversationSummary; readonly "userMessage": Message; readonly "run": Run; readonly "branch"?: ConversationBranchSummary; };
 
 export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | ModelThinkingDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
 
@@ -339,6 +360,44 @@ export type NotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly
 
 export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 
+export type DocumentStatus = "uploading" | "queued" | "processing" | "ready" | "failed" | "deleting";
+
+export type DocumentMediaType = "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+
+export type DocumentFailure = { readonly "code": string; readonly "retryable": boolean; };
+
+export type CreateDocumentUploadRequest = { readonly "filename": string; readonly "mediaType": DocumentMediaType; readonly "byteCount": number; };
+
+export type DocumentUploadSession = { readonly "id": string; readonly "documentId": string; readonly "filename": string; readonly "mediaType": DocumentMediaType; readonly "byteCount": number; readonly "status": "uploading"; readonly "version": number; readonly "createdAt": string; readonly "expiresAt": string; };
+
+export type DocumentPage = { readonly "items": ReadonlyArray<DocumentSummary>; readonly "nextCursor": string | null; };
+
+export type DocumentSummary = { readonly "id": string; readonly "filename": string; readonly "mediaType": DocumentMediaType; readonly "byteCount": number; readonly "status": DocumentStatus; readonly "failure": DocumentFailure | null; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type DocumentDetail = { readonly "id": string; readonly "filename": string; readonly "mediaType": DocumentMediaType; readonly "byteCount": number; readonly "status": DocumentStatus; readonly "failure": DocumentFailure | null; readonly "version": number; readonly "extractedTextLength": number; readonly "chunkCount": number; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type DocumentPreview = { readonly "documentId": string; readonly "text": string; readonly "truncated": boolean; readonly "totalCharacters": number; };
+
+export type DocumentUploadReceipt = { readonly "document": DocumentDetail; readonly "duplicate": boolean; };
+
+export type SearchDocumentsRequest = { readonly "query": string; readonly "cursor"?: string; readonly "limit"?: number; readonly "mediaType"?: DocumentMediaType; };
+
+export type DocumentPageLocator = { readonly "kind": "page"; readonly "pageNumber": number; };
+
+export type DocumentSectionLocator = { readonly "kind": "section"; readonly "sectionOrdinal": number; readonly "heading": string | null; };
+
+export type DocumentLocator = DocumentPageLocator | DocumentSectionLocator;
+
+export type DocumentCitation = { readonly "documentId": string; readonly "displayLabel": string; readonly "locator": string; };
+
+export type DocumentSearchResult = { readonly "evidenceId": string; readonly "documentId": string; readonly "displayName": string; readonly "excerpt": string; readonly "locator": DocumentLocator; readonly "score": number; };
+
+export type DocumentSearchResultPage = { readonly "items": ReadonlyArray<DocumentSearchResult>; readonly "nextCursor": string | null; };
+
+export type DocumentTransitionRequest = { readonly "expectedVersion": number; };
+
+export type DocumentDeletionReceipt = { readonly "documentId": string; readonly "status": "deleting"; readonly "version": number; readonly "acceptedAt": string; };
+
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
 
 export type FieldError = { readonly "field": string; readonly "code": string; readonly "message": string; };
@@ -371,10 +430,14 @@ export interface AuraApiOperations {
   readonly createConversation: { readonly response: ConversationRunAccepted; readonly body: CreateConversationRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getConversation: { readonly response: ConversationDetail; readonly body: never; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly updateConversation: { readonly response: ConversationSummary; readonly body: UpdateConversationRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listConversationBranches: { readonly response: ConversationBranchPage; readonly body: never; readonly path: { readonly "conversation_id": string; }; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createConversationBranch: { readonly response: ConversationRunAccepted; readonly body: CreateConversationBranchRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getConversationBranch: { readonly response: ConversationBranchDetail; readonly body: never; readonly path: { readonly "conversation_id": string; readonly "branch_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createRun: { readonly response: ConversationRunAccepted; readonly body: CreateRunRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly updateConversationMetadata: { readonly response: ConversationSummary; readonly body: UpdateConversationMetadataRequest; readonly path: { readonly "conversation_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly cancelRun: { readonly response: Run; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly retryRun: { readonly response: ConversationRunAccepted; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly regenerateRun: { readonly response: ConversationRunAccepted; readonly body: RegenerateRunRequest; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamRunEvents: { readonly response: RunEvent; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly getRunMemoryActivity: { readonly response: RunMemoryActivitySnapshot; readonly body: never; readonly path: { readonly "run_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listMemories: { readonly response: MemoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "kind"?: MemoryKind; readonly "scopeType"?: MemoryCollectionScopeType; readonly "agentProfileId"?: string; readonly "status"?: MemoryLifecycleStatus; readonly "provenanceType"?: MemoryProvenanceType; readonly "confidenceMin"?: number; readonly "confidenceMax"?: number; readonly "createdFrom"?: string; readonly "createdTo"?: string; readonly "includeHistorical"?: boolean; }; readonly headers: Readonly<Record<string, never>>; };
@@ -423,6 +486,15 @@ export interface AuraApiOperations {
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly createDocumentUpload: { readonly response: DocumentUploadSession; readonly body: CreateDocumentUploadRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly uploadDocumentContent: { readonly response: DocumentUploadReceipt; readonly body: AuraBinaryRequestBody; readonly path: { readonly "upload_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; readonly "X-Expected-Version": string; readonly "Content-Length": string; readonly "Content-Type": string; }; };
+  readonly listDocuments: { readonly response: DocumentPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "status"?: DocumentStatus; readonly "mediaType"?: DocumentMediaType; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly searchDocuments: { readonly response: DocumentSearchResultPage; readonly body: SearchDocumentsRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; }; };
+  readonly getDocument: { readonly response: DocumentDetail; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteDocument: { readonly response: DocumentDeletionReceipt; readonly body: DocumentTransitionRequest; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly downloadDocument: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly getDocumentPreview: { readonly response: DocumentPreview; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly retryDocumentProcessing: { readonly response: DocumentDetail; readonly body: DocumentTransitionRequest; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -439,83 +511,97 @@ export type AuraOperationResponse<K extends AuraOperationId> = AuraApiOperations
 export interface AuraOperationDescriptor {
   readonly method: string;
   readonly pathTemplate: string;
-  readonly responseMode: 'json' | 'event-stream';
+  readonly requestMode: 'none' | 'json' | 'binary';
+  readonly responseMode: 'json' | 'event-stream' | 'binary';
 }
 
 export const AURA_API_OPERATIONS = {
-  getSession: { method: 'GET', pathTemplate: '/api/v1/auth/session', responseMode: 'json' },
-  startLogin: { method: 'GET', pathTemplate: '/api/v1/auth/login', responseMode: 'json' },
-  completeLogin: { method: 'GET', pathTemplate: '/api/v1/auth/callback', responseMode: 'json' },
-  logout: { method: 'POST', pathTemplate: '/api/v1/auth/logout', responseMode: 'json' },
-  listModels: { method: 'GET', pathTemplate: '/api/v1/models', responseMode: 'json' },
-  listTools: { method: 'GET', pathTemplate: '/api/v1/tools', responseMode: 'json' },
-  listAgents: { method: 'GET', pathTemplate: '/api/v1/agents', responseMode: 'json' },
-  createAgent: { method: 'POST', pathTemplate: '/api/v1/agents', responseMode: 'json' },
-  getAgent: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}', responseMode: 'json' },
-  updateAgentStatus: { method: 'PATCH', pathTemplate: '/api/v1/agents/{agent_profile_id}', responseMode: 'json' },
-  createAgentRevision: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/revisions', responseMode: 'json' },
-  listPersonas: { method: 'GET', pathTemplate: '/api/v1/personas', responseMode: 'json' },
-  createPersona: { method: 'POST', pathTemplate: '/api/v1/personas', responseMode: 'json' },
-  previewPersona: { method: 'POST', pathTemplate: '/api/v1/personas/preview', responseMode: 'json' },
-  getPersona: { method: 'GET', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
-  updatePersonaStatus: { method: 'PATCH', pathTemplate: '/api/v1/personas/{persona_profile_id}', responseMode: 'json' },
-  createPersonaRevision: { method: 'POST', pathTemplate: '/api/v1/personas/{persona_profile_id}/revisions', responseMode: 'json' },
-  listConversations: { method: 'GET', pathTemplate: '/api/v1/conversations', responseMode: 'json' },
-  createConversation: { method: 'POST', pathTemplate: '/api/v1/conversations', responseMode: 'json' },
-  getConversation: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}', responseMode: 'json' },
-  updateConversation: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}', responseMode: 'json' },
-  createRun: { method: 'POST', pathTemplate: '/api/v1/conversations/{conversation_id}/runs', responseMode: 'json' },
-  updateConversationMetadata: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}/metadata', responseMode: 'json' },
-  cancelRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/cancel', responseMode: 'json' },
-  retryRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/retry', responseMode: 'json' },
-  streamRunEvents: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/events', responseMode: 'event-stream' },
-  getRunMemoryActivity: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/memory-activity', responseMode: 'json' },
-  listMemories: { method: 'GET', pathTemplate: '/api/v1/memories', responseMode: 'json' },
-  createMemory: { method: 'POST', pathTemplate: '/api/v1/memories', responseMode: 'json' },
-  searchMemories: { method: 'POST', pathTemplate: '/api/v1/memories/search', responseMode: 'json' },
-  getMemory: { method: 'GET', pathTemplate: '/api/v1/memories/{memory_id}', responseMode: 'json' },
-  correctMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/revisions', responseMode: 'json' },
-  updateMemoryStatus: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/status', responseMode: 'json' },
-  updateMemoryPin: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/pin', responseMode: 'json' },
-  purgeMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/purge', responseMode: 'json' },
-  listMemoryCandidates: { method: 'GET', pathTemplate: '/api/v1/memory-candidates', responseMode: 'json' },
-  getMemoryCandidate: { method: 'GET', pathTemplate: '/api/v1/memory-candidates/{candidate_id}', responseMode: 'json' },
-  approveMemoryCandidate: { method: 'POST', pathTemplate: '/api/v1/memory-candidates/{candidate_id}/approve', responseMode: 'json' },
-  rejectMemoryCandidate: { method: 'POST', pathTemplate: '/api/v1/memory-candidates/{candidate_id}/reject', responseMode: 'json' },
-  getMemoryModelInventory: { method: 'GET', pathTemplate: '/api/v1/memory-model-inventory', responseMode: 'json' },
-  getMemoryModelConfiguration: { method: 'GET', pathTemplate: '/api/v1/memory-model-configuration', responseMode: 'json' },
-  updateMemoryModelConfiguration: { method: 'PUT', pathTemplate: '/api/v1/memory-model-configuration', responseMode: 'json' },
-  getMemoryReindexStatus: { method: 'GET', pathTemplate: '/api/v1/memory-reindex', responseMode: 'json' },
-  resumeMemoryReindex: { method: 'POST', pathTemplate: '/api/v1/memory-reindex/resume', responseMode: 'json' },
-  listAgentMemoryPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', responseMode: 'json' },
-  createAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', responseMode: 'json' },
-  attachAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies/{policy_revision_id}/attach', responseMode: 'json' },
-  listAgentToolPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
-  createAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', responseMode: 'json' },
-  attachAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach', responseMode: 'json' },
-  listReminders: { method: 'GET', pathTemplate: '/api/v1/reminders', responseMode: 'json' },
-  createReminder: { method: 'POST', pathTemplate: '/api/v1/reminders', responseMode: 'json' },
-  getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', responseMode: 'json' },
-  completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', responseMode: 'json' },
-  cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', responseMode: 'json' },
-  listReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series', responseMode: 'json' },
-  createReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series', responseMode: 'json' },
-  getReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}', responseMode: 'json' },
-  listReminderSeriesOccurrences: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}/occurrences', responseMode: 'json' },
-  updateReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/update', responseMode: 'json' },
-  pauseReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/pause', responseMode: 'json' },
-  resumeReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/resume', responseMode: 'json' },
-  skipNextReminderSeriesOccurrence: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/skip-next', responseMode: 'json' },
-  cancelReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/cancel', responseMode: 'json' },
-  listApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals', responseMode: 'json' },
-  getApproval: { method: 'GET', pathTemplate: '/api/v1/approvals/{approval_id}', responseMode: 'json' },
-  approveApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/approve', responseMode: 'json' },
-  rejectApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/reject', responseMode: 'json' },
-  streamApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals/stream', responseMode: 'event-stream' },
-  listNotifications: { method: 'GET', pathTemplate: '/api/v1/notifications', responseMode: 'json' },
-  getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', responseMode: 'json' },
-  acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', responseMode: 'json' },
-  streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', responseMode: 'event-stream' },
-  getLiveness: { method: 'GET', pathTemplate: '/health/live', responseMode: 'json' },
-  getReadiness: { method: 'GET', pathTemplate: '/health/ready', responseMode: 'json' },
+  getSession: { method: 'GET', pathTemplate: '/api/v1/auth/session', requestMode: 'none', responseMode: 'json' },
+  startLogin: { method: 'GET', pathTemplate: '/api/v1/auth/login', requestMode: 'none', responseMode: 'json' },
+  completeLogin: { method: 'GET', pathTemplate: '/api/v1/auth/callback', requestMode: 'none', responseMode: 'json' },
+  logout: { method: 'POST', pathTemplate: '/api/v1/auth/logout', requestMode: 'none', responseMode: 'json' },
+  listModels: { method: 'GET', pathTemplate: '/api/v1/models', requestMode: 'none', responseMode: 'json' },
+  listTools: { method: 'GET', pathTemplate: '/api/v1/tools', requestMode: 'none', responseMode: 'json' },
+  listAgents: { method: 'GET', pathTemplate: '/api/v1/agents', requestMode: 'none', responseMode: 'json' },
+  createAgent: { method: 'POST', pathTemplate: '/api/v1/agents', requestMode: 'json', responseMode: 'json' },
+  getAgent: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}', requestMode: 'none', responseMode: 'json' },
+  updateAgentStatus: { method: 'PATCH', pathTemplate: '/api/v1/agents/{agent_profile_id}', requestMode: 'json', responseMode: 'json' },
+  createAgentRevision: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/revisions', requestMode: 'json', responseMode: 'json' },
+  listPersonas: { method: 'GET', pathTemplate: '/api/v1/personas', requestMode: 'none', responseMode: 'json' },
+  createPersona: { method: 'POST', pathTemplate: '/api/v1/personas', requestMode: 'json', responseMode: 'json' },
+  previewPersona: { method: 'POST', pathTemplate: '/api/v1/personas/preview', requestMode: 'json', responseMode: 'json' },
+  getPersona: { method: 'GET', pathTemplate: '/api/v1/personas/{persona_profile_id}', requestMode: 'none', responseMode: 'json' },
+  updatePersonaStatus: { method: 'PATCH', pathTemplate: '/api/v1/personas/{persona_profile_id}', requestMode: 'json', responseMode: 'json' },
+  createPersonaRevision: { method: 'POST', pathTemplate: '/api/v1/personas/{persona_profile_id}/revisions', requestMode: 'json', responseMode: 'json' },
+  listConversations: { method: 'GET', pathTemplate: '/api/v1/conversations', requestMode: 'none', responseMode: 'json' },
+  createConversation: { method: 'POST', pathTemplate: '/api/v1/conversations', requestMode: 'json', responseMode: 'json' },
+  getConversation: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}', requestMode: 'none', responseMode: 'json' },
+  updateConversation: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}', requestMode: 'json', responseMode: 'json' },
+  listConversationBranches: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}/branches', requestMode: 'none', responseMode: 'json' },
+  createConversationBranch: { method: 'POST', pathTemplate: '/api/v1/conversations/{conversation_id}/branches', requestMode: 'json', responseMode: 'json' },
+  getConversationBranch: { method: 'GET', pathTemplate: '/api/v1/conversations/{conversation_id}/branches/{branch_id}', requestMode: 'none', responseMode: 'json' },
+  createRun: { method: 'POST', pathTemplate: '/api/v1/conversations/{conversation_id}/runs', requestMode: 'json', responseMode: 'json' },
+  updateConversationMetadata: { method: 'PATCH', pathTemplate: '/api/v1/conversations/{conversation_id}/metadata', requestMode: 'json', responseMode: 'json' },
+  cancelRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/cancel', requestMode: 'none', responseMode: 'json' },
+  retryRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/retry', requestMode: 'none', responseMode: 'json' },
+  regenerateRun: { method: 'POST', pathTemplate: '/api/v1/runs/{run_id}/regenerate', requestMode: 'json', responseMode: 'json' },
+  streamRunEvents: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/events', requestMode: 'none', responseMode: 'event-stream' },
+  getRunMemoryActivity: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/memory-activity', requestMode: 'none', responseMode: 'json' },
+  listMemories: { method: 'GET', pathTemplate: '/api/v1/memories', requestMode: 'none', responseMode: 'json' },
+  createMemory: { method: 'POST', pathTemplate: '/api/v1/memories', requestMode: 'json', responseMode: 'json' },
+  searchMemories: { method: 'POST', pathTemplate: '/api/v1/memories/search', requestMode: 'json', responseMode: 'json' },
+  getMemory: { method: 'GET', pathTemplate: '/api/v1/memories/{memory_id}', requestMode: 'none', responseMode: 'json' },
+  correctMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/revisions', requestMode: 'json', responseMode: 'json' },
+  updateMemoryStatus: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/status', requestMode: 'json', responseMode: 'json' },
+  updateMemoryPin: { method: 'PATCH', pathTemplate: '/api/v1/memories/{memory_id}/pin', requestMode: 'json', responseMode: 'json' },
+  purgeMemory: { method: 'POST', pathTemplate: '/api/v1/memories/{memory_id}/purge', requestMode: 'json', responseMode: 'json' },
+  listMemoryCandidates: { method: 'GET', pathTemplate: '/api/v1/memory-candidates', requestMode: 'none', responseMode: 'json' },
+  getMemoryCandidate: { method: 'GET', pathTemplate: '/api/v1/memory-candidates/{candidate_id}', requestMode: 'none', responseMode: 'json' },
+  approveMemoryCandidate: { method: 'POST', pathTemplate: '/api/v1/memory-candidates/{candidate_id}/approve', requestMode: 'json', responseMode: 'json' },
+  rejectMemoryCandidate: { method: 'POST', pathTemplate: '/api/v1/memory-candidates/{candidate_id}/reject', requestMode: 'json', responseMode: 'json' },
+  getMemoryModelInventory: { method: 'GET', pathTemplate: '/api/v1/memory-model-inventory', requestMode: 'none', responseMode: 'json' },
+  getMemoryModelConfiguration: { method: 'GET', pathTemplate: '/api/v1/memory-model-configuration', requestMode: 'none', responseMode: 'json' },
+  updateMemoryModelConfiguration: { method: 'PUT', pathTemplate: '/api/v1/memory-model-configuration', requestMode: 'json', responseMode: 'json' },
+  getMemoryReindexStatus: { method: 'GET', pathTemplate: '/api/v1/memory-reindex', requestMode: 'none', responseMode: 'json' },
+  resumeMemoryReindex: { method: 'POST', pathTemplate: '/api/v1/memory-reindex/resume', requestMode: 'json', responseMode: 'json' },
+  listAgentMemoryPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', requestMode: 'none', responseMode: 'json' },
+  createAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies', requestMode: 'json', responseMode: 'json' },
+  attachAgentMemoryPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/memory-policies/{policy_revision_id}/attach', requestMode: 'json', responseMode: 'json' },
+  listAgentToolPolicies: { method: 'GET', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', requestMode: 'none', responseMode: 'json' },
+  createAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies', requestMode: 'json', responseMode: 'json' },
+  attachAgentToolPolicy: { method: 'POST', pathTemplate: '/api/v1/agents/{agent_profile_id}/tool-policies/{tool_policy_revision_id}/attach', requestMode: 'json', responseMode: 'json' },
+  listReminders: { method: 'GET', pathTemplate: '/api/v1/reminders', requestMode: 'none', responseMode: 'json' },
+  createReminder: { method: 'POST', pathTemplate: '/api/v1/reminders', requestMode: 'json', responseMode: 'json' },
+  getReminder: { method: 'GET', pathTemplate: '/api/v1/reminders/{reminder_id}', requestMode: 'none', responseMode: 'json' },
+  completeReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/complete', requestMode: 'json', responseMode: 'json' },
+  cancelReminder: { method: 'POST', pathTemplate: '/api/v1/reminders/{reminder_id}/cancel', requestMode: 'json', responseMode: 'json' },
+  listReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series', requestMode: 'none', responseMode: 'json' },
+  createReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series', requestMode: 'json', responseMode: 'json' },
+  getReminderSeries: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}', requestMode: 'none', responseMode: 'json' },
+  listReminderSeriesOccurrences: { method: 'GET', pathTemplate: '/api/v1/reminder-series/{series_id}/occurrences', requestMode: 'none', responseMode: 'json' },
+  updateReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/update', requestMode: 'json', responseMode: 'json' },
+  pauseReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/pause', requestMode: 'json', responseMode: 'json' },
+  resumeReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/resume', requestMode: 'json', responseMode: 'json' },
+  skipNextReminderSeriesOccurrence: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/skip-next', requestMode: 'json', responseMode: 'json' },
+  cancelReminderSeries: { method: 'POST', pathTemplate: '/api/v1/reminder-series/{series_id}/cancel', requestMode: 'json', responseMode: 'json' },
+  listApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals', requestMode: 'none', responseMode: 'json' },
+  getApproval: { method: 'GET', pathTemplate: '/api/v1/approvals/{approval_id}', requestMode: 'none', responseMode: 'json' },
+  approveApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/approve', requestMode: 'json', responseMode: 'json' },
+  rejectApproval: { method: 'POST', pathTemplate: '/api/v1/approvals/{approval_id}/reject', requestMode: 'json', responseMode: 'json' },
+  streamApprovals: { method: 'GET', pathTemplate: '/api/v1/approvals/stream', requestMode: 'none', responseMode: 'event-stream' },
+  listNotifications: { method: 'GET', pathTemplate: '/api/v1/notifications', requestMode: 'none', responseMode: 'json' },
+  getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', requestMode: 'none', responseMode: 'json' },
+  acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', requestMode: 'json', responseMode: 'json' },
+  streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
+  createDocumentUpload: { method: 'POST', pathTemplate: '/api/v1/documents/uploads', requestMode: 'json', responseMode: 'json' },
+  uploadDocumentContent: { method: 'PUT', pathTemplate: '/api/v1/documents/uploads/{upload_id}/content', requestMode: 'binary', responseMode: 'json' },
+  listDocuments: { method: 'GET', pathTemplate: '/api/v1/documents', requestMode: 'none', responseMode: 'json' },
+  searchDocuments: { method: 'POST', pathTemplate: '/api/v1/documents/search', requestMode: 'json', responseMode: 'json' },
+  getDocument: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}', requestMode: 'none', responseMode: 'json' },
+  deleteDocument: { method: 'DELETE', pathTemplate: '/api/v1/documents/{document_id}', requestMode: 'json', responseMode: 'json' },
+  downloadDocument: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/content', requestMode: 'none', responseMode: 'binary' },
+  getDocumentPreview: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/preview', requestMode: 'none', responseMode: 'json' },
+  retryDocumentProcessing: { method: 'POST', pathTemplate: '/api/v1/documents/{document_id}/retry', requestMode: 'json', responseMode: 'json' },
+  getLiveness: { method: 'GET', pathTemplate: '/health/live', requestMode: 'none', responseMode: 'json' },
+  getReadiness: { method: 'GET', pathTemplate: '/health/ready', requestMode: 'none', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

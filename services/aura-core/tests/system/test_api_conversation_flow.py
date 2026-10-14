@@ -160,6 +160,629 @@ async def test_owner_authentication_csrf_and_lazy_idempotent_creation(api_app: F
 
 
 @pytest.mark.asyncio
+async def test_branch_and_regeneration_api_preserve_original_and_hide_cross_owner_existence(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    other, other_session = await owner_client(api_app, subject="other-owner")
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "original question", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        original_message_id = accepted["userMessage"]["id"]
+        source_message_id = original_message_id
+        original_run_id = accepted["run"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(original_run_id), api_app.state.aura.provider
+        )
+
+        version = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()["version"]
+        later = await client.post(
+            f"/api/v1/conversations/{conversation_id}/runs",
+            headers=headers(str(uuid4())),
+            json={
+                "message": "later question",
+                "conversationVersion": version,
+            },
+        )
+        assert later.status_code == 202, later.text
+        later_payload = later.json()
+        source_message_id = later_payload["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(later_payload["run"]["id"]), api_app.state.aura.provider
+        )
+        version = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()["version"]
+        branch_key = str(uuid4())
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(branch_key),
+            json={
+                "sourceUserMessageId": source_message_id,
+                "message": "corrected question",
+                "conversationVersion": version,
+            },
+        )
+        assert branch.status_code == 202, branch.text
+        branch_payload = branch.json()
+        assert branch_payload["branch"]["id"]
+        assert branch_payload["run"]["branchId"] == branch_payload["branch"]["id"]
+        replay = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(branch_key),
+            json={
+                "sourceUserMessageId": source_message_id,
+                "message": "corrected question",
+                "conversationVersion": version,
+            },
+        )
+        assert replay.status_code == 202
+        assert replay.json()["branch"]["id"] == branch_payload["branch"]["id"]
+
+        await api_app.state.aura.coordinator.execute(
+            UUID(branch_payload["run"]["id"]), api_app.state.aura.provider
+        )
+        updated = await client.get(f"/api/v1/conversations/{conversation_id}")
+        assert updated.status_code == 200
+        original_detail = updated.json()
+        assert original_detail["messages"][0]["content"] == "original question"
+        assert original_detail["messages"][0]["id"] == original_message_id
+
+        branches = await client.get(f"/api/v1/conversations/{conversation_id}/branches")
+        assert branches.status_code == 200
+        assert len(branches.json()["items"]) == 2
+        invalid_cursor = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            params={"cursor": str(uuid4())},
+        )
+        assert invalid_cursor.status_code == 400
+        missing_conversation = await client.get(f"/api/v1/conversations/{uuid4()}/branches")
+        assert missing_conversation.status_code == 404
+        branch_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{branch_payload['branch']['id']}"
+        )
+        assert branch_detail.status_code == 200
+        assert [item["content"] for item in branch_detail.json()["messages"]] == [
+            "original question",
+            "Hello from Aura.",
+            "corrected question",
+            "Hello from Aura.",
+        ]
+
+        current_version = original_detail["version"]
+        regenerated = await client.post(
+            f"/api/v1/runs/{original_run_id}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": current_version},
+        )
+        assert regenerated.status_code == 202
+        regenerated_payload = regenerated.json()
+        assert regenerated_payload["run"]["regeneratedFromRunId"] == original_run_id
+        assert regenerated_payload["run"]["retryOfRunId"] is None
+        assert regenerated_payload["run"]["branchId"] != branch_payload["branch"]["id"]
+
+        regeneration_spans = [
+            item
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.kind == "span"
+            and item.component_id == "aura.execution.run_coordinator"
+            and item.metric == "run.regenerate"
+            and dict(item.dimensions).get("outcome") == "ok"
+        ]
+        assert regeneration_spans
+        span_attributes = dict(regeneration_spans[-1].trace_attributes)
+        assert span_attributes["run_id"] == regenerated_payload["run"]["id"]
+        assert span_attributes["conversation_id"] == conversation_id
+        assert "regenerated_from_run_id" not in span_attributes or span_attributes[
+            "regenerated_from_run_id"
+        ] == original_run_id
+
+        failed_regeneration = await client.post(
+            f"/api/v1/runs/{original_run_id}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": version},
+        )
+        assert failed_regeneration.status_code == 409
+        regeneration_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric == "conversation_regeneration_outcome"
+        }
+        assert {"ok", "conflict"} <= regeneration_outcomes
+
+        # Version conflicts do not create an additional branch.
+        stale = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={
+                "sourceUserMessageId": source_message_id,
+                "message": "stale edit",
+                "conversationVersion": version,
+            },
+        )
+        assert stale.status_code == 409
+
+        denied = await other.get(f"/api/v1/conversations/{conversation_id}/branches")
+        assert denied.status_code == 403
+        denied_create = await other.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers={"X-CSRF-Token": other_session.csrf_token, "Idempotency-Key": str(uuid4())},
+            json={
+                "sourceUserMessageId": source_message_id,
+                "message": "cross owner",
+                "conversationVersion": current_version,
+            },
+        )
+        assert denied_create.status_code == 403
+
+        owner_denial_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric
+            in {"conversation_branch_creation_outcome", "conversation_branch_load_outcome"}
+        }
+        assert "denied" in owner_denial_outcomes
+
+        missing_branch = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{uuid4()}"
+        )
+        assert missing_branch.status_code == 404
+
+        load_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric == "conversation_branch_load_outcome"
+        }
+        assert {"ok", "not_found", "error"} <= load_outcomes
+        create_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric == "conversation_branch_creation_outcome"
+        }
+        assert {"ok", "conflict"} <= create_outcomes
+        for measurement in api_app.state.aura.metrics.snapshot():
+            if measurement.metric not in {
+                "conversation_branch_creation_outcome",
+                "conversation_branch_load_outcome",
+                "conversation_regeneration_outcome",
+            }:
+                continue
+            rendered = repr(measurement).lower()
+            assert not any(
+                forbidden in rendered
+                for forbidden in ("message", "prompt", "response", "content", "payload")
+            )
+    finally:
+        await client.aclose()
+        await other.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_run_on_selected_branch_preserves_branch_lineage(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "root question", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        root_user_id = accepted["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(accepted["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        root_branch_id = detail["branches"][0]["id"]
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={
+                "sourceUserMessageId": root_user_id,
+                "message": "alternative question",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert branch.status_code == 202
+        branch_payload = branch.json()
+        await api_app.state.aura.coordinator.execute(
+            UUID(branch_payload["run"]["id"]), api_app.state.aura.provider
+        )
+
+        current = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        selected = await client.post(
+            f"/api/v1/conversations/{conversation_id}/runs",
+            headers=headers(str(uuid4())),
+            json={
+                "message": "continue from the original branch",
+                "conversationVersion": current["version"],
+                "branchId": root_branch_id,
+            },
+        )
+        assert selected.status_code == 202, selected.text
+        assert selected.json()["run"]["branchId"] == root_branch_id
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_first_local_edit_branch_detail_excludes_legacy_siblings(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "legacy root question", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        source_message_id = accepted["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(accepted["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={
+                "sourceUserMessageId": source_message_id,
+                "message": "first local correction",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert branch.status_code == 202
+        await api_app.state.aura.coordinator.execute(
+            UUID(branch.json()["run"]["id"]), api_app.state.aura.provider
+        )
+        branch_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{branch.json()['branch']['id']}"
+        )
+        assert branch_detail.status_code == 200
+        assert [item["content"] for item in branch_detail.json()["messages"]] == [
+            "first local correction",
+            "Hello from Aura.",
+        ]
+        assert "legacy root question" not in branch_detail.text
+
+        branch_payload = branch.json()
+        regenerate = await client.post(
+            f"/api/v1/runs/{branch_payload['run']['id']}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": branch_payload["conversation"]["version"]},
+        )
+        assert regenerate.status_code == 202, regenerate.text
+        regenerated_payload = regenerate.json()
+        regenerated_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/"
+            f"{regenerated_payload['branch']['id']}"
+        )
+        assert regenerated_detail.status_code == 200
+        regenerated_runs = regenerated_detail.json()["recentRuns"]
+        assert any(
+            item["regeneratedFromRunId"] == branch_payload["run"]["id"]
+            for item in regenerated_runs
+        )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_editing_earlier_ancestor_from_descendant_truncates_branch_context(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "q1", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        q2_id = accepted["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(accepted["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        q2 = await client.post(
+            f"/api/v1/conversations/{conversation_id}/runs",
+            headers=headers(str(uuid4())),
+            json={
+                "message": "q2",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert q2.status_code == 202
+        q2_id = q2.json()["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(q2.json()["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        q3 = await client.post(
+            f"/api/v1/conversations/{conversation_id}/runs",
+            headers=headers(str(uuid4())),
+            json={
+                "message": "q3",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert q3.status_code == 202
+        await api_app.state.aura.coordinator.execute(
+            UUID(q3.json()["run"]["id"]), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={
+                "sourceUserMessageId": q2_id,
+                "message": "q2b",
+                "conversationVersion": detail["version"],
+            },
+        )
+        assert branch.status_code == 202, branch.text
+        branch_payload = branch.json()
+        await api_app.state.aura.coordinator.execute(
+            UUID(branch_payload["run"]["id"]), api_app.state.aura.provider
+        )
+        branch_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{branch_payload['branch']['id']}"
+        )
+        assert branch_detail.status_code == 200
+        contents = [item["content"] for item in branch_detail.json()["messages"]]
+        assert contents == ["q1", "Hello from Aura.", "q2b", "Hello from Aura."]
+        assert all(item not in contents for item in ("q2", "q3"))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_root_detail_excludes_regenerated_alternative_run(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "root question", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        original_run_id = accepted["run"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(original_run_id), api_app.state.aura.provider
+        )
+        detail = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()
+        regenerated = await client.post(
+            f"/api/v1/runs/{original_run_id}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": detail["version"]},
+        )
+        assert regenerated.status_code == 202, regenerated.text
+        regenerated_run_id = regenerated.json()["run"]["id"]
+        regenerated_branch_id = regenerated.json()["run"]["branchId"]
+        queued_root_detail = await client.get(f"/api/v1/conversations/{conversation_id}")
+        assert queued_root_detail.status_code == 200
+        queued_root_payload = queued_root_detail.json()
+        root_branch_ids = {
+            item["id"]
+            for item in queued_root_payload.get("branches", [])
+            if item.get("parentBranchId") is None
+        }
+        current_root_run = queued_root_payload.get("currentRun")
+        assert current_root_run is None or current_root_run.get("branchId") in root_branch_ids
+        listed_branches = await client.get(f"/api/v1/conversations/{conversation_id}/branches")
+        assert listed_branches.status_code == 200
+        assert regenerated_branch_id in {
+            item["id"] for item in listed_branches.json()["items"]
+        }
+        queued_branch_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{regenerated_branch_id}"
+        )
+        assert queued_branch_detail.status_code == 200
+        assert regenerated_run_id in {
+            item["id"] for item in queued_branch_detail.json()["recentRuns"]
+        }
+        await api_app.state.aura.coordinator.execute(
+            UUID(regenerated_run_id), api_app.state.aura.provider
+        )
+        root_detail = await client.get(f"/api/v1/conversations/{conversation_id}")
+        assert root_detail.status_code == 200
+        recent_runs = root_detail.json()["recentRuns"]
+        assert original_run_id in {item["id"] for item in recent_runs}
+        assert regenerated_run_id not in {item["id"] for item in recent_runs}
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_regeneration_emits_success_and_conflict_telemetry(api_app: FastAPI) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "regeneration telemetry", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        source_run_id = accepted["run"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(source_run_id), api_app.state.aura.provider
+        )
+        stale_version = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()[
+            "version"
+        ]
+
+        regenerated = await client.post(
+            f"/api/v1/runs/{source_run_id}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": stale_version},
+        )
+        assert regenerated.status_code == 202
+        success_metrics = api_app.state.aura.metrics.snapshot()
+        success_spans = [
+            item
+            for item in success_metrics
+            if item.kind == "span"
+            and item.metric == "run.regenerate"
+            and dict(item.dimensions).get("outcome") == "ok"
+        ]
+        assert success_spans
+        assert dict(success_spans[-1].trace_attributes)["run_id"] == regenerated.json()["run"]["id"]
+
+        failed = await client.post(
+            f"/api/v1/runs/{source_run_id}/regenerate",
+            headers=headers(str(uuid4())),
+            json={"conversationVersion": stale_version},
+        )
+        assert failed.status_code == 409
+        outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric == "conversation_regeneration_outcome"
+        }
+        assert {"ok", "conflict"} <= outcomes
+        assert all(
+            not any(
+                forbidden in repr(item).lower()
+                for forbidden in ("message", "prompt", "response", "content", "payload")
+            )
+            for item in api_app.state.aura.metrics.snapshot()
+            if item.metric in {"conversation_regeneration_outcome", "run.regenerate"}
+        )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_branch_telemetry_records_replay_load_conflict_and_cursor_outcomes(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    try:
+        def headers(key: str) -> dict[str, str]:
+            return {"X-CSRF-Token": session.csrf_token, "Idempotency-Key": key}
+
+        created = await client.post(
+            "/api/v1/conversations",
+            headers=headers(str(uuid4())),
+            json={"message": "branch telemetry", "modelId": "chat"},
+        )
+        assert created.status_code == 202
+        accepted = created.json()
+        conversation_id = accepted["conversation"]["id"]
+        source_message_id = accepted["userMessage"]["id"]
+        await api_app.state.aura.coordinator.execute(
+            UUID(accepted["run"]["id"]), api_app.state.aura.provider
+        )
+        version = (await client.get(f"/api/v1/conversations/{conversation_id}")).json()["version"]
+        branch_key = str(uuid4())
+        payload = {
+            "sourceUserMessageId": source_message_id,
+            "message": "branch telemetry correction",
+            "conversationVersion": version,
+        }
+        branch = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(branch_key),
+            json=payload,
+        )
+        assert branch.status_code == 202
+        replay = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(branch_key),
+            json=payload,
+        )
+        assert replay.status_code == 202
+        await api_app.state.aura.coordinator.execute(
+            UUID(branch.json()["run"]["id"]), api_app.state.aura.provider
+        )
+        idempotency_conflict = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(branch_key),
+            json={**payload, "message": "different idempotency payload"},
+        )
+        assert idempotency_conflict.status_code == 409
+        loaded = await client.get(f"/api/v1/conversations/{conversation_id}/branches")
+        assert loaded.status_code == 200
+        branch_detail = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches/{branch.json()['branch']['id']}"
+        )
+        assert branch_detail.status_code == 200
+        invalid_cursor = await client.get(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            params={"cursor": str(uuid4())},
+        )
+        assert invalid_cursor.status_code == 400
+        missing = await client.get(f"/api/v1/conversations/{uuid4()}/branches")
+        assert missing.status_code == 404
+        stale = await client.post(
+            f"/api/v1/conversations/{conversation_id}/branches",
+            headers=headers(str(uuid4())),
+            json={**payload, "conversationVersion": version},
+        )
+        assert stale.status_code == 409
+
+        metrics = api_app.state.aura.metrics.snapshot()
+        load_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in metrics
+            if item.metric == "conversation_branch_load_outcome"
+        }
+        assert {"ok", "not_found", "error"} <= load_outcomes
+        create_outcomes = {
+            dict(item.dimensions).get("outcome")
+            for item in metrics
+            if item.metric == "conversation_branch_creation_outcome"
+        }
+        assert {"ok", "conflict", "idempotent"} <= create_outcomes
+        assert sum(
+            item.metric == "conversation_branch_creation_outcome"
+            and dict(item.dimensions).get("outcome") == "ok"
+            for item in metrics
+        ) >= 2
+        assert api_app.state.aura.metrics.stats().rejected == 0
+        assert all(
+            not any(
+                forbidden in repr(item).lower()
+                for forbidden in ("message", "prompt", "response", "content", "payload")
+            )
+            for item in metrics
+            if item.metric
+            in {"conversation_branch_load_outcome", "conversation_branch_creation_outcome"}
+        )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_recent_conversation_pages_follow_accepted_user_activity(api_app: FastAPI) -> None:
     """Metadata updates and pagination must not make a conversation look active."""
 

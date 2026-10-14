@@ -1,6 +1,6 @@
 component:
   id: aura.interaction.conversation_persistence
-  version: 1.6.0
+  version: 1.7.0
   owner: aura-core
   category: persistence
 input:
@@ -15,6 +15,9 @@ output:
 dependencies:
   - postgresql
   - conversation_store
+evaluators:
+  - conversation_branch_context_isolation
+  - conversation_regeneration_evidence_freshness
 metrics:
   - checkpoint_persisted
   - conversation_list_duration_ms
@@ -24,6 +27,9 @@ metrics:
   - model_selection_persisted
   - persistence_duration_ms
   - title_persistence_duration_ms
+  - conversation_branch_creation_outcome
+  - conversation_branch_load_outcome
+  - conversation_regeneration_outcome
   - errors
 metric_semantics:
   checkpoint_persisted: Partial assistant output committed before a stream event is published.
@@ -31,13 +37,16 @@ metric_semantics:
   conversation_metadata_mutation_duration_ms: Owner-scoped rename/archive/restore persistence duration; failed requests use unknown archive state.
   conversation_filter_outcome: Count of metadata-filtered listing outcomes by bounded outcome and archive state.
   conversation_archive_outcome: Count of archive/restore outcomes by bounded outcome and resulting archive state; failed mutations use unknown.
+  conversation_branch_creation_outcome: Owner-scoped immutable branch creation outcome; branch and message content are excluded.
+  conversation_branch_load_outcome: Owner-scoped branch listing/load outcome with bounded result count; branch content is excluded.
+  conversation_regeneration_outcome: Owner-scoped governed regeneration outcome; source and regenerated identifiers are metadata-only.
   model_selection_persisted: Model and immutable policy references committed successfully.
   persistence_duration_ms: Component-local persistence boundary duration from a parented span.
   title_persistence_duration_ms: Conditional derived-title persistence duration without a configuration-version update.
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [provider, error_class, dependency, outcome, archive_state]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, model_id, agent_revision_id, model_policy_revision_id, title_input_size, title_output_size, result_count]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id, model_id, agent_revision_id, model_policy_revision_id, title_input_size, title_output_size, result_count]
   prohibited: [prompt, response, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

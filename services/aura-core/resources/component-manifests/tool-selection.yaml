@@ -1,6 +1,6 @@
 component:
   id: aura.runtime.tool_selection
-  version: 1.3.0
+  version: 1.4.0
   owner: runtime.tools
   category: selection
 input:
@@ -20,10 +20,12 @@ metrics:
   - tool_selection_outcome
   - reminder_create_tool_outcome
   - reminder_tool_selection_outcome
+  - document_search_tool_selection
 metric_semantics:
   tool_selection_duration_ms: Bounded native provider selection duration.
   tool_selection_outcome: Content-free selection branch outcome.
   reminder_tool_selection_outcome: Content-free reminder selection branch outcome; no tool arguments or target query are captured.
+  document_search_tool_selection: Content-free document.search@1 selection outcome.
 capture_policy: metadata_only
 evaluators:
   - tool_selection_quality

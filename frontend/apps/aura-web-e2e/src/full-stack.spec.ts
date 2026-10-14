@@ -448,6 +448,78 @@ async function selectSecondChatModel(page: Page): Promise<string> {
   return modelId;
 }
 
+function pdfFixture(text: string): Buffer {
+  const placeholder = 'Owner-private retrieval fixture. The grounded answer must cite this marker: AURA_E2E_DOCUMENT_SEARCH_CITATION_00000000-0000-4000-8000-000000000000.';
+  const template = Buffer.from(
+    'JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Ci9Gb250IDw8Ci9GMSA1IDAgUgo+Pgo+PgovTWVkaWFCb3ggWyAwLjAgMC4wIDYxMiA3OTIgXQovUGFyZW50IDIgMCBSCi9Db250ZW50cyA2IDAgUgo+PgplbmRvYmoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0xlbmd0aCAxNzgKPj4Kc3RyZWFtCkJUIC9GMSAxMiBUZiA3MiA3MjAgVGQgKE93bmVyLXByaXZhdGUgcmV0cmlldmFsIGZpeHR1cmUuIFRoZSBncm91bmRlZCBhbnN3ZXIgbXVzdCBjaXRlIHRoaXMgbWFya2VyOiBBVVJBX0UyRV9ET0NVTUVOVF9TRUFSQ0hfQ0lUQVRJT05fMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAKMDAwMDAwMDA1NCAwMDAwMCBuIAowMDAwMDAwMTEzIDAwMDAwIG4gCjAwMDAwMDAxNjIgMDAwMDAgbiAKMDAwMDAwMDI5NCAwMDAwMCBuIAowMDAwMDAwMzY0IDAwMDAwIG4gCnRyYWlsZXIKPDwKL1NpemUgNwovUm9vdCAzIDAgUgovSW5mbyAxIDAgUgo+PgpzdGFydHhyZWYKNTkzCiUlRU9GCg==',
+    'base64',
+  );
+  const source = Buffer.from(text, 'ascii');
+  const marker = Buffer.from(placeholder, 'ascii');
+  if (source.byteLength !== marker.byteLength) throw new Error('PDF fixture text length must remain stable');
+  const offset = template.indexOf(marker);
+  if (offset < 0) throw new Error('pypdf PDF fixture placeholder was not found');
+  source.copy(template, offset);
+  return template;
+}
+
+function crc32(data: Buffer): number {
+  let value = 0xffffffff;
+  for (const byte of data) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function docxFixture(text: string): Buffer {
+  const escapeXml = (value: string): string => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const entries = [
+    ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
+    ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
+    ['word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p></w:body></w:document>`],
+  ].map(([name, value]) => ({ name, data: Buffer.from(value, 'utf8') }));
+  const localChunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const checksum = crc32(entry.data);
+    const local = Buffer.alloc(30 + name.byteLength + entry.data.byteLength);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(entry.data.byteLength, 18);
+    local.writeUInt32LE(entry.data.byteLength, 22);
+    local.writeUInt16LE(name.byteLength, 26);
+    name.copy(local, 30);
+    entry.data.copy(local, 30 + name.byteLength);
+    localChunks.push(local);
+
+    const central = Buffer.alloc(46 + name.byteLength);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(entry.data.byteLength, 20);
+    central.writeUInt32LE(entry.data.byteLength, 24);
+    central.writeUInt16LE(name.byteLength, 28);
+    central.writeUInt32LE(offset, 42);
+    name.copy(central, 46);
+    centralChunks.push(central);
+    offset += local.byteLength;
+  }
+  const localData = Buffer.concat(localChunks);
+  const centralData = Buffer.concat(centralChunks);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralData.byteLength, 12);
+  end.writeUInt32LE(localData.byteLength, 16);
+  return Buffer.concat([localData, centralData, end]);
+}
+
 async function sendAndWaitForAssistant(page: Page, text: string): Promise<void> {
   const composer = page.getByRole('textbox', { name: 'Message Aura' });
   await composer.fill(text);
@@ -491,6 +563,187 @@ for (const mode of configuredModes) {
         const parsed = new URL(url);
         expect(parsed.search).not.toMatch(/token|authorization|access_token/i);
       }
+    });
+
+    test('AURA_E2E_DOCUMENT_SEARCH_CITATION uploads, retrieves, cites, and deletes all supported formats', async ({ page }) => {
+      await runDocumentSearchCitationAcceptance(page, mode);
+    });
+
+    test('AURA_E2E_CONVERSATION_BRANCHING edits, regenerates, switches, and preserves the original', async ({ page }) => {
+      const config = stackConfig(mode);
+      test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run conversation branching acceptance`);
+      if (!config) return;
+      test.setTimeout(180_000);
+
+      await signIn(page, config);
+      await waitForModelCatalog(page);
+      await closeConversationOptions(page);
+      const originalPrompt = `branch-original-${mode}-${Date.now()}`;
+      await sendAndWaitForAssistant(page, originalPrompt);
+      const conversationId = page.url().match(/\/conversation\/([^/?]+)/)?.[1];
+      expect(conversationId).toBeTruthy();
+      if (!conversationId) return;
+
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      const initialResponse = await page.request.get(new URL(`/api/v1/conversations/${conversationId}`, config.baseUrl).toString());
+      expect(initialResponse.ok(), await initialResponse.text()).toBeTruthy();
+      const initialDetail = await initialResponse.json() as ConversationDetailResponse;
+      const messages = (initialDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+      const originalMessage = messages.find((item) => item['role'] === 'user');
+      const runs = (initialDetail['recentRuns'] as Array<JsonObject> | undefined) ?? [];
+      const originalRun = runs.find((item) => item['userMessageId'] === originalMessage?.['id']);
+      expect(typeof originalMessage?.['id']).toBe('string');
+      expect(typeof originalRun?.['id']).toBe('string');
+      if (typeof originalMessage?.['id'] !== 'string' || typeof originalRun?.['id'] !== 'string') return;
+
+      const correctedPrompt = `${originalPrompt}-corrected`;
+      const transcriptUserMessage = (content: string) =>
+        page
+          .getByRole('main')
+          .getByRole('article', { name: 'Your message' })
+          .getByText(content, { exact: true });
+      const editAndBranch = page.getByRole('button', { name: 'Edit and branch' }).first();
+      await expect(editAndBranch).toBeEnabled();
+      await editAndBranch.click();
+      const editor = page.getByRole('textbox', { name: 'Edit your message' });
+      await expect(editor).toBeVisible();
+      await editor.fill(correctedPrompt);
+      await page.getByRole('button', { name: 'Create branch' }).click();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/Branch 2 of 2/, { exact: true })).toBeVisible();
+
+      const previous = page.getByRole('button', { name: 'Previous conversation branch' });
+      const next = page.getByRole('button', { name: 'Next conversation branch' });
+      await expect(previous).toBeEnabled();
+      await expect(next).toBeDisabled();
+
+      const branchListUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches?limit=100`,
+        config.baseUrl,
+      ).toString();
+      let editedBranchId: string | undefined;
+      let editedBranchRun: (RunDetail & JsonObject) | undefined;
+      let editedBranchDetail: ConversationDetailResponse = {};
+      await expect.poll(async () => {
+        const response = await page.request.get(branchListUrl);
+        if (!response.ok()) return false;
+        const payload = await response.json() as JsonObject;
+        const branches = (payload['items'] as Array<JsonObject> | undefined) ?? [];
+        const editedBranch = branches.find(
+          (item) => item['forkedFromMessageId'] === originalMessage['id'] && typeof item['id'] === 'string',
+        );
+        editedBranchId = typeof editedBranch?.['id'] === 'string' ? editedBranch['id'] : undefined;
+        return editedBranchId ?? false;
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBeTruthy();
+      expect(editedBranchId).toBeTruthy();
+      if (!editedBranchId) return;
+
+      const editedBranchUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches/${editedBranchId}`,
+        config.baseUrl,
+      ).toString();
+      await expect.poll(async () => {
+        const response = await page.request.get(editedBranchUrl);
+        if (!response.ok()) return false;
+        editedBranchDetail = await response.json() as ConversationDetailResponse;
+        const editedMessages = (editedBranchDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+        const editedAssistant = editedMessages.find((item) => item['role'] === 'assistant');
+        editedBranchRun = editedBranchDetail.recentRuns?.find(
+          (item) => item['branchId'] === editedBranchId && item['status'] === 'completed',
+        );
+        return Boolean(editedAssistant && editedBranchRun && typeof editedBranchRun['id'] === 'string');
+      }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      const editedMessages = (editedBranchDetail['messages'] as Array<JsonObject> | undefined) ?? [];
+      expect(editedMessages.some((item) => item['role'] === 'assistant')).toBe(true);
+      expect(editedBranchRun).toMatchObject({ branchId: editedBranchId, status: 'completed', error: null });
+      const editedBranchRunId = editedBranchRun?.['id'];
+      expect(typeof editedBranchRunId).toBe('string');
+      if (typeof editedBranchRunId !== 'string') return;
+      await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/Branch 2 of 2/, { exact: true })).toBeVisible();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible();
+      const selectedRegenerate = page.getByRole('button', { name: 'Regenerate' }).last();
+      await expect(selectedRegenerate).toBeEnabled();
+
+      const initialBranchesResponse = await page.request.get(branchListUrl);
+      expect(initialBranchesResponse.ok(), await initialBranchesResponse.text()).toBeTruthy();
+      const initialBranchesPayload = await initialBranchesResponse.json() as JsonObject;
+      const initialBranchIds = new Set<string>();
+      for (const item of (initialBranchesPayload['items'] as Array<JsonObject> | undefined) ?? []) {
+        if (typeof item['id'] === 'string') initialBranchIds.add(item['id']);
+      }
+
+      await selectedRegenerate.click();
+      await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 30_000 });
+      let regeneratedBranchId: string | undefined;
+      await expect.poll(async () => {
+        const response = await page.request.get(branchListUrl);
+        if (!response.ok()) return false;
+        const payload = await response.json() as JsonObject;
+        const branches = (payload['items'] as Array<JsonObject> | undefined) ?? [];
+        const regeneratedBranch = branches.find(
+          (item) => typeof item['id'] === 'string' && !initialBranchIds.has(item['id']),
+        );
+        regeneratedBranchId = typeof regeneratedBranch?.['id'] === 'string'
+          ? regeneratedBranch['id']
+          : undefined;
+        return regeneratedBranchId ?? false;
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBeTruthy();
+      expect(regeneratedBranchId).toBeTruthy();
+      if (!regeneratedBranchId) return;
+
+      const regeneratedBranchUrl = new URL(
+        `/api/v1/conversations/${conversationId}/branches/${regeneratedBranchId}`,
+        config.baseUrl,
+      ).toString();
+      let regeneratedBranchDetail: ConversationDetailResponse = {};
+      let regeneratedRun: (RunDetail & JsonObject) | undefined;
+      await expect.poll(async () => {
+        const response = await page.request.get(regeneratedBranchUrl);
+        if (!response.ok()) return false;
+        regeneratedBranchDetail = await response.json() as ConversationDetailResponse;
+        regeneratedRun = regeneratedBranchDetail.recentRuns?.find(
+          (item) => item['regeneratedFromRunId'] === editedBranchRunId,
+        );
+        return Boolean(regeneratedRun && typeof regeneratedRun['id'] === 'string');
+      }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+      expect(regeneratedRun).toMatchObject({ regeneratedFromRunId: editedBranchRunId });
+      const regeneratedRunId = regeneratedRun?.['id'];
+      expect(typeof regeneratedRunId).toBe('string');
+      if (typeof regeneratedRunId !== 'string') return;
+
+      await expect.poll(async () => {
+        const response = await page.request.get(regeneratedBranchUrl);
+        if (!response.ok()) return false;
+        regeneratedBranchDetail = await response.json() as ConversationDetailResponse;
+        const completedRun = regeneratedBranchDetail.recentRuns?.find(
+          (item) => item['id'] === regeneratedRunId,
+        );
+        return completedRun?.status === 'completed';
+      }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      const completedRegeneratedRun = regeneratedBranchDetail.recentRuns?.find(
+        (item) => item['id'] === regeneratedRunId,
+      );
+      expect(completedRegeneratedRun).toMatchObject({ status: 'completed', error: null });
+
+      await expect(page.getByText(/Branch 3 of 3/, { exact: true })).toBeVisible();
+      await expect(previous).toBeEnabled();
+      await expect(next).toBeDisabled();
+      await previous.click();
+      await expect(transcriptUserMessage(correctedPrompt)).toBeVisible();
+      await expect(page.getByText(/Branch 2 of 3/, { exact: true })).toBeVisible();
+      await previous.click();
+      await expect(transcriptUserMessage(originalPrompt)).toBeVisible();
+      await expect(page.getByText(/Branch 1 of 3/, { exact: true })).toBeVisible();
+      await expect(next).toBeEnabled();
+
+      const originalAfter = await page.request.get(new URL(`/api/v1/conversations/${conversationId}`, config.baseUrl).toString());
+      expect(originalAfter.ok(), await originalAfter.text()).toBeTruthy();
+      const originalPayload = await originalAfter.json() as ConversationDetailResponse;
+      const originalMessages = (originalPayload['messages'] as Array<JsonObject> | undefined) ?? [];
+      expect(originalMessages.some((item) => item['content'] === originalPrompt)).toBe(true);
+      expect(originalMessages.some((item) => item['content'] === correctedPrompt)).toBe(false);
+      expect(originalMessages.filter((item) => item['content'] === originalPrompt)).toHaveLength(1);
     });
 
     test('fires one durable reminder notification and catches up after SSE reconnect', async ({ page }) => {
@@ -654,9 +907,9 @@ for (const mode of configuredModes) {
       const approve = detail.getByRole('button', { name: 'Approve', exact: true });
       await expect(approve).toBeVisible();
       let approvalDecisionPosts = 0;
-      let approvalDecisionResponses: number[] = [];
-      let approvalDecisionResponseBodies: string[] = [];
-      let approvalDecisionFailures: string[] = [];
+      const approvalDecisionResponses: number[] = [];
+      const approvalDecisionResponseBodies: string[] = [];
+      const approvalDecisionFailures: string[] = [];
       const approvalDecisionPath = `/api/v1/approvals/${pending.id}/approve`;
       const observeApprovalDecision = (request: { method(): string; url(): string }): void => {
         const requestUrl = new URL(request.url());
@@ -893,7 +1146,7 @@ for (const mode of configuredModes) {
       await expect(page.getByRole('heading', { level: 1, name: 'Model settings', exact: true })).toBeVisible({ timeout: 15_000 });
     });
 
-    test('exposes the governed built-in memory-and-reminder tool policy seam', async ({ page }) => {
+    test('exposes the governed built-in document-search tool policy revision seam', async ({ page }) => {
       const config = stackConfig(mode);
       test.skip(!config, `set the ${mode} AURA_E2E_* identity variables to run the tool policy seam`);
       if (!config) return;
@@ -904,6 +1157,7 @@ for (const mode of configuredModes) {
       const tools = (await toolsResponse.json()) as { items?: Array<JsonObject> };
       expect(tools.items).toEqual([
         expect.objectContaining({ id: 'memory.search', version: 1, classification: 'read', permissionScope: 'memory:read' }),
+        expect.objectContaining({ id: 'document.search', version: 1, classification: 'read', permissionScope: 'documents:read', sensitivity: 'restricted', observableComponent: 'aura.runtime.tool_execution' }),
         expect.objectContaining({
           id: 'reminder.create',
           version: 1,
@@ -925,7 +1179,7 @@ for (const mode of configuredModes) {
         expect.objectContaining({ id: 'reminder.series.resume', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
         expect.objectContaining({ id: 'reminder.cancel', version: 1, classification: 'mutation', permissionScope: 'reminders:write', confirmation: 'always' }),
       ]);
-      expect(tools.items).toHaveLength(10);
+      expect(tools.items).toHaveLength(11);
       expect(JSON.stringify(tools.items)).not.toMatch(/handler|schema|credential|query|content/i);
 
       const agentsResponse = await page.request.get(new URL('/api/v1/agents', config.baseUrl).toString());
@@ -938,9 +1192,10 @@ for (const mode of configuredModes) {
       expect(policyResponse.ok(), await policyResponse.text()).toBeTruthy();
       const policy = (await policyResponse.json()) as JsonObject;
       const attached = (policy['items'] as Array<JsonObject> | undefined)?.find((item) => item['id'] === policy['attachedPolicyRevisionId']);
-      expect(attached).toMatchObject({ maxCallsPerRun: 1, timeoutMs: 10000, retryLimit: 0 });
+      expect(attached).toMatchObject({ revision: 4, maxCallsPerRun: 1, timeoutMs: 30000, retryLimit: 0 });
       expect(attached?.['grants']).toEqual([
         { toolId: 'memory.search', toolVersion: 1 },
+        { toolId: 'document.search', toolVersion: 1 },
         { toolId: 'reminder.create', toolVersion: 1 },
         { toolId: 'reminder.list', toolVersion: 1 },
         { toolId: 'reminder.inspect', toolVersion: 1 },
@@ -952,5 +1207,261 @@ for (const mode of configuredModes) {
         { toolId: 'reminder.cancel', toolVersion: 1 },
       ]);
     });
+
+    async function runDocumentSearchCitationAcceptance(page: Page, identityMode: IdentityMode): Promise<void> {
+      const config = stackConfig(identityMode);
+      test.skip(!config, `set the ${identityMode} AURA_E2E_* identity variables to run document retrieval acceptance`);
+      if (!config) return;
+      test.setTimeout(300_000);
+
+      await signIn(page, config);
+      const session = await apiSession(page, config);
+      const marker = `AURA_E2E_DOCUMENT_SEARCH_CITATION_${randomUUID()}`;
+      const fixtureText = `Owner-private retrieval fixture. The grounded answer must cite this marker: ${marker}.`;
+      const fixtures = [
+        { filename: `aura-e2e-${identityMode}.pdf`, mediaType: 'application/pdf', content: pdfFixture(fixtureText) },
+        { filename: `aura-e2e-${identityMode}.docx`, mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: docxFixture(fixtureText) },
+        { filename: `aura-e2e-${identityMode}.md`, mediaType: 'text/markdown', content: Buffer.from(`# Grounded fixture\n\n${fixtureText}\n`, 'utf8') },
+        { filename: `aura-e2e-${identityMode}.txt`, mediaType: 'text/plain', content: Buffer.from(fixtureText, 'utf8') },
+      ] as const;
+      const uploadedDocuments: Array<{ id: string; filename: string; version: number; content: Buffer }> = [];
+      for (const fixture of fixtures) {
+        const uploadResponse = await page.request.post(
+          new URL('/api/v1/documents/uploads', config.baseUrl).toString(),
+          {
+            headers: csrfHeaders(session, config.baseUrl),
+            data: { filename: fixture.filename, mediaType: fixture.mediaType, byteCount: fixture.content.byteLength },
+          },
+        );
+        expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
+        const uploadSession = (await uploadResponse.json()) as JsonObject;
+        const uploadId = uploadSession['id'];
+        expect(typeof uploadId).toBe('string');
+        if (typeof uploadId !== 'string') return;
+        const contentResponse = await page.request.put(
+          new URL(`/api/v1/documents/uploads/${uploadId}/content`, config.baseUrl).toString(),
+          {
+            headers: {
+              ...csrfHeaders(session, config.baseUrl),
+              'Content-Type': fixture.mediaType,
+              'Content-Length': String(fixture.content.byteLength),
+              'X-Expected-Version': '1',
+            },
+            data: fixture.content,
+          },
+        );
+        expect(contentResponse.status(), await contentResponse.text()).toBe(202);
+        const receipt = (await contentResponse.json()) as JsonObject;
+        expect(receipt['duplicate']).toBe(false);
+        const document = receipt['document'] as JsonObject | undefined;
+        const documentId = document?.['id'];
+        expect(typeof documentId).toBe('string');
+        if (typeof documentId !== 'string') return;
+        uploadedDocuments.push({ id: documentId, filename: fixture.filename, version: 1, content: fixture.content });
+      }
+
+      let detail: JsonObject = {};
+      const readinessFailures = await Promise.all(uploadedDocuments.map(async (uploaded) => {
+        let lastReadout = 'no response';
+        let delayMs = 1_000;
+        const deadline = Date.now() + 120_000;
+        while (Date.now() < deadline) {
+          try {
+            const response = await page.request.get(new URL(`/api/v1/documents/${uploaded.id}`, config.baseUrl).toString());
+            if (!response.ok()) {
+              const bodyLength = Number(response.headers()['content-length'] ?? 0);
+              lastReadout = `HTTP ${response.status()} bodyLength=${Number.isFinite(bodyLength) ? bodyLength : 0}`;
+              if (response.status() >= 500) {
+                return `Document ${uploaded.filename} detail endpoint returned ${lastReadout}`;
+              }
+            } else {
+              const current = (await response.json()) as JsonObject;
+              const failure = current['failure'];
+              const failureCode = failure && typeof failure === 'object' ? (failure as JsonObject)['code'] : undefined;
+              lastReadout = `status=${String(current['status'])} failure=${String(failureCode ?? 'none')}`;
+              if (typeof current['version'] === 'number') uploaded.version = current['version'];
+              if (uploaded.id === uploadedDocuments[3]?.id) detail = current;
+              if (current['id'] === uploaded.id && current['status'] === 'ready') return null;
+              if (current['status'] === 'failed' || current['status'] === 'deleting') {
+                return `Document ${uploaded.filename} reached terminal state (${lastReadout})`;
+              }
+            }
+          } catch (error: unknown) {
+            const kind = error instanceof Error ? error.name : 'unknown';
+            lastReadout = `request-error=${kind}`;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          delayMs = Math.min(delayMs * 2, 5_000);
+        }
+        return `Document ${uploaded.filename} did not become ready (${lastReadout})`;
+      }));
+      const failedReadiness = readinessFailures.filter((failure): failure is string => failure !== null);
+      expect(failedReadiness, failedReadiness.join('; ')).toEqual([]);
+      const selectedDocument = uploadedDocuments[3];
+      expect(selectedDocument).toBeDefined();
+      if (!selectedDocument) return;
+      const documentId = selectedDocument.id;
+      const selectedFilename = selectedDocument.filename;
+      expect(selectedFilename).toBe(`aura-e2e-${identityMode}.txt`);
+      expect(detail['filename']).toBe(selectedFilename);
+      expect(detail['version']).toEqual(expect.any(Number));
+
+      const libraryResponse = await page.request.get(
+        new URL('/api/v1/documents?limit=100', config.baseUrl).toString(),
+      );
+      expect(libraryResponse.ok(), await libraryResponse.text()).toBeTruthy();
+      const library = (await libraryResponse.json()) as { items?: Array<JsonObject> };
+      for (const uploaded of uploadedDocuments) {
+        expect(library.items?.some((item) => item['id'] === uploaded.id && item['filename'] === uploaded.filename && item['status'] === 'ready')).toBe(true);
+      }
+      if (!documentId) return;
+
+      const searchResponse = await page.request.post(
+        new URL('/api/v1/documents/search', config.baseUrl).toString(),
+        {
+          headers: csrfHeaders(session, config.baseUrl),
+          data: { query: marker, limit: 20 },
+        },
+      );
+      expect(searchResponse.ok(), await searchResponse.text()).toBeTruthy();
+      const searchPayload = (await searchResponse.json()) as { items?: Array<JsonObject> };
+      const hit = searchPayload.items?.find((item) => item['documentId'] === documentId);
+      expect(hit).toMatchObject({
+        documentId,
+        displayName: selectedFilename,
+        evidenceId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      });
+      const evidenceId = hit?.['evidenceId'];
+      expect(typeof evidenceId).toBe('string');
+      if (typeof evidenceId !== 'string') return;
+
+      const downloadResponse = await page.request.get(
+        new URL(`/api/v1/documents/${documentId}/content`, config.baseUrl).toString(),
+      );
+      expect(downloadResponse.status()).toBe(200);
+      expect(await downloadResponse.body()).toEqual(selectedDocument.content);
+
+      // This proves the citation target is an authorized document-detail route,
+      // rather than a model-provided URL or a raw object-store path.
+      await page.goto(new URL(`/documents/${documentId}`, config.baseUrl).toString());
+      await expect(page).toHaveURL(new RegExp(`/documents/${escapeRegExp(documentId)}$`));
+      await expect(page.getByRole('heading', { level: 2, name: selectedFilename, exact: true })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole('heading', { level: 3, name: 'Extracted text preview', exact: true })).toBeVisible({ timeout: 15_000 });
+
+      const conversationResponse = await page.request.post(
+        new URL('/api/v1/conversations', config.baseUrl).toString(),
+        {
+          headers: csrfHeaders(session, config.baseUrl),
+          data: {
+            message: `${marker}: answer with the matching owner-private source.`,
+            modelId: 'fixture-chat',
+            clientTimeZone: 'Europe/Brussels',
+          },
+        },
+      );
+      expect(conversationResponse.status(), await conversationResponse.text()).toBe(202);
+      const accepted = (await conversationResponse.json()) as JsonObject;
+      const conversation = accepted['conversation'] as JsonObject | undefined;
+      const run = accepted['run'] as JsonObject | undefined;
+      const conversationId = conversation?.['id'];
+      const runId = run?.['id'];
+      expect(typeof conversationId).toBe('string');
+      expect(typeof runId).toBe('string');
+      if (typeof conversationId !== 'string' || typeof runId !== 'string') return;
+      const completed = await waitForCompletedRun(page, config, conversationId, runId);
+      const completedRun = completed.recentRuns?.find((item) => item['id'] === runId);
+      expect(completedRun).toMatchObject({ status: 'completed', toolCallLimit: 1, toolCallsUsed: 1 });
+      const messages = completed['messages'];
+      expect(Array.isArray(messages)).toBe(true);
+      const assistant = (messages as Array<JsonObject> | undefined)?.find(
+        (item) => item['role'] === 'assistant' && item['runId'] === runId,
+      );
+      expect(assistant).toBeDefined();
+      expect(assistant?.['content']).toContain('Fixture grounded answer');
+      expect(assistant?.['content']).not.toContain('[[');
+      const citations = assistant?.['citations'];
+      expect(citations).toEqual([
+        expect.objectContaining({
+          documentId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+          locator: expect.any(String),
+        }),
+      ]);
+      expect(citations).toHaveLength(1);
+      // The same-run evidence ID is accepted by Core but is never persisted as
+      // document content, a query, or a provider URL.
+      expect(JSON.stringify(citations)).not.toContain(evidenceId);
+
+      const citedDocumentId = (citations as Array<JsonObject>)[0]?.['documentId'];
+      expect(typeof citedDocumentId).toBe('string');
+      const citedDocument = uploadedDocuments.find((uploaded) => uploaded.id === citedDocumentId);
+      expect(citedDocument).toBeDefined();
+      if (!citedDocument || typeof citedDocumentId !== 'string') return;
+      await page.goto(new URL(`/documents/${citedDocumentId}`, config.baseUrl).toString());
+      await expect(page.getByRole('heading', { level: 2, name: citedDocument.filename, exact: true })).toBeVisible({ timeout: 15_000 });
+
+      for (const uploaded of uploadedDocuments) {
+        const deleteResponse = await page.request.delete(
+          new URL(`/api/v1/documents/${uploaded.id}`, config.baseUrl).toString(),
+          {
+            headers: csrfHeaders(session, config.baseUrl),
+            data: { expectedVersion: uploaded.id === documentId ? detail['version'] : uploaded.version },
+          },
+        );
+        expect(deleteResponse.status(), await deleteResponse.text()).toBe(202);
+      }
+
+      for (const uploaded of uploadedDocuments) {
+        await expect.poll(async () => {
+          const response = await page.request.post(new URL('/api/v1/documents/search', config.baseUrl).toString(), {
+            headers: csrfHeaders(session, config.baseUrl),
+            data: { query: marker, limit: 20 },
+          });
+          if (!response.ok()) return false;
+          const payload = (await response.json()) as { items?: Array<JsonObject> };
+          return !(payload.items ?? []).some((item) => item['documentId'] === uploaded.id);
+        }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+        await expect.poll(async () => {
+          const response = await page.request.get(new URL(`/api/v1/documents/${uploaded.id}/content`, config.baseUrl).toString());
+          return response.status() === 404;
+        }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+        await expect.poll(async () => {
+          const response = await page.request.get(new URL(`/api/v1/documents/${uploaded.id}`, config.baseUrl).toString());
+          return response.status() === 404;
+        }, { timeout: 120_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      }
+
+      // A fresh run still exercises the native tool path after deletion. The
+      // empty result causes the fake provider's invalid marker to be discarded,
+      // proving deleted evidence cannot become a new citation.
+      const postDeleteResponse = await page.request.post(
+        new URL('/api/v1/conversations', config.baseUrl).toString(),
+        {
+          headers: csrfHeaders(session, config.baseUrl),
+          data: {
+            message: `${marker}: confirm whether a deleted source is still available.`,
+            modelId: 'fixture-chat',
+            clientTimeZone: 'Europe/Brussels',
+          },
+        },
+      );
+      expect(postDeleteResponse.status(), await postDeleteResponse.text()).toBe(202);
+      const postDeleteAccepted = (await postDeleteResponse.json()) as JsonObject;
+      const postDeleteConversation = postDeleteAccepted['conversation'] as JsonObject | undefined;
+      const postDeleteRun = postDeleteAccepted['run'] as JsonObject | undefined;
+      const postDeleteConversationId = postDeleteConversation?.['id'];
+      const postDeleteRunId = postDeleteRun?.['id'];
+      expect(typeof postDeleteConversationId).toBe('string');
+      expect(typeof postDeleteRunId).toBe('string');
+      if (typeof postDeleteConversationId !== 'string' || typeof postDeleteRunId !== 'string') return;
+      const postDeleteDetail = await waitForCompletedRun(page, config, postDeleteConversationId, postDeleteRunId);
+      const postDeleteCompletedRun = postDeleteDetail.recentRuns?.find((item) => item['id'] === postDeleteRunId);
+      expect(postDeleteCompletedRun).toMatchObject({ status: 'completed', toolCallLimit: 1, toolCallsUsed: 1 });
+      const postDeleteAssistant = (postDeleteDetail['messages'] as Array<JsonObject> | undefined)?.find(
+        (item) => item['role'] === 'assistant' && item['runId'] === postDeleteRunId,
+      );
+      expect(postDeleteAssistant).toBeDefined();
+      expect(postDeleteAssistant?.['citations'] ?? []).toEqual([]);
+      expect(postDeleteAssistant?.['content']).not.toContain('[[');
+    }
   });
 }

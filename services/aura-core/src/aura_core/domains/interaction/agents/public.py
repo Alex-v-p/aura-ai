@@ -42,6 +42,8 @@ GENERAL_SUCCESSOR_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-poli
 GENERAL_SUCCESSOR_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-2")
 GENERAL_CONVERSATIONAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-3")
 GENERAL_CONVERSATIONAL_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-3")
+GENERAL_DOCUMENT_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-4")
+GENERAL_DOCUMENT_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-4")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -167,6 +169,7 @@ class ToolGrant:
 SUPPORTED_TOOL_GRANTS = frozenset(
     {
         ToolGrant("memory.search", 1),
+        ToolGrant("document.search", 1),
         ToolGrant("reminder.create", 1),
         ToolGrant("reminder.list", 1),
         ToolGrant("reminder.inspect", 1),
@@ -464,6 +467,20 @@ class AgentCatalog:
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
             tool_policy_revision_id=GENERAL_CONVERSATIONAL_TOOL_POLICY_ID,
         )
+        document_aware = AgentRevision(
+            GENERAL_DOCUMENT_REVISION_ID,
+            GENERAL_PROFILE_ID,
+            4,
+            "Aura",
+            "A helpful local-first household assistant.",
+            "You are Aura, a helpful local-first household assistant.",
+            NEUTRAL_PERSONA_REVISION_ID,
+            PROMPT_BUNDLE_ID,
+            GENERAL_POLICY_ID,
+            "You are Aura, a helpful local-first household assistant.",
+            memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+            tool_policy_revision_id=GENERAL_DOCUMENT_TOOL_POLICY_ID,
+        )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
             GENERAL_MEMORY_POLICY_ID,
             GENERAL_PROFILE_ID,
@@ -511,13 +528,36 @@ class AgentCatalog:
             timeout_ms=10_000,
             permission_scopes=frozenset({"memory:read", "reminders:read", "reminders:write"}),
         )
+        self.tool_policies[GENERAL_DOCUMENT_TOOL_POLICY_ID] = ToolPolicy(
+            GENERAL_DOCUMENT_TOOL_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            4,
+            grants=(
+                ToolGrant("memory.search", 1),
+                ToolGrant("document.search", 1),
+                ToolGrant("reminder.create", 1),
+                ToolGrant("reminder.list", 1),
+                ToolGrant("reminder.inspect", 1),
+                ToolGrant("reminder.series.create", 1),
+                ToolGrant("reminder.reschedule", 1),
+                ToolGrant("reminder.series.update", 1),
+                ToolGrant("reminder.series.pause", 1),
+                ToolGrant("reminder.series.resume", 1),
+                ToolGrant("reminder.cancel", 1),
+            ),
+            max_calls_per_run=1,
+            timeout_ms=30_000,
+            permission_scopes=frozenset(
+                {"memory:read", "documents:read", "reminders:read", "reminders:write"}
+            ),
+        )
         self.agents: dict[UUID, AgentProfile] = {
             GENERAL_PROFILE_ID: AgentProfile(
                 GENERAL_PROFILE_ID,
                 "general-assistant",
                 "Aura",
-                current_revision_id=conversational.id,
-                revisions=[revision, successor, conversational],
+                current_revision_id=document_aware.id,
+                revisions=[revision, successor, conversational, document_aware],
             )
         }
 
@@ -1551,6 +1591,8 @@ __all__ = [
     "GENERAL_SUCCESSOR_REVISION_ID",
     "GENERAL_CONVERSATIONAL_TOOL_POLICY_ID",
     "GENERAL_CONVERSATIONAL_REVISION_ID",
+    "GENERAL_DOCUMENT_TOOL_POLICY_ID",
+    "GENERAL_DOCUMENT_REVISION_ID",
     "platform_memory_policy_id",
     "is_platform_memory_policy",
     "MemoryPolicy",

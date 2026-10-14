@@ -72,6 +72,27 @@ class MessageState(StrEnum):
     FAILED = "failed"
 
 
+class ConversationBranchOrigin(StrEnum):
+    ROOT = "root"
+    EDITED_MESSAGE = "edited_message"
+    REGENERATED_RESPONSE = "regenerated_response"
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentCitation:
+    """Metadata-only citation persisted from same-run document evidence."""
+
+    document_id: UUID
+    display_label: str
+    locator: str
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.display_label) <= 120:
+            raise ValueError("citation display label must be bounded")
+        if not 1 <= len(self.locator) <= 255:
+            raise ValueError("citation locator must be bounded")
+
+
 class TitleState(StrEnum):
     """Internal lifecycle for model-derived conversation titles."""
 
@@ -133,6 +154,29 @@ class Message:
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=now)
     updated_at: datetime = field(default_factory=now)
+    citations: tuple[DocumentCitation, ...] = ()
+    # Branch lineage is additive.  Legacy messages are assigned to the root
+    # branch by migration/bootstrap and may still be read by old clients.
+    branch_id: UUID | None = None
+    parent_message_id: UUID | None = None
+
+
+@dataclass(slots=True)
+class ConversationBranch:
+    """Immutable owner-scoped branch descriptor.
+
+    ``forked_from_message_id`` is the last source message included in the
+    branch's ancestor path.  Local messages are identified by ``branch_id``;
+    no content is copied when a branch is created.
+    """
+
+    conversation_id: UUID
+    parent_branch_id: UUID | None = None
+    forked_from_message_id: UUID | None = None
+    head_message_id: UUID | None = None
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=now)
+    origin: ConversationBranchOrigin = ConversationBranchOrigin.ROOT
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,10 +212,10 @@ class Conversation:
     messages: list[Message] = field(default_factory=list[Message])
     runs: list[Run] = field(default_factory=list[Run])
     assignments: list[AgentAssignment] = field(default_factory=list[AgentAssignment])
-    persona_assignments: list[PersonaAssignment] = field(
-        default_factory=list[PersonaAssignment]
-    )
+    persona_assignments: list[PersonaAssignment] = field(default_factory=list[PersonaAssignment])
     client_time_zone: str | None = None
+    branches: list[ConversationBranch] = field(default_factory=list[ConversationBranch])
+    active_branch_id: UUID | None = None
 
     @property
     def current_run(self) -> Run | None:

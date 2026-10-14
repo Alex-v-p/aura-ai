@@ -39,4 +39,22 @@ describe('conversation configuration select bindings', () => {
     expect(template).not.toContain('(click)="approvalStore.approve');
     expect(template).not.toContain('(click)="approvalStore.reject');
   });
+
+  it('renders validated document citations as internal accessible source links', () => {
+    expect(template).toContain('document-citations');
+    expect(template).toContain(`[routerLink]="['/documents', citation.documentId]"`);
+    expect(template).toContain('[attr.aria-label]="citationAccessibleLabel(citation)"');
+    expect(template).toContain('{{ citationLocator(citation) }}');
+    expect(template).not.toContain('citation.url');
+    expect(template).toContain('(click)="focusCitationDestination()"');
+    expect(componentSource).toContain("document.getElementById('detail-heading') ?? document.getElementById('main-content')");
+    expect(componentSource).toContain('target.focus()');
+  });
+
+  it('exposes an accessible bootstrap-ready seam before draft input is accepted', () => {
+    expect(template).toContain('[attr.data-conversation-ready]="conversationReady() ? \'true\' : \'false\'"');
+    expect(template).toContain('[attr.aria-busy]="conversationReady() ? \'false\' : \'true\'"');
+    expect(componentSource).toContain('this.store.models().some((model) => model.selectable)');
+    expect(componentSource).toContain('!this.agentStore.loading() && this.defaultAgentReady()');
+  });
 });

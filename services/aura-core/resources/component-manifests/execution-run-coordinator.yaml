@@ -1,6 +1,6 @@
 component:
   id: aura.execution.run_coordinator
-  version: 1.8.0
+  version: 1.9.0
   owner: aura-core
   category: execution
 input:
@@ -25,11 +25,13 @@ dependencies:
 metrics:
   - queue_wait_ms
   - run_duration_ms
+  - run.regenerate
   - operation_duration_ms
   - run_started
   - run_status
   - cancellations
   - retries
+  - conversation_regeneration_outcome
   - outbox_dispatched
   - outbox_duplicates
   - consumer_received
@@ -40,15 +42,19 @@ evaluators:
   - approval_race_exactly_once
   - conversational_reminder_approval_before_side_effect
   - conversational_reminder_metadata_only_capture
+  - conversation_branch_context_isolation
+  - conversation_regeneration_evidence_freshness
 metric_semantics:
   queue_wait_ms: Persisted run started_at minus persisted run created_at.
   run_duration_ms: Monotonic elapsed execution time tagged with terminal status.
+  run.regenerate: Metadata-only duration of a governed regenerated run admission command.
   operation_duration_ms: Component-local command, dispatch, lease, and worker execution span duration; never substituted for run_duration_ms.
   errors: Count classified as queue, provider, timeout, persistence, cancel, or delivery.
+  conversation_regeneration_outcome: Metadata-only outcome for a new governed run regenerated from an existing assistant run.
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [status, error_class, provider, dependency, outcome]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id]
   prohibited: [prompt, response, arguments, query, target_query, content, recurrence, timezone, due_at, owner_identity, raw_result, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

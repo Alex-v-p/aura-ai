@@ -1,8 +1,10 @@
 """Deterministic, test-only OIDC and Ollama HTTP providers for Compose E2E."""
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -25,6 +27,9 @@ _codes: dict[str, dict[str, str]] = {}
 # synthesis can never create a second one.
 _REMINDER_SERIES_MARKER = "AURA_E2E_REMINDER_SERIES_CREATE"
 _series_markers_seen: set[str] = set()
+_DOCUMENT_SEARCH_MARKER = "AURA_E2E_DOCUMENT_SEARCH_CITATION"
+_document_markers_seen: set[str] = set()
+_EMBEDDING_DIMENSION = 768
 
 
 def kind() -> str:
@@ -155,6 +160,11 @@ async def tags() -> dict[str, list[dict[str, str]]]:
                 "digest": "8a1eed22144c3f04485a69eea62bfd3fa1026de39dc252b77ba9b1f3f08b00ec",
                 "modified_at": "2026-10-09T00:00:00Z",
             },
+            {
+                "name": "qwen3-embedding:4b",
+                "digest": "c3e3b7d3a5a23e7f0c3d0d53d5f9d67f03d06f6f85ec5c9d03a8d2c7a8e5f1b4",
+                "modified_at": "2026-10-09T00:00:00Z",
+            },
         ]
     }
 
@@ -164,11 +174,34 @@ async def show(body: dict[str, Any]) -> dict[str, list[str]]:
     if kind() != "ollama":
         raise HTTPException(status_code=404)
     name = body.get("name")
-    if name == "embed":
+    if name in {"embed", "qwen3-embedding:4b"}:
         return {"capabilities": ["embedding"]}
     if name == "fixture-chat":
         return {"capabilities": ["chat", "tools", "tool_calling"]}
     return {"capabilities": ["chat"]}
+
+
+@app.post("/api/embed")
+async def embed(body: dict[str, Any]) -> dict[str, list[list[float]] | str]:
+    if kind() != "ollama":
+        raise HTTPException(status_code=404)
+    model = body.get("model")
+    value = body.get("input")
+    if (
+        model != "qwen3-embedding:4b"
+        or body.get("dimensions") != _EMBEDDING_DIMENSION
+        or not isinstance(value, str)
+        or not value
+    ):
+        raise HTTPException(status_code=400)
+    vector: list[float] = []
+    block = 0
+    while len(vector) < _EMBEDDING_DIMENSION:
+        digest = hashlib.sha256(f"{model}:{block}:{value}".encode()).digest()
+        vector.extend(((byte / 255.0) * 2.0) - 1.0 for byte in digest)
+        block += 1
+    vector = vector[:_EMBEDDING_DIMENSION]
+    return {"embeddings": [vector], "model_revision": "fixture-qwen-embedding-v1"}
 
 
 @app.post("/api/chat")
@@ -180,6 +213,9 @@ async def chat(body: dict[str, Any]) -> StreamingResponse:
         (item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), ""
     )
     tools_enabled = isinstance(body.get("tools"), list) and bool(body.get("tools"))
+    all_content = "\n".join(
+        str(item.get("content", "")) for item in messages if isinstance(item, dict)
+    )
 
     # Ollama's native tool protocol must not mix text and a tool call in the
     # same selection stream.  The marker is used only by the real browser
@@ -214,6 +250,45 @@ async def chat(body: dict[str, Any]) -> StreamingResponse:
             yield json.dumps({"message": {}, "done": True}) + "\n"
 
         return StreamingResponse(tool_stream(), media_type="application/x-ndjson")
+
+    document_marked = _DOCUMENT_SEARCH_MARKER in all_content
+    if document_marked and tools_enabled and content not in _document_markers_seen:
+        _document_markers_seen.add(content)
+
+        async def document_tool_stream() -> Any:
+            yield json.dumps(
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "document.search",
+                                    "arguments": {"query": _DOCUMENT_SEARCH_MARKER},
+                                }
+                            }
+                        ]
+                    }
+                }
+            ) + "\n"
+            yield json.dumps({"message": {}, "done": True}) + "\n"
+
+        return StreamingResponse(document_tool_stream(), media_type="application/x-ndjson")
+
+    if document_marked and not tools_enabled:
+        evidence_match = re.search(
+            r"evidenceId=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+            all_content,
+            flags=re.IGNORECASE,
+        )
+        marker = evidence_match.group(1) if evidence_match else "invalid-evidence"
+
+        async def document_synthesis_stream() -> Any:
+            yield json.dumps(
+                {"message": {"content": f"Fixture grounded answer [[document:{marker}]]."}}
+            ) + "\n"
+            yield json.dumps({"message": {}, "done": True}) + "\n"
+
+        return StreamingResponse(document_synthesis_stream(), media_type="application/x-ndjson")
 
     async def stream() -> Any:
         # The resumed approval path deliberately omits tools.  It must receive

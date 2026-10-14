@@ -179,6 +179,5 @@ def first_completed_run(conversation: Conversation) -> Iterable[Run]:
     return (
         run
         for run in conversation.runs
-        if run.status is RunStatus.COMPLETED
-        and pending_title_for(conversation, run) is not None
+        if run.status is RunStatus.COMPLETED and pending_title_for(conversation, run) is not None
     )

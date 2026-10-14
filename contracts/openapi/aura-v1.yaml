@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.13.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, credentials, tool arguments and results, and embedding vectors are never exposed by this API."
+    "version": "1.17.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, content hashes, and embedding vectors are never exposed by this API."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -16,6 +16,7 @@
     { "name": "Runs" },
     { "name": "Tools" },
     { "name": "Memories" },
+    { "name": "Documents" },
     { "name": "Reminders" },
     { "name": "Notifications" },
     { "name": "Approvals" },
@@ -321,6 +322,53 @@
         }
       }
     },
+    "/api/v1/conversations/{conversation_id}/branches": {
+      "get": {
+        "operationId": "listConversationBranches",
+        "tags": ["Conversations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/ConversationId" },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Opaque branch lineage ordered by creation time and branch identifier", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationBranchPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "operationId": "createConversationBranch",
+        "tags": ["Conversations", "Runs"],
+        "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateConversationBranchRequest" } } } },
+        "responses": {
+          "202": { "description": "Immutable edited-message branch and newly governed run created atomically", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/branches/{branch_id}": {
+      "get": {
+        "operationId": "getConversationBranch",
+        "tags": ["Conversations"],
+        "parameters": [{ "$ref": "#/components/parameters/ConversationId" }, { "$ref": "#/components/parameters/ConversationBranchId" }],
+        "responses": {
+          "200": { "description": "The branch's ordered ancestor path and run snapshots, excluding sibling and later source-branch messages", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationBranchDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/conversations/{conversation_id}/runs": {
       "post": {
         "operationId": "createRun",
@@ -381,6 +429,24 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/regenerate": {
+      "post": {
+        "operationId": "regenerateRun",
+        "tags": ["Runs"],
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegenerateRunRequest" } } } },
+        "responses": {
+          "202": { "description": "Immutable alternative branch and fresh governed run queued from the source run's preceding user-message path", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationRunAccepted" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
@@ -1132,6 +1198,166 @@
         }
       }
     },
+    "/api/v1/documents/uploads": {
+      "post": {
+        "operationId": "createDocumentUpload",
+        "tags": ["Documents"],
+        "description": "Creates an owner-bound, short-lived Aura upload session. The response never exposes an object-store key, bucket, endpoint, or credential.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateDocumentUploadRequest" } } } },
+        "responses": {
+          "201": { "description": "Owner-bound upload session created", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentUploadSession" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/uploads/{upload_id}/content": {
+      "put": {
+        "operationId": "uploadDocumentContent",
+        "tags": ["Documents"],
+        "description": "Streams one bounded document body through Aura Core. The declared byte count and media type must exactly match the upload session; Aura validates the extension, media type, and content signature before queueing processing. This endpoint is not a direct object-store upload.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentUploadId" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/ExpectedVersion" },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100000000 } },
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary", "maxLength": 100000000 } } } },
+        "responses": {
+          "202": { "description": "Content accepted and processing queued, or an active owner-scoped duplicate resolved without retaining duplicate object bytes", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentUploadReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "description": "Upload exceeds the exact 100000000-byte limit", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "415": { "description": "Declared type, filename extension, or content signature is unsupported or inconsistent", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "operationId": "listDocuments",
+        "tags": ["Documents"],
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner- and filter-bound pagination cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DocumentStatus" } },
+          { "name": "mediaType", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped documents ordered by most recent update with document ID as a deterministic tie-breaker", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/documents/search": {
+      "post": {
+        "operationId": "searchDocuments",
+        "tags": ["Documents"],
+        "description": "Runs bounded hybrid lexical/vector retrieval only across ready documents owned by the authenticated principal. Private query text is accepted only in the body and must not enter URLs, logs, telemetry, diagnostics, or caches.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchDocumentsRequest" } } } },
+        "responses": {
+          "200": { "description": "Ranked owner-private document evidence with document and page-or-section provenance", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentSearchResultPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+      "get": {
+        "operationId": "getDocument",
+        "tags": ["Documents"],
+        "responses": {
+          "200": { "description": "Owner-authorized document processing metadata; storage internals, hashes, extracted content, chunks, and embeddings are omitted", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteDocument",
+        "tags": ["Documents"],
+        "description": "Immediately excludes the owner-scoped document from retrieval and queues retryable content, chunk, embedding, and object cleanup.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentTransitionRequest" } } } },
+        "responses": {
+          "202": { "description": "Deletion accepted", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/content": {
+      "get": {
+        "operationId": "downloadDocument",
+        "tags": ["Documents"],
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized original document stream", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 100000000 } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/DocumentMediaType" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/preview": {
+      "get": {
+        "operationId": "getDocumentPreview",
+        "tags": ["Documents"],
+        "description": "Returns a bounded plain-text preview assembled from already-sanitized extracted text for a ready document owned by the authenticated principal. Document content remains untrusted evidence and is never interpreted as HTML, Markdown, policy, or instructions.",
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }],
+        "responses": {
+          "200": { "description": "Owner-authorized bounded preview for a ready document", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentPreview" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/retry": {
+      "post": {
+        "operationId": "retryDocumentProcessing",
+        "tags": ["Documents"],
+        "parameters": [{ "$ref": "#/components/parameters/DocumentId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentTransitionRequest" } } } },
+        "responses": {
+          "202": { "description": "Failed document processing queued for another bounded attempt", "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DocumentDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -1160,6 +1386,7 @@
       "AgentProfileId": { "name": "agent_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "PersonaProfileId": { "name": "persona_profile_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ConversationId": { "name": "conversation_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "ConversationBranchId": { "name": "branch_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped conversation branch identifier." },
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryId": { "name": "memory_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCandidateId": { "name": "candidate_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
@@ -1169,12 +1396,15 @@
       "ReminderSeriesId": { "name": "series_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "DocumentId": { "name": "document_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
       "MemoryReadAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Required with scopeType=agent for a single-resource detail or mutation. Rejected for user scope." },
       "CsrfToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 512 }, "description": "Session-bound anti-CSRF token returned by getSession." },
-      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Caller-generated UUID. Reuse only for an exact replay of the same command." }
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Caller-generated UUID. Reuse only for an exact replay of the same command." },
+      "ExpectedVersion": { "name": "X-Expected-Version", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Optimistic version of the upload session being completed." }
     },
     "responses": {
       "BadRequest": { "description": "Malformed request", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
@@ -1229,6 +1459,7 @@
       },
       "ToolCatalog": {
         "type": "object", "additionalProperties": false,
+        "description": "Safe provider-neutral descriptors for exact-version policy configuration. The additive catalog includes the owner-bound read-only document.search@1 tool; its query and evidence result remain private runtime values and are never returned by this catalog.",
         "required": ["items"],
         "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDescriptorSummary" } } }
       },
@@ -1744,6 +1975,7 @@
       },
       "ToolGrant": {
         "type": "object", "additionalProperties": false,
+        "description": "Exact immutable tool identity and version. The built-in Aura successor policy may grant document.search@1; historical policies remain unchanged and custom policies remain deny-by-default unless an owner explicitly creates a new grant policy.",
         "required": ["toolId", "toolVersion"],
         "properties": {
           "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
@@ -2068,7 +2300,27 @@
         "properties": {
           "message": { "type": "string", "minLength": 1, "maxLength": 32768 },
           "conversationVersion": { "type": "integer", "minimum": 1 },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch to extend. Omission preserves the pre-1.17 default linear conversation behavior." },
           "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the new run. Legacy clients may omit it." }
+        }
+      },
+      "CreateConversationBranchRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sourceUserMessageId", "message", "conversationVersion"],
+        "properties": {
+          "sourceUserMessageId": { "type": "string", "format": "uuid", "description": "Owner-authorized user message replaced only within the newly created immutable branch." },
+          "message": { "type": "string", "minLength": 1, "maxLength": 32768, "description": "Corrected user content for the new branch. The source message remains unchanged." },
+          "conversationVersion": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque source branch containing the edited message. Omission selects the message's authoritative creation lineage for backward compatibility." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." }
+        }
+      },
+      "RegenerateRunRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["conversationVersion"],
+        "properties": {
+          "conversationVersion": { "type": "integer", "minimum": 1, "description": "Expected current conversation version." },
+          "clientTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "Optional browser IANA timezone pinned to the newly admitted run." }
         }
       },
       "ConversationPage": {
@@ -2098,6 +2350,37 @@
           "updatedAt": { "type": "string", "format": "date-time" },
           "archivedAt": { "type": ["string", "null"], "format": "date-time", "description": "Archive timestamp when available. Producers in contract version 1.3.0 and later include this property." },
           "currentRun": { "oneOf": [{ "$ref": "#/components/schemas/Run" }, { "type": "null" }] }
+        }
+      },
+      "ConversationBranchOrigin": { "type": "string", "enum": ["root", "edited_message", "regenerated_response"] },
+      "ConversationBranchSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "conversationId", "parentBranchId", "forkedFromMessageId", "headMessageId", "origin", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid", "description": "Opaque owner-scoped branch identifier." },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "parentBranchId": { "type": ["string", "null"], "format": "uuid", "description": "Immediate source branch, or null for the migrated root branch." },
+          "forkedFromMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Last shared ancestor message, or null for the root branch or a fork before the first message." },
+          "headMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Current terminal message on this immutable lineage path." },
+          "origin": { "$ref": "#/components/schemas/ConversationBranchOrigin" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ConversationBranchPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ConversationBranchSummary" } },
+          "nextCursor": { "type": ["string", "null"] }
+        }
+      },
+      "ConversationBranchDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["branch", "messages", "recentRuns"],
+        "properties": {
+          "branch": { "$ref": "#/components/schemas/ConversationBranchSummary" },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" }, "description": "Ordered root-to-head ancestor path only; sibling and later source-branch messages are excluded." },
+          "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } }
         }
       },
       "AgentReference": {
@@ -2155,7 +2438,8 @@
             "required": ["messages", "recentRuns"],
             "properties": {
               "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } },
-              "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } }
+              "recentRuns": { "type": "array", "items": { "$ref": "#/components/schemas/Run" } },
+              "branches": { "type": "array", "items": { "$ref": "#/components/schemas/ConversationBranchSummary" }, "description": "Optional opaque lineage metadata. Pre-1.17 producers may omit this property." }
             }
           }
         ]
@@ -2170,6 +2454,9 @@
           "content": { "type": "string" },
           "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
           "runId": { "type": ["string", "null"], "format": "uuid" },
+          "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch on which this immutable message was created. Optional for backward compatibility with pre-1.17 producers." },
+          "parentMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Previous message in this message's immutable ancestor path. Optional for backward compatibility with pre-1.17 producers." },
+          "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are excluded." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
@@ -2192,12 +2479,15 @@
           "approvalId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
           "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
           "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
+          "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run. Historical runs and runs without validated document evidence may omit this property." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
           "retryOfRunId": { "type": ["string", "null"], "format": "uuid" },
+          "branchId": { "type": ["string", "null"], "format": "uuid", "description": "Opaque branch containing this run. Optional or null for backward compatibility with pre-1.17 producers." },
+          "regeneratedFromRunId": { "type": ["string", "null"], "format": "uuid", "description": "Source run for a user-requested regeneration, or null for ordinary and failed-run retry executions. Optional for backward compatibility with pre-1.17 producers." },
           "createdAt": { "type": "string", "format": "date-time" },
           "startedAt": { "type": ["string", "null"], "format": "date-time" },
           "finishedAt": { "type": ["string", "null"], "format": "date-time" },
@@ -2224,7 +2514,8 @@
         "properties": {
           "conversation": { "$ref": "#/components/schemas/ConversationSummary" },
           "userMessage": { "$ref": "#/components/schemas/Message" },
-          "run": { "$ref": "#/components/schemas/Run" }
+          "run": { "$ref": "#/components/schemas/Run" },
+          "branch": { "$ref": "#/components/schemas/ConversationBranchSummary", "description": "New or selected branch metadata. Optional for backward compatibility with pre-1.17 producers." }
         }
       },
       "RunEvent": {
@@ -2672,6 +2963,187 @@
           "schemaVersion": { "type": "integer", "const": 1 },
           "eventType": { "type": "string", "const": "heartbeat" },
           "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentStatus": {
+        "type": "string",
+        "enum": ["uploading", "queued", "processing", "ready", "failed", "deleting"]
+      },
+      "DocumentMediaType": {
+        "type": "string",
+        "enum": ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/markdown", "text/plain"]
+      },
+      "DocumentFailure": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-visible failure classification. Parser details, filenames, content, hashes, object keys, credentials, and provider diagnostics are never returned.",
+        "required": ["code", "retryable"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "CreateDocumentUploadRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["filename", "mediaType", "byteCount"],
+        "properties": {
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\\\\u0000]+$", "description": "Owner-private display filename. Path components and NUL characters are rejected." },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 }
+        }
+      },
+      "DocumentUploadSession": {
+        "type": "object", "additionalProperties": false,
+        "description": "Opaque owner-bound Aura upload session. It is not an object-store upload grant and contains no storage internals.",
+        "required": ["id", "documentId", "filename", "mediaType", "byteCount", "status", "version", "createdAt", "expiresAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "documentId": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "type": "string", "const": "uploading" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/DocumentSummary" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "DocumentSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized document metadata. Owner identity, content hash, object key, extracted content, chunks, embeddings, and storage credentials are omitted.",
+        "required": ["id", "filename", "mediaType", "byteCount", "status", "failure", "version", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "$ref": "#/components/schemas/DocumentStatus" },
+          "failure": { "oneOf": [{ "$ref": "#/components/schemas/DocumentFailure" }, { "type": "null" }] },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentDetail": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized inspection view. Private content remains available only through explicit search excerpts and authorized original download.",
+        "required": ["id", "filename", "mediaType", "byteCount", "status", "failure", "version", "extractedTextLength", "chunkCount", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" },
+          "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+          "status": { "$ref": "#/components/schemas/DocumentStatus" },
+          "failure": { "oneOf": [{ "$ref": "#/components/schemas/DocumentFailure" }, { "type": "null" }] },
+          "version": { "type": "integer", "minimum": 1 },
+          "extractedTextLength": { "type": "integer", "minimum": 0, "maximum": 10485760 },
+          "chunkCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DocumentPreview": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized ready-document preview. Text is already sanitized, remains untrusted evidence, and is bounded independently of the document's full extracted-text length.",
+        "required": ["documentId", "text", "truncated", "totalCharacters"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "text": { "type": "string", "maxLength": 20000 },
+          "truncated": { "type": "boolean", "description": "True when totalCharacters is greater than the number of characters returned in text." },
+          "totalCharacters": { "type": "integer", "minimum": 0, "maximum": 10485760, "description": "Full sanitized extracted-text character count, consistent with DocumentDetail.extractedTextLength." }
+        }
+      },
+      "DocumentUploadReceipt": {
+        "type": "object", "additionalProperties": false,
+        "required": ["document", "duplicate"],
+        "properties": {
+          "document": { "$ref": "#/components/schemas/DocumentDetail" },
+          "duplicate": { "type": "boolean", "description": "True when the uploaded bytes matched an active document owned by the same principal and Aura discarded the duplicate object." }
+        }
+      },
+      "SearchDocumentsRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Private owner-scoped retrieval text. It must not appear in URLs, logs, telemetry, diagnostics, or caches." },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, query-, and filter-bound pagination cursor." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 },
+          "mediaType": { "$ref": "#/components/schemas/DocumentMediaType" }
+        }
+      },
+      "DocumentPageLocator": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "pageNumber"],
+        "properties": {
+          "kind": { "type": "string", "const": "page" },
+          "pageNumber": { "type": "integer", "minimum": 1, "maximum": 10000 }
+        }
+      },
+      "DocumentSectionLocator": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "sectionOrdinal", "heading"],
+        "properties": {
+          "kind": { "type": "string", "const": "section" },
+          "sectionOrdinal": { "type": "integer", "minimum": 1, "maximum": 10000 },
+          "heading": { "type": ["string", "null"], "maxLength": 500 }
+        }
+      },
+      "DocumentLocator": {
+        "oneOf": [{ "$ref": "#/components/schemas/DocumentPageLocator" }, { "$ref": "#/components/schemas/DocumentSectionLocator" }],
+        "discriminator": { "propertyName": "kind" }
+      },
+      "DocumentCitation": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free validated source reference. Core accepts only evidence returned during the same run and persists document identity plus locator; displayLabel is a bounded server-generated non-filename label for the owner-authorized response and is never a client- or model-provided URL.",
+        "required": ["documentId", "displayLabel", "locator"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "displayLabel": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Server-generated accessible source label that does not contain a document filename or content." },
+          "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
+        }
+      },
+      "DocumentSearchResult": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized untrusted evidence. Excerpts cannot grant policy, permission, or instruction authority.",
+        "required": ["evidenceId", "documentId", "displayName", "excerpt", "locator", "score"],
+        "properties": {
+          "evidenceId": { "type": "string", "format": "uuid" },
+          "documentId": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "excerpt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "locator": { "$ref": "#/components/schemas/DocumentLocator" },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "DocumentSearchResultPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/DocumentSearchResult" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "DocumentTransitionRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "DocumentDeletionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free deletion acknowledgement. Cleanup may continue asynchronously and is safe to retry.",
+        "required": ["documentId", "status", "version", "acceptedAt"],
+        "properties": {
+          "documentId": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "const": "deleting" },
+          "version": { "type": "integer", "minimum": 1 },
+          "acceptedAt": { "type": "string", "format": "date-time" }
         }
       },
       "ErrorEnvelope": {

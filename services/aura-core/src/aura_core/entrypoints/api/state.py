@@ -10,6 +10,7 @@ from uuid import UUID
 from aura_core.bootstrap import memory_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_service
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
@@ -51,6 +52,7 @@ from aura_core.domains.interaction.personas.public import (
     PersonaPreviewResult,
     PersonaPreviewTrace,
 )
+from aura_core.domains.knowledge.documents.public import DocumentService
 from aura_core.domains.knowledge.memory import public as memory_public
 from aura_core.domains.knowledge.memory.public import MemoryRepository
 from aura_core.platform.auth import (
@@ -87,6 +89,7 @@ from aura_core.platform.telemetry import (
     TelemetryLifecycle,
     new_span_id,
 )
+from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.runtime.models.gateway import ModelGateway, ModelPreviewFailure
 from aura_core.runtime.models.ports import (
@@ -179,7 +182,9 @@ class AppState:
         approval_id = getattr(approval, "id", None)
         if not isinstance(run_id, UUID) or not isinstance(approval_id, UUID):
             raise ValueError("approval identifiers are required")
-        status = getattr(getattr(approval, "status", None), "value", getattr(approval, "status", None))
+        status = getattr(
+            getattr(approval, "status", None), "value", getattr(approval, "status", None)
+        )
         approved = status == "approved"
         run = await self.store.resume_waiting_run(run_id, approval_id, approved=approved)
         await self.coordinator.enqueue(run)
@@ -230,6 +235,7 @@ class AppState:
         self.approval_repository: ApprovalRepository
         self.approval_service: ApprovalApplicationService
         self.memory_worker: object | None = None
+        self.document_service: DocumentService
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
@@ -275,12 +281,16 @@ class AppState:
             self.approval_service = approval_service(
                 self.approval_repository,
             )
+
             async def get_memory_activity(run_id: UUID, issuer: str, subject: str) -> object:
                 return await self.memory_repository.get_run_memory_activity(run_id, issuer, subject)
 
             self.store.get_run_memory_activity = get_memory_activity  # type: ignore[attr-defined]
             self.memory_worker = memory_uow.memory_processing_service(
                 None, settings=self.settings, metrics=self.metrics
+            )
+            self.document_service = document_service(
+                None, settings=self.settings, testing=True, metrics=self.metrics
             )
             self.store.set_memory_recall(
                 memory_uow.memory_recall_service(
@@ -345,6 +355,7 @@ class AppState:
                     NOTIFICATION_TOPIC,
                     APPROVAL_EVENT_TOPIC,
                     RUN_RESUME_TOPIC,
+                    "aura.knowledge.documents.events.v1",
                 ),
                 metrics=self.metrics,
             )
@@ -376,14 +387,16 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
-            self.approval_repository = approval_repository(self.sessions_factory, metrics=self.metrics, execution_port=self.store)
-            self.approval_service = approval_service(self.approval_repository, execution_port=self.store)
+            self.approval_repository = approval_repository(
+                self.sessions_factory, metrics=self.metrics, execution_port=self.store
+            )
+            self.approval_service = approval_service(
+                self.approval_repository, execution_port=self.store
+            )
             cast(Any, self.memory_repository).set_run_recall_metadata_loader(
                 self.sql_store.get_run_memory_recall_metadata
             )
-            agent_policy_loader = memory_uow.make_agent_policy_loader(
-                self.agent_service.repository
-            )
+            agent_policy_loader = memory_uow.make_agent_policy_loader(self.agent_service.repository)
             cast(Any, self.memory_repository).set_candidate_evidence_loader(
                 memory_uow.memory_evidence_loader(
                     self.sessions_factory,
@@ -397,6 +410,18 @@ class AppState:
                 settings=self.settings,
                 metrics=self.metrics,
                 agent_policy_loader=agent_policy_loader,
+            )
+            self.document_service = document_service(
+                self.sessions_factory,
+                settings=self.settings,
+                metrics=self.metrics,
+                commands=SqlDocumentCommandSink(self.sessions_factory),
+                embedder=OllamaEmbeddingAdapter(
+                    self.settings.ollama_url,
+                    self.settings.ollama_run_timeout_seconds,
+                    telemetry=self.metrics,
+                    dimension=self.settings.document_embedding_dimension,
+                ),
             )
             self.sql_store.set_memory_recall(
                 memory_uow.memory_recall_service(
@@ -462,6 +487,7 @@ class AppState:
             tool_registry=self.tool_registry,
             approval_service=getattr(self, "approval_service", None),
             reminder_service=self.reminder_service,
+            document_service=self.document_service,
             thinking_publisher=thinking_publisher,
         )
 
@@ -480,7 +506,9 @@ class AppState:
             thinking_subscribe = getattr(self.nats, "subscribe_thinking_events", None)
             if callable(thinking_subscribe):
                 subscribe = cast(
-                    Callable[[Callable[[UUID, UUID, int, str], Awaitable[None]]], Awaitable[object]],
+                    Callable[
+                        [Callable[[UUID, UUID, int, str], Awaitable[None]]], Awaitable[object]
+                    ],
                     thinking_subscribe,
                 )
                 await subscribe(self._ingest_thinking_wakeup)
@@ -614,11 +642,7 @@ class AppState:
                         duplicate = await self.nats.publish(command)
                         wakeup_id = command.identifier("eventId")
                         publish_wakeup = getattr(self.nats, "publish_notification_event", None)
-                        if (
-                            is_reminder
-                            and wakeup_id is not None
-                            and callable(publish_wakeup)
-                        ):
+                        if is_reminder and wakeup_id is not None and callable(publish_wakeup):
                             publish = cast(Callable[[UUID], Awaitable[None]], publish_wakeup)
                             await publish(UUID(wakeup_id))
                         if is_approval_command:
@@ -744,9 +768,7 @@ class AppState:
                     if not is_approval_command:
                         self.metrics.increment(
                             component,
-                            "reminder_outbox_dispatched"
-                            if is_reminder
-                            else "outbox_dispatched",
+                            "reminder_outbox_dispatched" if is_reminder else "outbox_dispatched",
                             **metadata,
                         )
                     if duplicate and not is_approval_command:

@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import type { AgentToolPolicy, ToolGrant } from '@aura/aura-api-client';
-import { MEMORY_SEARCH_TOOL_ID, MEMORY_SEARCH_TOOL_VERSION } from './tool-policy-models';
+import { DOCUMENT_SEARCH_TOOL_ID, DOCUMENT_SEARCH_TOOL_VERSION, MEMORY_SEARCH_TOOL_ID, MEMORY_SEARCH_TOOL_VERSION } from './tool-policy-models';
 import { ToolPolicyStore } from './tool-policy-store';
 
 @Component({
@@ -23,7 +23,7 @@ import { ToolPolicyStore } from './tool-policy-store';
           @for (tool of store.catalog(); track tool.id + ':' + tool.version) {
             <label class="check-label tool-option"><input type="checkbox" [name]="tool.id" [checked]="selectedToolIds().has(tool.id + ':' + tool.version)" (change)="toggle(tool.id, tool.version, $any($event.target).checked)" /><span><strong>{{ tool.displayName }} <small>v{{ tool.version }}</small></strong><small>{{ tool.description }}</small><em>{{ tool.classification }} · {{ tool.permissionScope }}</em></span></label>
           } @empty { <p class="empty-state">No safe tools are available.</p> }
-          <p class="form-help">The initial tool is read-only memory search. Queries, arguments, and memory content never appear in run activity.</p>
+          <p class="form-help">Memory and document search are read-only. Queries, arguments, excerpts, and private content never appear in run activity.</p>
           <button class="primary-button" type="button" [disabled]="store.saving() || !store.catalog().length" (click)="save()">{{ store.saving() ? 'Saving…' : 'Save and attach revision' }}</button>
         </section>
         <section class="detail-card">
@@ -71,6 +71,10 @@ export class AgentToolPolicyPageComponent {
   }
 
   summary(policy: AgentToolPolicy): string {
-    return policy.grants.some((grant) => grant.toolId === MEMORY_SEARCH_TOOL_ID && grant.toolVersion === MEMORY_SEARCH_TOOL_VERSION) ? 'Memory search enabled' : 'No tools granted';
+    const names = [
+      ...(policy.grants.some((grant) => grant.toolId === MEMORY_SEARCH_TOOL_ID && grant.toolVersion === MEMORY_SEARCH_TOOL_VERSION) ? ['Memory search'] : []),
+      ...(policy.grants.some((grant) => grant.toolId === DOCUMENT_SEARCH_TOOL_ID && grant.toolVersion === DOCUMENT_SEARCH_TOOL_VERSION) ? ['Document search'] : []),
+    ];
+    return names.length ? `${names.join(' and ')} enabled` : 'No tools granted';
   }
 }

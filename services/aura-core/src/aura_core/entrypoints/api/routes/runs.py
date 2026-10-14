@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from aura_core.domains.execution.runs.events import new_event
 from aura_core.domains.execution.runs.public import message_payload, run_payload
@@ -22,6 +23,7 @@ from aura_core.domains.interaction.conversations.public import (
     ArchivedConversationConflict,
     ConversationNotFound,
     IdempotencyConflict,
+    VersionConflict,
 )
 from aura_core.entrypoints.api.routes.conversations import conversation_payload, state
 from aura_core.entrypoints.api.routes.dependencies import require_csrf, require_session
@@ -29,6 +31,50 @@ from aura_core.platform.auth import Session
 from aura_core.platform.telemetry import Stopwatch, new_span_id
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Runs"])
+
+
+class RegenerateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conversationVersion: int = Field(ge=1)
+    clientTimeZone: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+async def _regenerate_csrf(request: Request) -> Session:
+    run_id = _path_uuid(request)
+    try:
+        session = await require_session(request)
+        return await require_csrf(request, session, request.headers.get("x-csrf-token"))
+    except HTTPException as exc:
+        state(request).metrics.record_span(
+            "aura.execution.run_coordinator",
+            "run.regenerate",
+            0.0,
+            trace_id=run_id.hex,
+            span_id=new_span_id(),
+            parent_span_id=None,
+            dependency="identity_authorization",
+            outcome="denied",
+            error_class="authorization" if exc.status_code in {401, 403} else "persistence",
+            run_id=str(run_id),
+        )
+        state(request).metrics.increment(
+            "aura.execution.run_coordinator",
+            "conversation_regeneration_outcome",
+            trace_id=run_id.hex,
+            run_id=str(run_id),
+            outcome="denied",
+        )
+        raise
+
+
+def _path_uuid(request: Request) -> UUID:
+    for part in request.url.path.rstrip("/").split("/"):
+        try:
+            return UUID(part)
+        except ValueError:
+            continue
+    return UUID(int=0)
+
 
 _MEMORY_ACTIVITY_NAMESPACE = UUID("ab5a2cd0-6ce9-4b69-a6c7-c7d0f9f840a2")
 
@@ -284,7 +330,74 @@ async def retry_run(
     )
     await state(request).coordinator.enqueue(run)
     return {
-        "conversation": conversation_payload(conversation, state(request).agents),
+        "conversation": conversation_payload(
+            conversation, state(request).agents, state(request).personas
+        ),
+        "userMessage": message_payload(message),
+        "run": run_payload(run),
+    }
+
+
+@router.post("/{run_id}/regenerate", status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_run(
+    request: Request,
+    run_id: UUID,
+    body: RegenerateRunRequest,
+    session: Session = Depends(_regenerate_csrf),
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+) -> dict[str, object]:
+    timer = Stopwatch()
+    try:
+        conversation, message, run, branch = await state(request).store.regenerate(
+            run_id,
+            body.conversationVersion,
+            idempotency_key,
+            session.principal.subject,
+            session.principal.issuer,
+            body.clientTimeZone,
+        )
+    except ConversationNotFound as exc:
+        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "not_found")
+        _record_regeneration_outcome(request, run_id, "not_found")
+        raise HTTPException(status_code=404, detail="run not found") from exc
+    except (VersionConflict, ActiveRunConflict, ArchivedConversationConflict) as exc:
+        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "conflict")
+        _record_regeneration_outcome(request, run_id, "conflict")
+        raise HTTPException(status_code=409, detail="conversation version conflict") from exc
+    except IdempotencyConflict as exc:
+        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms(), "idempotency")
+        _record_regeneration_outcome(request, run_id, "idempotent")
+        raise HTTPException(status_code=409, detail="idempotency key payload conflict") from exc
+    except Exception:
+        _record_command_error(request, run_id, "run.regenerate", timer.elapsed_ms())
+        _record_regeneration_outcome(request, run_id, "error")
+        raise
+    _record_run_command(request, run.id, conversation.id, "run.regenerate", timer.elapsed_ms())
+    state(request).metrics.increment(
+        "aura.execution.run_coordinator",
+        "conversation_regeneration_outcome",
+        outcome="ok",
+        conversation_id=str(conversation.id),
+        run_id=str(run.id),
+        branch_id=str(branch.id),
+        regenerated_from_run_id=str(run.regenerated_from_run_id),
+    )
+    await state(request).coordinator.enqueue(run)
+    return {
+        "conversation": conversation_payload(
+            conversation, state(request).agents, state(request).personas
+        ),
+        "branch": {
+            "id": str(branch.id),
+            "conversationId": str(branch.conversation_id),
+            "parentBranchId": str(branch.parent_branch_id) if branch.parent_branch_id else None,
+            "forkedFromMessageId": str(branch.forked_from_message_id)
+            if branch.forked_from_message_id
+            else None,
+            "headMessageId": str(branch.head_message_id) if branch.head_message_id else None,
+            "origin": branch.origin.value,
+            "createdAt": branch.created_at.isoformat(),
+        },
         "userMessage": message_payload(message),
         "run": run_payload(run),
     }
@@ -631,6 +744,7 @@ def _record_command_error(
     run_id: UUID,
     operation: str,
     duration_ms: float,
+    error_class: str | None = None,
 ) -> None:
     state(request).metrics.record_span(
         "aura.execution.run_coordinator",
@@ -641,8 +755,18 @@ def _record_command_error(
         parent_span_id=None,
         dependency="conversation_store",
         outcome="error",
-        error_class="cancel" if operation == "run.cancel" else "persistence",
+        error_class=error_class or ("cancel" if operation == "run.cancel" else "persistence"),
         run_id=str(run_id),
+    )
+
+
+def _record_regeneration_outcome(request: Request, run_id: UUID, outcome: str) -> None:
+    state(request).metrics.increment(
+        "aura.execution.run_coordinator",
+        "conversation_regeneration_outcome",
+        trace_id=run_id.hex,
+        run_id=str(run_id),
+        outcome=outcome,
     )
 
 

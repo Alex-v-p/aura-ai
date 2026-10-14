@@ -31,3 +31,13 @@ USER aura
 ENTRYPOINT ["/usr/local/bin/aura-core-entrypoint"]
 
 CMD ["uv", "run", "python", "-c", "from aura_core.entrypoints.worker.app import main; main()"]
+
+# The parser sandbox reuses the locked parser dependency set but has a
+# dedicated process entrypoint. Compose gives it a separate network and
+# applies its read-only, capability, resource, and PID constraints.
+FROM runtime AS document-parser
+
+COPY --chmod=0555 deploy/docker/document_parser_service.py /usr/local/bin/document-parser-service.py
+
+ENTRYPOINT ["/usr/local/bin/document-parser-service.py"]
+CMD []

@@ -10,7 +10,9 @@ from uuid import UUID, uuid4
 import pytest
 from aura_core.domains.execution.runs.events import RunEvent, new_event, validate_tool_status
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
+from aura_core.domains.execution.runs.public import Run, message_payload, run_payload
 from aura_core.domains.execution.runs.repository import SqlRunRepository
+from aura_core.domains.interaction.conversations.dto import Message, MessageRole
 from aura_core.runtime.streaming.publisher import EventPublisher
 
 
@@ -234,3 +236,48 @@ def test_approval_run_lifecycle_is_versioned_and_metadata_only() -> None:
         "prompt",
         "response",
     } & set(properties)
+
+
+def test_branch_and_regeneration_lineage_is_optional_and_opaque_in_snapshots() -> None:
+    conversation_id = uuid4()
+    branch_id = uuid4()
+    source_run_id = uuid4()
+    user_message_id = uuid4()
+    run = Run(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        agent_revision_id=uuid4(),
+        model_policy_revision_id=uuid4(),
+        provider="ollama",
+        model_id="fake",
+        branch_id=branch_id,
+        regenerated_from_run_id=source_run_id,
+    )
+    payload = run_payload(run)
+    assert payload["branchId"] == str(branch_id)
+    assert payload["regeneratedFromRunId"] == str(source_run_id)
+    assert "content" not in payload
+
+    message = Message(
+        conversation_id,
+        MessageRole.USER,
+        "private prompt",
+        branch_id=branch_id,
+        parent_message_id=uuid4(),
+    )
+    message_data = message_payload(message)
+    assert message_data["branchId"] == str(branch_id)
+    assert isinstance(message_data["parentMessageId"], str)
+    assert message_data["content"] == "private prompt"
+
+
+def test_lineage_contract_rejects_arbitrary_strings_as_uuid_references() -> None:
+    schema_path = Path(__file__).parents[3] / "contracts/events/runs/v1/run-events.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    run_properties = schema["$defs"]["Run"]["properties"]
+    for field in ("branchId", "regeneratedFromRunId"):
+        alternatives = run_properties[field]["oneOf"]
+        assert {"$ref": "#/$defs/Uuid"} in alternatives
+        assert {"type": "null"} in alternatives
+        with pytest.raises(ValueError):
+            UUID("arbitrary-lineage-value")

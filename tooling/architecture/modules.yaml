@@ -78,6 +78,79 @@ modules:
   - services/aura-core/src/aura_core/domains/knowledge/memory/__init__.py
   dependencies:
   - aura-core.domains.knowledge.memory.public
+- id: aura-core.domains.knowledge.documents
+  root: services/aura-core/src/aura_core/domains/knowledge/documents
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  python_modules:
+  - aura_core.domains.knowledge.documents
+  source_files:
+  - services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+  dependencies:
+  - aura-core.domains.knowledge.documents.evaluation
+  - aura-core.domains.knowledge.documents.public
+- id: aura-core.domains.knowledge.documents.chunking
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/chunking.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/chunking.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.chunking
+  dependencies: []
+- id: aura-core.domains.knowledge.documents.parser
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/parser.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/parser.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.parser
+  dependencies:
+  - aura-core.domains.knowledge.documents.chunking
+- id: aura-core.domains.knowledge.documents.evaluation
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.evaluation
+  dependencies:
+  - aura-core.domains.knowledge.documents.public
+- id: aura-core.domains.knowledge.documents.persistence
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/persistence.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.knowledge.documents.ports
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.ports
+  dependencies:
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.documents.parser
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.knowledge.documents.public
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.public
+  dependencies:
+  - aura-core.domains.knowledge.documents.chunking
+  - aura-core.domains.knowledge.documents.parser
+  - aura-core.domains.knowledge.documents.ports
+  - aura-core.runtime.models.ports
+- id: aura-core.domains.knowledge.documents.repository
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.repository
+  dependencies:
+  - aura-core.domains.knowledge.documents.persistence
+  - aura-core.domains.knowledge.documents.ports
+  - aura-core.domains.knowledge.documents.public
 - id: aura-core.domains.automation.reminders
   root: services/aura-core/src/aura_core/domains/automation/reminders
   kind: package
@@ -249,7 +322,6 @@ modules:
   - aura-core.domains.interaction.agents
   - aura-core.domains.interaction.agents.persistence
   - aura-core.domains.interaction.conversations
-  - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.conversations.public
   - aura-core.platform.database.base
   - aura-core.platform.outbox
@@ -343,7 +415,6 @@ modules:
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.interaction.conversations.context
   - aura-core.domains.interaction.conversations.dto
-  - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.conversations.repository
   - aura-core.domains.interaction.conversations.store
   - aura-core.platform.outbox
@@ -621,6 +692,19 @@ modules:
   - aura-core.providers.embeddings.ollama.adapter
   - aura-core.providers.models.ollama.adapter
   - aura-core.runtime.models.ports
+- id: aura-core.bootstrap.document-uow
+  root: services/aura-core/src/aura_core/bootstrap/document_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/document_uow.py
+  python_modules:
+  - aura_core.bootstrap.document_uow
+  dependencies:
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.documents.persistence
+  - aura-core.domains.knowledge.documents.repository
+  - aura-core.platform.outbox
+  - aura-core.providers.document-parser
+  - aura-core.providers.object-storage.garage
 - id: aura-core.domains.knowledge.memory.persistence
   root: services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
   kind: python
@@ -1076,6 +1160,7 @@ modules:
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.approvals
   - aura-core.entrypoints.api.routes.conversations
+  - aura-core.entrypoints.api.routes.documents
   - aura-core.entrypoints.api.routes.health
   - aura-core.entrypoints.api.routes.memories
   - aura-core.entrypoints.api.routes.models
@@ -1220,12 +1305,14 @@ modules:
   - aura_core.entrypoints.api.state
   dependencies:
   - aura-core.bootstrap.approval-uow
+  - aura-core.bootstrap.document-uow
   - aura-core.domains.governance.approvals
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.health
   - aura-core.bootstrap.notification_uow
   - aura-core.bootstrap.reminder_uow
+  - aura-core.bootstrap.document-uow
   - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.public
@@ -1238,6 +1325,8 @@ modules:
   - aura-core.bootstrap.memory-uow
   - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.public
+  - aura-core.entrypoints.worker.documents
+  - aura-core.domains.knowledge.documents.public
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.oidc
@@ -1246,6 +1335,8 @@ modules:
   - aura-core.platform.readiness
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
+  - aura-core.providers.embeddings.ollama.adapter
+  - aura-core.providers.embeddings.ollama.adapter
   - aura-core.runtime.models.gateway
   - aura-core.runtime.models.ports
   - aura-core.runtime.tools
@@ -1285,6 +1376,19 @@ modules:
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
+- id: aura-core.entrypoints.api.routes.documents
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.documents
+  dependencies:
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.documents.ports
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.runtime.models.ports
 - id: aura-core.entrypoints.cli
   root: services/aura-core/src/aura_core/entrypoints/cli.py
   kind: python
@@ -1308,6 +1412,7 @@ modules:
   - aura-core.bootstrap.conversation-uow
   - aura-core.bootstrap.memory-uow
   - aura-core.bootstrap.reminder_uow
+  - aura-core.bootstrap.document-uow
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public
@@ -1318,14 +1423,39 @@ modules:
   - aura-core.domains.interaction.personas.public
   - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.public
+  - aura-core.entrypoints.worker.documents
   - aura-core.platform.auth
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
+  - aura-core.providers.embeddings.ollama.adapter
   - aura-core.runtime.streaming.publisher
   - aura-core.runtime.tools
+- id: aura-core.entrypoints.worker.documents
+  root: services/aura-core/src/aura_core/entrypoints/worker/documents.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/documents.py
+  python_modules:
+  - aura_core.entrypoints.worker.documents
+  dependencies:
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.runtime.models.ports
+- id: aura-core.entrypoints.document-parser
+  root: services/aura-core/src/aura_core/entrypoints/document_parser
+  kind: package
+  public_api: services/aura-core/src/aura_core/entrypoints/document_parser/__init__.py
+  python_modules:
+  - aura_core.entrypoints.document_parser
+  - aura_core.entrypoints.document_parser.client
+  - aura_core.entrypoints.document_parser.main
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/document_parser/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/document_parser/client.py
+  - services/aura-core/src/aura_core/entrypoints/document_parser/main.py
+  dependencies:
+  - aura-core.domains.knowledge.documents.parser
 - id: aura-core.platform.auth
   root: services/aura-core/src/aura_core/platform/auth.py
   kind: python
@@ -1433,6 +1563,36 @@ modules:
   - aura_core.providers.embeddings.ollama.adapter
   dependencies:
   - aura-core.runtime.models.ports
+- id: aura-core.providers.object-storage
+  root: services/aura-core/src/aura_core/providers/object_storage
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/object_storage/__init__.py
+  python_modules:
+  - aura_core.providers.object_storage
+  source_files:
+  - services/aura-core/src/aura_core/providers/object_storage/__init__.py
+  dependencies:
+  - aura-core.providers.object-storage.garage
+- id: aura-core.providers.document-parser
+  root: services/aura-core/src/aura_core/providers/document_parser
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/document_parser/__init__.py
+  python_modules:
+  - aura_core.providers.document_parser
+  - aura_core.providers.document_parser.http
+  source_files:
+  - services/aura-core/src/aura_core/providers/document_parser/__init__.py
+  - services/aura-core/src/aura_core/providers/document_parser/http.py
+  dependencies:
+  - aura-core.domains.knowledge.documents.parser
+- id: aura-core.providers.object-storage.garage
+  root: services/aura-core/src/aura_core/providers/object_storage/garage.py
+  kind: provider
+  public_api: services/aura-core/src/aura_core/providers/object_storage/garage.py
+  python_modules:
+  - aura_core.providers.object_storage.garage
+  dependencies:
+  - aura-core.domains.knowledge.documents.ports
 - id: aura-core.runtime.models.capacity
   root: services/aura-core/src/aura_core/runtime/models/capacity.py
   kind: python
@@ -1569,6 +1729,12 @@ modules:
   root: frontend/libs/aura/governance/approvals
   kind: frontend-feature
   public_api: frontend/libs/aura/governance/approvals/src/index.ts
+  dependencies:
+  - aura-web.api-client
+- id: aura-web.knowledge-documents
+  root: frontend/libs/aura/knowledge/documents
+  kind: frontend-feature
+  public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
 - id: aura-contract.openapi

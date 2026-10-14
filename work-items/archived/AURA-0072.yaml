@@ -1,0 +1,97 @@
+id: AURA-0072
+title: Prevent private Compose networks from shadowing provider LAN routes
+status: integrated
+change_class: infrastructure
+intent: >
+  Make Aura's private object-storage and document-parser networks deterministic
+  and operator-configurable so Docker cannot auto-allocate a subnet that
+  shadows the configured Ollama provider or another trusted LAN route.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved explicit operator-overridable private Compose subnets that preserve existing service isolation and do not overlap the current 192.168.0.0/24 LAN.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deployment.compose
+  - platform.compose-topology
+allowed_paths:
+  - work-items/active/AURA-0072.yaml
+  - work-items/archived/AURA-0072.yaml
+  - compose.yaml
+  - .env.example
+  - deploy/compose/test_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - evaluations/**
+  - services/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Garage and the document parser must remain reachable only by their authorized Core clients.
+    - Explicit IPAM must not attach private services to the egress or browser-facing networks.
+    - Subnet values must remain operator-overridable to avoid collisions on other hosts and VPNs.
+  data_classes: []
+required_agents:
+  implementation:
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The object-storage and document-parser networks use explicit small default subnets outside the current 192.168.0.0/24 LAN and remain configurable through documented environment values.
+  - Existing internal flags and exact service network memberships remain unchanged.
+  - Compose configuration validation and topology tests reject removal of deterministic private-network IPAM.
+  - Recreating only the Aura Compose project yields the configured object-storage subnet without removing unrelated Docker networks or persistent state.
+  - Aura Core API and worker can reach the configured Ollama inventory endpoint while Garage and the parser remain healthy and private.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0072.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0072.yaml
+  - python3 deploy/compose/test_topology.py
+  - .venv/bin/python -m pytest -q services/aura-core/tests/system/test_contract_and_deployment.py
+  - docker compose --env-file .env config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,15 @@
+agent: observability_steward
+work_item: AURA-0073
+verdict: PASS
+checked:
+  - Prior blocker fixed: MetadataMetrics now allowlists identity_mismatch as a bounded degradation value.
+  - Direct production-sink verification retained the identity-mismatch span with rejected=0 and dimensions limited to degradation, dependency, error_class, and outcome.
+  - Real-sink regression verifies trace id, parent span, correlation id, degraded outcome, identity_mismatch classification, retrieval duration, and zero rejected measurements.
+  - Regression verifies filenames, document text markers, model digests, vectors, owners, and other private content do not enter telemetry.
+  - aura.knowledge.document_retrieval is declared as an affected component with document_retrieval_duration_ms and document_retrieval_outcome.
+  - The retrieval manifest retains its stable id/version, metadata-only capture, evaluator set, prohibited fields, and bounded degradation dimension.
+  - SQL mismatch detection is bounded to LIMIT 1, selects only a chunk identifier, remains owner/status scoped, and returns only a boolean degradation flag.
+  - Compatible vector retrieval, embedding-provider lexical fallback, identity-mismatch lexical fallback, and public list-of-hits behavior remain covered.
+  - Work-item, changed-path, and observability validation passed.
+  - Five focused production-telemetry, retrieval, SQL, and manifest tests passed.
+findings: []

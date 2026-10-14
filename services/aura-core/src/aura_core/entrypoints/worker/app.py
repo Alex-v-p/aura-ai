@@ -40,6 +40,13 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryValidationError,
     memory_activity_id,
 )
+from aura_core.entrypoints.worker.documents import (
+    DocumentWorker,
+    run_document_loop,
+)
+from aura_core.entrypoints.worker.documents import (
+    run_document_once as _run_document_once,
+)
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.outbox import (
@@ -59,8 +66,29 @@ from aura_core.platform.telemetry import (
     memory_trace_context,
     new_span_id,
 )
+from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.providers.models.ollama.adapter import OllamaAdapter
 from aura_core.runtime.tools import default_tool_registry
+
+
+async def run_document_housekeeping(worker: DocumentWorker) -> None:
+    """Bounded recovery for upload sessions left behind by a crash."""
+
+    while True:
+        try:
+            await worker.service.recover_stale_uploads(limit=100)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The next bounded pass retries; no document metadata is logged.
+            pass
+        await asyncio.sleep(60.0)
+
+
+async def run_document_once(worker: DocumentWorker, consumer: object) -> None:
+    """Expose the document dispatch seam from the production worker module."""
+
+    await _run_document_once(worker, consumer)
 
 
 class MemoryJobProcessor(Protocol):
@@ -749,6 +777,9 @@ async def run_forever(settings: Settings | None = None) -> None:
     from aura_core.domains.knowledge.memory import public as memory_public
 
     memory_topic = str(getattr(memory_public, "MEMORY_PROCESSING_TOPIC", "aura.memory.process.v1"))
+    document_process_topic = "aura.knowledge.documents.process.v1"
+    document_delete_topic = "aura.knowledge.documents.delete.v1"
+    document_event_topic = "aura.knowledge.documents.events.v1"
     memory_consumer = NatsIdentifierConsumer(
         config.nats_url,
         memory_topic,
@@ -763,9 +794,30 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-approval-resume-worker",
         component="aura.governance.approval_workflow",
     )
+    document_process_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        document_process_topic,
+        metrics=metrics,
+        durable="aura-core-document-process-worker",
+        component="aura.knowledge.document_processing",
+    )
+    document_delete_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        document_delete_topic,
+        metrics=metrics,
+        durable="aura-core-document-delete-worker",
+        component="aura.knowledge.document_deletion",
+    )
     event_transport = NatsOutbox(
         config.nats_url,
-        additional_subjects=(memory_topic, APPROVAL_EVENT_TOPIC, RUN_RESUME_TOPIC),
+        additional_subjects=(
+            memory_topic,
+            APPROVAL_EVENT_TOPIC,
+            RUN_RESUME_TOPIC,
+            document_process_topic,
+            document_delete_topic,
+            document_event_topic,
+        ),
         metrics=metrics,
     )
     memory_processor: MemoryJobProcessor | None = None
@@ -786,6 +838,9 @@ async def run_forever(settings: Settings | None = None) -> None:
         # that state.
         memory_processor = None
     memory_task: asyncio.Task[None] | None = None
+    document_process_task: asyncio.Task[None] | None = None
+    document_delete_task: asyncio.Task[None] | None = None
+    document_housekeeping_task: asyncio.Task[None] | None = None
     resume_task: asyncio.Task[None] | None = None
     housekeeping_task: asyncio.Task[None] | None = None
     approval_task: asyncio.Task[None] | None = None
@@ -793,6 +848,8 @@ async def run_forever(settings: Settings | None = None) -> None:
     try:
         await consumer.connect()
         await resume_consumer.connect()
+        await document_process_consumer.connect()
+        await document_delete_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
             housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
@@ -800,6 +857,30 @@ async def run_forever(settings: Settings | None = None) -> None:
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
+        from aura_core.bootstrap.document_uow import document_service
+
+        document_worker = DocumentWorker(
+            document_service(
+                sessions,
+                settings=config,
+                metrics=metrics,
+                embedder=OllamaEmbeddingAdapter(
+                    config.ollama_url,
+                    config.ollama_run_timeout_seconds,
+                    telemetry=metrics,
+                    dimension=config.document_embedding_dimension,
+                ),
+            )
+        )
+        document_process_task = asyncio.create_task(
+            run_document_loop(document_worker, document_process_consumer)
+        )
+        document_delete_task = asyncio.create_task(
+            run_document_loop(document_worker, document_delete_consumer)
+        )
+        document_housekeeping_task = asyncio.create_task(
+            run_document_housekeeping(document_worker)
+        )
         coordinator = RunCoordinator(
             store,
             PersistentEventPublisher(
@@ -815,6 +896,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             tool_registry=default_tool_registry(),
             approval_service=approval_service_instance,
             reminder_service=reminder_service_instance,
+            document_service=document_worker.service,
             thinking_publisher=event_transport,
         )
         # Approval/resumption wakeups are identifier-only; the worker always
@@ -934,10 +1016,22 @@ async def run_forever(settings: Settings | None = None) -> None:
         if memory_task is not None:
             memory_task.cancel()
             await asyncio.gather(memory_task, return_exceptions=True)
+        for task in (document_process_task, document_delete_task):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (document_process_task, document_delete_task) if task is not None),
+            return_exceptions=True,
+        )
+        if document_housekeeping_task is not None:
+            document_housekeeping_task.cancel()
+            await asyncio.gather(document_housekeeping_task, return_exceptions=True)
         if resume_task is not None:
             resume_task.cancel()
             await asyncio.gather(resume_task, return_exceptions=True)
         await memory_consumer.close()
+        await document_process_consumer.close()
+        await document_delete_consumer.close()
         await resume_consumer.close()
         await consumer.close()
         await event_transport.close()

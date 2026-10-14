@@ -689,6 +689,8 @@ class NatsIdentifierConsumer(NatsRunConsumer):
     without coupling a worker to an adapter-specific payload shape.
     """
 
+    emits_consumer_metrics = True
+
     def __init__(
         self,
         connection_url: str,

@@ -59,6 +59,9 @@ class RunRepository(Protocol):
         *,
         attempt_id: UUID | None = None,
     ) -> Message: ...
+    async def mark_document_search_used(
+        self, run_id: UUID, *, attempt_id: UUID | None = None
+    ) -> None: ...
     async def finish_run(
         self,
         run_id: UUID,
@@ -71,7 +74,11 @@ class RunRepository(Protocol):
         self, run_id: UUID, attempt_id: UUID, approval_id: UUID, tool_call_id: UUID
     ) -> Run: ...
     async def resume_waiting_run(
-        self, run_id: UUID, approval_id: UUID, *, approved: bool,
+        self,
+        run_id: UUID,
+        approval_id: UUID,
+        *,
+        approved: bool,
     ) -> Run: ...
 
 

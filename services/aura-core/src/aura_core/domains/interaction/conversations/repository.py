@@ -12,7 +12,10 @@ from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
     ConversationArchiveState,
+    ConversationBranch,
+    ConversationBranchOrigin,
     ConversationListFilters,
+    DocumentCitation,
     Message,
     MessageRole,
     MessageState,
@@ -24,6 +27,7 @@ from aura_core.domains.interaction.conversations.dto import (
 )
 from aura_core.domains.interaction.conversations.persistence import (
     ConversationAgentAssignmentRow,
+    ConversationBranchRow,
     ConversationPersonaAssignmentRow,
     ConversationRow,
     IdempotencyRow,
@@ -60,9 +64,7 @@ class IdempotencyRecord:
 
 class SqlConversationRepository:
     @staticmethod
-    def _record(
-        row: ConversationRow, activity_at: datetime | None = None
-    ) -> ConversationRecord:
+    def _record(row: ConversationRow, activity_at: datetime | None = None) -> ConversationRecord:
         return ConversationRecord(
             row.id,
             row.principal_id,
@@ -82,6 +84,15 @@ class SqlConversationRepository:
 
     @staticmethod
     def _message(row: MessageRow) -> Message:
+        citations = tuple(
+            DocumentCitation(
+                UUID(str(item["documentId"])),
+                "Document source",
+                str(item["locator"]),
+            )
+            for item in (row.citations or [])
+            if {"documentId", "locator"} <= set(item)
+        )
         return Message(
             row.conversation_id,
             MessageRole(row.role),
@@ -91,6 +102,21 @@ class SqlConversationRepository:
             row.id,
             row.created_at or now(),
             row.updated_at or now(),
+            citations,
+            row.branch_id,
+            row.parent_message_id,
+        )
+
+    @staticmethod
+    def _branch(row: ConversationBranchRow) -> ConversationBranch:
+        return ConversationBranch(
+            conversation_id=row.conversation_id,
+            parent_branch_id=row.parent_branch_id,
+            forked_from_message_id=row.forked_from_message_id,
+            head_message_id=row.head_message_id,
+            id=row.id,
+            created_at=row.created_at or now(),
+            origin=ConversationBranchOrigin(row.origin or "root"),
         )
 
     async def exists(self, session: AsyncSession, conversation_id: UUID) -> bool:
@@ -171,7 +197,7 @@ class SqlConversationRepository:
                 await session.execute(
                     select(MessageRow)
                     .where(MessageRow.conversation_id == conversation_id)
-                    .order_by(MessageRow.created_at)
+                    .order_by(MessageRow.created_at, MessageRow.id)
                 )
             )
             .scalars()
@@ -179,19 +205,39 @@ class SqlConversationRepository:
         )
         return [self._message(row) for row in rows]
 
+    async def branches(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[ConversationBranch]:
+        rows = (
+            (
+                await session.execute(
+                    select(ConversationBranchRow)
+                    .where(ConversationBranchRow.conversation_id == conversation_id)
+                    .order_by(ConversationBranchRow.created_at, ConversationBranchRow.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [self._branch(row) for row in rows]
+
     async def assignments(
         self, session: AsyncSession, conversation_id: UUID
     ) -> list[AgentAssignment]:
         rows = (
-            await session.execute(
-                select(ConversationAgentAssignmentRow)
-                .where(ConversationAgentAssignmentRow.conversation_id == conversation_id)
-                .order_by(
-                    ConversationAgentAssignmentRow.created_at,
-                    ConversationAgentAssignmentRow.id,
+            (
+                await session.execute(
+                    select(ConversationAgentAssignmentRow)
+                    .where(ConversationAgentAssignmentRow.conversation_id == conversation_id)
+                    .order_by(
+                        ConversationAgentAssignmentRow.created_at,
+                        ConversationAgentAssignmentRow.id,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [
             AgentAssignment(
                 row.agent_profile_id,
@@ -208,15 +254,19 @@ class SqlConversationRepository:
         self, session: AsyncSession, conversation_id: UUID
     ) -> list[PersonaAssignment]:
         rows = (
-            await session.execute(
-                select(ConversationPersonaAssignmentRow)
-                .where(ConversationPersonaAssignmentRow.conversation_id == conversation_id)
-                .order_by(
-                    ConversationPersonaAssignmentRow.created_at,
-                    ConversationPersonaAssignmentRow.id,
+            (
+                await session.execute(
+                    select(ConversationPersonaAssignmentRow)
+                    .where(ConversationPersonaAssignmentRow.conversation_id == conversation_id)
+                    .order_by(
+                        ConversationPersonaAssignmentRow.created_at,
+                        ConversationPersonaAssignmentRow.id,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [
             PersonaAssignment(
                 row.persona_revision_id,
@@ -272,10 +322,39 @@ class SqlConversationRepository:
                 role=message.role.value,
                 content=message.content,
                 state=message.state.value,
+                citations=[
+                    {
+                        "documentId": str(item.document_id),
+                        "locator": item.locator,
+                    }
+                    for item in message.citations
+                ],
                 created_at=message.created_at,
                 updated_at=message.updated_at,
+                branch_id=message.branch_id,
+                parent_message_id=message.parent_message_id,
             )
         )
+
+    def stage_branch(self, session: AsyncSession, branch: ConversationBranch) -> None:
+        session.add(
+            ConversationBranchRow(
+                id=branch.id,
+                conversation_id=branch.conversation_id,
+                parent_branch_id=branch.parent_branch_id,
+                forked_from_message_id=branch.forked_from_message_id,
+                head_message_id=branch.head_message_id,
+                created_at=branch.created_at,
+                origin=branch.origin.value,
+            )
+        )
+
+    async def update_branch_head(
+        self, session: AsyncSession, branch_id: UUID, head_message_id: UUID
+    ) -> None:
+        row = await session.get(ConversationBranchRow, branch_id, with_for_update=True)
+        if row is not None:
+            row.head_message_id = head_message_id
 
     def stage_assignment(
         self, session: AsyncSession, assignment: AgentAssignment, conversation_id: UUID
@@ -372,6 +451,29 @@ class SqlConversationRepository:
         row = await session.get(MessageRow, message_id, with_for_update=True)
         if row is not None:
             row.state = state.value
+            row.updated_at = now()
+
+    async def set_message_citations(
+        self,
+        session: AsyncSession,
+        message_id: UUID,
+        citations: tuple[DocumentCitation, ...],
+        *,
+        content: str | None = None,
+    ) -> None:
+        """Atomically settle citations and sanitized assistant content."""
+
+        row = await session.get(MessageRow, message_id, with_for_update=True)
+        if row is not None:
+            row.citations = [
+                {
+                    "documentId": str(item.document_id),
+                    "locator": item.locator,
+                }
+                for item in citations
+            ]
+            if content is not None:
+                row.content = content
             row.updated_at = now()
 
     async def idempotency(

@@ -38,10 +38,15 @@ class OllamaEmbeddingAdapter:
         endpoint: str,
         timeout_seconds: float = 30.0,
         telemetry: ProviderTelemetryPort | None = None,
+        *,
+        dimension: int | None = None,
     ) -> None:
+        if dimension is not None and not 1 <= dimension <= MAX_DIMENSION:
+            raise ValueError("embedding dimension is outside the supported range")
         self._endpoint = endpoint.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
         self._telemetry = telemetry
+        self._dimension = dimension
 
     async def embed(
         self,
@@ -60,7 +65,12 @@ class OllamaEmbeddingAdapter:
                 outcome="error", error_class="validation"
             )
             raise OllamaEmbeddingUnavailable("embedding request is invalid")
-        payload = await self._request_embedding(model_id, text)
+        if self._dimension is None:
+            payload = await self._request_embedding(model_id, text)
+        else:
+            payload = await self._request_embedding(
+                model_id, text, dimension=self._dimension
+            )
         if payload is None:
             model_id = ""
             text = ""
@@ -80,6 +90,15 @@ class OllamaEmbeddingAdapter:
             )
             raise OllamaEmbeddingUnavailable("embedding response malformed")
         values, response_revision = parsed
+        if self._dimension is not None and len(values) != self._dimension:
+            payload = None
+            model_id = ""
+            text = ""
+            self._record_telemetry(
+                started, context, model_id=requested_model_id,
+                outcome="error", error_class="provider"
+            )
+            raise OllamaEmbeddingUnavailable("embedding response dimension mismatch")
         artifact = await self._request_model_artifact(model_id)
         if artifact is None:
             payload = None
@@ -173,12 +192,17 @@ class OllamaEmbeddingAdapter:
         except Exception:
             return
 
-    async def _request_embedding(self, model_id: str, text: str) -> object | None:
+    async def _request_embedding(
+        self, model_id: str, text: str, *, dimension: int | None = None
+    ) -> object | None:
+        request: dict[str, object] = {"model": model_id, "input": text}
+        if dimension is not None:
+            # Ollama forwards this Matryoshka output size to compatible
+            # embedding models such as qwen3-embedding:4b.
+            request["dimensions"] = dimension
         try:
             async with httpx.AsyncClient(base_url=self._endpoint, timeout=self._timeout) as client:
-                response = await client.post(
-                    "/api/embed", json={"model": model_id, "input": text}
-                )
+                response = await client.post("/api/embed", json=request)
                 response.raise_for_status()
                 return response.json()
         except Exception:

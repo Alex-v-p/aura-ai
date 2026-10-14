@@ -1,7 +1,7 @@
 import { Inject, Injectable, InjectionToken, Optional, computed, signal } from '@angular/core';
 import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
-import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
+import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationBranchDetail, type ConversationBranchPage, type ConversationBranchRunAccepted, type ConversationBranchSummary, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 
 // Memory processing can legitimately wait behind a provider run. Keep the
 // background reconciliation horizon aligned with the configured 300-second
@@ -12,7 +12,44 @@ export type TurnRole = 'user' | 'assistant';
 export type RunState = 'idle' | 'working' | 'waiting' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; }
+/** Metadata-only source reference accepted by Core for this run. */
+export interface DocumentCitation { readonly documentId: string; readonly displayLabel: string; readonly locator: string; }
+const citationIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const citationText = (value: unknown, maxLength: number): string | null => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength || [...value].some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; })) return null;
+  return value;
+};
+/** Normalize additive API data before it reaches the transcript template. */
+export function normalizeDocumentCitations(value: unknown): ReadonlyArray<DocumentCitation> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>(); const result: DocumentCitation[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const item = candidate as Record<string, unknown>;
+    const documentId = citationText(item['documentId'], 128);
+    const displayLabel = citationText(item['displayLabel'] ?? item['displayName'], 120);
+    const locator = citationText(item['locator'], 255);
+    if (!documentId || !citationIdPattern.test(documentId) || !displayLabel || !locator || !/^(?:page|section):[1-9][0-9]{0,6}$/u.test(locator)) continue;
+    const key = `${documentId}\u0000${locator}`;
+    if (seen.has(key)) continue;
+    seen.add(key); result.push({ documentId, displayLabel, locator });
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; }
+export interface ConversationBranchState {
+  readonly summaries: ReadonlyArray<ConversationBranchSummary>;
+  readonly activeId: string | null;
+  readonly nextCursor: string | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly errorAction: BranchRetryAction | null;
+  readonly editingMessageId: string | null;
+  readonly editDraft: string;
+}
+export type BranchRetryAction = { readonly kind: 'list' } | { readonly kind: 'edit'; readonly messageId: string } | { readonly kind: 'regenerate'; readonly messageId: string } | { readonly kind: 'select'; readonly branchId: string };
 export type MemoryPopupRecord = { readonly kind: 'memory'; readonly detail: MemoryDetail } | { readonly kind: 'candidate'; readonly detail: MemoryCandidateDetail };
 export function memoryActivityIndicators(items: ReadonlyArray<MemoryActivity>): { readonly recalled: boolean; readonly updated: boolean } {
   return { recalled: items.some((item) => item.action === 'recalled'), updated: items.some((item) => item.action !== 'recalled') };
@@ -59,7 +96,7 @@ export function reconcileModelThinkingDelta(existing: ModelThinkingState | null,
 export interface ConversationAssignment { readonly id: string; readonly agent: AgentReference; readonly reason: 'initial' | 'manual_switch' | 'revision_upgrade'; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface ConversationPersonaAssignment { readonly id: string; readonly persona: PersonaReference; readonly source: ApiPersonaAssignment['source']; readonly reason: ApiPersonaAssignment['reason']; readonly afterMessageId: string | null; readonly changedAt: string; }
 export interface PendingConversationConfiguration { readonly conversationId: string; readonly expectedVersion: number; readonly agent: AgentReference | null; readonly persona: PersonaReference | null; readonly useAgentDefaultPersona: boolean; readonly agentChanged: boolean; readonly personaChanged: boolean; readonly action: 'switch' | 'upgrade'; }
-export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly archivedAt: string | null; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; readonly toolActivities?: Readonly<Record<string, ReadonlyArray<ToolStatusData>>>; readonly toolActivityEventIds?: Readonly<Record<string, ReadonlyArray<string>>>; readonly toolActivityCursors?: Readonly<Record<string, string>>; }
+export interface Conversation { readonly id: string; readonly title: string; readonly turns: ReadonlyArray<ConversationTurn>; readonly updatedAt: number; readonly modelId: string; readonly version: number; readonly archivedAt: string | null; readonly currentRun: Run | null; readonly retryableRun: Run | null; readonly agent: AgentReference | null; readonly assignments: ReadonlyArray<ConversationAssignment>; readonly persona: PersonaReference | null; readonly personaOverride: boolean; readonly personaAssignments: ReadonlyArray<ConversationPersonaAssignment>; readonly runs: ReadonlyArray<Run>; readonly branch?: ConversationBranchState; readonly toolActivities?: Readonly<Record<string, ReadonlyArray<ToolStatusData>>>; readonly toolActivityEventIds?: Readonly<Record<string, ReadonlyArray<string>>>; readonly toolActivityCursors?: Readonly<Record<string, string>>; }
 export type ConversationRouteSelection = { readonly status: 'selected' } | { readonly status: 'not_found' } | { readonly status: 'unauthorized' | 'forbidden' | 'error'; readonly error: ConversationApiError } | { readonly status: 'stale' };
 export type SessionAuthorizationStatus = 401 | 403;
 interface SessionGuard { readonly epoch: number; readonly fingerprint: string | null; }
@@ -79,7 +116,8 @@ export interface ManagementSessionPort {
 export const AURA_MANAGEMENT_SESSION = new InjectionToken<ManagementSessionPort>('AURA_MANAGEMENT_SESSION');
 
 const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1, displayName: 'Aura', status: 'active' };
-const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
+const emptyBranchState = (): ConversationBranchState => ({ summaries: [], activeId: null, nextCursor: null, loading: false, error: null, errorAction: null, editingMessageId: null, editDraft: '' });
+const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [], branch: emptyBranchState() };
 
 @Injectable({ providedIn: 'root' })
 export class ConversationStore {
@@ -137,6 +175,8 @@ export class ConversationStore {
   readonly memoryPopupErrors = signal<Readonly<Record<string, string | null>>>({});
   /** Thinking is keyed by run and held only in this live browser session. */
   readonly modelThinking = signal<Readonly<Record<string, ModelThinkingState>>>({});
+  readonly selectedBranch = computed(() => this.selected().branch ?? emptyBranchState());
+  readonly branchEditing = computed(() => this.selectedBranch().editingMessageId !== null);
 
   toolActivitiesForRun(runId: string): ReadonlyArray<ToolStatusData> { return this.find(this.selectedId())?.toolActivities?.[runId] ?? []; }
   thinkingForRun(runId: string): ModelThinkingState | null { return this.modelThinking()[runId] ?? null; }
@@ -358,6 +398,128 @@ export class ConversationStore {
 
   select(id: string): void { if (this.conversations().some((conversation) => conversation.id === id)) { this.cancelPendingConfigurationForSelection(id); this.selectedId.set(id); this.setNotice(id, null); if (!id.startsWith('draft-')) void this.refresh(id); } }
 
+  beginEditMessage(messageId: string): void {
+    const turn = this.selected().turns.find((item) => item.id === messageId && item.role === 'user');
+    if (!turn || this.controlsBlockedForBranch()) return;
+    this.updateBranchState({ editingMessageId: messageId, editDraft: turn.text, error: null });
+  }
+
+  updateEditDraft(value: string): void { if (this.selectedBranch().editingMessageId) this.updateBranchState({ editDraft: value }); }
+
+  cancelEditMessage(): void { this.updateBranchState({ editingMessageId: null, editDraft: '' }); }
+
+  async editAndBranch(): Promise<boolean> {
+    const conversation = this.selected();
+    const branch = this.selectedBranch();
+    const messageId = branch.editingMessageId;
+    const text = branch.editDraft.trim();
+    if (!messageId || !text) { this.updateBranchState({ error: 'Write a replacement message before creating a branch.' }); return false; }
+    if (!this.api.createConversationBranch || this.controlsBlockedForBranch()) return false;
+    this.updateBranchState({ loading: true, error: null });
+    try {
+      const accepted = await this.api.createConversationBranch(conversation.id, messageId, text, conversation.version, this.key(), this.clientTimeZone(), conversation.branch?.activeId ?? undefined);
+      const applied = await this.applyAcceptedBranch(conversation.id, accepted, { kind: 'edit', messageId });
+      if (applied) {
+        this.updateBranchState({ loading: false, editingMessageId: null, editDraft: '', errorAction: null });
+        return true;
+      }
+      return false;
+    } catch (error: unknown) {
+      const apiError = this.toApiError(error);
+      if (apiError.status === 409) {
+        await this.recoverBranchConflict(conversation.id, { kind: 'edit', messageId });
+        return false;
+      }
+      this.updateBranchState({ loading: false, error: apiError.message, errorAction: { kind: 'edit', messageId } });
+      return false;
+    }
+  }
+
+  async regenerateAssistant(messageId: string): Promise<boolean> {
+    const conversation = this.selected();
+    const turn = conversation.turns.find((item) => item.id === messageId && item.role === 'assistant');
+    const runId = turn?.runId;
+    if (!runId || !this.api.regenerateRun || this.controlsBlockedForBranch()) return false;
+    this.updateBranchState({ loading: true, error: null });
+    try {
+      const accepted = await this.api.regenerateRun(conversation.id, runId, conversation.version, this.key(), this.clientTimeZone());
+      const applied = await this.applyAcceptedBranch(conversation.id, accepted, { kind: 'regenerate', messageId });
+      if (applied) {
+        this.updateBranchState({ loading: false, errorAction: null });
+        return true;
+      }
+      return false;
+    } catch (error: unknown) {
+      const apiError = this.toApiError(error);
+      if (apiError.status === 409) {
+        await this.recoverBranchConflict(conversation.id, { kind: 'regenerate', messageId });
+        return false;
+      }
+      this.updateBranchState({ loading: false, error: apiError.message, errorAction: { kind: 'regenerate', messageId } });
+      return false;
+    }
+  }
+
+  async loadBranches(conversationId = this.selectedId(), cursor?: string): Promise<void> {
+    const conversation = this.find(conversationId);
+    if (!conversation || conversationId.startsWith('draft-') || !this.api.listConversationBranches) return;
+    const initialLoad = cursor === undefined;
+    this.updateBranchState({ loading: true, error: null, errorAction: null, ...(initialLoad ? { nextCursor: null } : {}) }, conversationId);
+    try {
+      let pageCursor = cursor;
+      let summaries = initialLoad ? [] : [...(conversation.branch?.summaries ?? [])];
+      do {
+        const page: ConversationBranchPage = await this.api.listConversationBranches(conversationId, pageCursor);
+        summaries = [...summaries, ...page.items];
+        pageCursor = page.nextCursor ?? undefined;
+      } while (pageCursor);
+      // A branch detail request can complete while the list request is still
+      // in flight (notably for opaque URL deep links). Read the current
+      // conversation after pagination so the list cannot restore the root
+      // branch over a freshly hydrated alternative transcript.
+      const latest = this.find(conversationId);
+      const preferredActiveId = latest?.branch?.activeId ?? conversation.branch?.activeId;
+      const activeId = preferredActiveId && summaries.some((item) => item.id === preferredActiveId)
+        ? preferredActiveId
+        : summaries.find((item) => item.parentBranchId === null)?.id ?? summaries[0]?.id ?? null;
+      this.updateBranchState({ loading: false, summaries, activeId, nextCursor: null }, conversationId);
+    } catch (error: unknown) {
+      this.updateBranchState({ loading: false, error: this.toApiError(error).message, errorAction: { kind: 'list' } }, conversationId);
+    }
+  }
+
+  async retryBranchAction(): Promise<boolean> {
+    const action = this.selectedBranch().errorAction;
+    if (!action) return false;
+    if (action.kind === 'list') { await this.loadBranches(); return false; }
+    if (action.kind === 'edit') return this.editAndBranch();
+    if (action.kind === 'regenerate') return this.regenerateAssistant(action.messageId);
+    return this.selectBranch(action.branchId);
+  }
+
+  async selectBranch(branchId: string): Promise<boolean> {
+    const conversation = this.selected();
+    if (!conversation.branch?.summaries.some((item) => item.id === branchId) || !this.api.getConversationBranch || branchId === conversation.branch.activeId) return false;
+    this.updateBranchState({ loading: true, error: null });
+    try {
+      const detail = await this.api.getConversationBranch(conversation.id, branchId);
+      const next = this.fromBranchDetail(detail, conversation);
+      this.replaceConversation(next);
+      this.updateBranchState({ loading: false, activeId: branchId }, conversation.id);
+      return true;
+    } catch (error: unknown) {
+      this.updateBranchState({ loading: false, error: this.toApiError(error).message, errorAction: { kind: 'select', branchId } });
+      return false;
+    }
+  }
+
+  navigateBranch(direction: -1 | 1): void {
+    const branches = this.selectedBranch().summaries;
+    const index = branches.findIndex((item) => item.id === this.selectedBranch().activeId);
+    const next = branches[index + direction];
+    if (next) void this.selectBranch(next.id);
+  }
+
   async selectFromRoute(id: string, isCurrent: () => boolean = () => true): Promise<ConversationRouteSelection> {
     this.cancelPendingConfigurationForSelection(id);
     if (id.startsWith('draft-')) { if (!isCurrent() || !this.find(id)) return { status: 'stale' }; this.select(id); return { status: 'selected' }; }
@@ -376,6 +538,7 @@ export class ConversationStore {
       this.setNotice(id, null);
       if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
       else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); }
+      void this.loadBranches(id);
       return { status: 'selected' };
     } catch (error: unknown) {
       if (!isCurrent() || !this.matchesSessionGuard(guard)) return { status: 'stale' };
@@ -404,7 +567,7 @@ export class ConversationStore {
     }
     const id = `draft-${Date.now()}-${this.draftCounter++}`;
     this.cancelPendingConfigurationForSelection(id);
-    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [] };
+    const conversation: Conversation = { id, title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: this.defaultModelId(), version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [], branch: emptyBranchState() };
     this.conversations.update((items) => [conversation, ...items]); this.drafts.update((drafts) => ({ ...drafts, [id]: '' })); this.runStates.update((states) => ({ ...states, [id]: 'idle' })); this.defaultDraftAgentResolution.set('pending'); this.defaultDraftAgentError.set(null); this.selectedId.set(id); this.setNotice(id, conversation.modelId ? null : 'The configured default model is unavailable. Choose an available model to continue.');
   }
 
@@ -728,8 +891,8 @@ export class ConversationStore {
     const conversation = this.find(id); if (!conversation) return;
     const guard = this.captureSessionGuard();
     try {
-      const submission = this.pendingSubmissions.get(id); const clientTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined;
-      const accepted = await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone);
+      const submission = this.pendingSubmissions.get(id); const clientTimeZone = this.clientTimeZone();
+      const accepted = await this.api.createRun(id, text, conversation.version, this.key(), clientTimeZone, conversation.branch?.activeId ?? undefined);
       if (!this.matchesSessionGuard(guard)) return;
       this.acceptRun(id, accepted, submission?.pendingTurnId); this.promoteConversation(id); this.clearDraftAfterAcceptance(id, submission?.draft); this.pendingSubmissions.delete(id);
     } catch (error: unknown) { this.rejectSubmission(id, error, guard); }
@@ -746,6 +909,86 @@ export class ConversationStore {
     const title = acceptedConversation.title === 'New conversation' ? existing.title : acceptedConversation.title;
     this.replaceConversation({ ...acceptedConversation, title, turns, runs: [...existing.runs, accepted.run] }); this.setRunState(id, this.statusToState(accepted.run.status)); this.subscribe(accepted.run);
   }
+
+  private async applyAcceptedBranch(id: string, accepted: ConversationBranchRunAccepted, action: BranchRetryAction): Promise<boolean> {
+    const existing = this.find(id);
+    if (!existing) return false;
+    const acceptedConversation = this.fromSummary(accepted.conversation);
+    const branch = accepted.branch;
+    if (!branch) {
+      this.updateBranchState({ loading: false, error: 'Aura created the run, but the new branch could not be identified.', errorAction: action }, id);
+      this.subscribe(accepted.run);
+      return false;
+    }
+    const branchState: ConversationBranchState = {
+      ...(existing.branch ?? emptyBranchState()),
+      activeId: branch.id,
+      error: null,
+      errorAction: null,
+      loading: false,
+      editingMessageId: null,
+      editDraft: '',
+      summaries: (existing.branch?.summaries ?? []).some((item) => item.id === branch.id) ? (existing.branch?.summaries ?? []) : [...(existing.branch?.summaries ?? []), branch],
+    };
+    const acceptedUser = accepted.userMessage ? this.fromMessage(accepted.userMessage) : null;
+    this.replaceConversation({
+      ...acceptedConversation,
+      branch: branchState,
+      turns: acceptedUser ? [...existing.turns.slice(0, Math.max(0, existing.turns.findIndex((turn) => turn.id === branch.forkedFromMessageId) + 1)), acceptedUser] : existing.turns,
+      runs: [...existing.runs, accepted.run],
+    });
+    this.setRunState(id, this.statusToState(accepted.run.status));
+    this.subscribe(accepted.run);
+    if (this.api.getConversationBranch) {
+      try {
+        const detail = await this.api.getConversationBranch(id, branch.id);
+        this.replaceConversation(this.fromBranchDetail(detail, this.find(id) ?? existing));
+        this.setRunState(id, this.statusToState(detail.recentRuns.at(-1)?.status ?? accepted.run.status));
+      } catch {
+        this.updateBranchState({ loading: false, error: 'The branch was created, but its transcript is not available yet.', errorAction: { kind: 'select', branchId: branch.id } }, id);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async recoverBranchConflict(id: string, action: Extract<BranchRetryAction, { kind: 'edit' | 'regenerate' }>): Promise<void> {
+    const refreshed = await this.refresh(id);
+    const message = refreshed
+      ? 'This conversation changed. The latest version is loaded; review your draft and retry the branch action.'
+      : 'This conversation changed, but the latest version could not be loaded. Retry when the conversation is available.';
+    this.updateBranchState({ loading: false, error: message, errorAction: action }, id);
+    this.setNotice(id, message);
+  }
+
+  private fromBranchDetail(detail: ConversationBranchDetail, previous: Conversation): Conversation {
+    const turns = detail.messages.map((message) => {
+      const next = this.fromMessage(message);
+      const old = previous.turns.find((turn) => turn.id === message.id);
+      return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next;
+    });
+    const runs = this.uniqueRuns(detail.recentRuns);
+    const currentRun = runs.find((run) => !this.isTerminal(run.status)) ?? null;
+    const retryableRun = runs.filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null;
+    return { ...previous, turns, currentRun, retryableRun, runs, branch: { ...(previous.branch ?? emptyBranchState()), activeId: detail.branch.id, error: null, errorAction: null, loading: false } };
+  }
+
+  private controlsBlockedForBranch(): boolean {
+    const conversation = this.selected();
+    if (conversation.id.startsWith('draft-')) { this.setNotice(conversation.id, 'Branching is available after the conversation is saved.'); return true; }
+    if (conversation.archivedAt) { this.setNotice(conversation.id, 'Restore this conversation before creating a branch.'); return true; }
+    if (this.runState() === 'working' || this.runState() === 'waiting') { this.setNotice(conversation.id, 'Wait for the active response to finish before creating a branch.'); return true; }
+    if (this.authState() !== 'authenticated') { this.setNotice(conversation.id, 'Sign in before creating a branch.'); return true; }
+    return false;
+  }
+
+  private updateBranchState(patch: Partial<ConversationBranchState>, conversationId = this.selectedId()): void {
+    const conversation = this.find(conversationId);
+    if (!conversation) return;
+    this.replaceConversation({ ...conversation, branch: { ...(conversation.branch ?? emptyBranchState()), ...patch } });
+  }
+
+  private clientTimeZone(): string | undefined { return typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; }
 
   private subscribe(run: Run, attempt = 0): void {
     const guard = this.captureSessionGuard();
@@ -817,18 +1060,61 @@ export class ConversationStore {
     else if (event.eventType === 'run.error') { this.setRunState(event.conversationId, 'error'); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: 'failed', error: event.data } : run); this.setNotice(event.conversationId, event.data.message || 'Aura could not complete this response. Your message is still here.'); }
   }
 
-  private async refresh(id: string): Promise<void> {
+  private async refresh(id: string): Promise<boolean> {
     const guard = this.captureSessionGuard();
     try {
       const detail = await this.api.getConversation(id);
-      if (!this.matchesSessionGuard(guard)) return;
-      const conversation = this.fromDetail(detail); this.replaceConversation(conversation); this.hydrateHistoricalToolActivities(conversation);
-      const latestRun = detail.currentRun ?? conversation.runs.at(-1);
+      if (!this.matchesSessionGuard(guard)) return false;
+      // The legacy conversation projection intentionally excludes sibling
+      // branch content. Preserve the selected opaque branch and rehydrate its
+      // authorized path after refreshing shared metadata; otherwise a terminal
+      // SSE event can replace an alternative transcript with root messages
+      // while leaving its active branch id unchanged.
+      const previous = this.find(id);
+      const selectedBranchId = previous?.branch?.activeId;
+      let conversation = this.fromDetail(detail);
+      if (selectedBranchId && this.api.getConversationBranch) {
+        try {
+          const branchDetail = await this.api.getConversationBranch(id, selectedBranchId);
+          conversation = this.fromBranchDetail(branchDetail, conversation);
+        } catch {
+          // Keep the last authorized branch path with the refreshed metadata
+          // during a transient branch-detail outage; never show root content
+          // under the alternative branch id while waiting for reconciliation.
+          if (previous) conversation = { ...conversation, turns: previous.turns, currentRun: previous.currentRun, retryableRun: previous.retryableRun, runs: previous.runs, branch: previous.branch };
+        }
+      }
+      // A user can enter edit mode while the branch detail request is in
+      // flight. Re-read the interaction state at commit time so a late
+      // terminal refresh does not erase the textarea or its draft. Only keep
+      // the edit target when the refreshed authorized path still contains the
+      // original user message.
+      const latest = this.find(id);
+      if (latest?.branch && conversation.branch && latest.branch.activeId === conversation.branch.activeId) {
+        const latestEditId = latest.branch.editingMessageId;
+        const editStillExists = Boolean(latestEditId && conversation.turns.some((turn) => turn.id === latestEditId && turn.role === 'user'));
+        conversation = {
+          ...conversation,
+          branch: {
+            ...conversation.branch,
+            editingMessageId: editStillExists ? latestEditId : null,
+            editDraft: editStillExists ? latest.branch.editDraft : '',
+            error: latest.branch.error,
+            errorAction: latest.branch.errorAction,
+            loading: latest.branch.loading,
+          },
+        };
+      }
+      this.replaceConversation(conversation); this.hydrateHistoricalToolActivities(conversation);
+      const latestRun = conversation.currentRun ?? conversation.runs.at(-1);
       if (latestRun && this.api.getRunMemoryActivity) await this.readMemoryActivity(id, latestRun.id, guard);
-      if (!this.matchesSessionGuard(guard)) return;
-      if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
+      if (!this.matchesSessionGuard(guard)) return false;
+      if (conversation.currentRun) { this.setRunState(id, this.statusToState(conversation.currentRun.status)); this.subscribe(conversation.currentRun); }
       else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); this.setNotice(id, conversation.retryableRun.status === 'failed' ? 'Aura could not complete this response. Your message is still here.' : 'Generation stopped. Your partial response is still here.'); }
-    } catch (error: unknown) { this.handleError(id, error, guard); }
+      else this.setRunState(id, 'idle');
+      await this.loadBranches(id);
+      return true;
+    } catch (error: unknown) { this.handleError(id, error, guard); return false; }
   }
   private async loadConversationPage(generation: number): Promise<ReadonlyArray<ConversationSummary>> {
     const page = await this.api.listConversations(undefined, this.libraryFilters());
@@ -906,12 +1192,13 @@ export class ConversationStore {
   private cancelPendingConfigurationForSelection(id: string): void { if (this.pendingConfiguration()?.conversationId !== id) this.pendingConfiguration.set(null); }
 
   private fromSummary(summary: ConversationSummary): Conversation {
+    const previous = this.find(summary.id);
     const raw = summary as ConversationSummary & { agent?: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; agentAssignments?: ReadonlyArray<{ id: string; agent: { profileId: string; revisionId: string; revision: number; displayName: string; status: 'active' | 'disabled'; newerRevisionAvailable?: boolean }; reason: ConversationAssignment['reason']; effectiveAfterMessageId: string | null; createdAt: string }> };
     const agent = raw.agent ? { profileId: raw.agent.profileId, revisionId: raw.agent.revisionId, revision: raw.agent.revision, displayName: raw.agent.displayName, status: raw.agent.status, newerRevisionAvailable: raw.agent.newerRevisionAvailable } : summary.agentRevisionId ? { profileId: summary.agentProfileId, revisionId: summary.agentRevisionId, revision: 1, displayName: 'Aura', status: 'active' as const } : null;
     const assignments = (raw.agentAssignments ?? []).map((item) => ({ id: item.id, agent: { profileId: item.agent.profileId, revisionId: item.agent.revisionId, revision: item.agent.revision, displayName: item.agent.displayName, status: item.agent.status, newerRevisionAvailable: item.agent.newerRevisionAvailable }, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
     const persona = summary.persona ?? null;
     const personaAssignments = (summary.personaAssignments ?? []).map((item) => ({ id: item.id, persona: item.persona, source: item.source, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
-    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, archivedAt: summary.archivedAt ?? null, currentRun: summary.currentRun, retryableRun: null, agent, assignments, persona, personaOverride: summary.personaOverride ?? false, personaAssignments, runs: summary.currentRun ? [summary.currentRun] : [] };
+    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, archivedAt: summary.archivedAt ?? null, currentRun: summary.currentRun, retryableRun: null, agent, assignments, persona, personaOverride: summary.personaOverride ?? false, personaAssignments, runs: summary.currentRun ? [summary.currentRun] : [], ...(previous?.branch ? { branch: previous.branch } : { branch: emptyBranchState() }) };
   }
   private mergeSummary(summary: ConversationSummary, existing: Conversation): Conversation {
     const mapped = this.fromSummary(summary);
@@ -921,10 +1208,10 @@ export class ConversationStore {
     const retryableRun = currentRun && this.isRetryable(currentRun.status) ? currentRun : existing.retryableRun;
     return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()], ...(existing.toolActivities ? { toolActivities: existing.toolActivities } : {}), ...(existing.toolActivityEventIds ? { toolActivityEventIds: existing.toolActivityEventIds } : {}), ...(existing.toolActivityCursors ? { toolActivityCursors: existing.toolActivityCursors } : {}) };
   }
-  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
+  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
-  private fromMessage(message: Message): ConversationTurn { return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId }; }
+  private fromMessage(message: Message): ConversationTurn { const citations = normalizeDocumentCitations((message as Message & { readonly citations?: unknown }).citations); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
       if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;

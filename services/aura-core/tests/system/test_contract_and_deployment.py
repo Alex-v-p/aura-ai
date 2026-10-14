@@ -16,6 +16,8 @@ ROOT = Path(__file__).parents[4]
 def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
     settings = Settings()
 
+    assert settings.document_embedding_model == "qwen3-embedding:4b"
+    assert settings.document_embedding_dimension == 768
     assert settings.ollama_inventory_timeout_seconds == 5.0
     assert settings.ollama_verification_timeout_seconds == 60.0
     assert settings.ollama_inventory_cache_ttl_seconds == 15.0
@@ -30,6 +32,20 @@ def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
     ):
         with pytest.raises(ValueError):
             Settings(**cast(Any, {field: value}))
+
+
+def test_document_entrypoints_bind_the_dimension_safe_embedding_adapter() -> None:
+    api_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/api/state.py"
+    ).read_text()
+    worker_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/worker/app.py"
+    ).read_text()
+
+    assert "dimension=self.settings.document_embedding_dimension" in api_source
+    assert "dimension=config.document_embedding_dimension" in worker_source
+    assert "settings=self.settings" in api_source
+    assert "settings=config" in worker_source
 
 
 def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> None:
@@ -76,7 +92,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.17.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -238,7 +254,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.17.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -308,7 +324,7 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.17.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected_paths = {
         "/api/v1/approvals",
@@ -397,7 +413,7 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.13.0"
+    assert contract["info"]["version"] == "1.17.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
@@ -533,7 +549,10 @@ def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None
     assert "AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER:?" in identity_override
     assert "AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?" in identity_override
     assert "networks: [aura-identity, aura-identity-db, aura-identity-cache]" in identity_override
-    assert "networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress]" in compose
+    assert (
+        "networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, "
+        "aura-object-storage, aura-core-egress]"
+    ) in compose
     assert "host.docker.internal:host-gateway" in compose
     identity_core_block = identity_override.split("  aura-core-api:", 1)[1].split(
         "  authentik-postgres:", 1
@@ -550,6 +569,7 @@ def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None
         "aura-core-db",
         "aura-core-bus",
         "aura-core-cache",
+        "aura-object-storage",
         "aura-core-egress",
         "aura-identity",
     }

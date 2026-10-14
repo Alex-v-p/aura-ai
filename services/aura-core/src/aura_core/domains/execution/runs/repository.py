@@ -11,13 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aura_core.domains.execution.runs.dto import Run, RunClaimLost, RunError, RunStatus
 from aura_core.domains.execution.runs.events import RunEvent, validate_tool_status
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
-from aura_core.domains.interaction.conversations.dto import now
+from aura_core.domains.interaction.conversations.dto import DocumentCitation, now
 
 
 class SqlRunRepository:
     @staticmethod
     def _run(row: RunRow) -> Run:
         error = row.error or None
+        citations = tuple(
+            DocumentCitation(
+                UUID(str(item["documentId"])),
+                "Document source",
+                str(item["locator"]),
+            )
+            for item in (row.citations or [])
+            if {"documentId", "locator"} <= set(item)
+        )
         return Run(
             conversation_id=row.conversation_id,
             user_message_id=row.user_message_id,
@@ -51,6 +60,10 @@ class SqlRunRepository:
             approval_id=row.approval_id,
             pending_tool_call_id=row.pending_tool_call_id,
             tool_lifecycle_status=row.tool_lifecycle_status,
+            citations=citations,
+            document_search_used=row.document_search_used,
+            branch_id=row.branch_id,
+            regenerated_from_run_id=row.regenerated_from_run_id,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -153,6 +166,14 @@ class SqlRunRepository:
                 approval_id=run.approval_id,
                 pending_tool_call_id=run.pending_tool_call_id,
                 tool_lifecycle_status=run.tool_lifecycle_status,
+                citations=[
+                    {
+                        "documentId": str(item.document_id),
+                        "locator": item.locator,
+                    }
+                    for item in run.citations
+                ],
+                document_search_used=run.document_search_used,
                 provider=run.provider,
                 model_id=run.model_id,
                 retry_of_run_id=run.retry_of_run_id,
@@ -164,6 +185,8 @@ class SqlRunRepository:
                 created_at=run.created_at,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
+                branch_id=run.branch_id,
+                regenerated_from_run_id=run.regenerated_from_run_id,
             )
         )
 
@@ -191,6 +214,14 @@ class SqlRunRepository:
         row.approval_id = run.approval_id
         row.pending_tool_call_id = run.pending_tool_call_id
         row.tool_lifecycle_status = run.tool_lifecycle_status
+        row.citations = [
+            {
+                "documentId": str(item.document_id),
+                "locator": item.locator,
+            }
+            for item in run.citations
+        ]
+        row.document_search_used = run.document_search_used
 
     async def increment_tool_calls(
         self, session: AsyncSession, run_id: UUID, attempt_id: UUID

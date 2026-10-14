@@ -1,0 +1,10 @@
+agent: security_privacy_reviewer
+work_item: AURA-0075
+verdict: PASS
+checked:
+  - Citation instructions expose only bounded same-run UUID-backed evidence identifiers returned by document.search; no cross-run evidence is made available.
+  - Document names, locators, and excerpts remain explicitly untrusted evidence and cannot alter policy, permissions, tools, or system behavior.
+  - Empty, denied, failed, canceled, timed-out, malformed, and incomplete search results do not instruct the model to cite unavailable evidence.
+  - Existing Core validation continues to accept only evidence returned during the current run and strips raw marker syntax before persistence.
+  - The focused conversation suite passed with 71 tests, pyright reported 0 errors and 0 warnings, ruff passed, and git diff --check passed.
+findings: []

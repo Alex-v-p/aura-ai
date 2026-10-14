@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aura_core.domains.governance.identity.models import (
@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     default_model: str = Field(
         default="", validation_alias=AliasChoices("AURA_OLLAMA_DEFAULT_MODEL", "AURA_DEFAULT_MODEL")
     )
+    # Document vectors use the installed Qwen Matryoshka model at the
+    # dimension of the existing pgvector index.  Memory has its own model
+    # selection and embedding provider composition and must not inherit this
+    # document-specific setting.
+    document_embedding_model: str = Field(
+        default="qwen3-embedding:4b",
+        validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_MODEL"),
+    )
+    document_embedding_dimension: int = Field(
+        default=768,
+        validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_DIMENSION"),
+    )
     context_token_budget: int = Field(default=8192, gt=0)
     ollama_run_timeout_seconds: float = 300.0
     # Inventory reads use provider metadata and should fail quickly without
@@ -74,10 +86,49 @@ class Settings(BaseSettings):
     oidc_audience: str = ""
     oidc_redirect_uri: str = "https://aura.local/api/v1/auth/callback"
     owner_subject: str = ""
+    object_storage_endpoint: str = Field(
+        default="http://127.0.0.1:3900",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_ENDPOINT", "AURA_DOCUMENT_STORE_URL"),
+    )
+    object_storage_region: str = Field(
+        default="garage",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_REGION", "AURA_GARAGE_REGION"),
+    )
+    object_storage_bucket: str = Field(
+        default="aura-documents",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_BUCKET", "AURA_GARAGE_BUCKET"),
+    )
+    object_storage_access_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_ACCESS_KEY"),
+    )
+    object_storage_access_key_file: str = Field(
+        default="",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_ACCESS_KEY_FILE"),
+    )
+    object_storage_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_SECRET_KEY"),
+    )
+    object_storage_secret_key_file: str = Field(
+        default="",
+        validation_alias=AliasChoices("AURA_OBJECT_STORAGE_SECRET_KEY_FILE"),
+    )
+    document_parser_url: str = Field(
+        default="http://document-parser:8080",
+        validation_alias=AliasChoices("AURA_DOCUMENT_PARSER_URL"),
+    )
     secure_cookies: bool = Field(
         default=True,
         validation_alias=AliasChoices("AURA_SESSION_COOKIE_SECURE", "AURA_SECURE_COOKIES"),
     )
+
+    @field_validator("document_embedding_dimension")
+    @classmethod
+    def validate_document_embedding_dimension(cls, value: int) -> int:
+        if value != 768:
+            raise ValueError("document embedding dimension must be exactly 768")
+        return value
 
     @property
     def session_cookie(self) -> SessionCookiePolicy:
@@ -93,6 +144,12 @@ class Settings(BaseSettings):
         self.oidc_client_secret = read_secret(self.oidc_client_secret, self.oidc_client_secret_file)
         self.nats_password = read_secret(self.nats_password, self.nats_password_file)
         self.valkey_password = read_secret(self.valkey_password, self.valkey_password_file)
+        self.object_storage_access_key = read_secret(
+            self.object_storage_access_key, self.object_storage_access_key_file
+        )
+        self.object_storage_secret_key = read_secret(
+            self.object_storage_secret_key, self.object_storage_secret_key_file
+        )
         if not self.database_url:
             self.database_url = (
                 f"postgresql+psycopg://{quote(self.database_user)}:{quote(password, safe='')}"

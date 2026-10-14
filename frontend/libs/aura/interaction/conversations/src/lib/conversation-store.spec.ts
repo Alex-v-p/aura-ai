@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationApi, RunEventSubscription } from './conversation-api';
+import type { ConversationApi, ConversationBranchDetail, ConversationBranchSummary, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, normalizeDocumentCitations, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
 
 const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
 function hydrateDefaultAgent(store: ConversationStore): void { store.setDefaultDraftAgent(hydratedDefaultAgent); }
@@ -71,6 +71,10 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('normalizes citations to owner-safe internal-link data and drops malformed or duplicate markers', () => {
+    expect(normalizeDocumentCitations([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4', excerpt: 'private' }, { documentId: 'doc-a', displayLabel: 'Duplicate', locator: 'page:4' }, { documentId: 'https://attacker.test', displayLabel: 'Remote', locator: 'page:1' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }, { documentId: 'doc-c', displayLabel: 'Bad', locator: 'page:0' }])).toEqual([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }]);
+  });
+
   it('clears management state synchronously before awaiting logout', async () => {
     const management = managementPort();
     const api = fakeApi();
@@ -553,6 +557,51 @@ describe('ConversationStore', () => {
 
     expect(titleStore.conversations().map((conversation) => conversation.id)).toEqual(['first-title', 'second-title']);
     expect(titleStore.conversations().find((conversation) => conversation.id === second.id)?.title).toBe('Generated second title');
+  });
+  it('rehydrates the selected alternative branch after terminal reconciliation', async () => {
+    const now = new Date().toISOString();
+    const conversationId = 'branch-terminal-refresh';
+    const sourceUserId = 'branch-terminal-user';
+    const rootRun: Run = { id: 'branch-terminal-root-run', conversationId, userMessageId: sourceUserId, assistantMessageId: 'branch-terminal-root-assistant', status: 'completed', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: now, error: null };
+    const alternativeRun: Run = { id: 'branch-terminal-alternative-run', conversationId, userMessageId: sourceUserId, assistantMessageId: 'branch-terminal-alternative-assistant', status: 'running', agentRevisionId: 'agent-rev-1', modelPolicyRevisionId: 'policy-1', provider: 'ollama', modelId: model.id, retryOfRunId: null, regeneratedFromRunId: rootRun.id, branchId: 'branch-terminal-alternative', createdAt: now, startedAt: now, finishedAt: null, error: null };
+    const sourceUser = { id: sourceUserId, conversationId, role: 'user' as const, content: 'Original question', state: 'complete' as const, runId: rootRun.id, createdAt: now, updatedAt: now };
+    const rootAssistant = { id: rootRun.assistantMessageId!, conversationId, role: 'assistant' as const, content: 'Original answer', state: 'complete' as const, runId: rootRun.id, createdAt: now, updatedAt: now };
+    const alternativeAssistant = { id: alternativeRun.assistantMessageId!, conversationId, role: 'assistant' as const, content: 'Alternative answer', state: 'partial' as const, runId: alternativeRun.id, createdAt: now, updatedAt: now };
+    const rootBranch: ConversationBranchSummary = { id: 'branch-terminal-root', conversationId, parentBranchId: null, forkedFromMessageId: null, headMessageId: rootAssistant.id, origin: 'root', createdAt: now };
+    const alternativeBranch: ConversationBranchSummary = { id: 'branch-terminal-alternative', conversationId, parentBranchId: rootBranch.id, forkedFromMessageId: sourceUserId, headMessageId: sourceUserId, origin: 'regenerated_response', createdAt: now };
+    let rootDetail = { ...summary(conversationId), version: 2, currentRun: null, messages: [sourceUser, rootAssistant], recentRuns: [rootRun], branches: [rootBranch, alternativeBranch] } as ConversationDetail;
+    let alternativeDetail: ConversationBranchDetail = { branch: alternativeBranch, messages: [sourceUser, alternativeAssistant], recentRuns: [alternativeRun] };
+    let deferAlternativeRead = false;
+    let releaseAlternativeRead: (() => void) | undefined;
+    const api = fakeApi(async () => ({ items: [rootDetail], nextCursor: null }), [rootDetail]);
+    api.listConversationBranches = async () => ({ items: [rootBranch, alternativeBranch], nextCursor: null });
+    api.getConversationBranch = async (_id, branchId) => { if (branchId !== alternativeBranch.id) throw new Error('missing branch'); if (deferAlternativeRead) await new Promise<void>((resolve) => { releaseAlternativeRead = resolve; }); return alternativeDetail; };
+    api.getConversation = async () => rootDetail;
+    const branchStore = new ConversationStore(api);
+    await branchStore.selectFromRoute(conversationId);
+    await vi.waitFor(() => expect(branchStore.selectedBranch().summaries).toHaveLength(2));
+    await expect(branchStore.selectBranch(alternativeBranch.id)).resolves.toBe(true);
+    branchStore.runStates.update((states) => ({ ...states, [conversationId]: 'working' }));
+
+    alternativeDetail = { ...alternativeDetail, recentRuns: [{ ...alternativeRun, status: 'completed', finishedAt: now }], messages: [sourceUser, { ...alternativeAssistant, state: 'complete' }] };
+    rootDetail = { ...rootDetail, currentRun: null, recentRuns: [rootRun], messages: [sourceUser, rootAssistant] };
+    await (branchStore as unknown as { refresh: (id: string) => Promise<boolean> }).refresh(conversationId);
+
+    expect(branchStore.selectedBranch().activeId).toBe(alternativeBranch.id);
+    expect(branchStore.selected().turns.at(-1)?.id).toBe(alternativeAssistant.id);
+    expect(branchStore.selected().turns.at(-1)?.runId).toBe(alternativeRun.id);
+    expect(branchStore.runState()).toBe('idle');
+
+    deferAlternativeRead = true;
+    const delayedRefresh = (branchStore as unknown as { refresh: (id: string) => Promise<boolean> }).refresh(conversationId);
+    await vi.waitFor(() => expect(releaseAlternativeRead).toBeTypeOf('function'));
+    branchStore.beginEditMessage(sourceUserId);
+    branchStore.updateEditDraft('Keep this correction');
+    releaseAlternativeRead?.();
+    await delayedRefresh;
+
+    expect(branchStore.selectedBranch().editingMessageId).toBe(sourceUserId);
+    expect(branchStore.selectedBranch().editDraft).toBe('Keep this correction');
   });
   it('loads a generated title when a persisted conversation is opened directly', async () => {
     const detail = { ...summary('generated-route'), title: 'Generated observatory topic', messages: [], recentRuns: [], currentRun: null } as ConversationDetail;

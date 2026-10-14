@@ -1,5 +1,7 @@
 """Public execution run DTOs and lifecycle values."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -7,7 +9,11 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
-    from aura_core.domains.interaction.conversations.dto import Conversation, Message
+    from aura_core.domains.interaction.conversations.dto import (
+        Conversation,
+        DocumentCitation,
+        Message,
+    )
 
 
 class RunStatus(StrEnum):
@@ -77,6 +83,11 @@ class Run:
     approval_id: UUID | None = None
     pending_tool_call_id: UUID | None = None
     tool_lifecycle_status: str | None = None
+    citations: tuple[DocumentCitation, ...] = ()
+    document_search_used: bool = False
+    # Optional lineage fields preserve compatibility with pre-branch runs.
+    branch_id: UUID | None = None
+    regenerated_from_run_id: UUID | None = None
 
 
 class RunClaim(NamedTuple):

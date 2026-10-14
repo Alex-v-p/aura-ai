@@ -32,6 +32,21 @@ Aura does not pre-parse and embed every byte of local, SMB, or other connected s
 
 Aura Core PostgreSQL owns memory, document metadata, provenance, authorization, and lifecycle state. pgvector is the initial index behind a replaceable port; a dedicated vector database requires measured benchmark thresholds and an accepted decision. Production object content uses the Garage S3-compatible boundary, while local filesystem storage is development-only. Format-specific Python parsers are preferred, with an isolated Apache Tika fallback. Search and web-source adapters use SearXNG, HTTPX, Trafilatura, or isolated Playwright as appropriate. Full captured content remains policy-gated and is never implied by an index or telemetry record. See [technology stack](../architecture/technology-stack.md) and [ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md).
 
+The v1 source-backed document library accepts only owner uploads stored in the
+private Garage boundary. `document.search@1` reuses Core's authorized hybrid
+search over ready records and returns bounded excerpts with opaque run-scoped
+evidence identifiers and document/page-or-section provenance. Core, not the
+model, fixes the owner, lifecycle filters, retrieval limits, and context budget.
+Failed, deleting, deleted, and cross-owner documents cannot become evidence.
+
+Retrieved text remains evidence only. Citation markers are valid only when
+they refer to evidence returned during the same run; accepted citations retain
+document identity and locator without copying document text. Owner-facing
+responses may resolve the current display label for an authorized link, while
+events, telemetry, evaluation capture, logs, and audit metadata remain
+content-free. Document retrieval never automatically creates, reinforces, or
+writes long-term memory.
+
 Controlled web research follows the same provenance and policy principles: bounded search and retrieval, freshness awareness, source metadata, claim-linked citations, retention controls, and structured research artifacts. Fetched, parsed, and extension-provided content is untrusted evidence, never policy or instruction authority. Fetchers have no ambient credentials; allowed schemes, destination and redirect revalidation, private/link-local/loopback blocking, size/type/time/resource limits, and parser sandbox restrictions are mandatory.
 
 ## Related working summaries

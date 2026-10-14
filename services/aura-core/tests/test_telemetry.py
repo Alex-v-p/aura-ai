@@ -206,6 +206,92 @@ def test_recurring_reminder_metrics_are_registered_and_reject_private_dimensions
     assert metrics.stats().rejected == 0
 
 
+def test_conversation_branching_metrics_are_registered_and_content_free() -> None:
+    metrics = MetadataMetrics()
+    required = (
+        "conversation_branch_creation_outcome",
+        "conversation_branch_load_outcome",
+        "conversation_regeneration_outcome",
+    )
+    for name in required:
+        metrics.increment(
+            "aura.interaction.conversation_persistence"
+            if name != "conversation_regeneration_outcome"
+            else "aura.execution.run_coordinator",
+            name,
+            outcome="ok",
+        )
+    retained = metrics.snapshot()
+    assert {item.metric for item in retained} == set(required)
+    assert all("content" not in repr(item).lower() for item in retained)
+    assert all("prompt" not in repr(item).lower() for item in retained)
+    assert metrics.stats().rejected == 0
+
+
+def test_conversation_branching_outcomes_retain_error_replay_and_denial_records() -> None:
+    metrics = MetadataMetrics()
+    cases = (
+        ("conversation_branch_load_outcome", "error", "invalid_cursor"),
+        ("conversation_branch_load_outcome", "not_found", "not_found"),
+        ("conversation_branch_load_outcome", "denied", "authorization"),
+        ("conversation_branch_creation_outcome", "idempotent", "idempotency"),
+        ("conversation_branch_creation_outcome", "error", "persistence"),
+        ("conversation_regeneration_outcome", "ok", None),
+        ("conversation_regeneration_outcome", "conflict", "conflict"),
+        ("conversation_regeneration_outcome", "error", "persistence"),
+    )
+    for metric, outcome, error_class in cases:
+        component = (
+            "aura.execution.run_coordinator"
+            if metric == "conversation_regeneration_outcome"
+            else "aura.interaction.conversation_persistence"
+        )
+        dimensions = {"outcome": outcome}
+        if error_class is not None:
+            dimensions["error_class"] = error_class
+        metrics.increment(component, metric, **dimensions)
+
+    retained = metrics.snapshot()
+    assert metrics.stats().rejected == 0
+    assert {
+        (item.metric, dict(item.dimensions).get("outcome"))
+        for item in retained
+        if item.metric in {
+            "conversation_branch_load_outcome",
+            "conversation_branch_creation_outcome",
+            "conversation_regeneration_outcome",
+        }
+    } == {(metric, outcome) for metric, outcome, _ in cases}
+    assert all(
+        not any(
+            secret in repr(item).lower()
+            for secret in ("message", "prompt", "response", "content")
+        )
+        for item in retained
+    )
+
+
+def test_conversation_branching_required_evaluators_are_declared_on_affected_manifests() -> None:
+    manifest_root = Path(__file__).parents[1] / "resources" / "component-manifests"
+    affected = {
+        "aura.interaction.conversation_persistence",
+        "aura.execution.run_coordinator",
+        "aura.runtime.stream_delivery",
+    }
+    required = {
+        "conversation_branch_context_isolation",
+        "conversation_regeneration_evidence_freshness",
+    }
+    declared: set[str] = set()
+    for path in manifest_root.glob("*.yaml"):
+        document = cast(dict[str, object], yaml.safe_load(path.read_text()))
+        component = cast(dict[str, object], document.get("component", {}))
+        if component.get("id") not in affected:
+            continue
+        declared.update(cast(list[str], document.get("evaluators", [])))
+    assert required <= declared
+
+
 @pytest.mark.asyncio
 async def test_recurring_repository_runtime_metrics_cover_success_conflict_error_and_firing(
 ) -> None:
@@ -937,9 +1023,9 @@ def test_tool_runtime_metrics_are_registered_and_reject_content_dimensions() -> 
     assert all("arguments" not in dict(item.trace_attributes) for item in measurements)
     assert all("result" not in dict(item.trace_attributes) for item in measurements)
     assert metrics.stats().rejected >= 3
-    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.3.0"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_selection"] == "1.4.0"
     assert COMPONENT_VERSIONS["aura.runtime.policy_evaluation"] == "1.1.0"
-    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.2.1"
+    assert COMPONENT_VERSIONS["aura.runtime.tool_execution"] == "1.3.0"
 
 
 def test_memory_product_observations_are_registered_and_metadata_only() -> None:
@@ -1368,7 +1454,7 @@ def test_parented_span_has_component_identity_dependency_and_trace_only_ids() ->
     assert span.kind == "span"
     assert span.component_version == COMPONENT_VERSIONS[
         "aura.interaction.conversation_persistence"
-    ] == "1.6.0"
+    ] == "1.7.0"
     assert span.span_id == child_id
     assert span.parent_span_id == root_span_id(run_id.hex)
     assert dict(span.dimensions) == {"dependency": "postgresql", "outcome": "ok"}

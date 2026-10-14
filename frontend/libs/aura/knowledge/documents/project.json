@@ -1,0 +1,10 @@
+{
+  "name": "aura-documents",
+  "projectType": "library",
+  "sourceRoot": "libs/aura/knowledge/documents/src",
+  "tags": ["scope:aura", "type:feature"],
+  "targets": {
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts libs/aura/knowledge/documents" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/aura/knowledge/documents" } }
+  }
+}

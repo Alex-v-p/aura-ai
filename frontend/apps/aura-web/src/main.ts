@@ -6,6 +6,7 @@ import { AURA_MANAGEMENT_SESSION, ConversationStore, type ManagementSessionPort 
 import { AGENT_API, AgentStore, AuraAgentApi, ToolPolicyStore } from '@aura/aura/interaction/agents';
 import { PERSONA_API, AuraPersonaApi, PersonaStore } from '@aura/aura/interaction/personas';
 import { MemoryStore } from '@aura/aura/knowledge/memory';
+import { DocumentsStore } from '@aura/aura/knowledge/documents';
 import { ReminderStore } from '@aura/aura/automation/reminders';
 import { NotificationStore } from '@aura/aura/automation/notifications';
 import { ApprovalStore } from '@aura/aura/governance/approvals';
@@ -24,7 +25,7 @@ bootstrapApplication(AppComponent, {
         const injector = inject(Injector);
         const notificationStore = inject(NotificationStore);
         const approvalStore = inject(ApprovalStore);
-        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(ReminderStore), notificationStore, approvalStore];
+        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(DocumentsStore), inject(ReminderStore), notificationStore, approvalStore];
         let authorizationFailure = false;
         let resetting = false;
         return {

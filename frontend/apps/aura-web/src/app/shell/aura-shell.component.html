@@ -45,6 +45,14 @@
           </a>
         </section>
 
+        <section class="nav-group" aria-labelledby="nav-group-knowledge">
+          <h2 id="nav-group-knowledge" class="nav-group-heading">Knowledge</h2>
+          <a class="product-link" routerLink="/documents" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Documents" title="Documents" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4M8 12h8M8 15.5h6"/></svg>
+            <span class="label">Documents</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
+
         <section class="nav-group" aria-labelledby="nav-group-automate">
           <h2 id="nav-group-automate" class="nav-group-heading">Automate</h2>
           <a class="product-link" routerLink="/reminders" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Reminders" title="Reminders" (click)="closeMobileNavigation(isMobileViewport())">

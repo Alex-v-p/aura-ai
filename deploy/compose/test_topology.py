@@ -1,5 +1,7 @@
 """Static deployment topology checks that require no secrets or Docker daemon."""
 
+import ipaddress
+import json
 import os
 import stat
 import subprocess
@@ -46,6 +48,9 @@ class ComposeTopologyTests(unittest.TestCase):
             "fixture-chat": "5aab3664f58aecf3728756feafd39dfc723fdfd43dff233a622eea824574d18b",
             "fixture-chat-2": "2da0d79fc1a6e1cb9edef7bc5a3c41ee4e31df2eb8f53f35487639a0f9ed8951",
             "embed": "8a1eed22144c3f04485a69eea62bfd3fa1026de39dc252b77ba9b1f3f08b00ec",
+            "qwen3-embedding:4b": (
+                "c3e3b7d3a5a23e7f0c3d0d53d5f9d67f03d06f6f85ec5c9d03a8d2c7a8e5f1b4"
+            ),
         }
         for name, digest in expected.items():
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
@@ -70,7 +75,16 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("AURA_ROLE: scheduler", scheduler)
         self.assertIn("AURA_DATABASE_PASSWORD_FILE", scheduler)
         self.assertIn("networks: [aura-core-db]", scheduler)
-        for forbidden in ("AURA_NATS", "AURA_VALKEY", "AURA_OLLAMA", "AURA_OIDC", "aura-core-bus", "aura-core-cache", "aura-core-egress", "host.docker.internal"):
+        for forbidden in (
+            "AURA_NATS",
+            "AURA_VALKEY",
+            "AURA_OLLAMA",
+            "AURA_OIDC",
+            "aura-core-bus",
+            "aura-core-cache",
+            "aura-core-egress",
+            "host.docker.internal",
+        ):
             self.assertNotIn(forbidden, scheduler)
         self.assertNotIn("aura-core-egress", web)
         self.assertNotIn("aura-core-egress", migrate)
@@ -110,6 +124,23 @@ class ComposeTopologyTests(unittest.TestCase):
             api,
         )
 
+    def test_core_entrypoints_share_dimension_safe_document_embedding_defaults(self) -> None:
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        for service in (api, worker):
+            self.assertIn(
+                "AURA_DOCUMENT_EMBEDDING_MODEL: "
+                "${AURA_DOCUMENT_EMBEDDING_MODEL:-qwen3-embedding:4b}",
+                service,
+            )
+            self.assertIn(
+                "AURA_DOCUMENT_EMBEDDING_DIMENSION: ${AURA_DOCUMENT_EMBEDDING_DIMENSION:-768}",
+                service,
+            )
+        self.assertIn("AURA_DOCUMENT_EMBEDDING_MODEL=qwen3-embedding:4b", environment)
+        self.assertIn("AURA_DOCUMENT_EMBEDDING_DIMENSION=768", environment)
+
     def test_browser_e2e_runner_uses_only_the_web_network(self) -> None:
         e2e = self.compose.split("  frontend-e2e:\n", 1)[1].split("\nsecrets:\n", 1)[0]
 
@@ -145,6 +176,26 @@ class ComposeTopologyTests(unittest.TestCase):
         for network in ("aura-frontend", "aura-core-db", "aura-core-bus", "aura-core-cache"):
             self.assertIn(f"  {network}:\n    internal: true", self.compose)
         self.assertIn("  aura-core-egress: {}", self.compose)
+
+    def test_document_parser_uses_the_installed_sandbox_entrypoint(self) -> None:
+        parser = service_block(self.compose, "aura-document-parser", "aura-garage")
+        dockerfile = (ROOT / "deploy/docker/aura-worker.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "entrypoint: [/app/.venv/bin/python, /usr/local/bin/document-parser-service.py]",
+            parser,
+        )
+        self.assertIn(
+            "COPY --chmod=0555 deploy/docker/document_parser_service.py "
+            "/usr/local/bin/document-parser-service.py",
+            dockerfile,
+        )
+        self.assertIn(
+            'ENTRYPOINT ["/usr/local/bin/document-parser-service.py"]',
+            dockerfile,
+        )
 
     def test_identity_override_connects_only_the_api_to_identity_control_network(self) -> None:
         identity = (ROOT / "deploy/compose/local-identity.yaml").read_text(encoding="utf-8")
@@ -208,6 +259,230 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertNotIn("ports:", postgres)
         self.assertNotIn("expose:", postgres)
 
+    def test_garage_is_private_digest_qualified_and_core_only(self) -> None:
+        garage = service_block(self.compose, "aura-garage", "aura-garage-config")
+        config = service_block(self.compose, "aura-garage-config", "aura-garage-bootstrap")
+        bootstrap = self.compose.split("  aura-garage-bootstrap:\n", 1)[1].split(
+            "\nsecrets:\n", 1
+        )[0]
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "image: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:"
+            "4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}",
+            garage,
+        )
+        self.assertIn("rpc_secret", config)
+        self.assertIn("AURA_GARAGE_IMAGE must use a sha256 digest", config)
+        self.assertIn(
+            "AURA_GARAGE_IMAGE=dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a",
+            environment,
+        )
+        self.assertIn("printf 'GK000000000000000000000000\\n'", runner)
+        self.assertIn("entrypoint: [/garage]", garage)
+        self.assertIn("command: [--config, /run/garage-config/garage.toml, server]", garage)
+        self.assertIn(
+            "test: [CMD, /garage, --config, /run/garage-config/garage.toml, status]",
+            garage,
+        )
+        self.assertNotIn("/bin/sh", garage)
+        self.assertIn(
+            "image: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:"
+            "bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}",
+            config,
+        )
+        self.assertIn("network_mode: none", config)
+        self.assertIn("/run/secrets/aura-garage-rpc-secret", config)
+        self.assertIn("garage-bootstrap.Dockerfile", bootstrap)
+        self.assertIn("GARAGE_IMAGE:", bootstrap)
+        self.assertIn("node id 2>/dev/null | cut -d@ -f1", bootstrap)
+        self.assertIn("/var/lib/garage:ro", bootstrap)
+        self.assertIn("aura-object-storage", garage)
+        self.assertIn("aura-object-storage", bootstrap)
+        self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", api)
+        self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", worker)
+        self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", api)
+        self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", worker)
+        self.assertIn("aura-garage-access-key", api)
+        self.assertIn("aura-garage-secret-key", api)
+        self.assertNotIn("ports:", garage)
+        self.assertNotIn("aura-frontend", garage)
+        self.assertIn("  aura-object-storage:\n    internal: true", self.compose)
+
+    def test_document_parser_isolated_from_credentials_and_general_egress(self) -> None:
+        parser = service_block(self.compose, "aura-document-parser", "aura-garage")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        for forbidden in (
+            "AURA_DATABASE",
+            "AURA_NATS",
+            "AURA_VALKEY",
+            "AURA_OLLAMA",
+            "AURA_OIDC",
+            "AURA_OBJECT_STORAGE",
+            "aura-core-db",
+            "aura-core-bus",
+            "aura-core-cache",
+            "aura-object-storage",
+            "aura-core-egress",
+            "host.docker.internal",
+            "secrets:",
+        ):
+            self.assertNotIn(forbidden, parser)
+        self.assertIn("networks: [aura-document-parser]", parser)
+        self.assertIn("read_only: true", parser)
+        self.assertIn("no-new-privileges:true", parser)
+        self.assertIn("cap_drop:", parser)
+        self.assertIn('cpus: "1.0"', parser)
+        self.assertIn("mem_limit: 512m", parser)
+        self.assertIn("pids_limit: 64", parser)
+        self.assertIn("/tmp:rw,noexec,nosuid,nodev,size=64m", parser)
+        self.assertIn("healthz", parser)
+        self.assertIn("aura-document-parser", worker)
+        self.assertIn("AURA_DOCUMENT_PARSER_URL: http://aura-document-parser:8080", worker)
+
+    def test_private_parser_and_object_storage_networks_have_deterministic_ipam(self) -> None:
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        network_section = self.compose.split("\nnetworks:\n", 1)[1]
+
+        expected = {
+            "aura-document-parser": (
+                "AURA_DOCUMENT_PARSER_SUBNET",
+                "10.254.240.16/28",
+            ),
+            "aura-object-storage": (
+                "AURA_OBJECT_STORAGE_SUBNET",
+                "10.254.240.0/28",
+            ),
+        }
+        for network, (setting, subnet) in expected.items():
+            lines = network_section.splitlines()
+            start = lines.index(f"  {network}:") + 1
+            end = start
+            while end < len(lines) and not (
+                lines[end].startswith("  ") and not lines[end].startswith("    ")
+            ):
+                end += 1
+            network_block = "\n".join(lines[start:end])
+            self.assertIn("internal: true", network_block)
+            self.assertIn(
+                f"- subnet: ${{{setting}:-{subnet}}}",
+                network_block,
+            )
+            self.assertIn(f"{setting}={subnet}", environment)
+
+        self.assertNotEqual(
+            expected["aura-document-parser"][1],
+            expected["aura-object-storage"][1],
+        )
+        lan = ipaddress.ip_network("192.168.0.0/24")
+        parsed_subnets = {
+            network: ipaddress.ip_network(subnet)
+            for network, (_, subnet) in expected.items()
+        }
+        for subnet in parsed_subnets.values():
+            self.assertFalse(subnet.overlaps(lan))
+        self.assertFalse(
+            parsed_subnets["aura-document-parser"].overlaps(
+                parsed_subnets["aura-object-storage"]
+            )
+        )
+
+        rendered = self._render_compose_config()
+        rendered_networks = rendered["networks"]
+        for network, subnet in parsed_subnets.items():
+            self.assertEqual(
+                rendered_networks[network]["ipam"]["config"][0]["subnet"],
+                str(subnet),
+            )
+
+        expected_membership = {
+            "aura-object-storage": {
+                "aura-core-api",
+                "aura-core-worker",
+                "aura-garage",
+                "aura-garage-bootstrap",
+            },
+            "aura-document-parser": {
+                "aura-core-worker",
+                "aura-document-parser",
+            },
+        }
+        actual_membership = {
+            network: {
+                service
+                for service, definition in rendered["services"].items()
+                if network in definition.get("networks", {})
+            }
+            for network in expected_membership
+        }
+        self.assertEqual(actual_membership, expected_membership)
+
+    def _render_compose_config(self) -> dict[str, object]:
+        """Render the base file without requiring a Docker daemon or secrets."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_root = root / "state"
+            state_root.mkdir()
+            env_lines = {
+                "AURA_STATE_ROOT": str(state_root),
+                "AURA_PUBLIC_ORIGIN": "https://aura.example.invalid",
+                "AURA_OIDC_ISSUER": "https://authentik.example.invalid",
+                "AURA_OIDC_REDIRECT_URI": "https://aura.example.invalid/api/v1/auth/callback",
+                "AURA_OWNER_SUBJECT": "topology-test-owner",
+            }
+            for name in (
+                "AURA_CORE_DATABASE_PASSWORD_FILE",
+                "AURA_OIDC_CLIENT_SECRET_FILE",
+                "AURA_NATS_PASSWORD_FILE",
+                "AURA_VALKEY_PASSWORD_FILE",
+                "AURA_GARAGE_RPC_SECRET_FILE",
+                "AURA_GARAGE_ACCESS_KEY_FILE",
+                "AURA_GARAGE_SECRET_KEY_FILE",
+            ):
+                secret = root / name
+                secret.write_text("topology-test-secret\n", encoding="utf-8")
+                env_lines[name] = str(secret)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(f"{name}={value}" for name, value in env_lines.items()) + "\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "--project-directory",
+                    str(ROOT),
+                    "--env-file",
+                    str(env_file),
+                    "config",
+                    "--format",
+                    "json",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(result.stdout)
+
+    def test_full_stack_runner_uses_the_pinned_garage_default(self) -> None:
+        runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(encoding="utf-8")
+        digest = (
+            "dxflrs/garage:v2.1.0@sha256:"
+            "4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a"
+        )
+        self.assertIn(f"default_garage_image='{digest}'", runner)
+        self.assertIn(
+            'export AURA_GARAGE_IMAGE="${AURA_GARAGE_IMAGE:-$default_garage_image}"',
+            runner,
+        )
+
     def test_core_postgres_image_is_inherited_by_local_and_e2e_overlays(self) -> None:
         postgres = service_block(self.compose, "aura-core-postgres", "aura-nats")
         expected_image = "image: ${AURA_CORE_POSTGRES_IMAGE:-pgvector/pgvector:pg17}"
@@ -234,7 +509,9 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("name: aura-e2e-provider", provider)
         self.assertIn("AURA_E2E_MODE", runner)
         self.assertIn("local-identity", runner)
-        self.assertGreaterEqual(runner.count("-p aura-e2e"), 6)
+        self.assertIn('e2e_project="aura-e2e-$fixture_suffix"', runner)
+        self.assertIn('-p "$e2e_project"', runner)
+        self.assertIn("-p aura-e2e-provider", runner)
         self.assertIn("--profile checks build frontend-e2e", runner)
 
     def test_local_identity_uses_a_verified_digest_default_with_a_guarded_override(self) -> None:

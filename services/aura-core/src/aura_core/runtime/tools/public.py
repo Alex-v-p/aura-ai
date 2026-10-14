@@ -25,6 +25,8 @@ from uuid import UUID, uuid4
 
 MEMORY_SEARCH_TOOL_ID = "memory.search"
 MEMORY_SEARCH_TOOL_VERSION = 1
+DOCUMENT_SEARCH_TOOL_ID = "document.search"
+DOCUMENT_SEARCH_TOOL_VERSION = 1
 REMINDER_CREATE_TOOL_ID = "reminder.create"
 REMINDER_CREATE_TOOL_VERSION = 1
 REMINDER_LIST_TOOL_ID = "reminder.list"
@@ -70,6 +72,8 @@ REMINDER_MUTATION_TOOL_IDS = frozenset(
 MAX_TOOL_RESULT_ITEMS = 8
 MAX_REMINDER_TOOL_RESULT_ITEMS = 10
 MAX_TOOL_RESULT_CONTENT = 4096
+MAX_DOCUMENT_TOOL_RESULT_ITEMS = 8
+MAX_DOCUMENT_TOOL_EXCERPT = 2000
 _SAFE_ERROR_CLASSES = frozenset(
     {
         "capability",
@@ -101,6 +105,7 @@ _SAFE_ERROR_CODES = frozenset(
         "TOOL_TIMEOUT",
         "TOOL_UNKNOWN",
         "MEMORY_SEARCH_UNAVAILABLE",
+        "DOCUMENT_SEARCH_UNAVAILABLE",
     }
 )
 
@@ -156,6 +161,18 @@ class ToolCall:
 @dataclass(frozen=True, slots=True)
 class MemorySearchContext:
     """Per-run callback context used by the memory.search handler."""
+
+    search: Callable[[str], Awaitable[object]]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentSearchContext:
+    """Per-run, owner-bound callback context for document.search.
+
+    The callback is composed with the authenticated owner before a provider
+    can select the tool.  The model supplies only a query; limits, owner, and
+    ready-state filtering remain Core concerns.
+    """
 
     search: Callable[[str], Awaitable[object]]
 
@@ -342,6 +359,13 @@ def validate_tool_arguments(descriptor: ToolDescriptor, arguments: object) -> di
         if not 1 <= len(query) <= 200:
             raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
         return {"query": query}
+    if descriptor.id == DOCUMENT_SEARCH_TOOL_ID:
+        if set(value) != {"query"} or not isinstance(value.get("query"), str):
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        query = value["query"].strip()
+        if not 1 <= len(query) <= 500:
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        return {"query": query}
     if descriptor.id == REMINDER_CREATE_TOOL_ID:
         if set(value) != {"content", "dueAt"} or not isinstance(value.get("content"), str):
             raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
@@ -519,6 +543,61 @@ def validate_tool_result(descriptor: ToolDescriptor, result: object) -> dict[str
         ):
             raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
         return {"status": "completed", "command": descriptor.id}
+    if descriptor.id == DOCUMENT_SEARCH_TOOL_ID and descriptor.version == DOCUMENT_SEARCH_TOOL_VERSION:
+        if not isinstance(result, Mapping) or set(result) != {"items", "truncated"}:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        raw_items = result.get("items")
+        truncated = result.get("truncated")
+        if (
+            not isinstance(raw_items, Sequence)
+            or isinstance(raw_items, (str, bytes))
+            or len(raw_items) > MAX_DOCUMENT_TOOL_RESULT_ITEMS
+            or type(truncated) is not bool
+        ):
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        document_items: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in raw_items:
+            if not isinstance(raw, Mapping) or set(raw) != {
+                "evidenceId", "documentId", "displayName", "excerpt", "locator", "score"
+            }:
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+            evidence_id = raw.get("evidenceId")
+            document_id = raw.get("documentId")
+            display_name = raw.get("displayName")
+            excerpt = raw.get("excerpt")
+            locator = raw.get("locator")
+            score = raw.get("score")
+            try:
+                evidence_key = str(UUID(str(evidence_id)))
+                document_key = str(UUID(str(document_id)))
+            except (TypeError, ValueError) as exc:
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
+            if (
+                evidence_key in seen
+                or not isinstance(display_name, str)
+                or not 1 <= len(display_name) <= 255
+                or not isinstance(excerpt, str)
+                or not 1 <= len(excerpt) <= MAX_DOCUMENT_TOOL_EXCERPT
+                or not isinstance(locator, str)
+                or not 1 <= len(locator) <= 255
+                or not isinstance(score, (int, float))
+                or isinstance(score, bool)
+                or not 0 <= float(score) <= 1
+            ):
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+            seen.add(evidence_key)
+            document_items.append(
+                {
+                    "evidenceId": evidence_key,
+                    "documentId": document_key,
+                    "displayName": display_name,
+                    "excerpt": excerpt,
+                    "locator": locator,
+                    "score": float(score),
+                }
+            )
+        return {"items": document_items, "truncated": truncated}
     if descriptor.id != MEMORY_SEARCH_TOOL_ID or descriptor.version != MEMORY_SEARCH_TOOL_VERSION:
         if (
             descriptor.id == REMINDER_CREATE_TOOL_ID
@@ -739,6 +818,69 @@ def _memory_handler(arguments: Mapping[str, object], context: object) -> Awaitab
     return search()
 
 
+def _document_search_handler(arguments: Mapping[str, object], context: object) -> Awaitable[object]:
+    if not isinstance(context, DocumentSearchContext):
+
+        async def unavailable() -> Sequence[object]:
+            raise ToolExecutionError("execution", "DOCUMENT_SEARCH_UNAVAILABLE")
+
+        return unavailable()
+
+    async def search() -> Mapping[str, object]:
+        raw = await context.search(str(arguments["query"]))
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        document_items: list[dict[str, object]] = []
+        seen: set[str] = set()
+        dropped = False
+        for hit in raw[:MAX_DOCUMENT_TOOL_RESULT_ITEMS]:
+            values = hit if isinstance(hit, Mapping) else {
+                "evidenceId": getattr(hit, "evidence_id", None),
+                "documentId": getattr(hit, "document_id", None),
+                "displayName": getattr(hit, "filename", None),
+                "excerpt": getattr(hit, "excerpt", None),
+                "locator": getattr(hit, "locator", None),
+                "score": getattr(hit, "score", None),
+            }
+            try:
+                evidence_id = str(UUID(str(values.get("evidenceId", values.get("evidence_id")))))
+                document_id = str(UUID(str(values.get("documentId", values.get("document_id")))))
+            except (TypeError, ValueError) as exc:
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
+            display_name = values.get("displayName", values.get("filename"))
+            excerpt = values.get("excerpt")
+            locator = values.get("locator")
+            score = values.get("score")
+            if evidence_id in seen:
+                dropped = True
+                continue
+            if (
+                not isinstance(display_name, str)
+                or not isinstance(excerpt, str)
+                or not isinstance(locator, str)
+                or not isinstance(score, (int, float))
+                or isinstance(score, bool)
+            ):
+                raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+            seen.add(evidence_id)
+            document_items.append(
+                {
+                    "evidenceId": evidence_id,
+                    "documentId": document_id,
+                    "displayName": display_name[:255],
+                    "excerpt": excerpt[:MAX_DOCUMENT_TOOL_EXCERPT],
+                    "locator": locator[:255],
+                    "score": max(0.0, min(1.0, float(score))),
+                }
+            )
+        return {
+            "items": document_items,
+            "truncated": len(raw) > MAX_DOCUMENT_TOOL_RESULT_ITEMS or dropped,
+        }
+
+    return search()
+
+
 def _reminder_handler(arguments: Mapping[str, object], context: object) -> Awaitable[object]:
     if not isinstance(context, ReminderCreateContext):
 
@@ -793,6 +935,39 @@ _MEMORY_INPUT_SCHEMA: Mapping[str, object] = {
     "additionalProperties": False,
     "required": ["query"],
     "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 200}},
+}
+_DOCUMENT_INPUT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["query"],
+    "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 500}},
+}
+_DOCUMENT_RESULT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["items", "truncated"],
+    "properties": {
+        "items": {
+            "type": "array",
+            "maxItems": MAX_DOCUMENT_TOOL_RESULT_ITEMS,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["evidenceId", "documentId", "displayName", "excerpt", "locator", "score"],
+                "properties": {
+                    "evidenceId": {"type": "string", "format": "uuid"},
+                    "documentId": {"type": "string", "format": "uuid"},
+                    "displayName": {"type": "string", "minLength": 1, "maxLength": 255},
+                    "excerpt": {"type": "string", "minLength": 1, "maxLength": MAX_DOCUMENT_TOOL_EXCERPT},
+                    "locator": {"type": "string", "minLength": 1, "maxLength": 255},
+                    "score": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+            },
+        },
+        "truncated": {"type": "boolean"},
+    },
 }
 _MEMORY_RESULT_SCHEMA: Mapping[str, object] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1019,6 +1194,23 @@ def default_tool_registry() -> ToolRegistry:
                 input_schema=_MEMORY_INPUT_SCHEMA,
                 result_schema=_MEMORY_RESULT_SCHEMA,
                 handler=_memory_handler,
+            ),
+            ToolDescriptor(
+                id=DOCUMENT_SEARCH_TOOL_ID,
+                version=DOCUMENT_SEARCH_TOOL_VERSION,
+                display_name="Search documents",
+                description="Search the authenticated owner's ready Aura document library.",
+                classification="read",
+                permission_scope="documents:read",
+                confirmation="never",
+                timeout_ms=30_000,
+                retry_limit=0,
+                idempotency="read_only",
+                sensitivity="restricted",
+                observable_component="aura.runtime.tool_execution",
+                input_schema=_DOCUMENT_INPUT_SCHEMA,
+                result_schema=_DOCUMENT_RESULT_SCHEMA,
+                handler=_document_search_handler,
             ),
             ToolDescriptor(
                 id=REMINDER_CREATE_TOOL_ID,
