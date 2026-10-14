@@ -1,6 +1,7 @@
 """End-to-end API checks using only in-process deterministic dependencies."""
 
 import asyncio
+import base64
 import hashlib
 import json
 from collections.abc import AsyncIterator, Sequence
@@ -9,6 +10,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from aura_core.domains.artifacts.attachments.public import AttachmentService
 from aura_core.domains.execution.runs.events import RunEvent, new_event
 from aura_core.domains.interaction.conversations.public import InvalidConversationCursor
 from aura_core.domains.knowledge.memory.public import (
@@ -21,7 +23,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryTurnEvidence,
 )
 from aura_core.entrypoints.api.app import create_app
-from aura_core.platform.auth import Settings
+from aura_core.platform.auth import Session, Settings
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.gateway import ModelGateway
 from aura_core.runtime.models.ports import (
@@ -33,6 +35,10 @@ from aura_core.runtime.models.ports import (
 from fastapi import FastAPI
 
 from conftest import ScriptedModel, owner_client
+
+_ONE_PIXEL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class _ConversationSummary(TypedDict):
@@ -155,6 +161,121 @@ async def test_owner_authentication_csrf_and_lazy_idempotent_creation(api_app: F
         assert replay.json()["conversation"]["id"] == accepted["conversation"]["id"]
         listing = await client.get("/api/v1/conversations")
         assert len(listing.json()["items"]) == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_attachment_upload_duplicate_reuse_is_bounded_and_owner_scoped(
+    api_app: FastAPI,
+) -> None:
+    client, session = await owner_client(api_app)
+    data = _ONE_PIXEL_PNG
+
+    async def upload(
+        target: httpx.AsyncClient,
+        target_session: Session,
+        filename: str,
+        key: str,
+    ) -> tuple[httpx.Response, httpx.Response]:
+        csrf = target_session.csrf_token
+        created = await target.post(
+            "/api/v1/attachments/uploads",
+            headers={"X-CSRF-Token": csrf, "Idempotency-Key": key},
+            json={
+                "filename": filename,
+                "mediaType": "image/png",
+                "byteCount": len(data),
+            },
+        )
+        assert created.status_code == 201, created.text
+        upload_id = created.json()["id"]
+        completed = await target.put(
+            f"/api/v1/attachments/uploads/{upload_id}/content",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": key,
+                "X-Expected-Version": "1",
+                "Content-Type": "image/png",
+                "Content-Length": str(len(data)),
+            },
+            content=data,
+        )
+        return created, completed
+
+    try:
+        first_key = str(uuid4())
+        first_created, first_completed = await upload(
+            client, session, "first-private-name.png", first_key
+        )
+        assert first_created.status_code == 201
+        assert first_completed.status_code == 202, first_completed.text
+        first_id = first_completed.json()["attachment"]["id"]
+        assert first_completed.headers["cache-control"] == "no-store"
+
+        prior_service = api_app.state.aura.attachment_service
+        object_store = prior_service.object_store
+        objects_before_replay = dict(object_store.objects)
+        recreated_service = AttachmentService(
+            prior_service.repository,
+            prior_service.object_store,
+            inspector=prior_service.inspector,
+            metrics=api_app.state.aura.metrics,
+        )
+        api_app.state.aura.attachment_service = recreated_service
+        replay = await client.put(
+            f"/api/v1/attachments/uploads/{first_created.json()['id']}/content",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": first_key,
+                "X-Expected-Version": "1",
+                "Content-Type": "image/png",
+                "Content-Length": str(len(data)),
+            },
+            content=data,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["attachment"]["id"] == first_id
+        assert recreated_service.lifecycle_events == []
+        assert object_store.objects == objects_before_replay
+
+        second_created, second_completed = await upload(
+            client, session, "second-private-name.png", str(uuid4())
+        )
+        assert second_created.status_code == 201
+        assert second_completed.status_code == 202, second_completed.text
+        assert second_completed.json()["attachment"]["id"] == first_id
+        assert (
+            second_completed.json()["attachment"]["filename"] == "first-private-name.png"
+        )
+
+        listing = await client.get("/api/v1/attachments")
+        assert listing.status_code == 200
+        assert [item["id"] for item in listing.json()["items"]] == [first_id]
+
+        attachment = await client.get(f"/api/v1/attachments/{first_id}")
+        assert attachment.status_code == 200
+        delete = await client.request(
+            "DELETE",
+            f"/api/v1/attachments/{first_id}",
+            headers={
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": str(uuid4()),
+            },
+            json={"expectedVersion": attachment.json()["version"]},
+        )
+        assert delete.status_code == 202, delete.text
+
+        _, unavailable_completed = await upload(
+            client, session, "after-delete.png", str(uuid4())
+        )
+        assert unavailable_completed.status_code == 409
+        problem = unavailable_completed.json()
+        assert len(unavailable_completed.text) < 512
+        assert "first-private-name.png" not in unavailable_completed.text
+        assert "second-private-name.png" not in unavailable_completed.text
+        assert "digest" not in unavailable_completed.text.casefold()
+        assert problem.get("detail")
     finally:
         await client.aclose()
 

@@ -1,11 +1,13 @@
 """Conversation-owned SQLAlchemy mappings."""
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aura_core.platform.database.base import Base
 
@@ -60,6 +62,11 @@ class MessageRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
     parent_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    attachment_links: Mapped[list[MessageAttachmentRow]] = relationship(
+        "MessageAttachmentRow",
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
 
 
 class MessageAttachmentRow(Base):
@@ -79,6 +86,7 @@ class MessageAttachmentRow(Base):
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    message: Mapped[MessageRow] = relationship("MessageRow", back_populates="attachment_links")
 
 
 class IdempotencyRow(Base):

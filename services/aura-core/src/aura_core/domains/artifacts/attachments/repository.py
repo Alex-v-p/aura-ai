@@ -7,6 +7,7 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.artifacts.attachments.persistence import (
@@ -28,6 +29,15 @@ from aura_core.platform.outbox import (
 )
 
 
+def _is_owner_digest_conflict(exc: IntegrityError) -> bool:
+    """Identify only the attachment owner/digest uniqueness race."""
+
+    diagnostic = getattr(getattr(exc, "orig", None), "diag", None)
+    if getattr(diagnostic, "constraint_name", None) == "uq_attachment_owner_digest":
+        return True
+    return "uq_attachment_owner_digest" in str(getattr(exc, "orig", exc))
+
+
 class MemoryAttachmentRepository:
     def __init__(self) -> None:
         self.attachments: dict[UUID, Attachment] = {}
@@ -38,6 +48,20 @@ class MemoryAttachmentRepository:
 
     async def save(self, attachment: Attachment) -> Attachment:
         async with self._lock:
+            duplicate = next(
+                (
+                    value
+                    for value in self.attachments.values()
+                    if value.owner == attachment.owner
+                    and value.digest == attachment.digest
+                    and value.id != attachment.id
+                ),
+                None,
+            )
+            if duplicate is not None:
+                from aura_core.domains.artifacts.attachments.public import AttachmentDuplicate
+
+                raise AttachmentDuplicate("duplicate attachment")
             self.attachments[attachment.id] = attachment
         return attachment
 
@@ -58,6 +82,22 @@ class MemoryAttachmentRepository:
     async def get(self, owner: tuple[str, str], attachment_id: UUID) -> Attachment | None:
         value = self.attachments.get(attachment_id)
         return value if value is not None and value.owner == owner else None
+
+    async def get_by_digest(
+        self,
+        owner: tuple[str, str],
+        digest: str,
+        *,
+        exclude_attachment_id: UUID | None = None,
+    ) -> Attachment | None:
+        for value in self.attachments.values():
+            if (
+                value.owner == owner
+                and value.digest == digest
+                and value.id != exclude_attachment_id
+            ):
+                return value
+        return None
 
     async def get_any(self, attachment_id: UUID) -> Attachment | None:
         return self.attachments.get(attachment_id)
@@ -113,7 +153,11 @@ class MemoryAttachmentRepository:
         return dict(value) if value is not None else None
 
     async def complete_upload_session(
-        self, owner: tuple[str, str], upload_id: UUID, expected_version: int = 1
+        self,
+        owner: tuple[str, str],
+        upload_id: UUID,
+        expected_version: int = 1,
+        attachment_id: UUID | None = None,
     ) -> None:
         async with self._lock:
             value = self.upload_sessions.get((*owner, upload_id))
@@ -125,6 +169,8 @@ class MemoryAttachmentRepository:
                 raise AttachmentConflict("upload session version conflict")
             if value.get("status") == "completed":
                 return
+            if attachment_id is not None:
+                value["attachment_id"] = attachment_id
             value["status"] = "completed"
             value["version"] = expected_version + 1
 
@@ -205,33 +251,58 @@ class SqlAttachmentRepository:
     async def save_with_event(
         self, attachment: Attachment, event: AttachmentLifecycleEvent
     ) -> Attachment:
-        async with self.sessions() as session, session.begin():
-            row = await session.get(AttachmentRow, attachment.id, with_for_update=True)
-            values = dict(
-                id=attachment.id,
-                principal_issuer=attachment.issuer,
-                principal_subject=attachment.subject,
-                filename=attachment.filename,
-                media_type=attachment.media_type,
-                byte_count=attachment.byte_count,
-                digest=attachment.digest,
-                original_object_key=attachment.original_object_key,
-                derivative_object_key=attachment.derivative_object_key,
-                width=attachment.width,
-                height=attachment.height,
-                status=attachment.status.value,
-                version=attachment.version,
-                failure_code=attachment.failure_code,
-                created_at=attachment.created_at,
-                updated_at=attachment.updated_at,
-            )
-            if row is None:
-                session.add(AttachmentRow(**values))
-            else:
-                for key, value in values.items():
-                    setattr(row, key, value)
-            await self._stage_lifecycle(session, event)
+        try:
+            async with self.sessions() as session, session.begin():
+                row = await session.get(AttachmentRow, attachment.id, with_for_update=True)
+                values = dict(
+                    id=attachment.id,
+                    principal_issuer=attachment.issuer,
+                    principal_subject=attachment.subject,
+                    filename=attachment.filename,
+                    media_type=attachment.media_type,
+                    byte_count=attachment.byte_count,
+                    digest=attachment.digest,
+                    original_object_key=attachment.original_object_key,
+                    derivative_object_key=attachment.derivative_object_key,
+                    width=attachment.width,
+                    height=attachment.height,
+                    status=attachment.status.value,
+                    version=attachment.version,
+                    failure_code=attachment.failure_code,
+                    created_at=attachment.created_at,
+                    updated_at=attachment.updated_at,
+                )
+                if row is None:
+                    session.add(AttachmentRow(**values))
+                else:
+                    for key, value in values.items():
+                        setattr(row, key, value)
+                await self._stage_lifecycle(session, event)
+        except IntegrityError as exc:
+            if _is_owner_digest_conflict(exc):
+                from aura_core.domains.artifacts.attachments.public import AttachmentDuplicate
+
+                raise AttachmentDuplicate("duplicate attachment") from None
+            raise
         return attachment
+
+    async def get_by_digest(
+        self,
+        owner: tuple[str, str],
+        digest: str,
+        *,
+        exclude_attachment_id: UUID | None = None,
+    ) -> Attachment | None:
+        async with self.sessions() as session:
+            query = select(AttachmentRow).where(
+                AttachmentRow.principal_issuer == owner[0],
+                AttachmentRow.principal_subject == owner[1],
+                AttachmentRow.digest == digest,
+            )
+            if exclude_attachment_id is not None:
+                query = query.where(AttachmentRow.id != exclude_attachment_id)
+            row = await session.scalar(query)
+            return self._value(row) if row else None
 
     async def delete_with_event(
         self,
@@ -381,7 +452,11 @@ class SqlAttachmentRepository:
             return self._session_value(row) if row else None
 
     async def complete_upload_session(
-        self, owner: tuple[str, str], upload_id: UUID, expected_version: int = 1
+        self,
+        owner: tuple[str, str],
+        upload_id: UUID,
+        expected_version: int = 1,
+        attachment_id: UUID | None = None,
     ) -> None:
         async with self.sessions() as session, session.begin():
             row = await session.scalar(
@@ -401,6 +476,8 @@ class SqlAttachmentRepository:
                 raise AttachmentConflict("upload session version conflict")
             if row.status == "completed":
                 return
+            if attachment_id is not None:
+                row.attachment_id = attachment_id
             row.status = "completed"
             row.version = expected_version + 1
 

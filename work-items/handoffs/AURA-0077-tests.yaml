@@ -1,0 +1,88 @@
+agent: test_evaluation_engineer
+work_item: AURA-0077
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0077_tests
+  worktree: dev
+scope:
+  ownership_zone: evaluation.conversation-attachments, aura-core tests, deploy.compose.e2e test paths
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - work-items/handoffs/AURA-0077-tests.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache AURA_WORK_ITEM=AURA-0077 uv run ruff check
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/system/test_api_conversation_flow.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache AURA_WORK_ITEM=AURA-0077 uv run pyright
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/system/test_api_conversation_flow.py (0 errors,
+      0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache AURA_WORK_ITEM=AURA-0077 uv run pytest -q
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/system/test_api_conversation_flow.py
+      --maxfail=8 (61 passed, 3 skipped)
+    - >-
+      git diff --check --
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/system/test_api_conversation_flow.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache AURA_WORK_ITEM=AURA-0077 uv run python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0077.yaml (passed; 10 changed paths)
+  failed: []
+  not_run:
+    - >-
+      PostgreSQL AURA-0077 message/link and production ConversationStore
+      transaction tests were skipped because AURA_0077_DATABASE_URL was not
+      configured.
+    - >-
+      Full work-item validator, architecture validator set, pyright, full Core
+      suite, compose build, and full-stack E2E remain for integration.
+decisions:
+  - >-
+    Added owner-scoped duplicate coverage for ready, in-progress, unavailable,
+    cross-owner, upload-session replay after service recreation, and the typed
+    owner-digest unique-race path.
+  - >-
+    Asserted duplicate reuse emits no lifecycle events or object writes and
+    records a metadata-only duplicate upload outcome.
+  - >-
+    Added an optional PostgreSQL regression that flushes a parent conversation
+    before staging a message and verifies relationship-ordered message links,
+    JSON snapshots, and rollback atomicity.
+  - >-
+    Added production SqlConversationStore.create PostgreSQL coverage for
+    admitted image links, committed conversation/message/run/outbox/idempotency
+    rows, and a late injected failure that leaves none of those rows behind;
+    rollback assertions compare pre/post table ID and idempotency-key snapshots
+    so random-ID leakage cannot evade the regression.
+  - >-
+    Added an in-process authenticated API regression for bounded duplicate
+    reuse, service-recreation upload replay, original-resource presentation,
+    no-store responses, and typed 409 tombstone conflicts without private error
+    detail.
+risks:
+  - >-
+    PostgreSQL ordering and SQL unique-race behavior require the configured
+    disposable integration database during aggregate validation.
+  - >-
+    The API fixture uses the configured single-owner policy; cross-owner
+    deduplication is covered at the owner-scoped repository/service boundary.
+unresolved: []

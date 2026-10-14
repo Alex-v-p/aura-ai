@@ -1,0 +1,72 @@
+agent: integration_maintainer
+work_item: AURA-0077
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0077-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0077-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0077-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0077-observability.yaml
+  - reviewer: core_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0077-core.yaml
+  - reviewer: frontend_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0077-frontend.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0077-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0077.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py (passed before archival)
+    - python3 tooling/architecture/validate-changed-paths.py (22 changed paths valid)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py (no contract changes; skipped)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-observability.py
+    - python3 tooling/architecture/validate-baseline-protection.py (no protected baseline changes; skipped)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e
+    - uv run pyright services/aura-core (0 errors, 0 warnings, 0 informations)
+    - uv run pytest services/aura-core/tests/test_conversation_attachments.py (34 passed, 1 skipped, 2 deselected without PostgreSQL)
+    - uv run pytest services/aura-core/tests (1017 passed, 103 skipped, 1 warning)
+    - uv run pytest deploy/compose/e2e (1 passed, 1 warning)
+    - pnpm --dir frontend run test (262 passed)
+    - pnpm --dir frontend run lint (0 errors; existing warnings only)
+    - nx production build (passed)
+    - PostgreSQL-gated attachment regressions with live disposable database (2 passed)
+    - git diff --check
+    - ./deploy/compose/local-http.sh up (build completed and services healthy during validation)
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Disposable full-stack E2E was executed twice. Each run produced 2 passed,
+    1 skipped attachment scenario because the fixture advertised no verified
+    vision model, 1 failed generic branching test, and 5 not run. The branch
+    run reached the worker and failed with an external Ollama provider error;
+    retained worker logs showed no attachment persistence or deduplication
+    defect. The retained fixture was stopped before final official-stack
+    startup.
+  - >-
+    Manual browser acceptance was completed by the Delivery Lead, including
+    duplicate upload, mixed document/image conversations, vision gating,
+    grounding, branching, regeneration, preview, deletion, and immutable
+    unavailable tombstones. No private attachment data appeared in browser
+    storage, URLs, caches, or logs.

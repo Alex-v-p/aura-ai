@@ -12,7 +12,7 @@ from aura_core.domains.execution.runs.events import RunEvent, new_event, validat
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
 from aura_core.domains.execution.runs.public import Run, message_payload, run_payload
 from aura_core.domains.execution.runs.repository import SqlRunRepository
-from aura_core.domains.interaction.conversations.dto import Message, MessageRole
+from aura_core.domains.interaction.conversations.dto import AttachmentSummary, Message, MessageRole
 from aura_core.runtime.streaming.publisher import EventPublisher
 
 
@@ -269,6 +269,45 @@ def test_branch_and_regeneration_lineage_is_optional_and_opaque_in_snapshots() -
     assert message_data["branchId"] == str(branch_id)
     assert isinstance(message_data["parentMessageId"], str)
     assert message_data["content"] == "private prompt"
+
+
+def test_message_payload_includes_present_attachment_summaries() -> None:
+    attachment = AttachmentSummary(
+        link_id=uuid4(),
+        kind="image",
+        source_id=uuid4(),
+        display_filename="private.png",
+        media_type="image/png",
+        byte_count=128,
+        availability="available",
+        width=16,
+        height=8,
+    )
+    message = Message(
+        uuid4(),
+        MessageRole.USER,
+        "private prompt",
+        attachments=(attachment,),
+    )
+
+    payload = message_payload(message)
+    assert payload["attachments"] == [
+        {
+            "linkId": str(attachment.link_id),
+            "kind": "image",
+            "sourceId": str(attachment.source_id),
+            "displayFilename": "private.png",
+            "mediaType": "image/png",
+            "byteCount": 128,
+            "availability": "available",
+            "width": 16,
+            "height": 8,
+        }
+    ]
+    assert "private prompt" not in json.dumps(payload["attachments"])
+
+    legacy_payload = message_payload(Message(uuid4(), MessageRole.USER, "legacy"))
+    assert "attachments" not in legacy_payload
 
 
 def test_lineage_contract_rejects_arbitrary_strings_as_uuid_references() -> None:

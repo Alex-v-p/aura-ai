@@ -50,6 +50,14 @@ class AttachmentRepository(Protocol):
 
     async def get(self, owner: tuple[str, str], attachment_id: UUID) -> Attachment | None: ...
 
+    async def get_by_digest(
+        self,
+        owner: tuple[str, str],
+        digest: str,
+        *,
+        exclude_attachment_id: UUID | None = None,
+    ) -> Attachment | None: ...
+
     async def list(self, owner: tuple[str, str]) -> list[Attachment]: ...
 
     async def delete(self, owner: tuple[str, str], attachment_id: UUID) -> Attachment | None: ...
@@ -68,7 +76,11 @@ class AttachmentRepository(Protocol):
     ) -> dict[str, object] | None: ...
 
     async def complete_upload_session(
-        self, owner: tuple[str, str], upload_id: UUID, expected_version: int = 1
+        self,
+        owner: tuple[str, str],
+        upload_id: UUID,
+        expected_version: int = 1,
+        attachment_id: UUID | None = None,
     ) -> None: ...
 
     async def get_delete_request(

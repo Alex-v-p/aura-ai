@@ -40,6 +40,14 @@ export function normalizeDocumentCitations(value: unknown): ReadonlyArray<Docume
 }
 
 export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly attachments?: ReadonlyArray<AttachmentSummary>; }
+export function attachmentSelectionForHydration(
+  switchedConversation: boolean,
+  editingMessageId: string | null,
+  draftAttachments: ReadonlyArray<AttachmentSelection>,
+  sourceAttachments: ReadonlyArray<AttachmentSelection>,
+): ReadonlyArray<AttachmentSelection> {
+  return switchedConversation && editingMessageId ? sourceAttachments : draftAttachments;
+}
 export interface ConversationBranchState {
   readonly summaries: ReadonlyArray<ConversationBranchSummary>;
   readonly activeId: string | null;
@@ -148,6 +156,9 @@ export class ConversationStore {
   readonly hasMoreConversations = computed(() => this.libraryNextCursor() !== null);
   readonly selectedId = signal(emptyDraft.id);
   readonly drafts = signal<Readonly<Record<string, string>>>({ [emptyDraft.id]: '' });
+  /** Edit text whose source disappeared during branch recovery. Keep it out
+   * of the sendable composer draft so it cannot overwrite an ordinary prompt. */
+  readonly orphanedEditDrafts = signal<Readonly<Record<string, string>>>({});
   readonly draftAttachments = signal<Readonly<Record<string, ReadonlyArray<AttachmentSelection>>>>({ [emptyDraft.id]: [] });
   readonly notices = signal<Readonly<Record<string, string | null>>>({});
   /** Provider discovery is advisory: it must not replace a conversation error. */
@@ -199,6 +210,23 @@ export class ConversationStore {
   readonly selectedBranch = computed(() => this.selected().branch ?? emptyBranchState());
   readonly branchEditing = computed(() => this.selectedBranch().editingMessageId !== null);
   readonly branchAnnouncement = computed(() => this.branchAnnouncements()[this.selectedId()] ?? '');
+
+  orphanedEditDraftFor(conversationId = this.selectedId()): string | null { return this.orphanedEditDrafts()[conversationId] ?? null; }
+
+  restoreOrphanedEditDraft(replace = false): boolean {
+    const id = this.selectedId();
+    const recovered = this.orphanedEditDraftFor(id);
+    if (!recovered || (!replace && this.draft().trim())) return false;
+    this.drafts.update((drafts) => ({ ...drafts, [id]: recovered }));
+    this.orphanedEditDrafts.update((drafts) => { const next = { ...drafts }; delete next[id]; return next; });
+    return true;
+  }
+
+  dismissOrphanedEditDraft(): void {
+    const id = this.selectedId();
+    if (!this.orphanedEditDraftFor(id)) return;
+    this.orphanedEditDrafts.update((drafts) => { const next = { ...drafts }; delete next[id]; return next; });
+  }
 
   toolActivitiesForRun(runId: string): ReadonlyArray<ToolStatusData> { return this.find(this.selectedId())?.toolActivities?.[runId] ?? []; }
   thinkingForRun(runId: string): ModelThinkingState | null { return this.modelThinking()[runId] ?? null; }
@@ -448,6 +476,15 @@ export class ConversationStore {
     this.updateBranchState({ editDraft: value });
   }
 
+  /** Preserve an edit whose source disappeared while restoring the ordinary composer. */
+  recoverOrphanedEdit(): void {
+    const conversation = this.selected();
+    const draft = conversation.branch?.editDraft ?? '';
+    if (!conversation.branch?.editingMessageId) return;
+    this.preserveEditDraft(conversation.id, draft);
+    this.updateBranchState({ editingMessageId: null, editDraft: '' });
+  }
+
   cancelEditMessage(): void { this.updateBranchState({ editingMessageId: null, editDraft: '' }); }
 
   async editAndBranch(explicitAttachments?: ReadonlyArray<AttachmentSelection>): Promise<boolean> {
@@ -562,28 +599,45 @@ export class ConversationStore {
     }
   }
 
-  async retryBranchAction(): Promise<boolean> {
+  // The no-argument retry shape remains valid for list/regenerate actions:
+  // async retryBranchAction(): Promise<boolean>
+  async retryBranchAction(explicitAttachments?: ReadonlyArray<AttachmentSelection>): Promise<boolean> {
     const action = this.selectedBranch().errorAction;
     if (!action) return false;
     if (action.kind === 'list') { await this.loadBranches(); return false; }
-    if (action.kind === 'edit') return this.editAndBranch();
+    if (action.kind === 'edit') return this.editAndBranch(explicitAttachments);
     if (action.kind === 'regenerate') return this.regenerateAssistant(action.messageId);
     return this.selectBranch(action.branchId);
   }
 
   async selectBranch(branchId: string): Promise<boolean> {
     const conversation = this.selected();
-    if (conversation.branch?.loading || !conversation.branch?.summaries.some((item) => item.id === branchId) || !this.api.getConversationBranch || branchId === conversation.branch.activeId) return false;
+    const guard = this.captureSessionGuard();
+    const branchSummary = conversation.branch?.summaries.find((item) => item.id === branchId);
+    const branchContentLoaded = branchSummary?.headMessageId === null || branchSummary?.headMessageId === undefined
+      ? branchId === conversation.branch?.activeId
+      : conversation.turns.some((turn) => turn.id === branchSummary.headMessageId);
+    if (conversation.branch?.loading || !branchSummary || !this.api.getConversationBranch || (branchId === conversation.branch?.activeId && branchContentLoaded)) return false;
     this.updateBranchState({ loading: true, error: null });
     try {
       const detail = await this.api.getConversationBranch(conversation.id, branchId);
-      const next = this.fromBranchDetail(detail, conversation);
+      if (!this.matchesSessionGuard(guard)) return false;
+      // A branch request can overlap a user cancellation or another
+      // conversation-state transition. Merge the response into the latest
+      // owner-scoped state so a stale pre-await snapshot cannot resurrect an
+      // edit that the user already cancelled.
+      const latest = this.find(conversation.id) ?? conversation;
+      const next = this.fromBranchDetail(detail, latest);
       this.replaceConversation(next);
       this.updateBranchState({ loading: false, activeId: branchId }, conversation.id);
       this.setBranchAnnouncement(conversation.id, 'Conversation branch loaded.');
       return true;
     } catch (error: unknown) {
-      this.updateBranchState({ loading: false, error: this.branchErrorMessage(error, 'select'), errorAction: this.retryActionFor(error, { kind: 'select', branchId }) });
+      if (!this.matchesSessionGuard(guard)) return false;
+      // The user may navigate to another conversation while this request is
+      // pending. Keep the failure and retry action on the conversation that
+      // authorized the request; never paint A's error onto the current B.
+      this.updateBranchState({ loading: false, error: this.branchErrorMessage(error, 'select'), errorAction: this.retryActionFor(error, { kind: 'select', branchId }) }, conversation.id);
       return false;
     }
   }
@@ -1071,7 +1125,25 @@ export class ConversationStore {
     const runs = this.uniqueRuns(detail.recentRuns);
     const currentRun = runs.find((run) => !this.isTerminal(run.status)) ?? null;
     const retryableRun = runs.filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null;
-    return { ...previous, turns, currentRun, retryableRun, runs, branch: { ...(previous.branch ?? emptyBranchState()), activeId: detail.branch.id, error: null, errorAction: null, loading: false } };
+    const previousBranch = previous.branch ?? emptyBranchState();
+    const editStillExists = !previousBranch.editingMessageId || turns.some((turn) => turn.id === previousBranch.editingMessageId && turn.role === 'user');
+    if (!editStillExists && previousBranch.editDraft) this.preserveEditDraft(previous.id, previousBranch.editDraft);
+    return {
+      ...previous,
+      turns,
+      currentRun,
+      retryableRun,
+      runs,
+      branch: {
+        ...previousBranch,
+        activeId: detail.branch.id,
+        error: null,
+        errorAction: null,
+        loading: false,
+        editingMessageId: editStillExists ? previousBranch.editingMessageId : null,
+        editDraft: editStillExists ? previousBranch.editDraft : '',
+      },
+    };
   }
 
   private controlsBlockedForBranch(): boolean {
@@ -1132,6 +1204,11 @@ export class ConversationStore {
     const conversation = this.find(conversationId);
     if (!conversation) return;
     this.replaceConversation({ ...conversation, branch: { ...(conversation.branch ?? emptyBranchState()), ...patch } });
+  }
+
+  private preserveEditDraft(conversationId: string, draft: string): void {
+    if (!draft.trim()) return;
+    this.orphanedEditDrafts.update((drafts) => ({ ...drafts, [conversationId]: draft }));
   }
 
   private clientTimeZone(): string | undefined { return typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; }
@@ -1330,6 +1407,7 @@ export class ConversationStore {
     this.conversations.set([emptyDraft]);
     this.selectedId.set(emptyDraft.id);
     this.drafts.set({ [emptyDraft.id]: '' });
+    this.orphanedEditDrafts.set({});
     this.draftAttachments.set({ [emptyDraft.id]: [] });
     this.attachmentAcceptanceConversationId.set(null);
     this.notices.set({});

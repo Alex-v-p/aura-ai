@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
@@ -95,6 +96,20 @@ class SqlConversationRepository:
             for item in (row.citations or [])
             if {"documentId", "locator"} <= set(item)
         )
+        attachment_values = row.attachments or [
+            {
+                "linkId": str(item.id),
+                "kind": item.kind,
+                "sourceId": str(item.source_id),
+                "displayFilename": item.display_filename,
+                "mediaType": item.media_type,
+                "byteCount": item.byte_count,
+                "availability": item.availability,
+                "width": item.width,
+                "height": item.height,
+            }
+            for item in getattr(row, "attachment_links", ())
+        ]
         return Message(
             row.conversation_id,
             MessageRole(row.role),
@@ -119,7 +134,7 @@ class SqlConversationRepository:
                     int(cast(Any, item["width"])) if item.get("width") is not None else None,
                     int(cast(Any, item["height"])) if item.get("height") is not None else None,
                 )
-                for item in (row.attachments or [])
+                for item in attachment_values
                 if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
                 <= set(item)
             ),
@@ -214,6 +229,7 @@ class SqlConversationRepository:
             (
                 await session.execute(
                     select(MessageRow)
+                    .options(selectinload(MessageRow.attachment_links))
                     .where(MessageRow.conversation_id == conversation_id)
                     .order_by(MessageRow.created_at, MessageRow.id)
                 )
@@ -309,7 +325,11 @@ class SqlConversationRepository:
         return row
 
     async def message(self, session: AsyncSession, message_id: UUID) -> Message | None:
-        row = await session.get(MessageRow, message_id)
+        row = await session.scalar(
+            select(MessageRow)
+            .options(selectinload(MessageRow.attachment_links))
+            .where(MessageRow.id == message_id)
+        )
         return self._message(row) if row else None
 
     def stage_conversation(self, session: AsyncSession, record: ConversationRecord) -> None:
@@ -332,56 +352,56 @@ class SqlConversationRepository:
         )
 
     def stage_message(self, session: AsyncSession, message: Message) -> None:
-        session.add(
-            MessageRow(
-                id=message.id,
-                conversation_id=message.conversation_id,
-                run_id=message.run_id,
-                role=message.role.value,
-                content=message.content,
-                state=message.state.value,
-                citations=[
-                    {
-                        "documentId": str(item.document_id),
-                        "locator": item.locator,
-                    }
-                    for item in message.citations
-                ],
-                created_at=message.created_at,
-                updated_at=message.updated_at,
-                branch_id=message.branch_id,
-                parent_message_id=message.parent_message_id,
-                attachments=[
-                    {
-                        "linkId": str(item.link_id),
-                        "kind": item.kind,
-                        "sourceId": str(item.source_id),
-                        "displayFilename": item.display_filename,
-                        "mediaType": item.media_type,
-                        "byteCount": item.byte_count,
-                        "availability": item.availability,
-                        "width": item.width,
-                        "height": item.height,
-                    }
-                    for item in message.attachments
-                ],
-            )
+        row = MessageRow(
+            id=message.id,
+            conversation_id=message.conversation_id,
+            run_id=message.run_id,
+            role=message.role.value,
+            content=message.content,
+            state=message.state.value,
+            citations=[
+                {
+                    "documentId": str(item.document_id),
+                    "locator": item.locator,
+                }
+                for item in message.citations
+            ],
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            branch_id=message.branch_id,
+            parent_message_id=message.parent_message_id,
+            attachments=[
+                {
+                    "linkId": str(item.link_id),
+                    "kind": item.kind,
+                    "sourceId": str(item.source_id),
+                    "displayFilename": item.display_filename,
+                    "mediaType": item.media_type,
+                    "byteCount": item.byte_count,
+                    "availability": item.availability,
+                    "width": item.width,
+                    "height": item.height,
+                }
+                for item in message.attachments
+            ],
         )
-        for item in message.attachments:
-            session.add(
-                MessageAttachmentRow(
-                    id=item.link_id,
-                    message_id=message.id,
-                    kind=item.kind,
-                    source_id=item.source_id,
-                    display_filename=item.display_filename,
-                    media_type=item.media_type,
-                    byte_count=item.byte_count,
-                    availability=item.availability,
-                    width=item.width,
-                    height=item.height,
-                )
+        # Stage links through the relationship so SQLAlchemy knows the
+        # message is their parent and always flushes it before the FK rows.
+        row.attachment_links = [
+            MessageAttachmentRow(
+                id=item.link_id,
+                kind=item.kind,
+                source_id=item.source_id,
+                display_filename=item.display_filename,
+                media_type=item.media_type,
+                byte_count=item.byte_count,
+                availability=item.availability,
+                width=item.width,
+                height=item.height,
             )
+            for item in message.attachments
+        ]
+        session.add(row)
 
     def stage_branch(self, session: AsyncSession, branch: ConversationBranch) -> None:
         session.add(

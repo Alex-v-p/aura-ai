@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -35,6 +37,7 @@ from aura_core.domains.artifacts.attachments.public import (
     Attachment,
     AttachmentAdmissionError,
     AttachmentConflict,
+    AttachmentDuplicate,
     AttachmentError,
     AttachmentLifecycleEvent,
     AttachmentNotFound,
@@ -48,12 +51,16 @@ from aura_core.domains.artifacts.attachments.repository import (
     SqlAttachmentRepository,
 )
 from aura_core.domains.execution.runs.events import RunEvent, new_event
+from aura_core.domains.execution.runs.persistence import RunRow
 from aura_core.domains.execution.runs.public import (
     Run,
     RunCoordinator,
     RunRepository,
+    message_payload,
     run_payload,
 )
+from aura_core.domains.interaction.agents.adapters import SqlAgentSeeder, SqlAgentStore
+from aura_core.domains.interaction.agents.public import AgentCatalog
 from aura_core.domains.interaction.conversations.context import (
     search_attached_documents,
     select_attachment_context,
@@ -67,7 +74,12 @@ from aura_core.domains.interaction.conversations.dto import (
     Message,
     MessageRole,
 )
-from aura_core.domains.interaction.conversations.persistence import MessageAttachmentRow
+from aura_core.domains.interaction.conversations.persistence import (
+    ConversationRow,
+    IdempotencyRow,
+    MessageAttachmentRow,
+    MessageRow,
+)
 from aura_core.domains.interaction.conversations.repository import (
     SqlConversationRepository,
 )
@@ -82,7 +94,7 @@ from aura_core.platform.outbox import (
     SqlOutboxRepository,
 )
 from aura_core.platform.outbox.persistence import OutboxRow
-from aura_core.platform.outbox.service import OutboxCommand
+from aura_core.platform.outbox.service import RUN_COMMAND_TOPIC, OutboxCommand
 from aura_core.platform.telemetry import MetadataMetrics
 from aura_core.runtime.models.ports import (
     ChatMessage,
@@ -144,6 +156,23 @@ class DeleteFailingObjectStore(MemoryObjectStore):
         await super().delete(key)
 
 
+class BlockingObjectStore(MemoryObjectStore):
+    """Pause the first original-object write to expose an in-progress row."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.original_started = asyncio.Event()
+        self.release_original = asyncio.Event()
+
+    async def put_stream(
+        self, key: str, stream: AsyncIterable[bytes], *, content_type: str
+    ) -> int:
+        if key.endswith("/original") and not self.original_started.is_set():
+            self.original_started.set()
+            await self.release_original.wait()
+        return await super().put_stream(key, stream, content_type=content_type)
+
+
 class StubInspector:
     def __init__(self, *, animated: bool = False, width: int = 4, height: int = 3) -> None:
         self.animated = animated
@@ -203,6 +232,210 @@ async def test_image_attachment_is_owner_scoped_idempotent_and_tombstoned() -> N
     assert await service.delete(*OWNER, first.id) == deleted
     with pytest.raises(AttachmentNotFound):
         await service.preview(*OWNER, first.id)
+
+
+@pytest.mark.asyncio
+async def test_same_owner_duplicate_content_reuses_ready_attachment_without_side_effects() -> None:
+    objects = MemoryObjectStore()
+    metrics = MetadataMetrics()
+    service = AttachmentService(
+        MemoryAttachmentRepository(),
+        objects,
+        inspector=StubInspector(),
+        metrics=metrics,
+    )
+
+    first = await _upload(
+        service,
+        filename="first-name.png",
+        data=b"same-content",
+        idempotency_key=str(uuid4()),
+    )
+    lifecycle_count = len(service.lifecycle_events)
+    object_snapshot = dict(objects.objects)
+    second = await _upload(
+        service,
+        filename="different-name.png",
+        data=b"same-content",
+        idempotency_key=str(uuid4()),
+    )
+
+    assert second == first
+    assert len(service.lifecycle_events) == lifecycle_count
+    assert objects.objects == object_snapshot
+    upload_outcomes = {
+        dict(item.dimensions).get("outcome")
+        for item in metrics.snapshot()
+        if item.metric == "attachment_upload_outcome"
+    }
+    assert "duplicate" in upload_outcomes
+    encoded = json.dumps(
+        [
+            dict(item.dimensions)
+            for item in metrics.snapshot()
+            if item.metric == "attachment_upload_outcome"
+        ]
+    ).casefold()
+    assert "first-name.png" not in encoded
+    assert "different-name.png" not in encoded
+    assert first.digest not in encoded
+
+
+@pytest.mark.asyncio
+async def test_duplicate_completion_replays_existing_attachment_after_service_recreation() -> None:
+    repository = MemoryAttachmentRepository()
+    objects = MemoryObjectStore()
+    first_service = AttachmentService(repository, objects, inspector=StubInspector())
+    original = await _upload(
+        first_service,
+        filename="already-stored.png",
+        data=b"replay-content",
+        idempotency_key=str(uuid4()),
+    )
+    lifecycle_count = len(first_service.lifecycle_events)
+    object_snapshot = dict(objects.objects)
+    upload_key = str(uuid4())
+    session = await first_service.create_upload_session(
+        *OWNER,
+        filename="new-session.png",
+        media_type="image/png",
+        byte_count=len(b"replay-content"),
+        idempotency_key=upload_key,
+    )
+    completed = await first_service.complete_upload(
+        *OWNER,
+        cast(UUID, session["id"]),
+        stream=b"replay-content",
+        idempotency_key=upload_key,
+        media_type="image/png",
+    )
+    assert completed.id == original.id
+    assert len(first_service.lifecycle_events) == lifecycle_count
+    assert objects.objects == object_snapshot
+
+    recreated = AttachmentService(repository, objects, inspector=StubInspector())
+    replay = await recreated.complete_upload(
+        *OWNER,
+        cast(UUID, session["id"]),
+        stream=b"replay-content",
+        idempotency_key=upload_key,
+        media_type="image/png",
+        expected_version=1,
+    )
+    assert replay == original
+    assert recreated.lifecycle_events == []
+    assert objects.objects == object_snapshot
+
+
+@pytest.mark.asyncio
+async def test_owner_digest_unique_race_is_translated_to_duplicate_reuse() -> None:
+    class UniqueRaceRepository(MemoryAttachmentRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.force_race = False
+            self._missed_lookup = False
+
+        async def get_by_digest(
+            self,
+            owner: tuple[str, str],
+            digest: str,
+            *,
+            exclude_attachment_id: UUID | None = None,
+        ) -> Attachment | None:
+            if self.force_race and not self._missed_lookup:
+                self._missed_lookup = True
+                return None
+            return await super().get_by_digest(
+                owner, digest, exclude_attachment_id=exclude_attachment_id
+            )
+
+        async def save_with_event(
+            self, attachment: Attachment, event: AttachmentLifecycleEvent
+        ) -> Attachment:
+            if self.force_race and event.status is AttachmentStatus.UPLOADING:
+                raise AttachmentDuplicate("duplicate attachment")
+            return await super().save_with_event(attachment, event)
+
+    repository = UniqueRaceRepository()
+    objects = MemoryObjectStore()
+    service = AttachmentService(repository, objects, inspector=StubInspector())
+    first = await _upload(service, data=b"unique-race", idempotency_key=str(uuid4()))
+    lifecycle_count = len(service.lifecycle_events)
+    object_snapshot = dict(objects.objects)
+    repository.force_race = True
+    second = await _upload(
+        service,
+        filename="race-loser.png",
+        data=b"unique-race",
+        idempotency_key=str(uuid4()),
+    )
+    assert second == first
+    assert len(service.lifecycle_events) == lifecycle_count
+    assert objects.objects == object_snapshot
+
+@pytest.mark.asyncio
+async def test_duplicate_content_is_owner_scoped_and_unavailable_records_are_not_resurrected(
+) -> None:
+    repository = MemoryAttachmentRepository()
+    owner_objects = MemoryObjectStore()
+    owner_service = AttachmentService(repository, owner_objects, inspector=StubInspector())
+    foreign_service = AttachmentService(
+        repository, MemoryObjectStore(), inspector=StubInspector()
+    )
+
+    first = await _upload(owner_service, data=b"owner-scoped", idempotency_key=str(uuid4()))
+    foreign = await _upload(
+        foreign_service,
+        owner=FOREIGN,
+        data=b"owner-scoped",
+        idempotency_key=str(uuid4()),
+    )
+    assert foreign.id != first.id
+    assert foreign.owner == FOREIGN
+
+    deleted = await owner_service.delete(
+        *OWNER,
+        first.id,
+        expected_version=first.version,
+        idempotency_key=str(uuid4()),
+    )
+    assert deleted.status is AttachmentStatus.UNAVAILABLE
+    with pytest.raises(AttachmentConflict):
+        await _upload(
+            owner_service,
+            filename="after-delete.png",
+            data=b"owner-scoped",
+            idempotency_key=str(uuid4()),
+        )
+    assert await repository.get(OWNER, first.id) == deleted
+    assert await repository.get(FOREIGN, foreign.id) == foreign
+
+
+@pytest.mark.asyncio
+async def test_duplicate_content_observes_in_progress_attachment_and_does_not_write_again() -> None:
+    repository = MemoryAttachmentRepository()
+    objects = BlockingObjectStore()
+    service = AttachmentService(repository, objects, inspector=StubInspector())
+
+    first_task = asyncio.create_task(
+        _upload(service, filename="in-progress.png", data=b"in-progress", idempotency_key="one")
+    )
+    await asyncio.wait_for(objects.original_started.wait(), timeout=1)
+    second = await _upload(
+        service,
+        filename="same-bytes-later.png",
+        data=b"in-progress",
+        idempotency_key="two",
+    )
+    assert second.id == (await repository.list(OWNER))[0].id
+    assert second.status is AttachmentStatus.PROCESSING
+    assert len(objects.objects) == 0
+
+    objects.release_original.set()
+    first = await asyncio.wait_for(first_task, timeout=1)
+    assert first.id == second.id
+    assert first.status is AttachmentStatus.READY
+    assert len(objects.objects) == 2
 
 
 @pytest.mark.asyncio
@@ -1365,6 +1598,44 @@ def test_historical_message_rows_and_migration_are_additive() -> None:
     assert "REFERENCES artifact_attachments" not in source
 
 
+def test_branch_message_hydration_falls_back_to_normalized_attachment_links() -> None:
+    link = SimpleNamespace(
+        id=uuid4(),
+        kind="image",
+        source_id=uuid4(),
+        display_filename="branch-image.png",
+        media_type="image/png",
+        byte_count=256,
+        availability="available",
+        width=32,
+        height=16,
+    )
+    row = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        role="user",
+        content="edited branch",
+        state="complete",
+        run_id=uuid4(),
+        created_at=None,
+        updated_at=None,
+        citations=None,
+        branch_id=uuid4(),
+        parent_message_id=None,
+        # Some branch rows can have durable normalized links even when the
+        # additive JSON snapshot is absent; reload must retain the cards.
+        attachments=None,
+        attachment_links=[link],
+    )
+
+    message = SqlConversationRepository._message(row)  # type: ignore[arg-type]
+    payload = message_payload(message)
+
+    assert message.attachments[0].source_id == link.source_id
+    attachments = cast(list[dict[str, object]], payload["attachments"])
+    assert attachments[0]["displayFilename"] == "branch-image.png"
+
+
 def test_attachment_sql_links_are_unique_and_upload_sessions_are_durable() -> None:
     attachment_table: Any = AttachmentRow.__table__
     attachment_constraints = {
@@ -1500,6 +1771,375 @@ async def test_sql_attachment_lifecycle_and_topic_outbox_are_atomic() -> None:
         with pytest.raises(ValueError, match="invalid status"):
             OutboxCommand.from_record(uuid4(), ATTACHMENT_EVENT_TOPIC, malformed, item.updated_at)
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgresql_message_links_flush_after_parent_and_rollback_together() -> None:
+    """A real FK flush catches the original attachment admission regression."""
+
+    database_url = os.environ.get("AURA_0077_DATABASE_URL")
+    if not database_url:
+        pytest.skip("AURA_0077_DATABASE_URL is required for SQL attachment coverage")
+    from alembic import command
+    from aura_core.domains.governance.identity.persistence import PrincipalRow
+    from aura_core.domains.interaction.agents.adapters.postgres import SqlAgentSeeder
+    from aura_core.domains.interaction.conversations.public import GENERAL_AGENT
+    from aura_core.entrypoints.cli import alembic_config
+    from aura_core.platform.auth import Settings
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    try:
+        command.upgrade(alembic_config(Settings(database_url=database_url)), "head")
+    except Exception as exc:
+        message = str(getattr(exc, "orig", exc)).lower()
+        if any(
+            marker in message for marker in ("connection refused", "could not connect", "timed out")
+        ):
+            pytest.skip(f"PostgreSQL unavailable: {type(exc).__name__}")
+        raise
+
+    engine = create_async_engine(database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    conversation_id = uuid4()
+    message_id = uuid4()
+    link_id = uuid4()
+    source_id = uuid4()
+    principal_id = uuid4()
+    now = datetime.now(UTC)
+    summary = _summary("image", source_id)
+    message = Message(
+        conversation_id,
+        MessageRole.USER,
+        "persist attached image",
+        id=message_id,
+        created_at=now,
+        updated_at=now,
+        attachments=(replace(summary, link_id=link_id),),
+    )
+    repository = SqlConversationRepository()
+    try:
+        await SqlAgentSeeder(sessions).seed()
+        async with sessions() as session:
+            session.add(
+                PrincipalRow(
+                    id=principal_id,
+                    issuer="https://aura0077.example",
+                    subject=f"message-ordering-{principal_id}",
+                )
+            )
+            session.add(
+                ConversationRow(
+                    id=conversation_id,
+                    principal_id=principal_id,
+                    title="attachment-ordering",
+                    agent_profile_id=GENERAL_AGENT.profile_id,
+                    agent_revision_id=GENERAL_AGENT.revision_id,
+                    model_id="chat",
+                )
+            )
+            await session.flush()
+            repository.stage_message(session, message)
+            await session.flush()
+            stored_message = await session.get(MessageRow, message_id)
+            stored_links = (
+                await session.scalars(
+                    select(MessageAttachmentRow).where(
+                        MessageAttachmentRow.message_id == message_id
+                    )
+                )
+            ).all()
+            assert stored_message is not None
+            assert stored_message.attachments is not None
+            assert len(stored_links) == 1
+            assert stored_links[0].message_id == stored_message.id
+            assert stored_links[0].source_id == source_id
+            assert stored_message.attachments[0]["linkId"] == str(link_id)
+            await session.rollback()
+
+        async with sessions() as session:
+            assert await session.get(MessageRow, message_id) is None
+            assert not (
+                await session.scalars(
+                    select(MessageAttachmentRow).where(
+                        MessageAttachmentRow.message_id == message_id
+                    )
+                )
+            ).all()
+            assert await session.get(ConversationRow, conversation_id) is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgresql_conversation_create_with_attachments_is_fully_atomic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise production ConversationStore admission and its transaction boundary."""
+
+    database_url = os.environ.get("AURA_0077_DATABASE_URL")
+    if not database_url:
+        pytest.skip("AURA_0077_DATABASE_URL is required for SQL attachment coverage")
+    from alembic import command
+    from aura_core.domains.interaction.personas.adapters.postgres import SqlPersonaSeeder
+    from aura_core.entrypoints.cli import alembic_config
+    from aura_core.platform.auth import Settings
+    from sqlalchemy import select, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    try:
+        command.upgrade(alembic_config(Settings(database_url=database_url)), "head")
+    except Exception as exc:
+        message = str(getattr(exc, "orig", exc)).lower()
+        if any(
+            marker in message for marker in ("connection refused", "could not connect", "timed out")
+        ):
+            pytest.skip(f"PostgreSQL unavailable: {type(exc).__name__}")
+        raise
+
+    engine = create_async_engine(database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    issuer = "https://aura0077.example"
+    subject = f"conversation-{uuid4().hex}"
+    owner = (issuer, subject)
+    create_key = str(uuid4())
+    failed_key = str(uuid4())
+    conversation_id: UUID | None = None
+    run_id: UUID | None = None
+    message_id: UUID | None = None
+    attachment: Attachment | None = None
+    try:
+        await SqlPersonaSeeder(sessions).seed()
+        await SqlAgentSeeder(sessions).seed()
+        catalog = AgentCatalog()
+        agent_store = SqlAgentStore(sessions, catalog)
+        await agent_store.refresh()
+
+        attachment_repository = SqlAttachmentRepository(sessions, SqlOutboxRepository())
+        attachment_service = AttachmentService(
+            attachment_repository,
+            MemoryObjectStore(),
+            inspector=StubInspector(),
+        )
+        attachment = await _upload(
+            attachment_service,
+            owner=owner,
+            filename="conversation-image.png",
+            data=b"conversation-image",
+            idempotency_key=str(uuid4()),
+        )
+        model = ModelDescriptor(
+            "chat",
+            "Chat with vision",
+            "ollama",
+            ("chat", "vision"),
+            model_revision="revision-1",
+            model_digest="d" * 64,
+        )
+        store = SqlConversationStore(sessions, catalog)
+        store.agent_store = agent_store
+        store.set_attachment_services(attachment_service, None)
+        conversation, user_message, run = await store.create(
+            issuer,
+            subject,
+            "inspect this image",
+            "chat",
+            (model,),
+            create_key,
+            attachments=(ConversationAttachmentReference("image", attachment.id),),
+        )
+        conversation_id, message_id, run_id = conversation.id, user_message.id, run.id
+
+        async with sessions() as session:
+            persisted_conversation = await session.get(ConversationRow, conversation.id)
+            persisted_message = await session.get(MessageRow, user_message.id)
+            persisted_run = await session.get(RunRow, run.id)
+            persisted_links = (
+                await session.scalars(
+                    select(MessageAttachmentRow).where(
+                        MessageAttachmentRow.message_id == user_message.id
+                    )
+                )
+            ).all()
+            persisted_idempotency = await session.get(
+                IdempotencyRow, (issuer, subject, create_key)
+            )
+            persisted_outbox = await session.get(OutboxRow, run.id)
+            assert persisted_conversation is not None
+            assert persisted_message is not None
+            assert persisted_message.attachments
+            assert persisted_run is not None
+            assert len(persisted_links) == 1
+            assert persisted_links[0].source_id == attachment.id
+            assert persisted_links[0].message_id == persisted_message.id
+            assert persisted_message.attachments[0]["sourceId"] == str(attachment.id)
+            assert persisted_run.attachments
+            assert persisted_idempotency is not None
+            assert persisted_idempotency.response["runId"] == str(run.id)
+            assert persisted_outbox is not None
+            assert persisted_outbox.topic == RUN_COMMAND_TOPIC
+            assert persisted_outbox.aggregate_id == run.id
+
+            before_conversation_ids = set(
+                (await session.scalars(select(ConversationRow.id))).all()
+            )
+            before_message_ids = set((await session.scalars(select(MessageRow.id))).all())
+            before_link_ids = set(
+                (await session.scalars(select(MessageAttachmentRow.id))).all()
+            )
+            before_run_ids = set((await session.scalars(select(RunRow.id))).all())
+            before_run_outbox_ids = set(
+                (
+                    await session.scalars(
+                        select(OutboxRow.id).where(OutboxRow.topic == RUN_COMMAND_TOPIC)
+                    )
+                ).all()
+            )
+            before_idempotency_keys = set(
+                (
+                    await session.execute(
+                        select(
+                            IdempotencyRow.principal_issuer,
+                            IdempotencyRow.principal_subject,
+                            IdempotencyRow.idempotency_key,
+                        )
+                    )
+                ).all()
+            )
+
+        failed_conversation_id = UUID(
+            bytes=hashlib.sha256(f"{subject}:{failed_key}".encode()).digest()[:16]
+        )
+        failed_message_id = UUID(
+            bytes=hashlib.sha256(f"{failed_conversation_id}:message".encode()).digest()[:16]
+        )
+        failed_run_id = UUID(
+            bytes=hashlib.sha256(f"{failed_conversation_id}:run".encode()).digest()[:16]
+        )
+
+        def fail_late(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise RuntimeError("late conversation transaction failure")
+
+        monkeypatch.setattr(store, "_audit", fail_late)
+        with pytest.raises(RuntimeError, match="late conversation transaction failure"):
+            await store.create(
+                issuer,
+                subject,
+                "must roll back",
+                "chat",
+                (model,),
+                failed_key,
+                attachments=(ConversationAttachmentReference("image", attachment.id),),
+            )
+
+        async with sessions() as session:
+            after_conversation_ids = set(
+                (await session.scalars(select(ConversationRow.id))).all()
+            )
+            after_message_ids = set((await session.scalars(select(MessageRow.id))).all())
+            after_link_ids = set(
+                (await session.scalars(select(MessageAttachmentRow.id))).all()
+            )
+            after_run_ids = set((await session.scalars(select(RunRow.id))).all())
+            after_run_outbox_ids = set(
+                (
+                    await session.scalars(
+                        select(OutboxRow.id).where(OutboxRow.topic == RUN_COMMAND_TOPIC)
+                    )
+                ).all()
+            )
+            after_idempotency_keys = set(
+                (
+                    await session.execute(
+                        select(
+                            IdempotencyRow.principal_issuer,
+                            IdempotencyRow.principal_subject,
+                            IdempotencyRow.idempotency_key,
+                        )
+                    )
+                ).all()
+            )
+            assert after_conversation_ids == before_conversation_ids
+            assert after_message_ids == before_message_ids
+            assert after_link_ids == before_link_ids
+            assert after_run_ids == before_run_ids
+            assert after_run_outbox_ids == before_run_outbox_ids
+            assert after_idempotency_keys == before_idempotency_keys
+            assert await session.get(ConversationRow, failed_conversation_id) is None
+            assert await session.get(MessageRow, failed_message_id) is None
+            assert await session.get(RunRow, failed_run_id) is None
+            assert await session.get(IdempotencyRow, (issuer, subject, failed_key)) is None
+            assert await session.get(OutboxRow, failed_run_id) is None
+            assert not (
+                await session.scalars(
+                    select(MessageAttachmentRow).where(
+                        MessageAttachmentRow.message_id == failed_message_id
+                    )
+                )
+            ).all()
+    finally:
+        async with sessions() as session, session.begin():
+            if message_id is not None:
+                await session.execute(
+                    text("DELETE FROM message_attachments WHERE message_id = :message_id"),
+                    {"message_id": message_id},
+                )
+                if run_id is not None:
+                    await session.execute(
+                        text("DELETE FROM run_events WHERE run_id = :run_id"),
+                        {"run_id": run_id},
+                    )
+                    await session.execute(
+                        text("DELETE FROM runs WHERE id = :run_id"),
+                        {"run_id": run_id},
+                    )
+                await session.execute(
+                    text("DELETE FROM messages WHERE id = :message_id"),
+                    {"message_id": message_id},
+                )
+            if conversation_id is not None:
+                for table in (
+                    "conversation_agent_assignments",
+                    "conversation_persona_assignments",
+                    "conversation_branches",
+                ):
+                    await session.execute(
+                        text(f"DELETE FROM {table} WHERE conversation_id = :conversation_id"),
+                        {"conversation_id": conversation_id},
+                    )
+                await session.execute(
+                    text("DELETE FROM conversations WHERE id = :conversation_id"),
+                    {"conversation_id": conversation_id},
+                )
+            if run_id is not None:
+                await session.execute(
+                    text("DELETE FROM outbox WHERE id = :run_id"), {"run_id": run_id}
+                )
+            await session.execute(
+                text(
+                    "DELETE FROM command_idempotency "
+                    "WHERE principal_issuer = :issuer AND principal_subject = :subject"
+                ),
+                {"issuer": issuer, "subject": subject},
+            )
+            if attachment is not None:
+                await session.execute(
+                    text(
+                        "DELETE FROM artifact_attachment_lifecycle_events "
+                        "WHERE attachment_id = :attachment_id"
+                    ),
+                    {"attachment_id": attachment.id},
+                )
+                await session.execute(
+                    text("DELETE FROM outbox WHERE aggregate_id = :attachment_id"),
+                    {"attachment_id": attachment.id},
+                )
+                await session.execute(
+                    text("DELETE FROM artifact_attachments WHERE id = :attachment_id"),
+                    {"attachment_id": attachment.id},
+                )
         await engine.dispose()
 
 

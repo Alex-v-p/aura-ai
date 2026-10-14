@@ -3199,6 +3199,8 @@ def message_payload(message: Message) -> dict[str, object]:
         payload["parentMessageId"] = str(message.parent_message_id)
     if message.citations:
         payload["citations"] = [_citation_payload(item) for item in message.citations]
+    if message.attachments:
+        payload["attachments"] = [_attachment_payload(item) for item in message.attachments]
     return payload
 
 

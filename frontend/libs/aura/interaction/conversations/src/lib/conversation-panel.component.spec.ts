@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { focusBranchAction } from './branch-action-focus';
 import { selectedDocumentIsPending } from './conversation-attachment-readiness';
+import { attachmentSelectionForHydration } from './conversation-store';
 
 const template = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.html'), 'utf8');
 const componentSource = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts'), 'utf8');
@@ -106,6 +107,8 @@ describe('conversation configuration select bindings', () => {
   it('renders a branch retry only when the store exposes a retryable action', () => {
     expect(template).toContain('@if (store.selectedBranch().errorAction)');
     expect(template).not.toContain('{{ branchError }} <button type="button" class="inline-action" (click)="retryBranchAction()">');
+    expect(componentSource).toContain('this.store.retryBranchAction(this.branchAttachments())');
+    expect(componentSource).toContain("if (succeeded && action?.kind === 'edit') this.finishBranchEdit(conversationId, action.messageId);");
   });
 
   it('keeps attachment picker controls keyboard-addressable and sibling-native', () => {
@@ -120,7 +123,7 @@ describe('conversation configuration select bindings', () => {
 
   it('shares one submission blocker between the button and keyboard/form submission', () => {
     expect(componentSource).toContain('submissionBlocked(): boolean');
-    expect(template).toContain('[disabled]="!store.canSend() || !defaultAgentReady() || submissionBlocked()"');
+    expect(template).toContain('[disabled]="!store.canSend() || !defaultAgentReady() || submissionBlocked() || branchEditActive()"');
     expect(componentSource).toContain('if (!this.defaultAgentReady() || this.submissionBlocked()) return;');
     expect(componentSource).toContain("['validating', 'creating', 'uploading'].includes(item.state)");
     expect(componentSource).toContain('this.store.modelVisionRequiredFor()');
@@ -142,7 +145,117 @@ describe('conversation configuration select bindings', () => {
     expect(componentSource).toContain('failed image-understanding verification');
     expect(template).toContain('{{ modelOptionLabel(model) }}');
     expect(componentSource).toContain('this.store.setDraftAttachments(selected)');
-    expect(componentSource).toContain('if (accepted) { if (this.store.branchEditing())');
+    expect(componentSource).toContain('if (accepted) { if (this.branchEditActive())');
     expect(template).toContain("attachmentStore.errorKind() === 'storage' && !attachmentStore.images().length");
+  });
+
+  it('hard-blocks the ordinary composer while preserving the branch picker path', () => {
+    expect(componentSource).toContain('if (this.branchEditActive()) return;');
+    expect(componentSource).toContain('|| this.branchEditActive()');
+    expect(template).toContain('[disabled]="!!store.selected().archivedAt || branchEditActive()"');
+    expect(template).toContain('[disabled]="controlsDisabled()"');
+    expect(template).toContain("branchEditActive() ? 'Add branch attachments' : 'Add attachments'");
+    expect(template).toContain('class="send-button" type="submit" [disabled]="!store.canSend() || !defaultAgentReady() || submissionBlocked() || branchEditActive()"');
+    expect(template).toContain('class="selected-attachments branch-edit-attachments"');
+    expect(componentSource).toContain('branchEditActive(): boolean { return this.store.selectedBranch().editingMessageId !== null; }');
+  });
+
+  it('keeps an explicit branch attachment set during refresh hydration', () => {
+    expect(componentSource).toContain('if (switchedConversation && editingMessageId)');
+    expect(componentSource).toContain('this.attachmentStore.setSelected(branchSelection);');
+    expect(componentSource).toContain('this.branchAttachments.set(branchSelection);');
+    expect(componentSource).toContain('this.branchAttachments.set(this.store.attachmentsForTurn(messageId));');
+    expect(componentSource).toContain('this.store.editAndBranch(this.branchAttachments())');
+  });
+
+  it('uses full edit cleanup after a successful retry so branch attachments do not enter the composer draft', () => {
+    expect(componentSource).toContain('private finishBranchEdit(conversationId: string, messageId: string | null): void');
+    expect(componentSource).toContain('this.attachmentStore.setSelected(ordinarySelection);');
+    expect(componentSource).toContain('this.branchAttachments.set([]);');
+    expect(componentSource).toContain("this.store.setDraftAttachments(selected);");
+    const ordinaryComposerSet = [{ kind: 'image', attachmentId: 'ordinary-x' }] as const;
+    const branchSet = [{ kind: 'image', attachmentId: 'branch-y' }] as const;
+    const scopedRestore = new Map<string, ReadonlyArray<unknown>>([['conversation-a\u0000message-a', ordinaryComposerSet]]);
+    expect(scopedRestore.get('conversation-a\u0000message-a')).toEqual(ordinaryComposerSet);
+    expect(scopedRestore.get('conversation-a\u0000message-a')).not.toEqual(branchSet);
+  });
+
+  it('keeps branch additions and removals scoped across conversation switches', () => {
+    expect(componentSource).toContain('private readonly branchAttachmentSelections = new Map');
+    expect(componentSource).toContain('this.rememberBranchAttachments(conversationId, messageId, selection);');
+    expect(componentSource).toContain('this.rememberBranchAttachments(this.store.selectedId(), messageId, selected);');
+    expect(componentSource).toContain('const rememberedBranchSelection = branchKey ? this.branchAttachmentSelections.get(branchKey) : undefined;');
+    expect(componentSource).toContain('this.rememberBranchAttachments(this.store.selectedId(), editingMessageId, selected);');
+    expect(componentSource).toContain("if (succeeded && action?.kind === 'edit') this.finishBranchEdit(conversationId, action.messageId);");
+    expect(componentSource).toContain('private clearBranchAttachmentSelection(conversationId: string, messageId: string): void');
+    expect(componentSource).toContain('this.branchAttachmentSelections.clear();');
+    expect(componentSource).toContain('this.ordinaryAttachmentSelections.clear();');
+    expect(componentSource).toContain('this.branchAttachments.set([]);');
+    expect(componentSource).toContain('ngOnDestroy(): void { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.branchAttachmentSelections.clear(); this.ordinaryAttachmentSelections.clear(); this.branchAttachments.set([]); }');
+    expect(componentSource).toContain('if (succeeded) this.finishBranchEdit(conversationId, messageId);');
+    expect(componentSource).toContain('this.clearBranchAttachmentSelection(conversationId, messageId);');
+    expect(componentSource).toContain('private readonly ordinaryAttachmentSelections = new Map');
+    expect(componentSource).toContain('this.ordinaryAttachmentSelections.set(this.branchAttachmentKey(conversationId, messageId), [...this.attachmentStore.selected()]);');
+    expect(componentSource).toContain('this.store.setDraftAttachmentsFor(conversationId, ordinarySelection);');
+
+    const aSource = ['a1', 'a2', 'a3', 'a4', 'a5'];
+    const aAfterRemoval = aSource.slice(0, 4);
+    const bSelection = ['b1', 'b2'];
+    const selections = new Map<string, ReadonlyArray<string>>();
+    selections.set('conversation-a\u0000message-a', aAfterRemoval);
+    selections.set('conversation-b\u0000message-b', bSelection);
+    expect(selections.get('conversation-a\u0000message-a')).toEqual(aAfterRemoval);
+    expect(selections.get('conversation-a\u0000message-a')).not.toContain('a5');
+    expect(selections.get('conversation-b\u0000message-b')).toEqual(bSelection);
+  });
+
+  it('renders one attachment surface while editing and focuses the post-render branch textarea', () => {
+    expect(template).toContain('@if (!branchEditActive() && attachmentStore.selected().length)');
+    expect(template).toContain('class="selected-attachments branch-edit-attachments"');
+    expect(componentSource).toContain('this.requestBranchEditInputFocus(messageId);');
+    expect(componentSource).toContain("triggerId: `branch-edit-${messageId}`");
+    expect(componentSource).toContain('this.requestBranchEditFocus();');
+  });
+
+  it('rebuilds retained branch selection from the destination turn across A-to-B-to-A', () => {
+    const a = [{ kind: 'image', attachmentId: 'image-a' }] as const;
+    const b = [{ kind: 'image', attachmentId: 'image-b' }] as const;
+
+    expect(attachmentSelectionForHydration(true, 'message-a', b, a)).toEqual(a);
+    expect(attachmentSelectionForHydration(true, 'message-b', a, b)).toEqual(b);
+    expect(attachmentSelectionForHydration(false, 'message-a', b, a)).toEqual(b);
+  });
+
+  it('re-requests the URL branch after navigation and clears an orphaned edit safely', () => {
+    expect(componentSource).toContain('if (conversationId !== this.lastRoutedConversationId)');
+    expect(componentSource).toContain('const requestedSummary = branch.summaries.find((item) => item.id === requested);');
+    expect(componentSource).toContain('if (requestedSummary && branch.error)');
+    expect(componentSource).toContain('this.requestedBranchId = null;');
+    expect(componentSource).toContain('Keep the store\'s explicit retry action visible');
+    expect(componentSource).toContain('if (branch.activeId !== requested || !branchContentLoaded)');
+    expect(componentSource).toContain('const sourceStillVisible = !editingMessageId || this.store.selected().turns.some((turn) => turn.id === editingMessageId && turn.role === \'user\');');
+    expect(componentSource).toContain('if (editingMessageId && sourceStillVisible === false && !branch.loading && !this.requestedBranchId)');
+    expect(componentSource).toContain('this.store.recoverOrphanedEdit();');
+    expect(componentSource).toContain('this.restoreOrdinaryComposerSelection(conversationId, editingMessageId);');
+    expect(componentSource).toContain('restoreOrphanedEditDraft(replace = false)');
+    expect(template).toContain('Replace current draft');
+    expect(template).toContain('Confirm replace current draft');
+    expect(template).toContain('Confirm discard recovered edit');
+    expect(template).toContain('Discard recovered edit');
+    expect(componentSource).toContain("private readonly pendingOrphanedEditFocus = signal<'confirmation' | 'composer' | 'trigger' | null>(null)");
+    expect(componentSource).toContain("document.querySelector<HTMLButtonElement>('[data-orphaned-confirm-cancel]')");
+    expect(componentSource).toContain('this.pendingOrphanedEditFocus.set(\'composer\')');
+    expect(componentSource).toContain('this.pendingOrphanedEditFocus.set(\'trigger\')');
+    expect(template).toContain('aria-label="Recovered branch edit"');
+    expect(template).toContain('data-orphaned-confirm-cancel');
+    expect(componentSource).toContain('if (switchedConversation) { this.orphanedEditAction.set(null);');
+    expect(componentSource).toContain('this.orphanedEditActionTrigger = null;');
+    const recoveryStart = template.indexOf('@if (store.orphanedEditDraftFor())');
+    const recoveryBanner = template.slice(recoveryStart, template.indexOf('<form class="composer-wrap"', recoveryStart));
+    expect(recoveryBanner).toContain('role="status"');
+    expect(recoveryBanner).not.toContain('role="alert"');
+    expect(recoveryBanner).not.toContain('aria-invalid');
+    expect(componentSource).toContain('this.store.selectedBranch().editingMessageId !== null');
+    expect(componentSource).toContain('if (wasEditing && !editingMessageId && !loading)');
   });
 });

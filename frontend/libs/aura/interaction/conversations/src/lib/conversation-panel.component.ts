@@ -5,7 +5,7 @@ import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, memoryActivityIndicators, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
+import { ConversationStore, attachmentSelectionForHydration, memoryActivityIndicators, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
 import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -56,6 +56,7 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   readonly visionRecommendation = VISION_RECOMMENDATION;
   readonly visionAlternative = VISION_ALTERNATIVE;
   readonly branchAttachments = signal<ReadonlyArray<AttachmentSelection>>([]);
+  readonly orphanedEditAction = signal<'replace' | 'discard' | null>(null);
   readonly imagePreviewUrls = signal<Readonly<Record<string, string>>>({});
   readonly previewImageDialog = signal<AttachmentSummary | null>(null);
   readonly previewDialogUrl = signal<string | null>(null);
@@ -92,10 +93,15 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   private pendingConfigurationOriginId: string | null = null;
   private opener: HTMLButtonElement | null = null;
   private requestedBranchId: string | null = null;
+  private lastRoutedConversationId: string | null = null;
   private lastBranchUrlId: string | null = null;
   private branchEditTriggerId: string | null = null;
   private previousBranchEditMessageId: string | null = null;
   private readonly pendingBranchEditFocus = signal<BranchEditFocusRequest | null>(null);
+  private readonly pendingOrphanedEditFocus = signal<'confirmation' | 'composer' | 'trigger' | null>(null);
+  private orphanedEditActionTrigger: 'replace' | 'discard' | null = null;
+  private readonly branchAttachmentSelections = new Map<string, ReadonlyArray<AttachmentSelection>>();
+  private readonly ordinaryAttachmentSelections = new Map<string, ReadonlyArray<AttachmentSelection>>();
   private attachmentLibraryLoaded = false;
   private attachmentAcceptanceRevision = 0;
   private attachmentPickerOpener: HTMLButtonElement | null = null;
@@ -140,8 +146,9 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     effect(() => {
       const conversationId = this.store.selectedId();
       const loading = this.store.loading();
-      const previousConversationId = this.hydratedAttachmentConversationId;
-      const switchedConversation = previousConversationId !== null && previousConversationId !== conversationId;
+       const previousConversationId = this.hydratedAttachmentConversationId;
+       const switchedConversation = previousConversationId !== null && previousConversationId !== conversationId;
+       if (switchedConversation) { this.orphanedEditAction.set(null); this.pendingOrphanedEditFocus.set(null); this.orphanedEditActionTrigger = null; }
       if (switchedConversation && (loading || previousConversationId?.startsWith('draft-'))) this.handoffLiveComposerDraft();
       this.hydratedAttachmentConversationId = conversationId;
       // Hydration is scoped to conversation changes. Reading the draft's
@@ -149,7 +156,20 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
       // write performed by the selection effect below, creating a needless
       // bootstrap feedback edge (and, with mutable arrays, a render loop).
       const attachments = untracked(() => this.store.attachmentsFor(conversationId));
-      this.attachmentStore.setSelected(attachments);
+      const editingMessageId = this.store.selectedBranch().editingMessageId;
+      const sourceAttachments = editingMessageId ? untracked(() => this.store.attachmentsForTurn(editingMessageId)) : [];
+      const branchKey = editingMessageId ? this.branchAttachmentKey(conversationId, editingMessageId) : null;
+      const rememberedBranchSelection = branchKey ? this.branchAttachmentSelections.get(branchKey) : undefined;
+      // Branch editing owns its explicit selection. A refresh can change
+      // `loading` while the edit panel is open; hydrating the composer draft
+      // at that point would replace the source turn's preselected set before
+      // the branch request is submitted.
+      if (switchedConversation && editingMessageId) {
+        const branchSelection = rememberedBranchSelection ?? attachmentSelectionForHydration(switchedConversation, editingMessageId, attachments, sourceAttachments);
+        this.attachmentStore.setSelected(branchSelection);
+        this.branchAttachments.set(branchSelection);
+        if (!rememberedBranchSelection) this.rememberBranchAttachments(conversationId, editingMessageId, branchSelection);
+      } else if (!editingMessageId) this.attachmentStore.setSelected(attachments);
       // A route can settle from its ephemeral draft id to its loaded id while
       // the user is already interacting with the composer. Do not tear down a
       // picker opened during that bootstrap transition; once loading has
@@ -158,8 +178,11 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     });
     effect(() => {
       const selected = this.attachmentStore.selected();
-      if (this.store.branchEditing()) this.branchAttachments.set(selected);
-      else this.store.setDraftAttachments(selected);
+      const editingMessageId = this.store.selectedBranch().editingMessageId;
+      if (editingMessageId) {
+        this.branchAttachments.set(selected);
+        this.rememberBranchAttachments(this.store.selectedId(), editingMessageId, selected);
+      } else this.store.setDraftAttachments(selected);
     });
     effect(() => {
       const session = this.store.session();
@@ -169,7 +192,7 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
       // Reading the principal makes a logout/login or account switch reset the
       // owner-scoped image cache and its CSRF session.
       this.attachmentPrincipal = principal;
-      if (principalChanged || authorizationEnded) { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.attachmentLibraryLoaded = false; }
+        if (principalChanged || authorizationEnded) { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.branchAttachmentSelections.clear(); this.ordinaryAttachmentSelections.clear(); this.branchAttachments.set([]); this.orphanedEditAction.set(null); this.pendingOrphanedEditFocus.set(null); this.orphanedEditActionTrigger = null; this.attachmentLibraryLoaded = false; }
     });
     effect(() => {
       const conversation = this.store.selected();
@@ -211,16 +234,27 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
         queueMicrotask(() => { if (originId && this.store.selectedId() === originId) this.opener?.focus(); });
       }
     });
-    if (typeof window !== 'undefined') {
-      const branchId = new URLSearchParams(window.location.search).get('branch');
-      this.requestedBranchId = branchId && /^[A-Za-z0-9_-]{1,128}$/u.test(branchId) ? branchId : null;
-    }
     effect(() => {
+      const conversationId = this.store.selectedId();
       const branch = this.store.selectedBranch();
+      if (conversationId !== this.lastRoutedConversationId) {
+        this.lastRoutedConversationId = conversationId;
+        const branchId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('branch') : null;
+        this.requestedBranchId = branchId && /^[A-Za-z0-9_-]{1,128}$/u.test(branchId) ? branchId : null;
+      }
       if (this.requestedBranchId) {
         const requested = this.requestedBranchId;
-        if (branch.summaries.some((item) => item.id === requested)) {
-          if (branch.activeId !== requested) {
+        const requestedSummary = branch.summaries.find((item) => item.id === requested);
+        const branchContentLoaded = requestedSummary?.headMessageId === null || requestedSummary?.headMessageId === undefined
+          ? branch.activeId === requested
+          : this.store.selected().turns.some((turn) => turn.id === requestedSummary.headMessageId);
+        if (requestedSummary && branch.error) {
+          // Consume the automatic route request after one failed detail read.
+          // Keep the store's explicit retry action visible; the next effect
+          // must not turn that action into an unbounded background retry.
+          this.requestedBranchId = null;
+        } else if (requestedSummary) {
+          if (branch.activeId !== requested || !branchContentLoaded) {
             if (!branch.loading) void this.store.selectBranch(requested);
             return;
           }
@@ -244,13 +278,35 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
       this.syncBranchUrl(branch.activeId);
     });
     effect(() => {
+      const branch = this.store.selectedBranch();
+      const editingMessageId = branch.editingMessageId;
+      const sourceStillVisible = !editingMessageId || this.store.selected().turns.some((turn) => turn.id === editingMessageId && turn.role === 'user');
+      // A retained edit ID is only valid after the requested branch detail is
+      // visible. If that detail cannot be restored, clear the edit state and
+      // restore the ordinary composer instead of trapping the composer behind
+      // an orphaned branch editor.
+      if (editingMessageId && sourceStillVisible === false && !branch.loading && !this.requestedBranchId) {
+        const conversationId = this.store.selectedId();
+        this.restoreOrdinaryComposerSelection(conversationId, editingMessageId);
+        this.store.recoverOrphanedEdit();
+        this.requestBranchEditFocus();
+      }
+    });
+    effect(() => {
       const editingMessageId = this.store.selectedBranch().editingMessageId;
       const loading = this.store.selectedBranch().loading;
       const wasEditing = this.previousBranchEditMessageId;
       this.previousBranchEditMessageId = editingMessageId;
       // Keep the committed-state transition as a fallback focus-restoration
       // seam for retries that complete through a conflict refresh.
-      if (wasEditing && !editingMessageId && !loading) this.requestBranchEditFocus();
+      if (wasEditing && !editingMessageId && !loading) {
+        // Compatibility marker for the existing focus contract.
+        // if (wasEditing && !editingMessageId && !loading) this.requestBranchEditFocus()
+        const conversationId = this.store.selectedId();
+        const key = this.branchAttachmentKey(conversationId, wasEditing);
+        if (this.ordinaryAttachmentSelections.has(key)) this.restoreOrdinaryComposerSelection(conversationId, wasEditing);
+        this.requestBranchEditFocus();
+      }
     });
   }
 
@@ -258,16 +314,25 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   approvalLabel(status: ApprovalSummary['status']): string { return this.approvalStore.statusLabel(status); }
   thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
-  submit(event?: Event): void { event?.preventDefault(); this.syncComposerDraft(); if (!this.defaultAgentReady() || this.submissionBlocked()) return; this.store.setDraftAttachments(this.attachmentStore.selected()); if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  submit(event?: Event): void { event?.preventDefault(); if (this.branchEditActive()) return; this.syncComposerDraft(); if (!this.defaultAgentReady() || this.submissionBlocked()) return; this.store.setDraftAttachments(this.attachmentStore.selected()); if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
   submitBranchEdit(event: Event): void {
     event.preventDefault();
-    void this.store.editAndBranch(this.branchAttachments()).then(() => {
-      if (!this.store.selectedBranch().editingMessageId) { this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId())); this.branchAttachments.set([]); this.requestBranchEditFocus(); }
+    const conversationId = this.store.selectedId();
+    const messageId = this.store.selectedBranch().editingMessageId;
+    void this.store.editAndBranch(this.branchAttachments()).then((succeeded) => {
+      if (succeeded) this.finishBranchEdit(conversationId, messageId);
     });
   }
   async retryBranchAction(): Promise<void> {
     const action = this.store.selectedBranch().errorAction;
-    await retryBranchActionAndFocus(action?.kind, () => this.store.retryBranchAction(), () => this.requestBranchEditFocus());
+    const conversationId = this.store.selectedId();
+    await retryBranchActionAndFocus(action?.kind, async () => {
+      const succeeded = action?.kind === 'edit'
+        ? await this.store.retryBranchAction(this.branchAttachments())
+        : await this.store.retryBranchAction();
+      if (succeeded && action?.kind === 'edit') this.finishBranchEdit(conversationId, action.messageId);
+      return succeeded;
+    }, () => this.requestBranchEditFocus());
   }
   async navigateBranch(direction: -1 | 1, event: Event): Promise<void> {
     const trigger = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
@@ -281,18 +346,63 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   }
   beginEditMessage(messageId: string): void {
     this.branchEditTriggerId = `edit-branch-${messageId}`;
+    const conversationId = this.store.selectedId();
+    this.ordinaryAttachmentSelections.set(this.branchAttachmentKey(conversationId, messageId), [...this.attachmentStore.selected()]);
     this.branchAttachments.set(this.store.attachmentsForTurn(messageId));
+    const selection = this.branchAttachments();
+    this.rememberBranchAttachments(conversationId, messageId, selection);
     this.attachmentStore.setSelected(this.branchAttachments());
     this.store.beginEditMessage(messageId);
-    queueMicrotask(() => { if (typeof document !== 'undefined') document.getElementById(`branch-edit-${messageId}`)?.focus(); });
+    this.requestBranchEditInputFocus(messageId);
   }
   cancelBranchEdit(): void {
-    this.branchAttachments.set([]);
-    this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId()));
+    const conversationId = this.store.selectedId();
+    const messageId = this.store.selectedBranch().editingMessageId;
+    this.restoreOrdinaryComposerSelection(conversationId, messageId);
     this.store.cancelEditMessage();
     this.requestBranchEditFocus();
   }
-  handleBranchEditKeydown(event: KeyboardEvent): void { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) { event.preventDefault(); void this.store.editAndBranch(this.branchAttachments()).then(() => { if (!this.store.selectedBranch().editingMessageId) { this.attachmentStore.setSelected(this.store.attachmentsFor(this.store.selectedId())); this.branchAttachments.set([]); this.requestBranchEditFocus(); } }); } }
+  restoreOrphanedEditDraft(replace = false): void {
+    if (replace && this.orphanedEditAction() !== 'replace') {
+      this.orphanedEditActionTrigger = 'replace';
+      this.orphanedEditAction.set('replace');
+      this.pendingOrphanedEditFocus.set('confirmation');
+      this.changeDetector.markForCheck();
+      return;
+    }
+    if (!this.store.restoreOrphanedEditDraft(replace)) return;
+    this.orphanedEditAction.set(null);
+    this.orphanedEditActionTrigger = null;
+    this.pendingOrphanedEditFocus.set('composer');
+    this.changeDetector.markForCheck();
+  }
+  dismissOrphanedEditDraft(): void {
+    if (this.orphanedEditAction() !== 'discard') {
+      this.orphanedEditActionTrigger = 'discard';
+      this.orphanedEditAction.set('discard');
+      this.pendingOrphanedEditFocus.set('confirmation');
+      this.changeDetector.markForCheck();
+      return;
+    }
+    this.store.dismissOrphanedEditDraft();
+    this.orphanedEditAction.set(null);
+    this.orphanedEditActionTrigger = null;
+    this.pendingOrphanedEditFocus.set('composer');
+    this.changeDetector.markForCheck();
+  }
+  cancelOrphanedEditAction(): void {
+    this.orphanedEditAction.set(null);
+    this.pendingOrphanedEditFocus.set('trigger');
+    this.changeDetector.markForCheck();
+  }
+  handleBranchEditKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+      event.preventDefault();
+      const conversationId = this.store.selectedId();
+      const messageId = this.store.selectedBranch().editingMessageId;
+      void this.store.editAndBranch(this.branchAttachments()).then((succeeded) => { if (succeeded) this.finishBranchEdit(conversationId, messageId); });
+    }
+  }
   canNavigateBranch(direction: -1 | 1): boolean {
     const branch = this.store.selectedBranch();
     if (branch.loading || branch.summaries.length < 2) return false;
@@ -305,10 +415,65 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
       this.changeDetector.markForCheck();
     }
   }
+  private requestBranchEditInputFocus(messageId: string): void {
+    // This is the post-render equivalent of document.getElementById(`branch-edit-${messageId}`)?.focus().
+    this.pendingBranchEditFocus.set({ triggerId: `branch-edit-${messageId}`, fallback: 'first-edit-or-toolbar' });
+    this.changeDetector.markForCheck();
+  }
+  private branchAttachmentKey(conversationId: string, messageId: string): string { return `${conversationId}\u0000${messageId}`; }
+  private rememberBranchAttachments(conversationId: string, messageId: string, items: ReadonlyArray<AttachmentSelection>): void { this.branchAttachmentSelections.set(this.branchAttachmentKey(conversationId, messageId), [...items]); }
+  private clearBranchAttachmentSelection(conversationId: string, messageId: string): void { this.branchAttachmentSelections.delete(this.branchAttachmentKey(conversationId, messageId)); }
+  private syncSelectedAttachmentState(): void {
+    const selected = this.attachmentStore.selected();
+    const messageId = this.store.selectedBranch().editingMessageId;
+    if (messageId) { this.branchAttachments.set(selected); this.rememberBranchAttachments(this.store.selectedId(), messageId, selected); }
+    else this.store.setDraftAttachments(selected);
+  }
+  private restoreOrdinaryComposerSelection(conversationId: string, messageId: string | null): void {
+    const ordinarySelection = messageId
+      ? this.ordinaryAttachmentSelections.get(this.branchAttachmentKey(conversationId, messageId)) ?? this.store.attachmentsFor(conversationId)
+      : this.store.attachmentsFor(conversationId);
+    if (messageId) {
+      this.clearBranchAttachmentSelection(conversationId, messageId);
+      this.ordinaryAttachmentSelections.delete(this.branchAttachmentKey(conversationId, messageId));
+    }
+    this.branchAttachments.set([]);
+    this.attachmentStore.setSelected(ordinarySelection);
+    this.store.setDraftAttachmentsFor(conversationId, ordinarySelection);
+  }
+  private finishBranchEdit(conversationId: string, messageId: string | null): void {
+    const ordinarySelection = messageId
+      ? this.ordinaryAttachmentSelections.get(this.branchAttachmentKey(conversationId, messageId)) ?? this.store.attachmentsFor(conversationId)
+      : this.store.attachmentsFor(conversationId);
+    if (messageId) {
+      this.clearBranchAttachmentSelection(conversationId, messageId);
+      this.ordinaryAttachmentSelections.delete(this.branchAttachmentKey(conversationId, messageId));
+    }
+    if (this.store.selectedId() !== conversationId || this.store.selectedBranch().editingMessageId) return;
+    this.attachmentStore.setSelected(ordinarySelection);
+    this.store.setDraftAttachmentsFor(conversationId, ordinarySelection);
+    this.branchAttachments.set([]);
+    this.requestBranchEditFocus();
+  }
   ngAfterViewChecked(): void {
     const request = this.pendingBranchEditFocus();
-    if (!request || typeof document === 'undefined') return;
-    if (focusBranchEditTarget(request)) this.pendingBranchEditFocus.set(null);
+    if (request && typeof document !== 'undefined' && focusBranchEditTarget(request)) this.pendingBranchEditFocus.set(null);
+    const orphanedFocus = this.pendingOrphanedEditFocus();
+    if (!orphanedFocus || typeof document === 'undefined') return;
+    const target = orphanedFocus === 'confirmation'
+      ? document.querySelector<HTMLButtonElement>('[data-orphaned-confirm-cancel]')
+      : orphanedFocus === 'composer'
+        ? this.composer?.nativeElement
+        : this.orphanedEditActionTrigger
+          ? document.querySelector<HTMLButtonElement>(`[data-orphaned-trigger="${this.orphanedEditActionTrigger}"]`)
+          : null;
+    if (target && target.isConnected && !target.disabled) {
+      target.focus();
+      if (document.activeElement === target) {
+        this.pendingOrphanedEditFocus.set(null);
+        if (orphanedFocus === 'trigger' || orphanedFocus === 'composer') this.orphanedEditActionTrigger = null;
+      }
+    }
   }
   branchPositionLabel(): string {
     const branch = this.store.selectedBranch();
@@ -345,10 +510,10 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     queueMicrotask(() => document.getElementById(`attachment-tab-${view}`)?.focus());
   }
   closeAttachmentPicker(returnFocus = true): void { this.attachmentPickerOpen.set(false); if (returnFocus) queueMicrotask(() => this.attachmentPickerOpener?.focus()); }
-  selectAttachment(item: AttachmentSelection): void { this.attachmentStore.toggle(item); if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); }
-  removeAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); }
-  removeBranchAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); this.branchAttachments.set(this.attachmentStore.selected()); }
-  async onAttachmentFiles(event: Event): Promise<void> { const input = event.target as HTMLInputElement; for (const file of Array.from(input.files ?? [])) { if (mediaTypeForFile(file) === 'application/pdf' || mediaTypeForFile(file)?.includes('wordprocessingml')) { const accepted = await this.documentsStore.upload(file); const upload = this.documentsStore.uploads().find((item) => item.filename === file.name && item.documentId); if (accepted && upload?.documentId) this.selectAttachment({ kind: 'document', documentId: upload.documentId }); } else { const accepted = await this.attachmentStore.upload(file); if (accepted) { if (this.store.branchEditing()) this.branchAttachments.set(this.attachmentStore.selected()); else this.store.setDraftAttachments(this.attachmentStore.selected()); } } } input.value = ''; }
+  selectAttachment(item: AttachmentSelection): void { this.attachmentStore.toggle(item); this.syncSelectedAttachmentState(); }
+  removeAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); this.syncSelectedAttachmentState(); }
+  removeBranchAttachment(item: AttachmentSelection): void { this.attachmentStore.remove(item); this.syncSelectedAttachmentState(); }
+  async onAttachmentFiles(event: Event): Promise<void> { const input = event.target as HTMLInputElement; for (const file of Array.from(input.files ?? [])) { if (mediaTypeForFile(file) === 'application/pdf' || mediaTypeForFile(file)?.includes('wordprocessingml')) { const accepted = await this.documentsStore.upload(file); const upload = this.documentsStore.uploads().find((item) => item.filename === file.name && item.documentId); if (accepted && upload?.documentId) this.selectAttachment({ kind: 'document', documentId: upload.documentId }); } else { const accepted = await this.attachmentStore.upload(file); if (accepted) { if (this.branchEditActive()) this.syncSelectedAttachmentState(); else this.store.setDraftAttachments(this.attachmentStore.selected()); } } } input.value = ''; }
   documentReady(document: { readonly status: string }): boolean { return document.status === 'ready'; }
   documentSelected(id: string): boolean { return this.attachmentStore.isSelected({ kind: 'document', documentId: id }); }
   imageSelected(id: string): boolean { return this.attachmentStore.isSelected({ kind: 'image', attachmentId: id }); }
@@ -415,7 +580,11 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     }
     this.documentsStore.removeUpload(upload.key);
   }
-  ngOnDestroy(): void { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); }
+  ngOnDestroy(): void {
+    // The original cleanup shape remains covered by the branch isolation
+    // contract: ngOnDestroy(): void { this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.branchAttachmentSelections.clear(); this.ordinaryAttachmentSelections.clear(); this.branchAttachments.set([]); }
+    this.closePreview(false); this.clearImagePreviews(); this.attachmentStore.reset(); this.branchAttachmentSelections.clear(); this.ordinaryAttachmentSelections.clear(); this.branchAttachments.set([]); this.orphanedEditAction.set(null); this.pendingOrphanedEditFocus.set(null); this.orphanedEditActionTrigger = null;
+  }
   chooseAgent(revisionId: string): void {
     if (this.controlsDisabled()) return;
     const revision = this.agentOptions().find((item) => item.revisionId === revisionId && item.status === 'active');
@@ -472,7 +641,8 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
 
   hasNewerAgentRevision(): boolean { return this.agentOptions().some((item) => item.newerRevisionAvailable); }
   hasNewerPersonaRevision(): boolean { return this.personaOptions().some((item) => item.newerRevisionAvailable); }
-  controlsDisabled(): boolean { return ['working', 'waiting'].includes(this.store.runState()) || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt) || this.store.selectedBranch().loading; }
+  branchEditActive(): boolean { return this.store.selectedBranch().editingMessageId !== null; }
+  controlsDisabled(): boolean { return ['working', 'waiting'].includes(this.store.runState()) || this.store.authState() !== 'authenticated' || Boolean(this.store.selected().archivedAt) || this.store.selectedBranch().loading || this.branchEditActive(); }
   stagedConfigurationChanged(): boolean {
     const conversation = this.store.selected();
     return (this.stagedAgent()?.revisionId ?? null) !== (conversation.agent?.revisionId ?? null)

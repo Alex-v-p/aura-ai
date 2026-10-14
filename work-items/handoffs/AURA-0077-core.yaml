@@ -1,0 +1,61 @@
+agent: core_worker
+work_item: AURA-0077
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0077_core
+  worktree: dev
+scope:
+  ownership_zone: aura-core.artifacts.attachments, aura-core.interaction.conversations
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/ports.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/tests/test_run_events.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.artifacts.attachment_upload
+  metrics_added: []
+  evaluators: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0077.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0077.yaml
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/domains/artifacts/attachments services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/domains/execution/runs/service.py services/aura-core/tests/test_run_events.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/domains/execution/runs/service.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_conversation_attachments.py (35 passed, 3 skipped)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_run_events.py (14 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/domains/interaction/conversations/repository.py services/aura-core/src/aura_core/domains/execution/runs/service.py services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+    - branch message reload fallback from normalized links preserves attachment summaries when the JSON snapshot is absent
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/system/test_api_conversation_flow.py (26 passed)
+    - duplicate, cross-owner, tombstone, concurrent convergence, and durable replay smoke probes
+    - completed API replay accepts original expected version 1, rejects unrelated completed-session versions, and preserves media/idempotency validation
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/domains/artifacts/attachments/public.py
+    - git diff --check
+  failed:
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/system/test_api_conversation_flow.py -q (one concurrent test-worker fixture failure: alternate-owner fixture received 403 owner authorization)
+  not_run:
+    - full repository, database-backed PostgreSQL, Compose build, and browser suites are integration-owned
+decisions:
+  - SQLAlchemy message attachment links are staged via a parent relationship so parent rows flush before normalized child links while retaining the JSON snapshot.
+  - Owner-digest lookup is exposed as a repository port and excludes the current attachment ID, allowing failed same-session retries without allowing unavailable tombstones to be resurrected.
+  - SQL unique violations are translated only when their diagnostic constraint is uq_attachment_owner_digest; all unrelated integrity failures remain visible.
+  - Duplicate upload-session completion persists the resolved attachment ID so replay after service recreation returns the reused attachment.
+  - Message hydration eagerly loads normalized attachment links and falls back to them when an additive JSON snapshot is absent, preserving branch cards for legacy or partially populated rows.
+risks:
+  - The full targeted test command included concurrent test-worker edits and failed only because the alternate-owner fixture was rejected by the existing owner-authorization policy; production-only targeted suites pass.
+unresolved: []

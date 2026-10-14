@@ -63,6 +63,10 @@ class AttachmentConflict(AttachmentError):
     """Optimistic version or idempotency conflict at an attachment boundary."""
 
 
+class AttachmentDuplicate(AttachmentConflict):
+    """A concurrent owner-scoped digest insert lost the unique race."""
+
+
 @dataclass(frozen=True, slots=True)
 class Attachment:
     id: UUID
@@ -378,25 +382,31 @@ class AttachmentService:
     ) -> Attachment:
         replay = self._upload_replays.get((issuer, subject, upload_id))
         if replay is not None:
-            replay_key, replay_attachment = replay
+            replay_key, _ = replay
             if idempotency_key != replay_key:
                 raise AttachmentConflict("upload idempotency conflict")
-            return replay_attachment
         value = await self.repository.get_upload_session((issuer, subject), upload_id)
         if value is None:
             raise AttachmentNotFound
         if value["idempotency_key"] != idempotency_key:
             raise AttachmentConflict("upload idempotency conflict")
+        if media_type is not None and value["media_type"] != media_type:
+            raise AttachmentConflict("upload media type conflict")
+        if value.get("status") == "completed":
+            if (
+                expected_version is not None
+                and int(cast(int, value.get("version", 1))) != expected_version + 1
+            ):
+                raise AttachmentConflict("upload session version conflict")
+            if replay is not None:
+                return replay[1]
+            existing = await self.get(issuer, subject, cast(UUID, value["attachment_id"]))
+            return existing
         if (
             expected_version is not None
             and int(cast(int, value.get("version", 1))) != expected_version
         ):
             raise AttachmentConflict("upload session version conflict")
-        if media_type is not None and value["media_type"] != media_type:
-            raise AttachmentConflict("upload media type conflict")
-        if value.get("status") == "completed":
-            existing = await self.get(issuer, subject, cast(UUID, value["attachment_id"]))
-            return existing
         if cast(datetime, value["expires_at"]) <= self.clock():
             raise AttachmentNotFound
         pieces: list[bytes] = []
@@ -422,6 +432,7 @@ class AttachmentService:
             (issuer, subject),
             upload_id,
             int(cast(int, value.get("version", expected_version or 1))),
+            attachment.id,
         )
         self._upload_sessions.pop((issuer, subject, upload_id), None)
         self._upload_replays[(issuer, subject, upload_id)] = (idempotency_key, attachment)
@@ -469,6 +480,32 @@ class AttachmentService:
         if inspected.animated or inspected.width * inspected.height > MAX_IMAGE_PIXELS:
             raise ImageValidationError("image failed safety inspection")
         identifier = attachment_id or uuid4()
+        current = await self.repository.get((issuer, subject), identifier)
+        if current is not None and current.status in {
+            AttachmentStatus.UNAVAILABLE,
+            AttachmentStatus.DELETING,
+        }:
+            raise AttachmentConflict("attachment is unavailable")
+        duplicate = await self.repository.get_by_digest(
+            (issuer, subject), digest, exclude_attachment_id=identifier
+        )
+        if duplicate is not None:
+            if duplicate.status in {
+                AttachmentStatus.READY,
+                AttachmentStatus.UPLOADING,
+                AttachmentStatus.PROCESSING,
+            }:
+                if key is not None:
+                    self._idempotency[key] = (fingerprint, duplicate)
+                self._metric(
+                    "aura.artifacts.attachment_upload",
+                    "attachment_upload_outcome",
+                    "duplicate",
+                    duration_ms=(monotonic() - operation_started) * 1000,
+                    attachment_id=duplicate.id,
+                )
+                return duplicate
+            raise AttachmentConflict("attachment is unavailable")
         upload_trace_id = uuid5(ATTACHMENT_ID_NAMESPACE, f"upload:{identifier}").hex
         upload_span_id = uuid4().hex[:16]
         now = self.clock()
@@ -490,7 +527,30 @@ class AttachmentService:
             now,
             now,
         )
-        await self._persist(attachment, "attachment.upload.created", idempotency_key, upload_id)
+        try:
+            await self._persist(attachment, "attachment.upload.created", idempotency_key, upload_id)
+        except AttachmentDuplicate:
+            duplicate = await self.repository.get_by_digest(
+                (issuer, subject), digest, exclude_attachment_id=identifier
+            )
+            if duplicate is None:
+                raise AttachmentConflict("attachment is unavailable") from None
+            if duplicate.status in {
+                AttachmentStatus.READY,
+                AttachmentStatus.UPLOADING,
+                AttachmentStatus.PROCESSING,
+            }:
+                if key is not None:
+                    self._idempotency[key] = (fingerprint, duplicate)
+                self._metric(
+                    "aura.artifacts.attachment_upload",
+                    "attachment_upload_outcome",
+                    "duplicate",
+                    duration_ms=(monotonic() - operation_started) * 1000,
+                    attachment_id=duplicate.id,
+                )
+                return duplicate
+            raise AttachmentConflict("attachment is unavailable") from None
         attachment = replace(
             attachment, status=AttachmentStatus.PROCESSING, updated_at=self.clock()
         )
