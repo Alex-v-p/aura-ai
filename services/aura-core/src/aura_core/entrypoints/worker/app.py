@@ -61,9 +61,9 @@ from aura_core.platform.telemetry import (
     MemoryTraceContext,
     MetadataMetrics,
     Stopwatch,
-    StructuredContainerLogExporter,
     TelemetryLifecycle,
     current_memory_trace_context,
+    make_telemetry_exporter,
     memory_trace_context,
     new_span_id,
 )
@@ -747,7 +747,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     )
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
-    metrics, telemetry = make_worker_telemetry()
+    metrics, telemetry = make_worker_telemetry(config)
     from aura_core.bootstrap.attachment_uow import attachment_service
 
     attachment_service_instance = attachment_service(sessions, settings=config, metrics=metrics)
@@ -1050,10 +1050,27 @@ async def run_forever(settings: Settings | None = None) -> None:
         await engine.dispose()
 
 
-def make_worker_telemetry() -> tuple[MetadataMetrics, TelemetryLifecycle]:
+def make_worker_telemetry(
+    settings: Settings | None = None,
+) -> tuple[MetadataMetrics, TelemetryLifecycle]:
     """Build the production metadata-only exporter and its lifecycle."""
 
-    metrics = MetadataMetrics(exporter=StructuredContainerLogExporter())
+    config = settings or Settings(role="worker")
+    metrics = MetadataMetrics(
+        exporter=make_telemetry_exporter(
+            enabled=config.telemetry_otlp_enabled,
+            endpoint=config.telemetry_otlp_endpoint,
+            credential=config.telemetry_otlp_credential or None,
+            queue_capacity=config.telemetry_otlp_queue_capacity,
+            max_attempts=config.telemetry_otlp_max_attempts,
+            timeout_seconds=config.telemetry_otlp_timeout_seconds,
+            deployment_id=config.telemetry_deployment_id,
+            git_commit=config.telemetry_git_commit,
+            environment=config.environment,
+            host_id=config.telemetry_host_id,
+            service_role=config.role,
+        )
+    )
     return metrics, TelemetryLifecycle(metrics)
 
 

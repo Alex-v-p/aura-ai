@@ -1,0 +1,94 @@
+agent: platform_worker
+work_item: AURA-0079
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: deployment.compose, deployment.docker, deployment.authentik, aura-observatory.authentication, aura-observatory.runtime.configuration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/authentik/blueprints/aura-oidc.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-identity.yaml
+  - deploy/compose/observatory-collector.yaml
+  - deploy/compose/test_topology.py
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/docker/observatory-web.nginx.conf
+  - deploy/tests/test_aura0079_observatory_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/tests/test_aura0079_auth.py
+  - services/aura-observatory/tests/test_aura0079_clickhouse_auth_regressions.py
+  - services/aura-observatory/tests/test_aura0079_identity_regressions.py
+  - services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+  - tooling/architecture/modules.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+  metrics_added:
+    - telemetry_export_accepted_count
+    - telemetry_export_failure_count
+    - telemetry_export_dropped_count
+    - telemetry_export_retry_count
+    - telemetry_export_duration_ms
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0079.yaml
+    - python3 -m unittest discover -s tooling/architecture/tests
+    - uv lock --check
+    - uv run pyright services/aura-core services/aura-observatory
+    - uv run ruff check services/aura-core/src services/aura-core/tests services/aura-observatory deploy
+    - uv run pytest services/aura-observatory/tests -q (87 passed)
+    - uv run pytest deploy/tests/test_aura0079_observatory_topology.py deploy/tests/test_aura0079_runtime_wiring_regressions.py -q (13 passed)
+    - PYTHONPATH=services/aura-core/src:services/aura-observatory/src uv run pytest deploy/tests/test_aura0079_runtime_wiring_regressions.py services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py -q (10 passed)
+    - PYTHONPATH=services/aura-core/src:services/aura-observatory/src uv run pytest services/aura-observatory/tests/test_aura0079_identity_regressions.py services/aura-observatory/tests/test_aura0079_auth.py -q (14 passed)
+    - uv run pytest deploy/tests/test_aura0079_runtime_wiring_regressions.py -q (6 passed)
+    - uv run pytest services/aura-core/tests/test_telemetry.py -q (55 passed, 1 skipped)
+    - uv run pytest services/aura-core/tests services/aura-observatory/tests deploy/tests -q (1148 passed, 103 skipped)
+    - python3 deploy/compose/test_topology.py (26 passed)
+    - docker compose --env-file .env config --quiet
+    - docker compose --env-file .env --profile observatory config --quiet
+    - git diff --check
+    - docker compose --env-file .env -f compose.yaml -f deploy/compose/local-http.yaml -f deploy/compose/local-identity.yaml --profile observatory --profile local-identity config --quiet
+    - implementation-handoff.schema.json validation for this handoff
+  failed: []
+  not_run: []
+decisions:
+  - Core API, worker, and scheduler Compose services explicitly render AURA_ENVIRONMENT=production so deployment metadata is consistent across all telemetry-producing roles.
+  - Observatory BFF origin, OIDC, cookie, and owner validation is API-role-only; worker and migration roles still load and validate storage credentials without requiring browser identity settings.
+  - The pinned Collector's OTLP HTTP exporter is explicitly configured with JSON encoding to match Observatory's standard OTLP/HTTP JSON decoder.
+  - Observatory composition explicitly declares its dependency on the service-owned authentication module in the architecture registry.
+  - Observatory deployment is opt-in through the observatory Compose profile; the default Aura stack has no Observatory dependency.
+  - Observatory uses a dedicated API, worker, migration job, PostgreSQL, ClickHouse, Valkey session store, Collector, and browser web service on private networks; only observatory-web publishes loopback port 4300.
+  - Persistent Observatory data is mounted below AURA_STATE_ROOT and runtime credentials are injected through file-backed Compose secrets.
+  - Observatory BFF sessions use a dedicated Valkey namespace, opaque rotated cookies, server-side provider tokens, exact issuer/audience/owner-subject checks, and origin-aware CSRF for logout/state changes.
+  - Authentik receives a separate Observatory OAuth client/application and strict callback; owner authorization remains in the Observatory BFF.
+  - Disposable local HTTP configuration is represented by a non-secure cookie only when explicitly selected; production settings require stable HTTPS, secure cookies, matching callback origin, and a configured owner.
+risks:
+  - The stock Collector wire is accepted on both its signal-specific OTLP paths and the deployed internal compatibility aliases; a container-level Collector acceptance run remains an integration-stage check.
+  - The web container is an isolated deployment seam pending the separately owned Observatory frontend implementation; no Aura product UI was added in this slice.
+unresolved: []

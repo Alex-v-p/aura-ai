@@ -19,8 +19,8 @@ from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.telemetry import (
     MetadataMetrics,
-    StructuredContainerLogExporter,
     TelemetryLifecycle,
+    make_telemetry_exporter,
     new_span_id,
 )
 
@@ -178,7 +178,7 @@ async def run_scheduler(settings: Settings | None = None) -> None:
     effective = settings or Settings(role="scheduler")
     engine = make_engine(effective.database_url)
     sessions = session_factory(engine)
-    metrics, telemetry = make_scheduler_telemetry()
+    metrics, telemetry = make_scheduler_telemetry(effective)
     delivery = notification_service(notification_repository(sessions, metrics=metrics))
     await telemetry.start()
     try:
@@ -188,10 +188,27 @@ async def run_scheduler(settings: Settings | None = None) -> None:
         await engine.dispose()
 
 
-def make_scheduler_telemetry() -> tuple[MetadataMetrics, TelemetryLifecycle]:
+def make_scheduler_telemetry(
+    settings: Settings | None = None,
+) -> tuple[MetadataMetrics, TelemetryLifecycle]:
     """Build the production bounded exporter and lifecycle manager."""
 
-    metrics = MetadataMetrics(exporter=StructuredContainerLogExporter())
+    config = settings or Settings(role="scheduler")
+    metrics = MetadataMetrics(
+        exporter=make_telemetry_exporter(
+            enabled=config.telemetry_otlp_enabled,
+            endpoint=config.telemetry_otlp_endpoint,
+            credential=config.telemetry_otlp_credential or None,
+            queue_capacity=config.telemetry_otlp_queue_capacity,
+            max_attempts=config.telemetry_otlp_max_attempts,
+            timeout_seconds=config.telemetry_otlp_timeout_seconds,
+            deployment_id=config.telemetry_deployment_id,
+            git_commit=config.telemetry_git_commit,
+            environment=config.environment,
+            host_id=config.telemetry_host_id,
+            service_role=config.role,
+        )
+    )
     return metrics, TelemetryLifecycle(metrics)
 
 

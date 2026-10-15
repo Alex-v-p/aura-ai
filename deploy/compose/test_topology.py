@@ -74,7 +74,7 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("host.docker.internal:host-gateway", worker)
         self.assertIn("AURA_ROLE: scheduler", scheduler)
         self.assertIn("AURA_DATABASE_PASSWORD_FILE", scheduler)
-        self.assertIn("networks: [aura-core-db]", scheduler)
+        self.assertIn("networks: [aura-core-db, observatory-ingest]", scheduler)
         for forbidden in (
             "AURA_NATS",
             "AURA_VALKEY",

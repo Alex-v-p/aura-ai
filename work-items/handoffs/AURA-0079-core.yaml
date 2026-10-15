@@ -1,0 +1,87 @@
+agent: core_worker
+work_item: AURA-0079
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: aura-core.platform.telemetry,aura-core.runtime.configuration,aura-core.entrypoints.composition
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/resources/component-manifests/telemetry-export.yaml
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_telemetry.py
+  - work-items/handoffs/AURA-0079-core.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  definitions:
+    - id: https://aura.local/contracts/telemetry/v1/metadata-observation.schema.json
+      version: 1
+      source: contracts/telemetry/v1/metadata-observation.schema.json
+      changes:
+        - Core emits existing metadata measurements through the unchanged v1 wire contract when OTLP export is enabled.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.telemetry_export
+  metrics_added:
+    - telemetry_export_accepted_count
+    - telemetry_export_failure_count
+    - telemetry_export_dropped_count
+    - telemetry_export_retry_count
+    - telemetry_export_duration_ms
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0079.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0079.yaml (39 changed paths validated)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src services/aura-core/tests (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_telemetry.py services/aura-core/tests/test_settings.py -q (78 passed, 1 skipped)
+    - Focused correction tests cover standard /v1/metrics and /v1/traces OTLP/HTTP JSON envelopes, stable observation metadata attributes, adversarial deployment metadata rejection, structured health counters, queue overflow, and queued/in-flight shutdown drops.
+    - Focused manifest/runtime assertion verifies distinct measurement-ring and OTLP signal-queue overflow semantics and the configurable 1-5 total-attempt retry policy (default 3 total, 2 retries).
+    - implementation-handoff.schema.json validation for this handoff (passed)
+    - git diff --check
+  failed:
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests -q (1045 passed, 103 skipped, 1 failure in shared Compose assertion because concurrent platform network membership changed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core services/aura-observatory (Core clean; 5 unrelated Observatory errors in concurrent composition/auth files)
+  not_run:
+    - uv lock --check (no dependency changes were made in this ownership slice)
+    - docker compose --env-file .env config --quiet (requires the concurrent platform worker's finalized environment and profile changes)
+    - docker compose --env-file .env --profile observatory config --quiet (requires the concurrent platform worker's finalized environment and profile changes)
+    - python3 deploy/compose/test_topology.py (owned by the concurrent platform/test worker)
+decisions:
+  - Structured container-log export remains the default and continues to work when OTLP is disabled or unavailable.
+  - OTLP export uses standard OTLP/HTTP JSON signal envelopes: resourceMetrics to /v1/metrics and resourceSpans to /v1/traces. The default endpoint is a Collector base URL; a configured legacy /v1/observations suffix remains compatible because Core strips signal suffixes and derives the standard routes.
+  - Stable observation IDs and metadata-only fields travel as allowlisted aura.* OTLP attributes (aura.observation_id, component/version, operation, metric name, bounded dimensions, and opaque run/conversation IDs) for the platform normalizer to reconstruct telemetry-v1.
+  - OTLP export is an independent bounded queue with background transport, bounded retries, exact per-observation drop accounting, and no synchronous Collector dependency.
+  - The telemetry manifest distinguishes measurement-ring drop-oldest behavior from full OTLP signal-queue drop-new-signal behavior; export attempts are configurable from 1 to 5 (default 3 total, 2 retries), with exhausted signals counted per observation.
+  - Each Measurement receives a UUID observation ID at record time so retry batches remain idempotent at Observatory ingestion.
+  - Core serializes only the closed metadata-observation v1 fields; arbitrary trace attributes, content, credentials, endpoints, and owner identity cannot cross the export boundary.
+  - Deployment metadata is validated against telemetry-v1 bounds before either structured or OTLP exporter construction; unsupported roles fail closed except the internal migrate role, which maps to cli.
+  - API, worker, and scheduler composition derive serviceRole and deployment metadata from Settings.
+risks:
+  - The shared worktree currently contains concurrent AURA-0079 platform/Observatory changes whose checks must be rerun after their paths and tests are reconciled.
+  - The default local host identifier is sourced from HOSTNAME and operators should provide a bounded telemetry host value in deployment configuration.
+  - The platform worker must normalize the stock Collector's signal-specific egress into the governed metadata-observation-v1 boundary and update the profile endpoint tests accordingly.
+unresolved:
+  - Integration must rerun the complete AURA-0079 checks after concurrent platform and Observatory changes settle.

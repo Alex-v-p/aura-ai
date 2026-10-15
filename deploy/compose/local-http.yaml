@@ -16,11 +16,22 @@ services:
     # Keep all normal Core paths and add only the Authentik control network.
     networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
 
+  observatory-api:
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: disposable_local
+      AURA_OBSERVATORY_PUBLIC_ORIGIN: http://observatory.localhost:4300
+      AURA_OBSERVATORY_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-observatory/
+      AURA_OBSERVATORY_OIDC_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback
+      AURA_OBSERVATORY_OWNER_SUBJECT: ${AURA_OBSERVATORY_OWNER_SUBJECT:-}
+      AURA_OBSERVATORY_SECURE_COOKIES: "false"
+    networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress]
+
   authentik-server:
     environment:
       AUTHENTIK_HOST_BROWSER: http://authentik.localhost:9000
       AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/
       AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
+      AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback
     # Docker Desktop does not publish ports for containers attached only to an
     # internal network.  This edge network is loopback-published and belongs
     # only to Authentik Server.
@@ -30,6 +41,7 @@ services:
       aura-identity-db: {}
       aura-identity-cache: {}
       aura-identity-edge: {}
+      observatory-identity-egress: {}
     ports: ["127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"]
 
   authentik-owner-bootstrap:
@@ -45,6 +57,7 @@ services:
         export AUTHENTIK_SECRET_KEY="$$(cat /run/secrets/authentik-secret-key)";
         export AUTHENTIK_REDIS__PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
         export AURA_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/aura-oidc-client-secret)";
+        export AURA_OBSERVATORY_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/observatory-oidc-client-secret)";
         export AUTHENTIK_OWNER_PASSWORD_FILE=/run/secrets/authentik-owner-password;
         case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
         ak apply_blueprint /blueprints/custom/aura-oidc.yaml >/dev/null;
@@ -61,7 +74,7 @@ services:
       AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
       AUTHENTIK_OWNER_USERNAME: ${AUTHENTIK_OWNER_USERNAME:-aura-owner}
       AUTHENTIK_OWNER_NAME: ${AUTHENTIK_OWNER_NAME:-Aura Owner}
-    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, authentik-owner-password]
+    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, observatory-oidc-client-secret, authentik-owner-password]
     volumes:
       - ./deploy/authentik/blueprints:/blueprints/custom:ro
       - ./deploy/authentik/bootstrap-local-owner.py:/bootstrap-local-owner.py:ro
@@ -72,6 +85,8 @@ services:
 secrets:
   authentik-owner-password:
     file: ${AUTHENTIK_OWNER_PASSWORD_FILE:-./.secrets/authentik-owner-password}
+  observatory-oidc-client-secret:
+    file: ${AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE:-./.secrets/observatory-oidc-client-secret}
 
 networks:
   aura-identity-edge: {}

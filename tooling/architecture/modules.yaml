@@ -51,6 +51,21 @@ modules:
   python_modules:
   - aura_observatory.settings
   dependencies: []
+- id: aura-observatory.auth
+  root: services/aura-observatory/src/aura_observatory/auth.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/auth.py
+  python_modules:
+  - aura_observatory.auth
+  dependencies:
+  - aura-observatory.settings
+- id: aura-observatory.otlp
+  root: services/aura-observatory/src/aura_observatory/otlp.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/otlp.py
+  python_modules:
+  - aura_observatory.otlp
+  dependencies: []
 - id: aura-observatory.ingest
   root: services/aura-observatory/src/aura_observatory/ingest.py
   kind: python
@@ -105,6 +120,7 @@ modules:
   dependencies:
   - aura-observatory.adapters.clickhouse
   - aura-observatory.adapters.postgres
+  - aura-observatory.auth
   - aura-observatory.ingest
   - aura-observatory.settings
 - id: aura-observatory.entrypoints
@@ -134,8 +150,10 @@ modules:
   - aura_observatory.entrypoints.api.app
   dependencies:
   - aura-observatory.adapters.memory
+  - aura-observatory.auth
   - aura-observatory.composition
   - aura-observatory.ingest
+  - aura-observatory.otlp
   - aura-observatory.settings
 - id: aura-observatory.entrypoints.worker
   root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py

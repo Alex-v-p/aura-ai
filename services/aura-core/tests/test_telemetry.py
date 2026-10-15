@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -49,7 +50,10 @@ from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
 from aura_core.platform.outbox.nats import NatsOutbox, NatsRunConsumer
 from aura_core.platform.telemetry import (
     COMPONENT_VERSIONS,
+    CompositeTelemetryExporter,
+    DeploymentMetadata,
     MetadataMetrics,
+    OtlpHttpTelemetryExporter,
     StructuredContainerLogExporter,
     TelemetryBatch,
     TelemetryLifecycle,
@@ -2035,3 +2039,360 @@ def test_optional_client_timezone_omission_is_a_registered_outcome() -> None:
     )
 
     assert metrics.stats().rejected == 0
+
+
+class _Aura0079FakeTransport:
+    def __init__(self, *, failures: int = 0) -> None:
+        self.failures = failures
+        self.requests: list[tuple[str, bytes, str | None, float]] = []
+
+    async def send(
+        self, endpoint: str, payload: bytes, credential: str | None, timeout: float
+    ) -> None:
+        self.requests.append((endpoint, payload, credential, timeout))
+        if len(self.requests) <= self.failures:
+            raise ConnectionError("Collector unavailable")
+
+
+class _Aura0079BlockingTransport:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send(
+        self, endpoint: str, payload: bytes, credential: str | None, timeout: float
+    ) -> None:
+        del endpoint, payload, credential, timeout
+        self.started.set()
+        await self.release.wait()
+
+
+def _aura0079_record(metrics: MetadataMetrics) -> None:
+    metrics.increment(
+        "aura.runtime.model_routing",
+        "model_routed",
+        trace_id="0123456789abcdef0123456789abcdef",
+        run_id=str(uuid4()),
+        provider="ollama",
+        model_id="fixture-chat",
+    )
+
+
+def _aura0079_deployment() -> DeploymentMetadata:
+    return DeploymentMetadata(
+        deployment_id="deploy-2026-10-15",
+        git_commit="0123456789abcdef",
+        environment="test",
+        host_id="host-a",
+        service_role="worker",
+    )
+
+
+@pytest.mark.asyncio
+async def test_aura0079_otlp_sink_serializes_only_metadata_contract_fields() -> None:
+    transport = _Aura0079FakeTransport()
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        credential="service-secret",
+        transport=transport,
+        deployment=_aura0079_deployment(),
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    _aura0079_record(metrics)
+
+    await exporter.start()
+    assert await metrics.flush() is True
+    await exporter.stop()
+
+    assert len(transport.requests) == 1
+    endpoint, raw_payload, credential, _ = transport.requests[0]
+    assert endpoint.endswith("/v1/metrics")
+    assert credential == "service-secret"
+    payload = json.loads(raw_payload)
+    resource = payload["resourceMetrics"][0]["resource"]["attributes"]
+    attrs = {
+        entry["key"]: next(iter(entry["value"].values()))
+        for entry in resource
+    }
+    assert attrs == {
+        "service.name": "aura-core",
+        "service.role": "worker",
+        "deployment.id": "deploy-2026-10-15",
+        "deployment.environment": "test",
+        "deployment.git_commit": "0123456789abcdef",
+        "host.id": "host-a",
+        "capture.policy": "metadata_only",
+    }
+    datapoint = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"][
+        "dataPoints"
+    ][0]
+    datapoint_attrs = {
+        entry["key"]: next(iter(entry["value"].values()))
+        for entry in datapoint["attributes"]
+    }
+    assert datapoint_attrs["aura.capture_policy"] == "metadata_only"
+    assert datapoint_attrs["aura.observation_id"]
+    assert datapoint_attrs["aura.component_id"] == "aura.runtime.model_routing"
+    assert not any(
+        forbidden in raw_payload.decode().casefold()
+        for forbidden in ("prompt", "response", "filename", "credential")
+    )
+
+
+@pytest.mark.asyncio
+async def test_aura0079_otlp_span_uses_standard_trace_signal_route_and_shape() -> None:
+    transport = _Aura0079FakeTransport()
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        transport=transport,
+        deployment=_aura0079_deployment(),
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        2.0,
+        trace_id="0123456789abcdef0123456789abcdef",
+        span_id="0123456789abcdef",
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+        run_id=str(uuid4()),
+    )
+    await exporter.start()
+    assert await metrics.flush()
+    await exporter.stop()
+
+    endpoint, raw_payload, _, _ = transport.requests[0]
+    assert endpoint.endswith("/v1/traces")
+    payload = json.loads(raw_payload)
+    span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert span["traceId"] == "0123456789abcdef0123456789abcdef"
+    assert span["spanId"] == "0123456789abcdef"
+    assert span["name"] == "model.route"
+    assert any(item["key"] == "aura.capture_policy" for item in span["attributes"])
+
+
+def test_aura0079_deployment_metadata_rejects_private_or_invalid_shapes() -> None:
+    invalid = (
+        {"deployment_id": "https://internal.example"},
+        {"deployment_id": "/var/run/aura"},
+        {"host_id": "operator@example.com"},
+        {"host_id": "a" * 129},
+        {"git_commit": "not-a-commit"},
+        {"environment": "Owner"},
+        {"service_role": "admin"},
+    )
+    for values in invalid:
+        with pytest.raises(ValueError):
+            DeploymentMetadata(
+                deployment_id=values.get("deployment_id", "deploy-2026-10-15"),
+                git_commit=values.get("git_commit", "0123456789abcdef"),
+                environment=values.get("environment", "test"),
+                host_id=values.get("host_id", "host-a"),
+                service_role=values.get("service_role", "worker"),
+            )
+
+
+@pytest.mark.asyncio
+async def test_aura0079_otlp_sink_retries_with_bounds_then_drops_without_raising_to_core() -> None:
+    transport = _Aura0079FakeTransport(failures=20)
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        transport=transport,
+        max_attempts=2,
+        queue_capacity=1,
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    _aura0079_record(metrics)
+
+    await exporter.start()
+    assert await metrics.flush() is True
+    await asyncio.sleep(0.05)
+    await exporter.stop()
+
+    stats = exporter.stats
+    assert len(transport.requests) == 2
+    assert stats["telemetry_export_retry_count"] == 1
+    assert stats["telemetry_export_failure_count"] == 2
+    assert stats["telemetry_export_dropped_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_aura0079_queue_overflow_counts_each_dropped_observation() -> None:
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid",
+        queue_capacity=1,
+        transport=_Aura0079FakeTransport(),
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    _aura0079_record(metrics)
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        1.0,
+        trace_id="0123456789abcdef0123456789abcdef",
+        span_id="0123456789abcdef",
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+    )
+
+    # Keep the worker stopped so the one-slot queue remains full while the
+    # metric and span signal payloads are enqueued independently.
+    assert await metrics.flush()
+    assert exporter.stats["telemetry_export_accepted_count"] == 1
+    assert exporter.stats["telemetry_export_dropped_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_aura0079_shutdown_counts_queued_and_inflight_observations_once() -> None:
+    transport = _Aura0079BlockingTransport()
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid",
+        queue_capacity=2,
+        timeout_seconds=0.01,
+        transport=transport,
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    _aura0079_record(metrics)
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        1.0,
+        trace_id="0123456789abcdef0123456789abcdef",
+        span_id="0123456789abcdef",
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+    )
+    await exporter.start()
+    assert await metrics.flush()
+    await asyncio.wait_for(transport.started.wait(), timeout=0.2)
+    await exporter.stop()
+
+    assert exporter.stats["telemetry_export_accepted_count"] == 2
+    assert exporter.stats["telemetry_export_dropped_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_aura0079_structured_health_surface_exposes_otlp_counters() -> None:
+    lines: list[str] = []
+    transport = _Aura0079FakeTransport(failures=20)
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid",
+        transport=transport,
+        max_attempts=1,
+    )
+    structured = StructuredContainerLogExporter(
+        lines.append,
+        deployment=_aura0079_deployment(),
+        health_provider=lambda: exporter.stats,
+    )
+    metrics = MetadataMetrics(exporter=CompositeTelemetryExporter(structured, exporter))
+    _aura0079_record(metrics)
+    await exporter.start()
+    assert await metrics.flush()
+    await asyncio.sleep(0.02)
+    # A later structured flush publishes the counters accumulated by the
+    # independent network task without making Core depend on its availability.
+    _aura0079_record(metrics)
+    assert await metrics.flush()
+    await exporter.stop()
+
+    health = [json.loads(line) for line in lines if '"event":"aura.telemetry.health"' in line]
+    assert health[-1]["telemetry_export_accepted_count"] == 1
+    assert health[-1]["telemetry_export_failure_count"] == 1
+    assert health[-1]["telemetry_export_dropped_count"] == 1
+    assert health[-1]["telemetry_export_retry_count"] == 0
+    assert health[-1]["telemetry_export_duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_aura0079_structured_log_export_survives_otlp_failure() -> None:
+    lines: list[str] = []
+    structured = StructuredContainerLogExporter(lines.append, deployment=_aura0079_deployment())
+    otlp = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        transport=_Aura0079FakeTransport(failures=20),
+        max_attempts=1,
+    )
+    metrics = MetadataMetrics(exporter=CompositeTelemetryExporter(structured, otlp))
+    _aura0079_record(metrics)
+
+    await otlp.start()
+    assert await metrics.flush() is True
+    await asyncio.sleep(0.02)
+    await otlp.stop()
+
+    assert any(json.loads(line).get("event") == "aura.telemetry.measurement" for line in lines)
+    assert otlp.stats["telemetry_export_dropped_count"] == 1
+
+
+def test_aura0079_otlp_exporter_configuration_is_bounded() -> None:
+    with pytest.raises(ValueError):
+        OtlpHttpTelemetryExporter("")
+    with pytest.raises(ValueError):
+        OtlpHttpTelemetryExporter("http://collector.invalid", queue_capacity=0)
+    with pytest.raises(ValueError):
+        OtlpHttpTelemetryExporter("http://collector.invalid", max_attempts=0)
+    with pytest.raises(ValueError):
+        OtlpHttpTelemetryExporter("http://collector.invalid", timeout_seconds=0)
+
+
+def test_aura0079_structured_exporter_remains_available_without_otlp() -> None:
+    lines: list[str] = []
+    metrics = MetadataMetrics(exporter=StructuredContainerLogExporter(lines.append))
+    _aura0079_record(metrics)
+
+    assert metrics.exporter is not None
+    assert not isinstance(metrics.exporter, OtlpHttpTelemetryExporter)
+
+
+def test_aura0079_deployment_metadata_is_bounded_and_not_arbitrary_mapping() -> None:
+    metadata = _aura0079_deployment()
+    assert set(metadata.__dataclass_fields__) == {
+        "deployment_id",
+        "git_commit",
+        "environment",
+        "host_id",
+        "service_role",
+    }
+
+
+def test_aura0079_manifest_retention_matches_runtime_queue_and_retry_bounds() -> None:
+    manifest_path = (
+        Path(__file__).parents[1] / "resources" / "component-manifests" / "telemetry-export.yaml"
+    )
+    document = cast(dict[str, Any], yaml.safe_load(manifest_path.read_text()))
+    retention = cast(dict[str, Any], document["retention"])
+    measurement_ring = cast(dict[str, Any], retention["measurement_ring"])
+    signal_queue = cast(dict[str, Any], retention["otlp_signal_queue"])
+    failure = cast(dict[str, Any], retention["export_failure"])
+    attempts = cast(dict[str, int], failure["total_attempts"])
+
+    assert measurement_ring == {
+        "capacity": "bounded",
+        "overflow": "drop_oldest_and_count",
+    }
+    assert signal_queue == {
+        "capacity": "bounded",
+        "full": "drop_new_signal_and_count_each_observation",
+    }
+    assert attempts == {"minimum": 1, "maximum": 5, "default": 3}
+    assert failure["default_retries"] == attempts["default"] - 1
+    assert failure["exhausted"] == "drop_and_count_each_observation"
+
+    runtime_default = inspect.signature(OtlpHttpTelemetryExporter).parameters[
+        "max_attempts"
+    ].default
+    assert runtime_default == attempts["default"]
+    assert Settings().telemetry_otlp_max_attempts == attempts["default"]
+    assert (
+        Settings(telemetry_otlp_max_attempts=attempts["minimum"]).telemetry_otlp_max_attempts
+        == 1
+    )
+    assert (
+        Settings(telemetry_otlp_max_attempts=attempts["maximum"]).telemetry_otlp_max_attempts
+        == 5
+    )

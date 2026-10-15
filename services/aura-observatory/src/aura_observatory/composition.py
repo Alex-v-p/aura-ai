@@ -7,9 +7,17 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import psycopg
+from redis.asyncio import Redis
 
 from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
 from aura_observatory.adapters.postgres import PostgresCatalog, PostgresObservationIdRegistry
+from aura_observatory.auth import (
+    MemoryLoginStateBackend,
+    MemorySessionBackend,
+    ObservatoryAuth,
+    RedisLoginStateBackend,
+    RedisSessionBackend,
+)
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.settings import Settings
 
@@ -32,6 +40,9 @@ def build_ingest_service(settings: Settings) -> TelemetryIngestService:
     )
     observations = ClickHouseObservationStore(
         settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
         id_registry=id_registry,
     )
     return TelemetryIngestService(
@@ -42,4 +53,26 @@ def build_ingest_service(settings: Settings) -> TelemetryIngestService:
     )
 
 
-__all__ = ["build_ingest_service", "postgres_connection"]
+def build_auth(settings: Settings, *, testing: bool = False) -> ObservatoryAuth:
+    """Compose a dedicated Observatory session boundary.
+
+    The memory backend is explicit test/local composition only.  Deployments
+    use the separately provisioned Observatory Valkey instance and namespace.
+    """
+
+    if testing:
+        return ObservatoryAuth(settings, MemorySessionBackend(), MemoryLoginStateBackend())
+    redis_from_url: Any = Redis.from_url  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    client: Any = redis_from_url(
+        settings.session_store_url,
+        password=settings.session_store_password or None,
+        decode_responses=True,
+    )
+    return ObservatoryAuth(
+        settings,
+        RedisSessionBackend(client, namespace=settings.session_namespace),
+        RedisLoginStateBackend(client, namespace=settings.session_namespace),
+    )
+
+
+__all__ = ["build_auth", "build_ingest_service", "postgres_connection"]

@@ -21,10 +21,14 @@ class ClickHouseObservationStore:
         endpoint: str,
         *,
         database: str = "aura_observatory",
+        user: str = "default",
+        password: str = "",
         id_registry: ObservationIdRegistry,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.database = database
+        self.user = user
+        self.password = password
         self.id_registry = id_registry
 
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome:
@@ -44,9 +48,11 @@ class ClickHouseObservationStore:
                     self.endpoint,
                     params={
                         "database": self.database,
+                        "user": self.user,
                         "insert_deduplicate": "1",
                         "insert_deduplication_token": observation.observation_id,
                     },
+                    auth=(self.user, self.password),
                     content=insert,
                 )
                 inserted.raise_for_status()

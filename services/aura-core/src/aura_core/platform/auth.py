@@ -3,6 +3,8 @@
 import hashlib
 import ipaddress
 import math
+import os
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -20,6 +22,11 @@ from aura_core.domains.governance.identity.models import (
     Session,
 )
 
+_TELEMETRY_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_TELEMETRY_ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+_TELEMETRY_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
+_TELEMETRY_PRIVATE_SHAPES = ("password", "secret", "token", "credential", "bearer", "owner")
+
 
 @dataclass(frozen=True, slots=True)
 class SessionCookiePolicy:
@@ -35,6 +42,29 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     role: str = "api"
+    # Observatory export is deliberately opt-in.  The structured container
+    # exporter remains enabled independently when this path is disabled or
+    # unavailable.
+    telemetry_otlp_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "AURA_TELEMETRY_OTLP_ENABLED", "AURA_OBSERVATORY_EXPORT_ENABLED"
+        ),
+    )
+    telemetry_otlp_endpoint: str = Field(
+        default="http://127.0.0.1:4318",
+        validation_alias=AliasChoices(
+            "AURA_TELEMETRY_OTLP_ENDPOINT", "AURA_OBSERVATORY_EXPORT_ENDPOINT"
+        ),
+    )
+    telemetry_otlp_credential: str = Field(default="", repr=False)
+    telemetry_otlp_credential_file: str = Field(default="", repr=False)
+    telemetry_otlp_queue_capacity: int = Field(default=32, ge=1, le=1024)
+    telemetry_otlp_max_attempts: int = Field(default=3, ge=1, le=5)
+    telemetry_otlp_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    telemetry_deployment_id: str = Field(default="local")
+    telemetry_git_commit: str = Field(default="0000000")
+    telemetry_host_id: str = Field(default_factory=lambda: os.environ.get("HOSTNAME", "local"))
     public_origin: str = "https://aura.localhost"
     ollama_url: str = Field(
         default="http://127.0.0.1:11434",
@@ -130,6 +160,29 @@ class Settings(BaseSettings):
             raise ValueError("document embedding dimension must be exactly 768")
         return value
 
+    @field_validator("telemetry_deployment_id", "telemetry_host_id")
+    @classmethod
+    def validate_telemetry_safe_name(cls, value: str) -> str:
+        lowered = value.casefold()
+        if (
+            not _TELEMETRY_SAFE_NAME.fullmatch(value)
+            or any(character.isspace() for character in value)
+            or "://" in value
+            or "/" in value
+            or "\\" in value
+            or "@" in value
+            or any(shape in lowered for shape in _TELEMETRY_PRIVATE_SHAPES)
+        ):
+            raise ValueError("telemetry metadata must be a bounded non-sensitive identifier")
+        return value
+
+    @field_validator("telemetry_git_commit")
+    @classmethod
+    def validate_telemetry_commit(cls, value: str) -> str:
+        if not _TELEMETRY_COMMIT.fullmatch(value):
+            raise ValueError("telemetry git commit must be 7-64 lowercase hexadecimal characters")
+        return value
+
     @property
     def session_cookie(self) -> SessionCookiePolicy:
         return SessionCookiePolicy(
@@ -142,6 +195,22 @@ class Settings(BaseSettings):
         password = read_secret(self.database_password, self.database_password_file)
         self.database_password = password
         self.oidc_client_secret = read_secret(self.oidc_client_secret, self.oidc_client_secret_file)
+        self.telemetry_otlp_credential = read_secret(
+            self.telemetry_otlp_credential, self.telemetry_otlp_credential_file
+        )
+        telemetry_endpoint = urlsplit(self.telemetry_otlp_endpoint)
+        if (
+            telemetry_endpoint.scheme not in {"http", "https"}
+            or telemetry_endpoint.hostname is None
+            or telemetry_endpoint.username is not None
+            or telemetry_endpoint.password is not None
+            or telemetry_endpoint.fragment
+        ):
+            raise ValueError("telemetry OTLP endpoint must not contain credentials or fragments")
+        if not _TELEMETRY_ENVIRONMENT.fullmatch(self.environment) or any(
+            shape in self.environment.casefold() for shape in _TELEMETRY_PRIVATE_SHAPES
+        ):
+            raise ValueError("telemetry environment must be a bounded lower-case identifier")
         self.nats_password = read_secret(self.nats_password, self.nats_password_file)
         self.valkey_password = read_secret(self.valkey_password, self.valkey_password_file)
         self.object_storage_access_key = read_secret(

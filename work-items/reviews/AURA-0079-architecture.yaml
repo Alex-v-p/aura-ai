@@ -1,0 +1,12 @@
+agent: architecture_guardian
+work_item: AURA-0079
+verdict: PASS
+checked:
+  - Standard OTLP HTTP JSON Core signal envelopes Collector routes and Observatory normalization boundary
+  - File-injected ClickHouse credentials across API worker migration composition and storage adapters
+  - Same-origin API gateway narrowly scoped identity egress and private storage and ingest networks
+  - Consistent API worker and scheduler deployment metadata and optional Collector routing without startup dependencies
+  - Registered authentication OTLP and composition module dependencies with transport-only API routes
+  - Separate Core and Observatory imports databases migrations authentication boundaries and deployment lifecycles
+  - Focused corrected regressions and all architecture changed-path topology and diff checks passed
+findings: []

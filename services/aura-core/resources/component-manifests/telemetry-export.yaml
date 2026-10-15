@@ -1,0 +1,54 @@
+component:
+  id: aura.platform.telemetry_export
+  version: 1.0.0
+  owner: aura-core.platform
+  category: observability
+input:
+  schema: aura-core-metadata-measurement-v1
+  replayable: false
+output:
+  schema: metadata-observation-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - observatory_collector
+metrics:
+  - telemetry_export_accepted_count
+  - telemetry_export_failure_count
+  - telemetry_export_dropped_count
+  - telemetry_export_retry_count
+  - telemetry_export_duration_ms
+metric_semantics:
+  telemetry_export_accepted_count: Metadata observations accepted by the bounded OTLP queue.
+  telemetry_export_failure_count: Bounded OTLP attempts that failed to reach the Collector.
+  telemetry_export_dropped_count: Metadata observations dropped after bounded queue or retry exhaustion.
+  telemetry_export_retry_count: Bounded retries performed after Collector export failures.
+  telemetry_export_duration_ms: Time spent on bounded Collector transport attempts.
+evaluators:
+  - telemetry_export_metadata_only
+  - telemetry_export_failure_isolation
+  - observatory_deployment_isolation
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]
+retention:
+  measurement_ring:
+    capacity: bounded
+    overflow: drop_oldest_and_count
+  otlp_signal_queue:
+    capacity: bounded
+    full: drop_new_signal_and_count_each_observation
+  export_failure:
+    total_attempts:
+      minimum: 1
+      maximum: 5
+      default: 3
+    default_retries: 2
+    exhausted: drop_and_count_each_observation
+export:
+  sink: otlp_http_metrics_and_traces
+  cadence: periodic_and_shutdown
+  health_counters: [accepted, failure, dropped, retry, duration_ms]

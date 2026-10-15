@@ -1,0 +1,56 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 128
+  attributes/metadata_only:
+    actions:
+      - key: aura.capture_policy
+        value: metadata_only
+        action: upsert
+  transform/metadata_allowlist:
+    error_mode: propagate
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_key(attributes, "events")
+          - delete_key(attributes, "links")
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "events")
+          - delete_key(attributes, "links")
+
+exporters:
+  otlphttp/observatory:
+    endpoint: http://observatory-api:8000/internal/v1/telemetry
+    encoding: json
+    headers:
+      Authorization: Bearer ${OBSERVATORY_INGEST_CREDENTIAL}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 30s
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 256
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/metadata_only, transform/metadata_allowlist, batch]
+      exporters: [otlphttp/observatory]
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/metadata_only, transform/metadata_allowlist, batch]
+      exporters: [otlphttp/observatory]

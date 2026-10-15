@@ -63,6 +63,14 @@ services:
       AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS: ${AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS:-5}
       AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS: ${AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS:-60}
       AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS: ${AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS:-15}
+      AURA_TELEMETRY_OTLP_ENABLED: ${AURA_TELEMETRY_OTLP_ENABLED:-false}
+      AURA_TELEMETRY_OTLP_ENDPOINT: ${AURA_TELEMETRY_OTLP_ENDPOINT:-http://observatory-collector:4318/v1/observations}
+      AURA_TELEMETRY_OTLP_QUEUE_CAPACITY: ${AURA_TELEMETRY_OTLP_QUEUE_CAPACITY:-32}
+      AURA_TELEMETRY_OTLP_MAX_ATTEMPTS: ${AURA_TELEMETRY_OTLP_MAX_ATTEMPTS:-3}
+      AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS: ${AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS:-2}
+      AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
+      AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
+      AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
       AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be a stable non-localhost HTTPS issuer}
       AURA_OIDC_AUDIENCE: ${AURA_OIDC_AUDIENCE:-aura-web}
       AURA_OIDC_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:-aura-web}
@@ -74,7 +82,10 @@ services:
     secrets: [aura-core-database-password, aura-oidc-client-secret, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # Only Core entrypoints need to contact configured external providers.
     # Keep all browser-facing and stateful service paths on internal networks.
-    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress]
+    # Established Core attachments remain unchanged; observatory-ingest is an
+    # additional optional Collector path for metadata-only export.
+    # networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress]
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress, observatory-ingest]
     # Docker Desktop provides this name automatically; Linux Engine needs the
     # explicit gateway mapping for the local Ollama development default.
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -103,6 +114,7 @@ services:
       target: runtime
     init: true
     environment:
+      AURA_ENVIRONMENT: production
       AURA_ROLE: worker
       AURA_DATABASE_HOST: aura-core-postgres
       AURA_DATABASE_PORT: "5432"
@@ -129,9 +141,17 @@ services:
       AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS: ${AURA_OLLAMA_INVENTORY_TIMEOUT_SECONDS:-5}
       AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS: ${AURA_OLLAMA_VERIFICATION_TIMEOUT_SECONDS:-60}
       AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS: ${AURA_OLLAMA_INVENTORY_CACHE_TTL_SECONDS:-15}
+      AURA_TELEMETRY_OTLP_ENABLED: ${AURA_TELEMETRY_OTLP_ENABLED:-false}
+      AURA_TELEMETRY_OTLP_ENDPOINT: ${AURA_TELEMETRY_OTLP_ENDPOINT:-http://observatory-collector:4318/v1/observations}
+      AURA_TELEMETRY_OTLP_QUEUE_CAPACITY: ${AURA_TELEMETRY_OTLP_QUEUE_CAPACITY:-32}
+      AURA_TELEMETRY_OTLP_MAX_ATTEMPTS: ${AURA_TELEMETRY_OTLP_MAX_ATTEMPTS:-3}
+      AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS: ${AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS:-2}
+      AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
+      AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
+      AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
     secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # The worker invokes Ollama, but has no browser-facing network attachment.
-    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress]
+    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress, observatory-ingest]
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       aura-core-migrate: {condition: service_completed_successfully}
@@ -156,10 +176,18 @@ services:
       AURA_DATABASE_NAME: ${AURA_CORE_DATABASE_NAME:-aura}
       AURA_DATABASE_USER: ${AURA_CORE_DATABASE_USER:-aura}
       AURA_DATABASE_PASSWORD_FILE: /run/secrets/aura-core-database-password
+      AURA_TELEMETRY_OTLP_ENABLED: ${AURA_TELEMETRY_OTLP_ENABLED:-false}
+      AURA_TELEMETRY_OTLP_ENDPOINT: ${AURA_TELEMETRY_OTLP_ENDPOINT:-http://observatory-collector:4318/v1/observations}
+      AURA_TELEMETRY_OTLP_QUEUE_CAPACITY: ${AURA_TELEMETRY_OTLP_QUEUE_CAPACITY:-32}
+      AURA_TELEMETRY_OTLP_MAX_ATTEMPTS: ${AURA_TELEMETRY_OTLP_MAX_ATTEMPTS:-3}
+      AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS: ${AURA_TELEMETRY_OTLP_TIMEOUT_SECONDS:-2}
+      AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
+      AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
+      AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
     secrets: [aura-core-database-password]
-    # The scheduler is deliberately database-only.  It must not inherit the
-    # worker's NATS, Valkey, provider, browser, identity, or egress paths.
-    networks: [aura-core-db]
+    # The scheduler has no service dependency on Observatory, but may emit
+    # bounded telemetry when the optional Collector is present.
+    networks: [aura-core-db, observatory-ingest]
     depends_on:
       aura-core-migrate: {condition: service_completed_successfully}
       aura-core-postgres: {condition: service_healthy}
@@ -397,6 +425,198 @@ services:
       aura-garage-config: {condition: service_completed_successfully}
     restart: "no"
 
+  # Observatory is deliberately opt-in.  None of these services is present
+  # in the normal Aura startup graph unless --profile observatory is selected.
+  observatory-api:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-observatory.Dockerfile
+      target: api
+    init: true
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: ${AURA_OBSERVATORY_ENVIRONMENT:-production}
+      AURA_OBSERVATORY_ROLE: api
+      AURA_OBSERVATORY_PUBLIC_ORIGIN: ${AURA_OBSERVATORY_PUBLIC_ORIGIN:-https://observatory.example.invalid}
+      AURA_OBSERVATORY_OIDC_ISSUER: ${AURA_OBSERVATORY_OIDC_ISSUER:-https://identity.example.invalid/application/o/aura-observatory/}
+      AURA_OBSERVATORY_OIDC_AUDIENCE: ${AURA_OBSERVATORY_OIDC_AUDIENCE:-aura-observatory}
+      AURA_OBSERVATORY_OIDC_CLIENT_ID: ${AURA_OBSERVATORY_OIDC_CLIENT_ID:-aura-observatory}
+      AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE: /run/secrets/observatory-oidc-client-secret
+      AURA_OBSERVATORY_OIDC_REDIRECT_URI: ${AURA_OBSERVATORY_OIDC_REDIRECT_URI:-https://observatory.example.invalid/api/v1/auth/callback}
+      AURA_OBSERVATORY_OWNER_SUBJECT: ${AURA_OBSERVATORY_OWNER_SUBJECT:-}
+      AURA_OBSERVATORY_SECURE_COOKIES: "${AURA_OBSERVATORY_SECURE_COOKIES:-true}"
+      AURA_OBSERVATORY_DATABASE_HOST: observatory-postgres
+      AURA_OBSERVATORY_DATABASE_PORT: "5432"
+      AURA_OBSERVATORY_DATABASE_NAME: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      AURA_OBSERVATORY_DATABASE_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      AURA_OBSERVATORY_DATABASE_PASSWORD_FILE: /run/secrets/observatory-database-password
+      AURA_OBSERVATORY_CLICKHOUSE_URL: http://observatory-clickhouse:8123
+      AURA_OBSERVATORY_CLICKHOUSE_DATABASE: ${AURA_OBSERVATORY_CLICKHOUSE_DATABASE:-aura_observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_USER: ${AURA_OBSERVATORY_CLICKHOUSE_USER:-observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE: /run/secrets/observatory-clickhouse-password
+      AURA_OBSERVATORY_SESSION_STORE_URL: redis://observatory-session:6379/0
+      AURA_OBSERVATORY_SESSION_STORE_PASSWORD_FILE: /run/secrets/observatory-session-password
+      AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE: /run/secrets/observatory-ingest-credential
+    secrets: [observatory-database-password, observatory-oidc-client-secret, observatory-session-password, observatory-ingest-credential, observatory-clickhouse-password]
+    networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress]
+    depends_on:
+      observatory-migrate: {condition: service_completed_successfully}
+      observatory-postgres: {condition: service_healthy}
+      observatory-clickhouse: {condition: service_healthy}
+      observatory-session: {condition: service_healthy}
+    expose: ["8000"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  observatory-worker:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-observatory.Dockerfile
+      target: worker
+    init: true
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: ${AURA_OBSERVATORY_ENVIRONMENT:-production}
+      AURA_OBSERVATORY_ROLE: worker
+      AURA_OBSERVATORY_DATABASE_HOST: observatory-postgres
+      AURA_OBSERVATORY_DATABASE_PORT: "5432"
+      AURA_OBSERVATORY_DATABASE_NAME: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      AURA_OBSERVATORY_DATABASE_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      AURA_OBSERVATORY_DATABASE_PASSWORD_FILE: /run/secrets/observatory-database-password
+      AURA_OBSERVATORY_CLICKHOUSE_URL: http://observatory-clickhouse:8123
+      AURA_OBSERVATORY_CLICKHOUSE_DATABASE: ${AURA_OBSERVATORY_CLICKHOUSE_DATABASE:-aura_observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_USER: ${AURA_OBSERVATORY_CLICKHOUSE_USER:-observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE: /run/secrets/observatory-clickhouse-password
+      AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE: /run/secrets/observatory-ingest-credential
+    secrets: [observatory-database-password, observatory-ingest-credential, observatory-clickhouse-password]
+    networks: [observatory-db, observatory-ingest]
+    depends_on:
+      observatory-migrate: {condition: service_completed_successfully}
+      observatory-postgres: {condition: service_healthy}
+      observatory-clickhouse: {condition: service_healthy}
+    restart: unless-stopped
+
+  observatory-migrate:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-observatory.Dockerfile
+      target: migrate
+    init: true
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: ${AURA_OBSERVATORY_ENVIRONMENT:-production}
+      AURA_OBSERVATORY_ROLE: migrate
+      AURA_OBSERVATORY_DATABASE_HOST: observatory-postgres
+      AURA_OBSERVATORY_DATABASE_PORT: "5432"
+      AURA_OBSERVATORY_DATABASE_NAME: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      AURA_OBSERVATORY_DATABASE_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      AURA_OBSERVATORY_DATABASE_PASSWORD_FILE: /run/secrets/observatory-database-password
+      AURA_OBSERVATORY_CLICKHOUSE_URL: http://observatory-clickhouse:8123
+      AURA_OBSERVATORY_CLICKHOUSE_DATABASE: ${AURA_OBSERVATORY_CLICKHOUSE_DATABASE:-aura_observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_USER: ${AURA_OBSERVATORY_CLICKHOUSE_USER:-observatory}
+      AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE: /run/secrets/observatory-clickhouse-password
+    secrets: [observatory-database-password, observatory-clickhouse-password]
+    networks: [observatory-db]
+    depends_on:
+      observatory-postgres: {condition: service_healthy}
+      observatory-clickhouse: {condition: service_healthy}
+    restart: "no"
+
+  observatory-postgres:
+    profiles: [observatory]
+    image: ${AURA_OBSERVATORY_POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_DB: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      POSTGRES_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      POSTGRES_PASSWORD_FILE: /run/secrets/observatory-database-password
+    secrets: [observatory-database-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-observatory-postgres:/var/lib/postgresql/data
+    networks: [observatory-db]
+    healthcheck:
+      test: [CMD-SHELL, "test \"$$(tr -d '\000' </proc/1/cmdline)\" = postgres && pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  observatory-clickhouse:
+    profiles: [observatory]
+    image: ${AURA_OBSERVATORY_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:25.8}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export CLICKHOUSE_PASSWORD="$$(cat /run/secrets/observatory-clickhouse-password)";
+        exec /entrypoint.sh
+    environment:
+      CLICKHOUSE_DB: ${AURA_OBSERVATORY_CLICKHOUSE_DATABASE:-aura_observatory}
+      CLICKHOUSE_USER: ${AURA_OBSERVATORY_CLICKHOUSE_USER:-observatory}
+    secrets: [observatory-clickhouse-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-observatory-clickhouse:/var/lib/clickhouse
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-observatory-clickhouse-logs:/var/log/clickhouse-server
+    networks: [observatory-db]
+    expose: ["8123"]
+    healthcheck:
+      test: [CMD, wget, --quiet, --output-document=-, http://127.0.0.1:8123/ping]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  observatory-session:
+    profiles: [observatory]
+    image: ${AURA_OBSERVATORY_SESSION_IMAGE:-valkey/valkey:8.1-alpine}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export VALKEY_PASSWORD="$$(cat /run/secrets/observatory-session-password)";
+        exec valkey-server --save "" --appendonly no --requirepass "$${VALKEY_PASSWORD}"
+    secrets: [observatory-session-password]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-observatory-session:/data
+    networks: [observatory-session]
+    healthcheck:
+      test: [CMD-SHELL, "valkey-cli -a \"$$(cat /run/secrets/observatory-session-password)\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  observatory-collector:
+    profiles: [observatory]
+    image: ${AURA_OBSERVATORY_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.138.0}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        export OBSERVATORY_INGEST_CREDENTIAL="$$(cat /run/secrets/observatory-ingest-credential)";
+        exec /otelcol-contrib --config=/etc/otelcol-contrib/config.yaml
+    secrets: [observatory-ingest-credential]
+    volumes:
+      - ./deploy/compose/observatory-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks: [observatory-ingest]
+    expose: ["4317", "4318"]
+    depends_on:
+      observatory-api: {condition: service_healthy}
+    restart: unless-stopped
+
+  observatory-web:
+    profiles: [observatory]
+    image: ${AURA_OBSERVATORY_WEB_IMAGE:-nginx:1.29-alpine}
+    volumes:
+      - ./deploy/docker/observatory-web.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${AURA_OBSERVATORY_PORT:-4300}:80"
+    networks: [observatory-edge, observatory-api]
+    depends_on:
+      observatory-api: {condition: service_healthy}
+    restart: unless-stopped
+
 secrets:
   aura-core-database-password:
     file: ${AURA_CORE_DATABASE_PASSWORD_FILE:-./.secrets/aura-core-database-password}
@@ -412,6 +632,16 @@ secrets:
     file: ${AURA_GARAGE_ACCESS_KEY_FILE:-./.secrets/aura-garage-access-key}
   aura-garage-secret-key:
     file: ${AURA_GARAGE_SECRET_KEY_FILE:-./.secrets/aura-garage-secret-key}
+  observatory-database-password:
+    file: ${AURA_OBSERVATORY_DATABASE_PASSWORD_FILE:-./.secrets/observatory-database-password}
+  observatory-oidc-client-secret:
+    file: ${AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE:-./.secrets/observatory-oidc-client-secret}
+  observatory-session-password:
+    file: ${AURA_OBSERVATORY_SESSION_PASSWORD_FILE:-./.secrets/observatory-session-password}
+  observatory-ingest-credential:
+    file: ${AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE:-./.secrets/observatory-ingest-credential}
+  observatory-clickhouse-password:
+    file: ${AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE:-./.secrets/observatory-clickhouse-password}
 
 networks:
   # Docker Desktop does not publish host ports for containers attached only to
@@ -451,3 +681,15 @@ networks:
   # endpoint and API/worker reach their configured Ollama provider. No service
   # on this network publishes a host port.
   aura-core-egress: {}
+  observatory-edge: {}
+  observatory-api:
+    internal: true
+  observatory-db:
+    internal: true
+  observatory-session:
+    internal: true
+  observatory-ingest:
+    internal: true
+  # Only the Observatory API and configured OIDC provider join this narrowly
+  # scoped identity egress network.
+  observatory-identity-egress: {}

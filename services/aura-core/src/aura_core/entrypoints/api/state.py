@@ -87,8 +87,8 @@ from aura_core.platform.readiness import (
 from aura_core.platform.telemetry import (
     MetadataMetrics,
     Stopwatch,
-    StructuredContainerLogExporter,
     TelemetryLifecycle,
+    make_telemetry_exporter,
     new_span_id,
 )
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
@@ -207,7 +207,23 @@ class AppState:
         self.settings = settings or Settings()
         self.testing = testing
         self.metrics = MetadataMetrics(
-            exporter=None if testing else StructuredContainerLogExporter()
+            exporter=(
+                None
+                if testing
+                else make_telemetry_exporter(
+                    enabled=self.settings.telemetry_otlp_enabled,
+                    endpoint=self.settings.telemetry_otlp_endpoint,
+                    credential=self.settings.telemetry_otlp_credential or None,
+                    queue_capacity=self.settings.telemetry_otlp_queue_capacity,
+                    max_attempts=self.settings.telemetry_otlp_max_attempts,
+                    timeout_seconds=self.settings.telemetry_otlp_timeout_seconds,
+                    deployment_id=self.settings.telemetry_deployment_id,
+                    git_commit=self.settings.telemetry_git_commit,
+                    environment=self.settings.environment,
+                    host_id=self.settings.telemetry_host_id,
+                    service_role=self.settings.role,
+                )
+            )
         )
         self.telemetry = TelemetryLifecycle(self.metrics)
         self.provider = provider or OllamaAdapter(
