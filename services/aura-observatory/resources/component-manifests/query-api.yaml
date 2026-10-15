@@ -30,6 +30,9 @@ metric_definitions:
     export: prometheus
 evaluators:
   - observatory_query_contract
+  - observatory_web_accessibility
+  - observatory_full_stack_trace
+  - observatory_outage_core_isolation
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

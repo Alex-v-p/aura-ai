@@ -93,7 +93,11 @@ for (const [path, pathItem] of Object.entries(document.paths)) {
       queryType: parameterType(parameters, 'query'),
       headerType: parameterType(parameters, 'header'),
       requestMode: operation.requestBody ? 'json' : 'none',
-      responseMode: successResponse(operation)?.content?.['text/event-stream'] ? 'event-stream' : 'json',
+      responseMode: successResponse(operation)?.content?.['text/event-stream']
+        ? 'event-stream'
+        : successResponse(operation)?.content
+          ? 'json'
+          : 'none',
     });
   }
 }
@@ -105,7 +109,7 @@ const operationTypes = operations.map((operation) =>
 const descriptors = operations.map((operation) =>
   `  ${operation.id}: { method: '${operation.method}', pathTemplate: '${operation.path}', requestMode: '${operation.requestMode}', responseMode: '${operation.responseMode}' },`,
 ).join('\n');
-const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json';\n  readonly responseMode: 'json' | 'event-stream';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
+const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json';\n  readonly responseMode: 'none' | 'json' | 'event-stream';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
 
 if (process.argv.includes('--check')) {
   if (readFileSync(outputPath, 'utf8') !== generated) {

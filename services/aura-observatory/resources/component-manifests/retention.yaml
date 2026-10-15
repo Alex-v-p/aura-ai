@@ -40,6 +40,7 @@ metric_definitions:
 evaluators:
   - observatory_retention_idempotency
   - observatory_retention_preservation
+  - observatory_web_retention_workflow
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

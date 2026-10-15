@@ -24,6 +24,59 @@ assert(document.openapi === '3.1.0', 'Observatory contract must remain OpenAPI 3
 assert(document.info?.['x-contract-id'] === 'observatory-v1', 'Contract id drifted');
 assert(document.info?.version === '1.0.0', 'Contract version drifted');
 
+const authLogin = document.paths?.['/api/v1/auth/login']?.get;
+assert(authLogin?.operationId === 'startOwnerLogin', 'Owner login operation is missing or renamed');
+assert(authLogin.security?.length === 0, 'Owner login initiation must be anonymous');
+assert(
+  !document.paths?.['/api/v1/auth/callback'],
+  'Provider-facing callback must remain outside the generated browser contract',
+);
+const returnTo = authLogin.parameters?.find((parameter) => parameter.name === 'return_to');
+assert(returnTo?.in === 'query' && !returnTo.required, 'Owner login return_to must be an optional query value');
+assert(returnTo?.schema?.pattern === '^/(?:$|[^/].*)$', 'Owner login return_to must remain same-origin');
+assert(returnTo?.schema?.maxLength === 2048, 'Owner login return_to must remain bounded');
+assert(returnTo?.schema?.default === '/', 'Owner login return_to must default to the shell root');
+assert(
+  authLogin.responses?.['307']?.headers?.Location?.schema?.format === 'uri',
+  'Owner login must declare its temporary redirect Location',
+);
+
+const authMe = document.paths?.['/api/v1/auth/me']?.get;
+assert(authMe?.operationId === 'getOwnerSession', 'Owner-session operation is missing or renamed');
+assert(
+  authMe.responses?.['200']?.content?.['application/json']?.schema?.$ref ===
+    '#/components/schemas/OwnerSession',
+  'Owner-session response must use the generated OwnerSession schema',
+);
+assert(authMe.responses?.['401'], 'Owner-session lookup must declare unauthenticated access');
+
+const authLogout = document.paths?.['/api/v1/auth/logout']?.post;
+assert(authLogout?.operationId === 'logoutOwnerSession', 'Owner logout operation is missing or renamed');
+assert(!authLogout.requestBody, 'Owner logout must not accept a request body');
+assert(
+  authLogout.responses?.['204'] && !authLogout.responses['204'].content,
+  'Owner logout must return an empty 204 response',
+);
+assert(authLogout.responses?.['403'], 'Owner logout must declare anti-CSRF denial');
+assert(
+  authLogout.parameters?.some((parameter) => parameter.$ref === '#/components/parameters/CsrfToken'),
+  'Owner logout must require the shared X-Observatory-CSRF header',
+);
+
+const ownerSession = document.components.schemas.OwnerSession;
+assert(ownerSession?.type === 'object', 'OwnerSession must be an object schema');
+assert(ownerSession.additionalProperties === false, 'OwnerSession must reject undeclared fields');
+assert(
+  ownerSession.required?.length === 1 && ownerSession.required[0] === 'csrfToken',
+  'OwnerSession must expose only the anti-CSRF value',
+);
+assert(
+  Object.keys(ownerSession.properties ?? {}).length === 1,
+  'OwnerSession must not expose owner identity or arbitrary claims',
+);
+assert(ownerSession.properties?.csrfToken?.minLength === 32, 'Owner CSRF token must preserve minimum entropy');
+assert(ownerSession.properties?.csrfToken?.maxLength === 256, 'Owner CSRF token must remain bounded');
+
 for (const [path, pathItem] of Object.entries(document.paths)) {
   for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
     const operation = pathItem[method];

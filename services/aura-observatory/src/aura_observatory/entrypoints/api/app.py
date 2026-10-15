@@ -204,13 +204,10 @@ def create_app(
         session = await auth_service.get_session(session_id)
         if session is None:
             raise HTTPException(status_code=401, detail="authentication required")
-        return JSONResponse(
-            {
-                "subject": session.principal.subject,
-                "displayName": session.principal.display_name,
-                "csrfToken": session.csrf_token,
-            }
-        )
+        # Keep the browser-facing contract closed: owner identity is an
+        # authentication concern, not Observatory telemetry.  The browser
+        # only needs this ephemeral value for same-origin state changes.
+        return JSONResponse({"csrfToken": session.csrf_token})
 
     @app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
     async def logout(

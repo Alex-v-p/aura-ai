@@ -14,6 +14,9 @@ ownership:
   - pattern: compose.yaml
     roles: [platform_worker]
     architectural_owner: deployment
+  - pattern: .dockerignore
+    roles: [platform_worker]
+    architectural_owner: deployment
   - pattern: pyproject.toml
     roles: [platform_worker]
     architectural_owner: repository-governance

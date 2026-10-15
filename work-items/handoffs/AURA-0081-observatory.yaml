@@ -1,0 +1,58 @@
+agent: observatory_worker
+work_item: AURA-0081
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0081_auth_runtime
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: services.aura-observatory.auth-session
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/tests/test_aura0079_auth.py
+  - work-items/handoffs/AURA-0081-observatory.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache timeout --signal=KILL 120s
+      prlimit --as=536870912 -- uv run pytest tests/test_aura0079_auth.py
+      (10 passed)
+    - >-
+      The focused bootstrap test asserts GET /api/v1/auth/me is exactly
+      {csrfToken} and excludes subject and displayName.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0081.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0081.yaml --role observatory_worker
+    - git diff --check -- services/aura-observatory/src/aura_observatory/entrypoints/api/app.py services/aura-observatory/tests/test_aura0079_auth.py
+    - implementation-handoff.schema.json validation for this handoff
+  failed: []
+  not_run:
+    - Repository-wide and frontend checks remain with the AURA-0081 integration owner.
+decisions:
+  - >-
+    Aligned the existing authenticated session bootstrap endpoint with the
+    closed observatory-v1 OwnerSession schema by returning only the ephemeral
+    anti-CSRF token; owner subject and display name remain server-side.
+  - >-
+    Preserved the existing opaque-cookie lookup, authentication failure, and
+    owner/session semantics; this is a response-shape correction only.
+risks:
+  - >-
+    Existing consumers that incorrectly depended on owner identity fields must
+    use the configured owner session contract instead; the generated client
+    already models the closed response.
+unresolved: []

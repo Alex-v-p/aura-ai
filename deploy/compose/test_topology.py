@@ -165,6 +165,266 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("aura-edge: {}", self.compose)
         self.assertIn('"127.0.0.1:${AURA_WEB_PORT:-4200}:8080"', web)
 
+    def test_observatory_web_is_a_loopback_only_production_shell(self) -> None:
+        web = self.compose.split("  observatory-web:\n", 1)[1].split(
+            "\nsecrets:\n", 1
+        )[0]
+        dockerfile = (ROOT / "deploy/docker/observatory-web.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        nginx = (ROOT / "deploy/docker/observatory-web.nginx.conf").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("profiles: [observatory]", web)
+        self.assertIn("dockerfile: deploy/docker/observatory-web.Dockerfile", web)
+        self.assertIn('"127.0.0.1:${AURA_OBSERVATORY_PORT:-4300}:8080"', web)
+        self.assertIn("networks: [observatory-edge, observatory-api]", web)
+        self.assertIn("observatory-api: {condition: service_healthy}", web)
+        self.assertIn("read_only: true", web)
+        self.assertIn("no-new-privileges:true", web)
+        self.assertIn("cap_drop:", web)
+        self.assertNotIn("secrets:", web)
+        self.assertIn("nx build observatory-web --configuration=production", dockerfile)
+        self.assertIn(
+            "dist/apps/observatory-web/browser/", dockerfile
+        )
+        self.assertIn("listen 8080;", nginx)
+        self.assertIn("proxy_pass http://observatory-api:8000;", nginx)
+        self.assertIn("proxy_buffering off;", nginx)
+        self.assertIn('add_header Cache-Control "no-store" always;', nginx)
+        self.assertIn("try_files $uri $uri/ /index.html;", nginx)
+        self.assertNotIn("nginx:1.29-alpine", web)
+
+    def test_observatory_web_build_context_excludes_secrets_and_unneeded_inputs(self) -> None:
+        dockerfile = (ROOT / "deploy/docker/observatory-web.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        dockerignore = (
+            ROOT / "deploy/docker/observatory-web.Dockerfile.dockerignore"
+        ).read_text(encoding="utf-8")
+
+        for exclusion in (
+            "**/.git",
+            "**/.env*",
+            "**/.env",
+            "**/.env.*",
+            "**/.secrets*",
+            "**/.secrets",
+            "**/.secrets/**",
+            "**/.local-state",
+            "**/.local-state/**",
+            "**/.state",
+            "**/.state/**",
+            "**/state",
+            "**/state/**",
+            "**/coverage",
+            "**/playwright-report",
+            "**/test-results",
+        ):
+            self.assertIn(exclusion, dockerignore)
+
+        for top_level in (
+            ".codex",
+            ".agents",
+            "docs",
+            "evaluations",
+            "infra",
+            "services",
+            "contracts",
+            "packages",
+            "satellites",
+            "work-items",
+            "compose.yaml",
+            "deploy/*",
+        ):
+            self.assertIn(top_level, dockerignore)
+
+        self.assertNotIn("\nfrontend\n", dockerignore)
+        self.assertNotIn("\nfrontend/*\n", dockerignore)
+        self.assertIn("!deploy/docker/observatory-web.Dockerfile", dockerignore)
+        self.assertIn("!deploy/docker/observatory-web.nginx.conf", dockerignore)
+        self.assertIn("COPY frontend/ ./frontend/", dockerfile)
+        self.assertIn(
+            "COPY deploy/docker/observatory-web.nginx.conf /etc/nginx/nginx.conf",
+            dockerfile,
+        )
+
+    def test_root_dockerignore_protects_every_runner_build_context(self) -> None:
+        dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+        for exclusion in (
+            "**/.git",
+            "**/.env*",
+            "**/.secrets",
+            "**/.secrets/**",
+            "**/.aura-e2e.*",
+            "**/.local-state/**",
+            "**/.state/**",
+            "**/state/**",
+            "**/coverage",
+            "**/playwright-report",
+            "**/test-results",
+        ):
+            self.assertIn(exclusion, dockerignore)
+
+        for dockerfile in (
+            "aura-api.Dockerfile",
+            "aura-worker.Dockerfile",
+            "aura-scheduler.Dockerfile",
+            "aura-web.Dockerfile",
+            "garage-bootstrap.Dockerfile",
+            "aura-observatory.Dockerfile",
+            "observatory-web.Dockerfile",
+        ):
+            self.assertIn(f"dockerfile: deploy/docker/{dockerfile}", self.compose)
+
+        aura_web_ignore = (
+            ROOT / "deploy/docker/aura-web.Dockerfile.dockerignore"
+        ).read_text(encoding="utf-8")
+        for exclusion in ("**/.env*", "**/.secrets/**", "**/.aura-e2e.*", "**/state/**"):
+            self.assertIn(exclusion, aura_web_ignore)
+        self.assertNotIn("!frontend", dockerignore)
+        self.assertNotIn("services\n", dockerignore)
+
+    def test_observatory_edge_isolated_to_observatory_web(self) -> None:
+        blocks = compose_service_blocks(self.compose)
+        edge_members = sorted(
+            name for name, body in blocks.items() if "observatory-edge" in body
+        )
+        self.assertEqual(["observatory-web"], edge_members)
+        self.assertIn("  observatory-edge: {}", self.compose)
+        self.assertIn("  observatory-api:\n    internal: true", self.compose)
+        self.assertIn("  observatory-db:\n    internal: true", self.compose)
+        self.assertIn("  observatory-session:\n    internal: true", self.compose)
+        self.assertIn("  observatory-ingest:\n    internal: true", self.compose)
+
+    def test_observatory_full_stack_runner_supplies_owner_login_and_outage_phase(self) -> None:
+        runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+        for setting in (
+            "AURA_OBSERVATORY_BASE_URL: http://observatory-web:8080",
+            "AURA_OBSERVATORY_FULL_STACK_BASE_URL: http://observatory-web:8080",
+            "AURA_OBSERVATORY_IDENTITY_MODE: external-oidc",
+            "AURA_OBSERVATORY_ISSUER: http://aura-e2e-oidc:8081",
+            "AURA_OBSERVATORY_IDENTITY_URL: http://aura-e2e-oidc:8081",
+            "AURA_OBSERVATORY_OWNER_USERNAME: owner",
+            "AURA_OBSERVATORY_OWNER_PASSWORD: fixture-password",
+            "AURA_E2E_IDENTITY_MODE: external-oidc",
+            "AURA_E2E_ISSUER: http://aura-e2e-oidc:8081",
+            "AURA_E2E_IDENTITY_URL: http://aura-e2e-oidc:8081",
+            "AURA_E2E_OWNER_USERNAME: owner",
+            "AURA_E2E_OWNER_PASSWORD: fixture-password",
+        ):
+            self.assertIn(setting, runner)
+        self.assertIn(
+            "--grep 'keeps Core usable after the platform stops Observatory services'",
+            runner,
+        )
+        self.assertIn("-e AURA_OBSERVATORY_SERVICES_STOPPED=1", runner)
+        self.assertIn(
+            'stop observatory-web observatory-api observatory-worker observatory-collector',
+            runner,
+        )
+        self.assertIn("health/live", runner)
+        self.assertIn("health/ready", runner)
+
+    def test_observatory_full_stack_runner_allocates_and_cleans_disposable_networks(self) -> None:
+        runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/aura-observatory-e2e.XXXXXX")',
+            runner,
+        )
+        self.assertNotIn("$ROOT/.aura-e2e.observatory", runner)
+        provider_start = runner.index("up --build --detach --wait")
+        inventory = runner.index("mapfile -t network_id_array")
+        self.assertLess(provider_start, inventory)
+        self.assertIn("docker network inspect", runner)
+        self.assertIn("mapfile -t network_id_array", runner)
+        self.assertIn("10.254.192.0/18", runner)
+        self.assertIn("172.30.0.0/16", runner)
+        self.assertIn("172.31.0.0/16", runner)
+        self.assertIn("no two free /28 subnets remain", runner)
+        self.assertIn("AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet", runner)
+        self.assertIn("AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet", runner)
+        self.assertIn(
+            "--profile observatory --profile checks down --volumes --remove-orphans",
+            runner,
+        )
+        self.assertIn("remove_disposable_networks", runner)
+        self.assertIn(
+            'label=com.docker.compose.project=$project',
+            runner,
+        )
+        self.assertIn('"${project}_"*)', runner)
+        self.assertIn('docker network rm "$network_id"', runner)
+
+    def test_observatory_full_stack_override_uses_named_state_and_environment_secrets(self) -> None:
+        runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+        override = runner.split('cat > "$override" <<\'EOF\'\n', 1)[1].split(
+            "\nEOF\n", 1
+        )[0]
+
+        for mount in (
+            "core_postgres_data:/var/lib/postgresql/data",
+            "core_nats_data:/data",
+            "core_garage_data:/var/lib/garage",
+            "core_garage_config:/run/garage-config",
+            "observatory_postgres_data:/var/lib/postgresql/data",
+            "observatory_clickhouse_data:/var/lib/clickhouse",
+            "observatory_clickhouse_logs:/var/log/clickhouse-server",
+            "observatory_session_data:/data",
+        ):
+            self.assertIn(mount, override)
+        self.assertIn("aura-web:\n    ports: !override []", override)
+        self.assertIn("observatory-web:\n    ports: !override []", override)
+        for secret, environment in (
+            ("aura-core-database-password", "AURA_E2E_CORE_DATABASE_PASSWORD"),
+            ("aura-oidc-client-secret", "AURA_E2E_OIDC_CLIENT_SECRET"),
+            ("aura-nats-password", "AURA_E2E_NATS_PASSWORD"),
+            ("aura-valkey-password", "AURA_E2E_VALKEY_PASSWORD"),
+            ("aura-garage-rpc-secret", "AURA_E2E_GARAGE_RPC_SECRET"),
+            ("aura-garage-access-key", "AURA_E2E_GARAGE_ACCESS_KEY"),
+            ("aura-garage-secret-key", "AURA_E2E_GARAGE_SECRET_KEY"),
+            (
+                "observatory-database-password",
+                "AURA_E2E_OBSERVATORY_DATABASE_PASSWORD",
+            ),
+            (
+                "observatory-oidc-client-secret",
+                "AURA_E2E_OBSERVATORY_OIDC_CLIENT_SECRET",
+            ),
+            (
+                "observatory-session-password",
+                "AURA_E2E_OBSERVATORY_SESSION_PASSWORD",
+            ),
+            (
+                "observatory-ingest-credential",
+                "AURA_E2E_OBSERVATORY_INGEST_CREDENTIAL",
+            ),
+            (
+                "observatory-clickhouse-password",
+                "AURA_E2E_OBSERVATORY_CLICKHOUSE_PASSWORD",
+            ),
+        ):
+            self.assertIn(f"{secret}: !override", override)
+            self.assertIn(f"environment: {environment}", override)
+
+        self.assertIn("volumes:\n  core_postgres_data:", override)
+        self.assertIn("observatory_postgres_data:", override)
+        self.assertIn("--volumes --remove-orphans", runner)
+        self.assertIn("cleanup_started=0", runner)
+        self.assertIn("trap - EXIT INT TERM", runner)
+        self.assertIn('if [ -f "$env_file" ] && [ -f "$override" ]; then', runner)
+        self.assertNotIn("chmod 0444", runner)
+        self.assertNotIn("$fixture_root/state", runner)
+        self.assertNotIn("$fixture_root/core-db", runner)
+
     def test_normal_composition_keeps_identity_outside_core_and_internal_paths(self) -> None:
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")

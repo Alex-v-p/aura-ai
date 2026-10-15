@@ -38,6 +38,7 @@ metric_definitions:
     export: prometheus
 evaluators:
   - observatory_sse_catch_up
+  - observatory_web_live_reconciliation
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

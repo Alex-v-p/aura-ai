@@ -2080,6 +2080,13 @@ modules:
   public_api: frontend/libs/platform/observatory-api-client/src/index.ts
   dependencies:
   - aura-contract.observatory-openapi
+- id: aura-web.observatory
+  root: frontend/libs/observatory
+  kind: frontend-feature
+  public_api: frontend/libs/observatory/src/index.ts
+  dependencies:
+  - aura-web.observatory-api-client
+  - aura-web.shared-ui
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract

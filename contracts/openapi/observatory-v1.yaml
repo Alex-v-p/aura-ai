@@ -3,13 +3,14 @@
   "info": {
     "title": "Observatory v1",
     "version": "1.0.0",
-    "description": "Owner-only, metadata-only Observatory query, live-notification, and manual-retention transport. Prompts, responses, memory or document content, filenames, tool arguments or results, credentials, endpoints, bearer tokens, arbitrary attributes, and owner identity are outside this contract.",
+    "description": "Owner-only Observatory authentication, metadata-only query, live-notification, and manual-retention transport. Prompts, responses, memory or document content, filenames, tool arguments or results, credentials, endpoints, bearer tokens, arbitrary attributes, and owner identity are outside this contract; the authentication resource exposes only an in-memory anti-CSRF value.",
     "x-contract-id": "observatory-v1",
     "x-capture-policy": "metadata_only"
   },
   "servers": [{ "url": "/", "description": "Same-origin Observatory BFF" }],
   "security": [{ "observatorySession": [] }],
   "tags": [
+    { "name": "Authentication" },
     { "name": "Overview" },
     { "name": "Runs" },
     { "name": "Traces" },
@@ -19,6 +20,43 @@
     { "name": "Retention" }
   ],
   "paths": {
+    "/api/v1/auth/login": {
+      "get": {
+        "operationId": "startOwnerLogin",
+        "tags": ["Authentication"],
+        "security": [],
+        "description": "Start the owner OIDC flow from a browser navigation. The provider-facing callback is intentionally server-owned and excluded from this browser transport contract.",
+        "parameters": [
+          { "name": "return_to", "in": "query", "required": false, "description": "Bounded same-origin path used after authentication; absolute and protocol-relative URLs are not permitted.", "schema": { "type": "string", "pattern": "^/(?:$|[^/].*)$", "maxLength": 2048, "default": "/" } }
+        ],
+        "responses": {
+          "307": { "description": "Temporary redirect to the configured OIDC provider", "headers": { "Location": { "required": true, "schema": { "type": "string", "format": "uri" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "getOwnerSession",
+        "tags": ["Authentication"],
+        "description": "Return the active owner BFF session anti-CSRF value without exposing owner identity. The value is held in memory and sent only in the header of state-changing same-origin requests.",
+        "responses": {
+          "200": { "description": "Active owner session anti-CSRF metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OwnerSession" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logoutOwnerSession",
+        "tags": ["Authentication"],
+        "description": "Revoke the active owner BFF session and clear its opaque cookie. An absent or expired session is also cleared idempotently.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
+        "responses": {
+          "204": { "description": "Owner session revoked or already absent; the session cookie is cleared" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
     "/api/v1/overview": {
       "get": {
         "operationId": "getOverview",
@@ -217,6 +255,13 @@
       "RunStatus": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"] },
       "Outcome": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "unknown"] },
       "ServiceState": { "type": "string", "enum": ["healthy", "degraded", "unavailable"] },
+      "OwnerSession": {
+        "type": "object", "additionalProperties": false,
+        "required": ["csrfToken"],
+        "properties": {
+          "csrfToken": { "type": "string", "minLength": 32, "maxLength": 256, "description": "Ephemeral anti-CSRF value retained only in browser memory and sent in X-Observatory-CSRF; never persisted or placed in a URL." }
+        }
+      },
       "Problem": {
         "type": "object", "additionalProperties": false,
         "required": ["code", "message", "retryable", "traceId"],

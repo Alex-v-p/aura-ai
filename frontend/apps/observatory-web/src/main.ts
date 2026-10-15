@@ -1,0 +1,29 @@
+import { bootstrapApplication } from '@angular/platform-browser';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { OBSERVATORY_GATEWAY, FetchObservatoryTransport, ObservatoryStore, ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent, ownerLoginHref } from '@aura/observatory';
+
+@Component({
+  selector: 'app-root', standalone: true,
+  imports: [ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent],
+  providers: [FetchObservatoryTransport, ObservatoryStore, { provide: OBSERVATORY_GATEWAY, useExisting: FetchObservatoryTransport }],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <a class="skip-link" href="#observatory-main">Skip to Observatory content</a>
+    <header class="masthead"><div><p class="eyebrow">Aura Observatory</p><h1>Operational metadata</h1><p class="subtitle">Owner-only monitoring for runs, traces, component health, and ingest.</p></div><div class="header-actions"><div class="connection" role="status"><span class="pulse" [class]="'pulse-' + store.snapshot().state" aria-hidden="true"></span>{{ connectionLabel() }}</div>@if (!store.sessionRequired()) { <button type="button" (click)="signOut()">Sign out</button> }</div></header>
+    @if (!store.sessionRequired()) { <nav class="tabs" aria-label="Observatory sections"><button type="button" [class.active]="tab() === 'overview'" [attr.aria-current]="tab() === 'overview' ? 'page' : null" (click)="tab.set('overview')">Overview</button><button type="button" [class.active]="tab() === 'runs'" [attr.aria-current]="tab() === 'runs' ? 'page' : null" (click)="tab.set('runs')">Runs</button><button type="button" [class.active]="tab() === 'trace'" [attr.aria-current]="tab() === 'trace' ? 'page' : null" (click)="tab.set('trace')">Trace</button><button type="button" [class.active]="tab() === 'components'" [attr.aria-current]="tab() === 'components' ? 'page' : null" (click)="tab.set('components')">Components</button><button type="button" [class.active]="tab() === 'retention'" [attr.aria-current]="tab() === 'retention' ? 'page' : null" (click)="tab.set('retention')">Retention</button></nav><main id="observatory-main" tabindex="-1"><observatory-overview [hidden]="tab() !== 'overview'" /><observatory-runs [hidden]="tab() !== 'runs'" (runSelected)="showTrace()" /><observatory-trace [hidden]="tab() !== 'trace'" /><observatory-components [hidden]="tab() !== 'components'" /><observatory-retention [hidden]="tab() !== 'retention'" /></main> } @else { <main id="observatory-main" tabindex="-1" class="signed-out"><h2>Observatory sign-in required</h2><p>Your owner session has ended. Sign in to continue.</p><a [href]="ownerLoginHref()">Sign in as owner</a></main> }
+  `,
+  styles: [`
+    :host { color:var(--text); display:block; min-height:100%; } .skip-link { background:var(--text); color:var(--canvas); left:.75rem; padding:.55rem .8rem; position:fixed; top:0; transform:translateY(-130%); z-index:5; } .skip-link:focus { transform:translateY(0); } .masthead { align-items:flex-start; display:flex; flex-wrap:wrap; gap:1rem; justify-content:space-between; margin:0 auto; max-width:82rem; padding:clamp(1.4rem,4vw,3rem) clamp(1rem,4vw,3rem) 1.3rem; } .eyebrow { color:var(--accent-hover); font-size:.75rem; font-weight:800; letter-spacing:.1em; margin:0 0 .45rem; } h1 { font-size:clamp(1.7rem,3vw,2.5rem); letter-spacing:-.04em; margin:0; } .subtitle { color:var(--text-muted); margin:.55rem 0 0; } .header-actions { align-items:center; display:flex; flex-wrap:wrap; gap:.65rem; } .header-actions button { background:transparent; border:1px solid var(--control-border); border-radius:.45rem; color:var(--text); cursor:pointer; padding:.45rem .7rem; } .connection { align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:999px; display:flex; gap:.5rem; padding:.45rem .7rem; white-space:nowrap; } .pulse { border-radius:50%; height:.55rem; width:.55rem; } .pulse-ready,.pulse-empty { background:var(--success); } .pulse-loading,.pulse-stale { background:#c58b27; } .pulse-disconnected,.pulse-error { background:var(--danger); } .tabs { border-bottom:1px solid var(--border); display:flex; gap:.2rem; margin:0 auto; max-width:82rem; overflow:auto; padding:0 clamp(1rem,4vw,3rem); } .tabs button { background:transparent; border:0; border-bottom:3px solid transparent; color:var(--text-muted); cursor:pointer; padding:.75rem 1rem; white-space:nowrap; } .tabs button.active { border-bottom-color:var(--accent); color:var(--text); font-weight:750; } .tabs button:focus-visible { outline:3px solid var(--focus); outline-offset:-3px; } main { margin:0 auto; max-width:82rem; padding:1.4rem clamp(1rem,4vw,3rem) 3rem; } @media (max-width:640px) { .masthead { display:grid; } .header-actions { justify-self:start; } }
+  `],
+})
+class AppComponent {
+  readonly store = inject(ObservatoryStore);
+  readonly ownerLoginHref = ownerLoginHref;
+  readonly tab = signal<'overview' | 'runs' | 'trace' | 'components' | 'retention'>('overview');
+  constructor() { void this.store.start(); }
+  showTrace(): void { this.tab.set('trace'); setTimeout(() => document.getElementById('trace-title')?.focus(), 0); }
+  signOut(): void { this.tab.set('overview'); void this.store.logout(); }
+  connectionLabel(): string { const state = this.store.snapshot().state; return state === 'ready' || state === 'empty' ? 'Live updates on' : state === 'disconnected' ? 'Disconnected' : state === 'stale' ? 'Stale snapshot' : state === 'error' ? 'Observatory unavailable' : 'Connecting'; }
+}
+
+bootstrapApplication(AppComponent).catch((error: unknown) => console.error(error));

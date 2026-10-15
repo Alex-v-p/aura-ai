@@ -15,7 +15,9 @@ export default [
           banTransitiveDependencies: true,
           depConstraints: [
             { sourceTag: 'scope:aura-web', onlyDependOnLibsWithTags: ['scope:aura', 'scope:shared'] },
-            { sourceTag: 'scope:storybook', onlyDependOnLibsWithTags: ['scope:aura', 'scope:shared'] },
+            { sourceTag: 'scope:observatory-web', onlyDependOnLibsWithTags: ['scope:observatory', 'scope:shared'] },
+            { sourceTag: 'scope:storybook', onlyDependOnLibsWithTags: ['scope:aura', 'scope:observatory', 'scope:shared'] },
+            { sourceTag: 'scope:observatory', onlyDependOnLibsWithTags: ['scope:observatory', 'scope:shared'] },
             { sourceTag: 'scope:aura', onlyDependOnLibsWithTags: ['scope:aura', 'scope:shared'] },
             { sourceTag: 'scope:shared', onlyDependOnLibsWithTags: ['scope:shared'] },
           ],

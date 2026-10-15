@@ -218,6 +218,26 @@ async def test_bff_logout_requires_csrf_and_clears_the_rotated_session_cookie() 
         assert "observatory_session=;" in allowed.headers.get("set-cookie", "")
 
 
+@pytest.mark.asyncio
+async def test_bff_session_bootstrap_exposes_only_the_ephemeral_csrf_token() -> None:
+    settings = _settings()
+    auth = ObservatoryAuth(settings, MemorySessionBackend(), MemoryLoginStateBackend())
+    session_id, session = await auth.create_session(
+        Principal(settings.oidc_issuer, "owner-subject", "Owner Display Name")
+    )
+    app = create_app(settings, auth=auth, testing=True)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://observatory.localhost:4300",
+        cookies={settings.effective_session_cookie_name: session_id},
+    ) as client:
+        response = await client.get("/api/v1/auth/me")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"csrfToken": session.csrf_token}
+
+
 def test_bff_cookie_settings_never_put_bearer_credentials_in_urls() -> None:
     source = (Path(__file__).parents[1] / "src/aura_observatory/entrypoints/api/app.py").read_text(
         encoding="utf-8"

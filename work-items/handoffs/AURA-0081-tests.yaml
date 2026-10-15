@@ -1,0 +1,74 @@
+agent: test_evaluation_engineer
+work_item: AURA-0081
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.observatory-web-full-stack
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/full-stack.config.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/resources/component-manifests/retention.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.web
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  metrics_added: []
+verification:
+  passed:
+    - "git diff --check"
+    - "NODE_OPTIONS=--max-old-space-size=512 timeout --signal=KILL 45s pnpm exec tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --strict --skipLibCheck on the four assigned Playwright files"
+    - "NODE_OPTIONS=--max-old-space-size=512 timeout --signal=KILL 45s pnpm exec eslint on the four assigned Playwright files"
+    - "Capped desktop mocked Playwright regression, one worker: 5 non-retention cases passed (ingest/unavailable, SSE disconnect, runs/trace, component health, browser persistence)"
+    - "Static ESLint and TypeScript checks after full-stack owner-login/Core-run flow and artifact-retention hardening"
+    - "Static ESLint and TypeScript checks after named SSE reconciliation, partial-panel, UTC-boundary, keyboard-section, responsive-layout, and accessible-trend coverage"
+    - "Static ESLint and TypeScript checks after final in-DOM retention confirmation selectors and relative freshness fixture timestamps"
+    - "Static ESLint and TypeScript checks after mocked owner logout, CSRF, and deferred-response isolation coverage"
+    - "Static ESLint and TypeScript checks after OwnerSession csrfToken-only fixture hardening"
+    - "Static ESLint and TypeScript checks after final Ordered trace spans list/listitem selectors and explicit Observatory/Core session-kind handling"
+    - "Static ESLint and TypeScript checks after aligning disconnected, scoped overview, partial-state, trend, retention-failure, and logout assertions with current UI semantics"
+    - "Static ESLint and TypeScript checks after scoping trace request/job/partial assertions to exact Ordered trace spans list content"
+    - "Final mocked Playwright matrix: 48/48 passed across desktop, tablet, and mobile projects with one worker and no NG0600 failures"
+    - "Axe checks passed for healthy, unavailable, and open retention-confirmation states at desktop, tablet, and mobile viewports"
+    - "Static ESLint and TypeScript checks after adding @axe-core/playwright checks for healthy, unavailable, and retention-confirmation shell states"
+    - "Focused lint and git diff checks after aligning retention failure fixtures with the storage_failure service code"
+    - "Focused mocked retention-failure browser case: 3/3 passed across desktop, tablet, and mobile projects with one worker and a 512 MB Node heap"
+  failed: []
+  not_run:
+    - "Real Docker full-stack execution is environment-blocked by the Docker Desktop bind-state hang; pending runner named-volume redesign/restart"
+    - "Full-stack browser execution remains not run until the disposable Compose Observatory/Core services can start with the redesigned runner volumes"
+    - "Outage phase: platform runner must stop Observatory services and set AURA_OBSERVATORY_SERVICES_STOPPED=1"
+decisions:
+  - "Mocked tests use only same-origin /api/v1 routes and metadata-only fixtures; no Core, database, or provider calls are introduced."
+  - "The real-stack test is opt-in via AURA_OBSERVATORY_FULL_STACK=1, performs owner OIDC login on both product origins, and creates a real Core run through the Core UI before Observatory queries."
+  - "The post-outage Core check is a separate opt-in phase controlled by the platform runner through AURA_OBSERVATORY_SERVICES_STOPPED=1; this test does not issue host-level stop commands."
+  - "Playwright traces, videos, and screenshots are disabled for both mocked and full-stack configurations to prevent authenticated metadata capture in artifacts."
+  - "Mocked SSE emits a named observation.changed event and changes the overview count on the subsequent REST reconciliation; this verifies named-event handling beyond the initial snapshot."
+  - "The UTC boundary test runs in America/Los_Angeles and asserts the exact Z-suffixed cutoff sent to the retention API."
+  - "Responsive checks assert narrow viewport document bounds and header/tab stacking; section checks require keyboard focus, active styling, and aria-current semantics."
+  - "Full-stack retention now uses a future cutoff so the generated run is affected, asserts a positive deleted-observation count and run disappearance, creates a second real Core run before purge-all, then verifies purge removes it while component catalogue entries remain."
+  - "Full-stack component verification captures a component ID from the selected run's trace span and requires the same component card to expose health measurements."
+  - "Browser persistence assertions inspect Cache Storage, localStorage, sessionStorage, IndexedDB, and URL strings for authenticated telemetry leakage."
+  - "Retention acceptance targets the final focus-managed in-DOM confirmation dialog; native browser dialog handlers are not used."
+  - "Normal mocked observation timestamps are relative/current for deterministic live-state coverage, while stale-state coverage uses an explicit old timestamp."
+  - "Mocked logout asserts the same-origin CSRF-protected POST, signed-out owner UI, and release of deferred run and retention responses without restoring authenticated state; component stale-response isolation is covered by the store generation guards and remains outside this browser flow because the current tab path does not start that request."
+  - "Observatory /auth/me fixtures contain only a 47-character csrfToken (above the contract minimum); subject and displayName are intentionally absent, while Core identity configuration remains unchanged."
+  - "Trace acceptance targets the final accessible list named Ordered trace spans and derives span assertions from listitems; Core OIDC principal validation is retained only for the Core session endpoint."
+  - "Mocked browser accessibility checks use the existing @axe-core/playwright dependency against the shell in healthy, unavailable, and open-retention-dialog states; traces, videos, screenshots, and other artifacts remain disabled."
+  - "The query-api, live-updates, and retention component manifest evaluator additions are owned by test_evaluation_engineer for AURA-0081; existing evaluator declarations were preserved and only the web acceptance evaluator references are in scope."
+risks:
+  - "The app worker must expose stable accessible names for overview, runs, trace, components, retention, confirmation dialogs, and state messages used by the acceptance suite."
+unresolved: []

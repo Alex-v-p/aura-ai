@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: a3d5b443ac227fc8cbd42b00d2cd34ec84aed1f9773e0e22db145971182c9d66
+// Contract SHA-256: db8cdb3c58d311e720541f186bde6e8a0f49937d6cbb2eb23f08c30489109a15
 
 export type Uuid = string;
 
@@ -20,6 +20,8 @@ export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancell
 export type Outcome = "succeeded" | "failed" | "cancelled" | "unknown";
 
 export type ServiceState = "healthy" | "degraded" | "unavailable";
+
+export type OwnerSession = { readonly "csrfToken": string; };
 
 export type Problem = { readonly "code": string; readonly "message": string; readonly "retryable": boolean; readonly "traceId": TraceId; };
 
@@ -74,6 +76,9 @@ export type RetentionActionStatus = "queued" | "running" | "succeeded" | "failed
 export type RetentionAction = { readonly "actionId": Uuid; readonly "action": "delete_before" | "purge_all"; readonly "cutoff": UtcInstant | null; readonly "status": RetentionActionStatus; readonly "createdAt": UtcInstant; readonly "startedAt": UtcInstant | null; readonly "finishedAt": UtcInstant | null; readonly "deletedObservationCount": number; readonly "deletedReceiptCount": number; readonly "deletedRunCount": number; readonly "failureCode": string | null; };
 
 export interface ObservatoryApiOperations {
+  readonly startOwnerLogin: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "return_to"?: string; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getOwnerSession: { readonly response: OwnerSession; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly logoutOwnerSession: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; }; };
   readonly getOverview: { readonly response: Overview; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listRuns: { readonly response: RunPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "status"?: RunStatus; readonly "component"?: ComponentId; readonly "model"?: SafeLabel; readonly "deployment"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getRun: { readonly response: RunDetail; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
@@ -99,10 +104,13 @@ export interface ObservatoryOperationDescriptor {
   readonly method: string;
   readonly pathTemplate: string;
   readonly requestMode: 'none' | 'json';
-  readonly responseMode: 'json' | 'event-stream';
+  readonly responseMode: 'none' | 'json' | 'event-stream';
 }
 
 export const OBSERVATORY_API_OPERATIONS = {
+  startOwnerLogin: { method: 'GET', pathTemplate: '/api/v1/auth/login', requestMode: 'none', responseMode: 'none' },
+  getOwnerSession: { method: 'GET', pathTemplate: '/api/v1/auth/me', requestMode: 'none', responseMode: 'json' },
+  logoutOwnerSession: { method: 'POST', pathTemplate: '/api/v1/auth/logout', requestMode: 'none', responseMode: 'none' },
   getOverview: { method: 'GET', pathTemplate: '/api/v1/overview', requestMode: 'none', responseMode: 'json' },
   listRuns: { method: 'GET', pathTemplate: '/api/v1/runs', requestMode: 'none', responseMode: 'json' },
   getRun: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}', requestMode: 'none', responseMode: 'json' },
