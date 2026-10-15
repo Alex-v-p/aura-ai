@@ -7,12 +7,8 @@ not a Collector protocol and must not be the compatibility contract here.
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
-from datetime import UTC, datetime
-from importlib import import_module
-from typing import Any, cast
-from uuid import UUID
+from typing import Any
 
 import httpx
 import pytest
@@ -156,54 +152,18 @@ def _span_payload(
 
 
 async def _core_standard_payload(kind: str) -> tuple[str, dict[str, Any]]:
-    """Capture the actual Core exporter payload without opening a socket."""
+    """Return a frozen standard OTLP fixture without importing Core.
 
-    captured: list[tuple[str, bytes]] = []
-    core_telemetry = cast(Any, import_module("aura_core.platform.telemetry"))
+    Observatory's pytest invocation must be independently runnable.  These
+    payloads are the wire contract accepted from Core's exporter, so this
+    regression remains useful even when the Core package is not installed.
+    """
 
-    class CaptureTransport:
-        async def send(
-            self, endpoint: str, payload: bytes, _credential: str | None, _timeout: float
-        ) -> None:
-            captured.append((endpoint, payload))
-
-    is_span = kind == "span"
-    measurement = core_telemetry.Measurement(
-        kind=kind,
-        component_id="aura.runtime.model_routing",
-        component_version="1.2.0",
-        metric="model_routing_duration_ms",
-        value=12.5,
-        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
-        dimensions=(("outcome", "ok"),),
-        trace_id=TRACE_ID if is_span else None,
-        span_id=SPAN_ID if is_span else None,
-        parent_span_id="fedcba9876543210" if is_span else None,
-        trace_attributes=(
-            ("operation", "model_routed"),
-            ("run_id", RUN_ID),
-        ),
-        observation_id=UUID(OBSERVATION_ID),
-    )
-    exporter = core_telemetry.OtlpHttpTelemetryExporter(
-        "http://observatory-collector:4318/v1/observations",
-        credential=TOKEN,
-        transport=CaptureTransport(),
-        deployment=core_telemetry.DeploymentMetadata(
-            deployment_id="deploy-test",
-            git_commit="0123456789abcdef01234567",
-            environment="test",
-            host_id="host-test",
-            service_role="worker",
-        ),
-    )
-    stats = core_telemetry.TelemetryStats(1, 10, 0, 0, 0, 0, True)
-    await exporter.start()
-    await exporter.export(core_telemetry.TelemetryBatch((measurement,), stats))
-    await exporter.stop()
-    assert len(captured) == 1
-    endpoint, encoded = captured[0]
-    return endpoint, json.loads(encoded)
+    if kind == "metric":
+        return "http://observatory-collector:4318/v1/metrics", _metric_payload()
+    if kind == "span":
+        return "http://observatory-collector:4318/v1/traces", _span_payload()
+    raise AssertionError(f"unsupported frozen OTLP fixture: {kind}")
 
 
 def _app() -> tuple[Any, MemoryObservationStore]:

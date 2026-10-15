@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 
 from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
 from aura_observatory.adapters.postgres import PostgresCatalog, PostgresObservationIdRegistry
+from aura_observatory.adapters.query import ProductionObservatoryStore
 from aura_observatory.auth import (
     MemoryLoginStateBackend,
     MemorySessionBackend,
@@ -19,6 +20,8 @@ from aura_observatory.auth import (
     RedisSessionBackend,
 )
 from aura_observatory.ingest import TelemetryIngestService
+from aura_observatory.metrics import ObservatoryMetrics
+from aura_observatory.query import ObservatoryQueryService
 from aura_observatory.settings import Settings
 
 
@@ -75,4 +78,25 @@ def build_auth(settings: Settings, *, testing: bool = False) -> ObservatoryAuth:
     )
 
 
-__all__ = ["build_auth", "build_ingest_service", "postgres_connection"]
+def build_query_service(settings: Settings) -> ObservatoryQueryService:
+    """Compose the independent PostgreSQL/ClickHouse query boundary."""
+
+    store = ProductionObservatoryStore(
+        lambda: postgres_connection(settings.database_url),
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
+    return ObservatoryQueryService(
+        store,
+        query_port=store,
+        retention_port=store,
+        # Retention metrics are derived from the shared Observatory PostgreSQL
+        # audit rows at API scrape time; no cross-container filesystem is
+        # required for worker-to-API metric visibility.
+        metrics=ObservatoryMetrics(),
+    )
+
+
+__all__ = ["build_auth", "build_ingest_service", "build_query_service", "postgres_connection"]

@@ -44,6 +44,15 @@ modules:
   python_modules:
   - aura_observatory.metrics
   dependencies: []
+- id: aura-observatory.query
+  root: services/aura-observatory/src/aura_observatory/query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/query.py
+  python_modules:
+  - aura_observatory.query
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
 - id: aura-observatory.settings
   root: services/aura-observatory/src/aura_observatory/settings.py
   kind: python
@@ -111,6 +120,16 @@ modules:
   dependencies:
   - aura-observatory.contract
   - aura-observatory.ports
+- id: aura-observatory.adapters.query
+  root: services/aura-observatory/src/aura_observatory/adapters/query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/query.py
+  python_modules:
+  - aura_observatory.adapters.query
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.query
+  - aura-observatory.ports
 - id: aura-observatory.composition
   root: services/aura-observatory/src/aura_observatory/composition.py
   kind: bootstrap
@@ -120,9 +139,11 @@ modules:
   dependencies:
   - aura-observatory.adapters.clickhouse
   - aura-observatory.adapters.postgres
+  - aura-observatory.adapters.query
   - aura-observatory.auth
   - aura-observatory.ingest
   - aura-observatory.settings
+  - aura-observatory.query
 - id: aura-observatory.entrypoints
   root: services/aura-observatory/src/aura_observatory/entrypoints
   kind: package
@@ -155,6 +176,7 @@ modules:
   - aura-observatory.ingest
   - aura-observatory.otlp
   - aura-observatory.settings
+  - aura-observatory.query
 - id: aura-observatory.entrypoints.worker
   root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
   kind: entrypoint
@@ -165,6 +187,7 @@ modules:
   - aura-observatory.composition
   - aura-observatory.ingest
   - aura-observatory.settings
+  - aura-observatory.query
 - id: aura-observatory.entrypoints.cli
   root: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
   kind: entrypoint
@@ -2046,6 +2069,17 @@ modules:
   public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
+- id: aura-contract.observatory-openapi
+  root: contracts/openapi/observatory-v1.yaml
+  kind: openapi-contract
+  public_api: contracts/openapi/observatory-v1.yaml
+  dependencies: []
+- id: aura-web.observatory-api-client
+  root: frontend/libs/platform/observatory-api-client
+  kind: generated-client
+  public_api: frontend/libs/platform/observatory-api-client/src/index.ts
+  dependencies:
+  - aura-contract.observatory-openapi
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract

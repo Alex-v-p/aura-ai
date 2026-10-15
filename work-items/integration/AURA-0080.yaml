@@ -1,0 +1,84 @@
+agent: integration_maintainer
+work_item: AURA-0080
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0080-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0080-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0080-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0080-observability.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0080-contracts.yaml
+  - reviewer: observatory_worker
+    status: PARTIAL
+    verdict: work-items/handoffs/AURA-0080-observatory.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0080-tests.yaml
+conflicts_resolved:
+  - >-
+    Reconciled the Observatory worker handoff's intermediate partial status
+    against its final recorded validations and all four PASS review verdicts.
+    Its only unresolved note is the separately scoped AURA-0081 Web and
+    full-stack acceptance work; no semantic conflict remains in AURA-0080.
+generated_outputs:
+  - work-items/archived/AURA-0080.yaml
+checks:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0080.yaml (passed before archival)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0080.yaml (51 changed paths validated)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0080.yaml
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0080.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0080.yaml (skipped: no protected changes)
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - uv lock --check
+    - >-
+      frontend observatory-api-client check-generated, lint, and TypeScript
+      no-emit checks (passed with Nx daemon disabled by the sandbox)
+    - >-
+      implementation-handoff.schema.json validation for 3 AURA-0080 handoffs
+    - review-verdict.schema.json validation for 4 AURA-0080 reviews
+    - >-
+      capped formal AURA-0080 regression suite (94 passed, 512 MiB cap,
+      120-second timeout; recorded by the test/evaluation handoff)
+    - >-
+      capped complete Observatory suite (209 passed, 512 MiB cap,
+      210-second timeout; recorded by the test/evaluation handoff)
+    - git diff --check
+    - python3 tooling/architecture/validate-work-item.py work-items/archived/AURA-0080.yaml
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Observatory Web, Compose full-stack startup, and browser acceptance remain
+    scoped to AURA-0081; the generated client is integrated and validated here.
+  - >-
+    The worker handoff records no live PostgreSQL or ClickHouse deployment
+    exercise; migrations and storage behavior are covered by the recorded
+    deterministic and capped validation checks.

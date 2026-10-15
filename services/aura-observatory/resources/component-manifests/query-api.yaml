@@ -1,0 +1,37 @@
+component:
+  id: aura.observatory.query_api
+  version: 1.0.0
+  owner: observatory.query_api
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1
+metrics:
+  - observatory_query_duration_ms
+  - observatory_query_outcome
+metric_definitions:
+  - name: observatory_query_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [resource]
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_query_outcome
+    type: counter
+    unit: occurrences
+    labels: [resource, outcome]
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
+    export: prometheus
+evaluators:
+  - observatory_query_contract
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [resource, outcome]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]

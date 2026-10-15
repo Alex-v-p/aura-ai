@@ -219,8 +219,7 @@ async def test_clickhouse_deduplication_token_is_stable_across_concurrent_retrie
             requests.append(kwargs)
             return FakeResponse()
 
-    def client_factory(timeout: float) -> FakeClient:
-        assert timeout == 5.0
+    def client_factory() -> FakeClient:
         return FakeClient()
 
     monkeypatch.setattr(
@@ -325,8 +324,7 @@ async def test_clickhouse_response_loss_recovers_without_second_visible_row(
                 raise RuntimeError("response lost after ClickHouse accepted the insert")
             return FakeResponse()
 
-    def client_factory(timeout: float) -> FakeClient:
-        assert timeout == 5.0
+    def client_factory() -> FakeClient:
         return FakeClient()
 
     monkeypatch.setattr(
@@ -372,8 +370,7 @@ async def test_clickhouse_preinsert_failure_is_retryable_before_stale_recovery(
                 raise RuntimeError("connection failed before insert")
             return FakeResponse()
 
-    def client_factory(timeout: float) -> FakeClient:
-        assert timeout == 5.0
+    def client_factory() -> FakeClient:
         return FakeClient()
 
     monkeypatch.setattr(
@@ -625,9 +622,16 @@ def test_cli_migrate_executes_both_service_owned_migration_sets(
 
     cli.migrate()
 
-    assert len(postgres_statements) == 1
-    assert "observatory_components" in postgres_statements[0]
-    assert len(clickhouse_statements) == 1
+    expected_postgres_migrations = sorted(
+        (Path(__file__).parents[1] / "migrations/postgresql/versions").glob("*.sql")
+    )
+    assert len(postgres_statements) == len(expected_postgres_migrations)
+    assert any("observatory_components" in statement for statement in postgres_statements)
+    assert any("observatory_retention_actions" in statement for statement in postgres_statements)
+    expected_clickhouse_migrations = sorted(
+        (Path(__file__).parents[1] / "migrations/clickhouse/versions").glob("*.sql")
+    )
+    assert len(clickhouse_statements) == len(expected_clickhouse_migrations)
     assert "CREATE TABLE IF NOT EXISTS observations" in clickhouse_statements[0]
 
 
@@ -675,6 +679,9 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
     assert manifest_ids == {
         "aura.observatory.telemetry_ingestion",
         "aura.observatory.telemetry_storage",
+        "aura.observatory.query_api",
+        "aura.observatory.live_updates",
+        "aura.observatory.retention",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -685,9 +692,26 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
     }
     for path in manifests:
         manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+        manifest_id = manifest["component"]["id"]
         expected_metrics = ingestion_metrics
-        if manifest["component"]["id"] == "aura.observatory.telemetry_storage":
+        if manifest_id == "aura.observatory.telemetry_storage":
             expected_metrics = ingestion_metrics - {"telemetry_ingest_duration_ms"}
             assert "telemetry_ingest_duration_ms" not in manifest["metric_semantics"]
+        elif manifest_id == "aura.observatory.query_api":
+            expected_metrics = {
+                "observatory_query_duration_ms",
+                "observatory_query_outcome",
+            }
+        elif manifest_id == "aura.observatory.live_updates":
+            expected_metrics = {
+                "observatory_sse_connection_count",
+                "observatory_sse_replay_count",
+            }
+        elif manifest_id == "aura.observatory.retention":
+            expected_metrics = {
+                "observatory_retention_action_count",
+                "observatory_retention_deleted_count",
+                "observatory_retention_failure_count",
+            }
         assert set(manifest["metrics"]) == expected_metrics
         assert manifest["capture_policy"] == "metadata_only"

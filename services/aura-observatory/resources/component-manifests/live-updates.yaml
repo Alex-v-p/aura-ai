@@ -1,0 +1,45 @@
+component:
+  id: aura.observatory.live_updates
+  version: 1.0.0
+  owner: observatory.live_updates
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-live-event-v1
+metrics:
+  - observatory_sse_connection_count
+  - observatory_sse_replay_count
+metric_definitions:
+  - name: observatory_sse_connection_count
+    type: counter
+    unit: connections
+    labels: [event_type]
+    dependencies: [postgresql, clickhouse]
+    trace: sse_stream
+    correlation: request_id
+    export: prometheus
+  - name: observatory_sse_active
+    type: gauge
+    unit: connections
+    labels: [event_type]
+    dependencies: [postgresql, clickhouse]
+    trace: sse_stream
+    correlation: request_id
+    export: prometheus
+  - name: observatory_sse_replay_count
+    type: counter
+    unit: events
+    labels: [event_type]
+    dependencies: [postgresql, clickhouse]
+    trace: sse_stream
+    correlation: request_id
+    export: prometheus
+evaluators:
+  - observatory_sse_catch_up
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [event_type, resource_type]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]

@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable
 from typing import Any
 
-from aura_observatory.composition import build_ingest_service
+from aura_observatory.composition import build_ingest_service, build_query_service
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.settings import Settings
 
@@ -60,8 +60,16 @@ async def _await_stop(stop: Awaitable[None]) -> None:
 async def run(settings: Settings | None = None) -> None:
     """Run the production worker with configured Observatory adapters."""
 
-    worker = IngestWorker(build_ingest_service(settings or Settings()))
-    await worker.run()
+    resolved = settings or Settings()
+    query = build_query_service(resolved)
+    worker = IngestWorker(build_ingest_service(resolved))
+    retention_stop = asyncio.Event()
+    retention_task = asyncio.create_task(query.run_retention_worker(retention_stop))
+    try:
+        await worker.run()
+    finally:
+        retention_stop.set()
+        await retention_task
 
 
 def main() -> None:

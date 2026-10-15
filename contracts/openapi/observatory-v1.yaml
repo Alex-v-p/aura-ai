@@ -1,0 +1,329 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Observatory v1",
+    "version": "1.0.0",
+    "description": "Owner-only, metadata-only Observatory query, live-notification, and manual-retention transport. Prompts, responses, memory or document content, filenames, tool arguments or results, credentials, endpoints, bearer tokens, arbitrary attributes, and owner identity are outside this contract.",
+    "x-contract-id": "observatory-v1",
+    "x-capture-policy": "metadata_only"
+  },
+  "servers": [{ "url": "/", "description": "Same-origin Observatory BFF" }],
+  "security": [{ "observatorySession": [] }],
+  "tags": [
+    { "name": "Overview" },
+    { "name": "Runs" },
+    { "name": "Traces" },
+    { "name": "Components" },
+    { "name": "Deployments" },
+    { "name": "Live" },
+    { "name": "Retention" }
+  ],
+  "paths": {
+    "/api/v1/overview": {
+      "get": {
+        "operationId": "getOverview",
+        "tags": ["Overview"],
+        "responses": {
+          "200": { "description": "Current system and ingest health snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Overview" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "tags": ["Runs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/PageSize" },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/RunStatus" } },
+          { "name": "component", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ComponentId" } },
+          { "name": "model", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
+          { "name": "deployment", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
+          { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } }
+        ],
+        "responses": {
+          "200": { "description": "Runs ordered by descending observed time and opaque run identifier", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "getRun",
+        "tags": ["Runs"],
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/DetailPageSize" }],
+        "responses": {
+          "200": { "description": "Metadata-only run detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/traces/{trace_id}": {
+      "get": {
+        "operationId": "getTrace",
+        "tags": ["Traces"],
+        "parameters": [{ "$ref": "#/components/parameters/TraceId" }, { "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/DetailPageSize" }],
+        "responses": {
+          "200": { "description": "Trace with deterministically ordered parent-child spans", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TraceDetail" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/components": {
+      "get": {
+        "operationId": "listComponents",
+        "tags": ["Components"],
+        "responses": {
+          "200": { "description": "Component catalogue with latency, error, and outcome summaries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/components/{component_id}/health": {
+      "get": {
+        "operationId": "getComponentHealth",
+        "tags": ["Components"],
+        "parameters": [
+          { "$ref": "#/components/parameters/ComponentId" },
+          { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded component health trend", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentHealth" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/deployments": {
+      "get": {
+        "operationId": "listDeployments",
+        "tags": ["Deployments"],
+        "responses": {
+          "200": { "description": "Deployment catalogue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentCollection" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "streamEvents",
+        "tags": ["Live"],
+        "description": "Authenticated same-origin stream. Each connection begins with the current REST overview snapshot, then emits persisted metadata-only changes; reconnects use Last-Event-ID for catch-up. Credentials are accepted only through the HttpOnly session cookie.",
+        "parameters": [{ "$ref": "#/components/parameters/LastEventId" }],
+        "responses": {
+          "200": { "description": "Initial overview snapshot followed by SSE metadata change notifications", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/SsePayload" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/retention/actions": {
+      "post": {
+        "operationId": "createRetentionAction",
+        "tags": ["Retention"],
+        "parameters": [
+          { "$ref": "#/components/parameters/CsrfToken" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/RetentionConfirmation" }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRetentionActionRequest" } } } },
+        "responses": {
+          "202": { "description": "Retention action queued, or the existing action returned for the same idempotency key", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetentionAction" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/retention/actions/{action_id}": {
+      "get": {
+        "operationId": "getRetentionAction",
+        "tags": ["Retention"],
+        "parameters": [{ "$ref": "#/components/parameters/RetentionActionId" }],
+        "responses": {
+          "200": { "description": "Content-free retention action and audit status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetentionAction" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "observatorySession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-observatory_session",
+        "description": "Opaque owner BFF session. Production cookies are HttpOnly, Secure, SameSite=Lax, Path=/, host-only, and rotated on authentication or privilege change."
+      }
+    },
+    "parameters": {
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "Opaque stable cursor; clients must not parse it.", "schema": { "$ref": "#/components/schemas/Cursor" } },
+      "PageSize": { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "DetailPageSize": { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 10000 } },
+      "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "TraceId": { "name": "trace_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/TraceId" } },
+      "ComponentId": { "name": "component_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ComponentId" } },
+      "RetentionActionId": { "name": "action_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "LastEventId": { "name": "Last-Event-ID", "in": "header", "required": false, "description": "Last persisted observation identifier received by the browser.", "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "CsrfToken": { "name": "X-Observatory-CSRF", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 256 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" } },
+      "RetentionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "description": "Exact acknowledgement selected for the requested action: delete-before or purge-all.", "schema": { "type": "string", "enum": ["delete-before", "purge-all"] } }
+    },
+    "responses": {
+      "BadRequest": { "description": "Malformed request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "Unauthorized": { "description": "Valid owner session required", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "Forbidden": { "description": "Owner authorization, same-origin request, or anti-CSRF validation failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "NotFound": { "description": "Resource not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "Conflict": { "description": "Idempotency key was reused with a different command", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "UnprocessableEntity": { "description": "Semantically invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "ServiceUnavailable": { "description": "A required Observatory-owned store is unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } }
+    },
+    "schemas": {
+      "Uuid": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+      "UtcInstant": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$" },
+      "SafeLabel": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$" },
+      "ComponentId": { "type": "string", "minLength": 6, "maxLength": 96, "pattern": "^aura\\.[a-z][a-z0-9_.-]{0,90}$" },
+      "TraceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+      "SpanId": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+      "Cursor": { "type": "string", "minLength": 16, "maxLength": 1024, "pattern": "^[A-Za-z0-9_-]+$" },
+      "RunStatus": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"] },
+      "Outcome": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "unknown"] },
+      "ServiceState": { "type": "string", "enum": ["healthy", "degraded", "unavailable"] },
+      "Problem": {
+        "type": "object", "additionalProperties": false,
+        "required": ["code", "message", "retryable", "traceId"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_.-]*$" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "retryable": { "type": "boolean" },
+          "traceId": { "$ref": "#/components/schemas/TraceId" }
+        }
+      },
+      "IngestCounts": {
+        "type": "object", "additionalProperties": false,
+        "required": ["accepted", "rejected", "duplicate", "malformed", "storageFailure"],
+        "properties": {
+          "accepted": { "type": "integer", "minimum": 0 }, "rejected": { "type": "integer", "minimum": 0 }, "duplicate": { "type": "integer", "minimum": 0 }, "malformed": { "type": "integer", "minimum": 0 }, "storageFailure": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "IngestOverview": {
+        "type": "object", "additionalProperties": false,
+        "required": ["state", "counts", "lastAcceptedAt", "lastFailureAt"],
+        "properties": {
+          "state": { "$ref": "#/components/schemas/ServiceState" }, "counts": { "$ref": "#/components/schemas/IngestCounts" }, "lastAcceptedAt": { "type": ["string", "null"], "format": "date-time" }, "lastFailureAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "Overview": {
+        "type": "object", "additionalProperties": false,
+        "required": ["observedAt", "systemState", "ingest", "observationCount", "runCount", "latestObservationId"],
+        "properties": {
+          "observedAt": { "$ref": "#/components/schemas/UtcInstant" }, "systemState": { "$ref": "#/components/schemas/ServiceState" }, "ingest": { "$ref": "#/components/schemas/IngestOverview" }, "observationCount": { "type": "integer", "minimum": 0 }, "runCount": { "type": "integer", "minimum": 0 }, "latestObservationId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }
+        }
+      },
+      "RunSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "status", "startedAt", "finishedAt", "durationMs", "model", "deploymentId", "componentIds", "traceId"],
+        "properties": {
+          "runId": { "$ref": "#/components/schemas/Uuid" }, "status": { "$ref": "#/components/schemas/RunStatus" }, "startedAt": { "$ref": "#/components/schemas/UtcInstant" }, "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "durationMs": { "type": ["number", "null"], "minimum": 0 }, "model": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }] }, "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "componentIds": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ComponentId" } }, "traceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] }
+        }
+      },
+      "RunPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "snapshotAt", "latestObservationId"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/RunSummary" } }, "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" }, "latestObservationId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }
+        }
+      },
+      "Measurement": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "value", "unit"],
+        "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]{0,95}$" }, "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 }, "unit": { "type": ["string", "null"], "enum": ["count", "milliseconds", "bytes", "ratio", "score", null] } }
+      },
+      "RunDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runId", "status", "startedAt", "finishedAt", "durationMs", "model", "deploymentId", "componentIds", "traceId", "observations", "partial", "nextCursor"],
+        "properties": {
+          "runId": { "$ref": "#/components/schemas/Uuid" }, "status": { "$ref": "#/components/schemas/RunStatus" }, "startedAt": { "$ref": "#/components/schemas/UtcInstant" }, "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "durationMs": { "type": ["number", "null"], "minimum": 0 }, "model": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }] }, "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "componentIds": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ComponentId" } }, "traceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] }, "observations": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/components/schemas/ObservationSummary" } }, "partial": { "type": "boolean", "description": "True when more observations remain after this bounded page." }, "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] }
+        }
+      },
+      "ObservationSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["observationId", "observedAt", "componentId", "componentVersion", "operation", "measurement", "outcome", "deploymentId", "serviceRole", "capturePolicy"],
+        "properties": { "observationId": { "$ref": "#/components/schemas/Uuid" }, "observedAt": { "$ref": "#/components/schemas/UtcInstant" }, "componentId": { "$ref": "#/components/schemas/ComponentId" }, "componentVersion": { "$ref": "#/components/schemas/SafeLabel" }, "operation": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]{0,95}$" }, "measurement": { "$ref": "#/components/schemas/Measurement" }, "outcome": { "$ref": "#/components/schemas/Outcome" }, "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "serviceRole": { "type": "string", "enum": ["api", "worker", "scheduler", "cli"] }, "capturePolicy": { "type": "string", "const": "metadata_only" } }
+      },
+      "Span": {
+        "type": "object", "additionalProperties": false,
+        "required": ["spanId", "parentSpanId", "componentId", "operation", "startedAt", "durationMs", "outcome", "depth", "partial"],
+        "properties": { "spanId": { "$ref": "#/components/schemas/SpanId" }, "parentSpanId": { "oneOf": [{ "$ref": "#/components/schemas/SpanId" }, { "type": "null" }] }, "componentId": { "$ref": "#/components/schemas/ComponentId" }, "operation": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]{0,95}$" }, "startedAt": { "$ref": "#/components/schemas/UtcInstant" }, "durationMs": { "type": "number", "minimum": 0 }, "outcome": { "$ref": "#/components/schemas/Outcome" }, "depth": { "type": "integer", "minimum": 0, "maximum": 256 }, "partial": { "type": "boolean" } }
+      },
+      "TraceDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["traceId", "runId", "partial", "spans", "nextCursor"],
+        "properties": { "traceId": { "$ref": "#/components/schemas/TraceId" }, "runId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }, "partial": { "type": "boolean", "description": "True for missing-parent topology or when more spans remain after this bounded page." }, "spans": { "type": "array", "maxItems": 10000, "description": "Preorder parent-child traversal; siblings use startedAt then spanId.", "items": { "$ref": "#/components/schemas/Span" } }, "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] } }
+      },
+      "HealthSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sampleCount", "latencyP50Ms", "latencyP95Ms", "errorRate", "outcomes"],
+        "properties": { "sampleCount": { "type": "integer", "minimum": 0 }, "latencyP50Ms": { "type": ["number", "null"], "minimum": 0 }, "latencyP95Ms": { "type": ["number", "null"], "minimum": 0 }, "errorRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "outcomes": { "type": "object", "additionalProperties": false, "required": ["succeeded", "failed", "cancelled", "unknown"], "properties": { "succeeded": { "type": "integer", "minimum": 0 }, "failed": { "type": "integer", "minimum": 0 }, "cancelled": { "type": "integer", "minimum": 0 }, "unknown": { "type": "integer", "minimum": 0 } } } }
+      },
+      "ComponentSummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["componentId", "versions", "firstSeenAt", "lastSeenAt", "health"],
+        "properties": { "componentId": { "$ref": "#/components/schemas/ComponentId" }, "versions": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/SafeLabel" } }, "firstSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "lastSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "health": { "$ref": "#/components/schemas/HealthSummary" } }
+      },
+      "ComponentCollection": { "type": "object", "additionalProperties": false, "required": ["items", "snapshotAt"], "properties": { "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/ComponentSummary" } }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" } } },
+      "HealthPoint": { "type": "object", "additionalProperties": false, "required": ["startAt", "endAt", "summary"], "properties": { "startAt": { "$ref": "#/components/schemas/UtcInstant" }, "endAt": { "$ref": "#/components/schemas/UtcInstant" }, "summary": { "$ref": "#/components/schemas/HealthSummary" } } },
+      "ComponentHealth": { "type": "object", "additionalProperties": false, "required": ["componentId", "summary", "points"], "properties": { "componentId": { "$ref": "#/components/schemas/ComponentId" }, "summary": { "$ref": "#/components/schemas/HealthSummary" }, "points": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/HealthPoint" } } } },
+      "Deployment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["deploymentId", "gitCommit", "environment", "hostId", "serviceRoles", "firstSeenAt", "lastSeenAt"],
+        "properties": { "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "gitCommit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, "environment": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_.-]{0,31}$" }, "hostId": { "$ref": "#/components/schemas/SafeLabel" }, "serviceRoles": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "enum": ["api", "worker", "scheduler", "cli"] } }, "firstSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "lastSeenAt": { "$ref": "#/components/schemas/UtcInstant" } }
+      },
+      "DeploymentCollection": { "type": "object", "additionalProperties": false, "required": ["items", "snapshotAt"], "properties": { "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/Deployment" } }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" } } },
+      "LiveEventType": { "type": "string", "enum": ["observation.changed", "retention.changed", "heartbeat"] },
+      "LiveEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "resourceType", "resourceId", "capturePolicy"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "$ref": "#/components/schemas/Uuid" }, "eventType": { "$ref": "#/components/schemas/LiveEventType" }, "occurredAt": { "$ref": "#/components/schemas/UtcInstant" }, "resourceType": { "type": "string", "enum": ["observation", "run", "trace", "component", "deployment", "retention", "system"] }, "resourceId": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" }, "capturePolicy": { "type": "string", "const": "metadata_only" } }
+      },
+      "SsePayload": { "oneOf": [{ "$ref": "#/components/schemas/Overview" }, { "$ref": "#/components/schemas/LiveEvent" }] },
+      "DeleteBeforeRequest": { "type": "object", "additionalProperties": false, "required": ["action", "cutoff"], "properties": { "action": { "type": "string", "const": "delete_before" }, "cutoff": { "$ref": "#/components/schemas/UtcInstant" } } },
+      "PurgeAllRequest": { "type": "object", "additionalProperties": false, "required": ["action"], "properties": { "action": { "type": "string", "const": "purge_all" } } },
+      "CreateRetentionActionRequest": { "oneOf": [{ "$ref": "#/components/schemas/DeleteBeforeRequest" }, { "$ref": "#/components/schemas/PurgeAllRequest" }], "discriminator": { "propertyName": "action", "mapping": { "delete_before": "#/components/schemas/DeleteBeforeRequest", "purge_all": "#/components/schemas/PurgeAllRequest" } } },
+      "RetentionActionStatus": { "type": "string", "enum": ["queued", "running", "succeeded", "failed"] },
+      "RetentionAction": {
+        "type": "object", "additionalProperties": false,
+        "required": ["actionId", "action", "cutoff", "status", "createdAt", "startedAt", "finishedAt", "deletedObservationCount", "deletedReceiptCount", "deletedRunCount", "failureCode"],
+        "properties": { "actionId": { "$ref": "#/components/schemas/Uuid" }, "action": { "type": "string", "enum": ["delete_before", "purge_all"] }, "cutoff": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "status": { "$ref": "#/components/schemas/RetentionActionStatus" }, "createdAt": { "$ref": "#/components/schemas/UtcInstant" }, "startedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "deletedObservationCount": { "type": "integer", "minimum": 0 }, "deletedReceiptCount": { "type": "integer", "minimum": 0 }, "deletedRunCount": { "type": "integer", "minimum": 0 }, "failureCode": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_.-]*$" } }
+      }
+    }
+  }
+}

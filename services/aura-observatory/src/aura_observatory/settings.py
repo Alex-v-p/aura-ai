@@ -31,9 +31,7 @@ class Settings(BaseSettings):
     owner_subject: str = ""
     secure_cookies: bool = Field(
         default=False,
-        validation_alias=AliasChoices(
-            "AURA_OBSERVATORY_SECURE_COOKIES", "AURA_SECURE_COOKIES"
-        ),
+        validation_alias=AliasChoices("AURA_OBSERVATORY_SECURE_COOKIES", "AURA_SECURE_COOKIES"),
     )
     session_cookie_name: str = "__Host-observatory_session"
     session_store_url: str = "redis://observatory-session:6379/0"
@@ -60,6 +58,12 @@ class Settings(BaseSettings):
     deployment_id: str = "local"
     deployment_host: str = "local"
     service_role: str = "api"
+    metrics_file: Path | None = Field(
+        default=Path("/state/aura-observatory/metrics/series.json"),
+        validation_alias=AliasChoices(
+            "AURA_OBSERVATORY_METRICS_FILE", "AURA_OBSERVATORY_METRICS_PATH"
+        ),
+    )
     collector_endpoint: str = "http://observatory-collector:4318"
     observation_claim_lease_seconds: int = Field(default=60, ge=1, le=3600)
     ingest_max_batch_size: int = Field(default=500, ge=1, le=5000)
@@ -85,7 +89,8 @@ class Settings(BaseSettings):
             disposable_local = (
                 self.environment == "disposable_local"
                 and self.public_origin == "http://observatory.localhost:4300"
-                and self.oidc_redirect_uri == "http://observatory.localhost:4300/api/v1/auth/callback"
+                and self.oidc_redirect_uri
+                == "http://observatory.localhost:4300/api/v1/auth/callback"
                 and not self.secure_cookies
             )
             if not disposable_local:

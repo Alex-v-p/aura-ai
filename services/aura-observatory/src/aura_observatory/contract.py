@@ -43,9 +43,7 @@ class ContractViolation(ValueError):
 
 
 class _ClosedModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", strict=True, frozen=True
-    )
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
 class ComponentIdentity(_ClosedModel):
@@ -267,6 +265,23 @@ class MetadataObservation(_ClosedModel):
 
     @classmethod
     def from_payload(cls, payload: Any) -> MetadataObservation:
+        # Accept one standard OTLP JSON point at this public boundary and
+        # immediately normalize it into the closed metadata contract.
+        if isinstance(payload, Mapping):
+            if "resourceMetrics" in payload:
+                from aura_observatory.otlp import metrics_to_observations
+
+                records = metrics_to_observations(cast(object, payload))
+                if len(records) != 1:
+                    raise ContractViolation("exactly one OTLP observation is required")
+                payload = records[0]
+            elif "resourceSpans" in payload:
+                from aura_observatory.otlp import traces_to_observations
+
+                records = traces_to_observations(cast(object, payload))
+                if len(records) != 1:
+                    raise ContractViolation("exactly one OTLP observation is required")
+                payload = records[0]
         return cls.model_validate(payload)
 
 

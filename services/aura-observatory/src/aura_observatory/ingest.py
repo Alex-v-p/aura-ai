@@ -89,7 +89,7 @@ class TelemetryIngestService:
             except ValidationError:
                 rejected += 1
                 continue
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 malformed += 1
                 continue
             try:
@@ -106,6 +106,15 @@ class TelemetryIngestService:
                     observation.deployment.environment,
                     observation.deployment.host_id,
                 )
+                record_role = getattr(self.catalog, "record_deployment_role", None)
+                if record_role is not None:
+                    await record_role(
+                        observation.deployment.deployment_id,
+                        observation.deployment.git_commit,
+                        observation.deployment.environment,
+                        observation.deployment.host_id,
+                        observation.service_role,
+                    )
             except Exception:
                 storage_failures += 1
                 continue

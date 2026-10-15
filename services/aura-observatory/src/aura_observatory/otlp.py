@@ -12,6 +12,7 @@ import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import cast
+from uuid import NAMESPACE_URL, uuid5
 
 
 class OtlpPayloadError(ValueError):
@@ -72,6 +73,7 @@ def metrics_to_observations(payload: object) -> list[dict[str, object]]:
     _only_keys(root, {"resourceMetrics"}, "metrics payload")
     resources = _list(root.get("resourceMetrics"), "resourceMetrics")
     result: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
     for resource_metric in resources:
         resource = _object(resource_metric, "resource metric")
         _only_keys(resource, {"resource", "scopeMetrics", "schemaUrl"}, "resource metric")
@@ -112,14 +114,22 @@ def metrics_to_observations(payload: object) -> list[dict[str, object]]:
                         "data point",
                     )
                     attrs = _attributes(point_object.get("attributes"), _OBSERVATION_KEYS)
+                    original_id = attrs.get("aura.observation_id")
+                    observed_at = _timestamp(point_object.get("timeUnixNano"))
+                    if original_id in seen_ids:
+                        attrs["aura.observation_id"] = str(
+                            uuid5(NAMESPACE_URL, f"{original_id}:{observed_at.isoformat()}")
+                        )
+                    seen_ids.add(attrs["aura.observation_id"])
                     result.append(
                         _observation(
                             deployment,
                             attrs,
                             kind="metric",
                             value=_number(point_object),
-                            observed_at=_timestamp(point_object.get("timeUnixNano")),
+                            observed_at=observed_at,
                             trace=None,
+                            unit=_metric_unit(metric_object.get("unit")),
                         )
                     )
     if not result:
@@ -189,6 +199,7 @@ def traces_to_observations(payload: object) -> list[dict[str, object]]:
                             **({"parentSpanId": _string(parent, "parentSpanId")} if parent else {}),
                             **({"linkedSpanIds": link_ids} if link_ids else {}),
                         },
+                        unit="milliseconds",
                     )
                 )
     if not result:
@@ -204,6 +215,7 @@ def _observation(
     value: float,
     observed_at: datetime,
     trace: dict[str, object] | None,
+    unit: str | None = None,
 ) -> dict[str, object]:
     required = (
         "aura.observation_id",
@@ -233,7 +245,11 @@ def _observation(
         "kind": kind,
         "component": {"id": attrs["aura.component_id"], "version": attrs["aura.component_version"]},
         "operation": attrs["aura.operation"],
-        "measurement": {"name": attrs["aura.metric_name"], "value": value},
+        "measurement": {
+            "name": attrs["aura.metric_name"],
+            "value": value,
+            **({"unit": unit} if unit is not None else {}),
+        },
         "dimensions": dimensions,
         "deployment": {
             "deploymentId": deployment["deploymentId"],
@@ -267,6 +283,16 @@ def _deployment(value: object) -> dict[str, str]:
     if "service.name" in attrs and attrs["service.name"] != "aura-core":
         raise OtlpPayloadError("unexpected OTLP service name")
     return {target: attrs[source] for source, target in required.items()}
+
+
+def _metric_unit(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise OtlpPayloadError("metric unit must be a string")
+    if value not in {"count", "milliseconds", "bytes", "ratio", "score"}:
+        raise OtlpPayloadError("metric unit is outside the metadata allowlist")
+    return value
 
 
 def _attributes(value: object, allowed: frozenset[str]) -> dict[str, str]:
