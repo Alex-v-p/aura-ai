@@ -32,21 +32,23 @@ dev = [
 
 [project.scripts]
 aura-core = "aura_core.entrypoints.cli:main"
+aura-observatory = "aura_observatory.entrypoints.cli:main"
 
 [tool.pyright]
-include = ["services/aura-core"]
+include = ["services/aura-core", "services/aura-observatory"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 executionEnvironments = [
   { root = "services/aura-core", extraPaths = ["services/aura-core/src"] },
+  { root = "services/aura-observatory", extraPaths = ["services/aura-observatory/src"] },
 ]
 
 [tool.ruff]
 target-version = "py314"
 line-length = 100
-src = ["services/aura-core", "services/aura-core/tests/system"]
+src = ["services/aura-core", "services/aura-core/tests/system", "services/aura-observatory"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

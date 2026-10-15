@@ -1,0 +1,14 @@
+agent: observability_steward
+work_item: AURA-0078
+verdict: PASS
+checked:
+  - Production composition uses Observatory-owned PostgreSQL and ClickHouse adapters and memory adapters remain explicit test dependencies.
+  - Observation topology correlation deployment component and capture fields map exactly into ClickHouse.
+  - Receipt states distinguish acquired active pending stale pending and completed observation IDs.
+  - Active pending receipts are retryable without inflating duplicate counts and completed receipts alone produce duplicate outcomes.
+  - Stale leases and ambiguous ClickHouse outcomes recover with the stable deduplication token.
+  - Failure and latency accounting is bounded metadata-only and manifests match implemented behavior.
+  - Runtime validation matches the versioned schema and rejects private fields and arbitrary attributes.
+  - PostgreSQL and ClickHouse migrations contain no automatic TTL or purge behavior.
+  - Focused Observatory verification passed with 65 tests and Ruff Pyright observability and diff checks passed.
+findings: []

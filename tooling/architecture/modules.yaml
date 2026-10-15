@@ -6,6 +6,162 @@ metadata:
   note: Registry entries describe existing roots; they do not authorize new product
     behavior.
 modules:
+- id: aura-observatory.service
+  root: services/aura-observatory
+  kind: service
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-observatory.package
+  root: services/aura-observatory/src/aura_observatory
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory
+  source_files:
+  - services/aura-observatory/src/aura_observatory/__init__.py
+  dependencies: []
+- id: aura-observatory.contract
+  root: services/aura-observatory/src/aura_observatory/contract.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/contract.py
+  python_modules:
+  - aura_observatory.contract
+  dependencies: []
+- id: aura-observatory.ports
+  root: services/aura-observatory/src/aura_observatory/ports.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/ports.py
+  python_modules:
+  - aura_observatory.ports
+  dependencies:
+  - aura-observatory.contract
+- id: aura-observatory.metrics
+  root: services/aura-observatory/src/aura_observatory/metrics.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/metrics.py
+  python_modules:
+  - aura_observatory.metrics
+  dependencies: []
+- id: aura-observatory.settings
+  root: services/aura-observatory/src/aura_observatory/settings.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/settings.py
+  python_modules:
+  - aura_observatory.settings
+  dependencies: []
+- id: aura-observatory.ingest
+  root: services/aura-observatory/src/aura_observatory/ingest.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/ingest.py
+  python_modules:
+  - aura_observatory.ingest
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.metrics
+  - aura-observatory.ports
+- id: aura-observatory.adapters
+  root: services/aura-observatory/src/aura_observatory/adapters
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/adapters/__init__.py
+  python_modules:
+  - aura_observatory.adapters
+  source_files:
+  - services/aura-observatory/src/aura_observatory/adapters/__init__.py
+  dependencies: []
+- id: aura-observatory.adapters.memory
+  root: services/aura-observatory/src/aura_observatory/adapters/memory.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/memory.py
+  python_modules:
+  - aura_observatory.adapters.memory
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
+- id: aura-observatory.adapters.postgres
+  root: services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  python_modules:
+  - aura_observatory.adapters.postgres
+  dependencies:
+  - aura-observatory.ports
+- id: aura-observatory.adapters.clickhouse
+  root: services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  python_modules:
+  - aura_observatory.adapters.clickhouse
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
+- id: aura-observatory.composition
+  root: services/aura-observatory/src/aura_observatory/composition.py
+  kind: bootstrap
+  public_api: services/aura-observatory/src/aura_observatory/composition.py
+  python_modules:
+  - aura_observatory.composition
+  dependencies:
+  - aura-observatory.adapters.clickhouse
+  - aura-observatory.adapters.postgres
+  - aura-observatory.ingest
+  - aura-observatory.settings
+- id: aura-observatory.entrypoints
+  root: services/aura-observatory/src/aura_observatory/entrypoints
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints
+  source_files:
+  - services/aura-observatory/src/aura_observatory/entrypoints/__init__.py
+  dependencies: []
+- id: aura-observatory.entrypoints.api
+  root: services/aura-observatory/src/aura_observatory/entrypoints/api
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints.api
+  source_files:
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/__init__.py
+  dependencies:
+  - aura-observatory.composition
+- id: aura-observatory.entrypoints.api.app
+  root: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints.api.app
+  dependencies:
+  - aura-observatory.adapters.memory
+  - aura-observatory.composition
+  - aura-observatory.ingest
+  - aura-observatory.settings
+- id: aura-observatory.entrypoints.worker
+  root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  python_modules:
+  - aura_observatory.entrypoints.worker
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.ingest
+  - aura-observatory.settings
+- id: aura-observatory.entrypoints.cli
+  root: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  python_modules:
+  - aura_observatory.entrypoints.cli
+  dependencies:
+  - aura-observatory.settings
+- id: aura-contract.telemetry-observation
+  root: contracts/telemetry/v1
+  kind: event-contract
+  public_api: contracts/telemetry/v1/metadata-observation.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
 - id: aura-core.service
   root: services/aura-core
   kind: service

@@ -1,0 +1,38 @@
+component:
+  id: aura.observatory.telemetry_ingestion
+  version: 1.0.0
+  owner: observatory.telemetry_ingestion
+  category: observability
+input:
+  schema: metadata-observation-v1
+  replayable: false
+output:
+  schema: observatory-observation-v1
+dependencies:
+  - postgresql
+  - clickhouse
+metrics:
+  - telemetry_ingest_accepted_count
+  - telemetry_ingest_rejected_count
+  - telemetry_ingest_duplicate_count
+  - telemetry_ingest_storage_failure_count
+  - telemetry_ingest_duration_ms
+metric_semantics:
+  telemetry_ingest_accepted_count: Metadata observations accepted by the idempotent ingest boundary.
+  telemetry_ingest_rejected_count: Contract-invalid observations rejected without persistence.
+  telemetry_ingest_duplicate_count: Stable observation identifiers with completed receipts already present in storage.
+  telemetry_ingest_storage_failure_count: Valid observations that failed or remain pending for retry.
+  telemetry_ingest_duration_ms: End-to-end metadata batch validation and storage duration.
+evaluators:
+  - metadata_observation_contract_rejection
+  - telemetry_ingestion_idempotency
+  - observatory_service_isolation
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, observation_id]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]
+export:
+  sink: clickhouse
+  cadence: per_batch
+  health_counters: [accepted, rejected, duplicate, malformed, storage_failure]

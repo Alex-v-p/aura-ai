@@ -1,0 +1,15 @@
+agent: general_reviewer
+work_item: AURA-0078
+verdict: PASS
+checked:
+  - Re-reviewed the final diff against AURA-0078, the authoritative telemetry schema, architecture boundaries, implementation handoffs, migrations, production entrypoints, persistence adapters, and all focused regression tests.
+  - Production API and worker composition use the configured PostgreSQL catalogue, PostgreSQL observation-receipt registry, and ClickHouse observation store; memory adapters require explicit test composition, and the CLI executes both service-owned migration sets.
+  - Runtime validation matches the closed v1 wire contract for required fields, explicit-null rejection, service roles, component bounds, canonical aliases and identifiers, dimensions, capture policy, and span trace topology.
+  - ClickHouse mapping preserves every declared observation field, including kind and capture_policy, while the migration configures bounded non-replicated insert deduplication and no automatic TTL.
+  - Receipt claims distinguish acquired, fresh pending, stale pending, and completed states; completed alone is duplicate, fresh pending is retryable, and stale pending is atomically reacquired after the configured lease.
+  - A pending delivery is classified as a storage failure rather than a duplicate and the API returns 503 with Retry-After, so a producer continues retrying instead of treating an absent observation as delivered.
+  - Successful ClickHouse insertion is followed by receipt completion; pre-insert failure and ambiguous response loss retain pending state, then recover with the same stable deduplication token without a second immediately visible observation.
+  - Catalogue and counter failures remain bounded and classified, malformed and oversized requests are rejected after authentication without retaining payloads, and duration reporting persists the current batch delta rather than the cumulative total.
+  - Focused receipt, lease, pre-insert failure, response-loss, pending-status, and deduplication tests passed with 9 tests; the complete Observatory suite passed with 65 tests.
+  - Work-item, changed-path, repository-shape, module-registry, import-boundary, service-isolation, contract-change, observability, and baseline-protection checks passed; tooling tests passed with 52 tests; Pyright, Ruff, and git diff --check passed.
+findings: []

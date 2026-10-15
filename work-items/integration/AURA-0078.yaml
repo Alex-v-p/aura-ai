@@ -1,0 +1,55 @@
+agent: integration_maintainer
+work_item: AURA-0078
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0078-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0078-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0078-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0078-observability.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0078-contracts.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0078-observatory.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0078-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0078.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0078.yaml (passed before archival)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0078.yaml (36 changed paths valid before archival)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0078.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0078.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0078.yaml (skipped; no protected baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv lock --check
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests (65 passed)
+    - implementation-handoff.schema.json validation for all three AURA-0078 handoffs
+    - review-verdict.schema.json validation for all four AURA-0078 reviews
+    - git diff --check
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - Worker handoff reports lease-based receipt recovery and manual-only retention; Collector transport wiring and retention execution are explicitly deferred to later work items.
+  - No live PostgreSQL or ClickHouse integration environment was required by AURA-0078; storage adapters and migrations were validated through focused deterministic tests.
+  - The repository does not include a JSON Schema validator dependency; focused tests cover closed-schema shape and runtime Pydantic rejection, while the contract remains the transport source of truth.

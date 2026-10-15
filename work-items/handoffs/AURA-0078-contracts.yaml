@@ -1,0 +1,74 @@
+agent: contract_steward
+work_item: AURA-0078
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0078_contracts
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: contracts.telemetry.v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/telemetry/v1/metadata-observation.schema.json
+  - work-items/handoffs/AURA-0078-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; Observatory runtime and test owners were directed to align with this authoritative shared schema and no other agent is authorized to revise the contract-owned path
+  compatibility: backward_compatible
+  definitions:
+    - id: https://aura.local/contracts/telemetry/v1/metadata-observation.schema.json
+      version: 1
+      source: contracts/telemetry/v1/metadata-observation.schema.json
+      changes:
+        - Added a closed JSON Schema 2020-12 envelope for content-free operational metrics and spans.
+        - Added stable observation UUIDs, bounded timestamps, component identity, operation and numeric measurement metadata, a fixed dimension allowlist, OpenTelemetry trace topology, opaque run correlation, deployment metadata, originating service role, and a metadata_only capture constant.
+        - Rejected undeclared and sensitive fields at every object boundary; bounded names, values, collections, identifiers, and numeric measurements prevent free-form or non-finite telemetry.
+  compatibility_notes:
+    - This is a new v1 contract and does not tighten or replace an existing telemetry payload contract.
+    - Metric observations may omit trace lineage to preserve compatibility with Core measurements that are not attached to a trace.
+    - Span observations require a 32-hex OpenTelemetry trace identifier and a 16-hex span identifier; correlation identifiers remain canonical UUIDs.
+    - Additive optional properties may be introduced compatibly within v1 only when they remain metadata-only; new required fields, widened capture policy, or newly admitted sensitive data require a new contract version and authorization.
+  producers:
+    - Aura Core API, worker, scheduler, and CLI telemetry exporters introduced by AURA-0079
+    - OpenTelemetry Collector normalization and routing configured by AURA-0079 without changing the originating service role
+  consumers:
+    - Aura Observatory authenticated ingestion boundary
+    - Aura Observatory ClickHouse observation and span-topology repository
+    - Contract and privacy regression evaluators
+  rollout:
+    - Deploy the AURA-0078 Observatory consumer and storage migrations before enabling AURA-0079 Core OTLP export.
+    - Keep the existing Core structured-container-log exporter enabled during rollout; this contract introduces no Core dependency on Observatory availability.
+    - Reject unknown fields or capture policies at ingest and do not dual-write rejected content.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/telemetry/v1/metadata-observation.schema.json
+    - AJV 8.20 strict JSON Schema 2020-12 compilation and valid metric/span instance validation
+    - AJV rejection cases for sensitive top-level fields, arbitrary dimensions, non-metadata capture, malformed observation identifiers, non-finite measurements, URL-like dimension values, and spans without trace topology
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0078.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0078.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0078.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0078.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full repository and Observatory checks are owned by the Observatory, test/evaluation, review, and integration handoffs.
+    - python3 tooling/architecture/validate-repository-shape.py was attempted but the concurrent workspace contained an unrelated .aura-e2e.ZRCbPp top-level test artifact; integration must rerun after its owner removes that artifact.
+decisions:
+  - The JSON Schema is the transport source of truth; runtime validation models and migrations must follow its camelCase wire names without embedding business behavior in the contract.
+  - observationId, runId, and conversationId are canonical UUIDs, while traceId and span IDs use W3C/OpenTelemetry lowercase hexadecimal widths.
+  - Trace lineage is optional for metrics because the existing Core Measurement contract permits untraced measurements; span observations require both traceId and spanId.
+  - Dimensions use a fixed eleven-key allowlist compatible with current Core metadata labels instead of arbitrary attribute maps.
+  - The Collector is a routing boundary, not an originating serviceRole; the admitted roles are api, worker, scheduler, and cli.
+risks:
+  - Runtime validators, database mappings, and tests must remain synchronized with camelCase nested wire properties and the metric-versus-span trace requirement.
+  - Future model filtering may require a separately reviewed additive metadata field; arbitrary trace attributes are intentionally not admitted by v1.
+unresolved: []
