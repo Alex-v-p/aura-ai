@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 from collections import defaultdict
 from collections.abc import AsyncIterator
@@ -25,9 +26,34 @@ from aura_observatory.ports import (
     ObservatoryRetentionPort,
 )
 
+_LOGGER = logging.getLogger(__name__)
+_RETENTION_EXCEPTION_CLASSES = frozenset(
+    {
+        "AttributeError",
+        "CancelledError",
+        "ConnectError",
+        "ConnectTimeout",
+        "HTTPStatusError",
+        "KeyError",
+        "OSError",
+        "PoolTimeout",
+        "ReadTimeout",
+        "RuntimeError",
+        "TimeoutError",
+        "TypeError",
+        "ValueError",
+        "WriteTimeout",
+    }
+)
+
+
+def _retention_exception_class(error: BaseException) -> str:
+    name = type(error).__name__
+    return name if name in _RETENTION_EXCEPTION_CLASSES else "other"
+
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9_-]{16,1024}$")
 _UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 
 
@@ -808,6 +834,7 @@ class ObservatoryQueryService:
             action = cast(RetentionAction, claimed)
         action.status = RetentionStatus.RUNNING
         action.started_at = datetime.now(UTC)
+        phase = "target_capture"
         try:
             # A restarted worker must bind the durable target scope before
             # deletion even when prepare_retention is correctly skipped for a
@@ -815,6 +842,7 @@ class ObservatoryQueryService:
             await self.retention_port.attach_retention(action)
             if action.deletion_phase == "queued":
                 await self.retention_port.prepare_retention(action)
+            phase = "storage_cleanup"
             deleted = await self.store.delete_observations(action.cutoff)
             action.deleted_count = deleted.observations
             action.deleted_receipt_count = deleted.receipts
@@ -828,6 +856,11 @@ class ObservatoryQueryService:
             )
             action.completed_at = datetime.now(UTC)
         except Exception as exc:  # pragma: no cover - adapter failure path
+            _LOGGER.error(
+                "retention storage failure phase=%s exception_class=%s",
+                phase,
+                _retention_exception_class(exc),
+            )
             action.status = RetentionStatus.FAILED
             action.error = "storage_failure"
             action.completed_at = datetime.now(UTC)
@@ -838,7 +871,7 @@ class ObservatoryQueryService:
             del exc
         try:
             await self.retention_port.update_retention(action)
-        except Exception:
+        except Exception as exc:
             # A terminal audit write is itself part of the durable command.
             # Keep the result counts, but make the in-memory action
             # recoverable rather than falsely reporting success.  The durable
@@ -846,6 +879,10 @@ class ObservatoryQueryService:
             action.status = RetentionStatus.FAILED
             action.error = "storage_failure"
             action.completed_at = datetime.now(UTC)
+            _LOGGER.error(
+                "retention storage failure phase=audit_update exception_class=%s",
+                _retention_exception_class(exc),
+            )
             self.metrics.record(
                 "observatory_retention_failure_count",
                 labels={"action": action.kind.value, "failure_code": "storage_failure"},
@@ -929,6 +966,20 @@ def _run_dict(
     *,
     include_spans: bool = False,
 ) -> dict[str, Any]:
+    # A run's last metadata observation is not necessarily a span.  In
+    # particular, terminal measurements can have no trace lineage even when
+    # an earlier span established the run's trace.  Select the newest
+    # non-empty lineage independently from the newest status/deployment/model
+    # observation, using the same stable timestamp/observation ordering as
+    # the run grouping and cursor semantics.
+    trace_items = [
+        item for item in items if item.trace is not None and item.trace.trace_id
+    ]
+    latest_trace = (
+        max(trace_items, key=lambda item: (item.observed_at, item.observation_id))
+        if trace_items
+        else None
+    )
     result: dict[str, Any] = {
         "runId": run_id,
         "status": _run_status(newest),
@@ -943,7 +994,7 @@ def _run_dict(
         ),
         "model": newest.dimensions.get("provider"),
         "componentIds": sorted({item.component.id for item in items}),
-        "traceId": newest.trace.trace_id if newest.trace else None,
+        "traceId": latest_trace.trace.trace_id if latest_trace and latest_trace.trace else None,
     }
     if include_spans:
         result["observations"] = [_observation_dict(item) for item in items]

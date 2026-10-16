@@ -379,6 +379,247 @@ async def test_production_run_status_equal_timestamp_uses_higher_observation_id(
 
 
 @pytest.mark.asyncio
+async def test_reference_run_list_and_detail_keep_latest_nonempty_trace_lineage() -> None:
+    store = MemoryObservatoryStore()
+    run_id = make_run_id("trace-lineage-reference")
+    trace_id = "0123456789abcdef0123456789abcdef"
+    await store.insert_observation(
+        make_payload(
+            "00000000-0000-4000-8000-0000000002d1",
+            observed_at=BASE_TIME,
+            run_id=run_id,
+            trace_id=trace_id,
+            span_id="0123456789abcdef",
+        )
+    )
+    latest_same_time_trace = "fedcba9876543210fedcba9876543210"
+    await store.insert_observation(
+        make_payload(
+            "00000000-0000-4000-8000-0000000002d3",
+            observed_at=BASE_TIME,
+            run_id=run_id,
+            trace_id=latest_same_time_trace,
+            span_id="fedcba9876543210",
+        )
+    )
+    terminal = make_payload(
+        "00000000-0000-4000-8000-0000000002d2",
+        observed_at=BASE_TIME + timedelta(seconds=1),
+        run_id=run_id,
+        trace_id=trace_id,
+    ).model_copy(update={"trace": None})
+    await store.insert_observation(terminal)
+
+    service = _query_service(store)
+    listed = await service.runs(RunFilters(), cursor=None, limit=10)
+    detail = await service.run_detail(run_id)
+
+    assert listed["items"][0]["traceId"] == latest_same_time_trace
+    assert detail is not None
+    assert detail["traceId"] == latest_same_time_trace
+
+
+@pytest.mark.asyncio
+async def test_reference_run_list_and_detail_leave_trace_empty_without_lineage() -> None:
+    store = MemoryObservatoryStore()
+    run_id = make_run_id("trace-lineage-empty-reference")
+    for suffix, observed_at in (("d3", BASE_TIME), ("d4", BASE_TIME + timedelta(seconds=1))):
+        item = make_payload(
+            f"00000000-0000-4000-8000-0000000000{suffix}",
+            observed_at=observed_at,
+            run_id=run_id,
+        ).model_copy(update={"trace": None})
+        await store.insert_observation(item)
+
+    service = _query_service(store)
+    listed = await service.runs(RunFilters(), cursor=None, limit=10)
+    detail = await service.run_detail(run_id)
+
+    assert listed["items"][0]["traceId"] is None
+    assert detail is not None
+    assert detail["traceId"] is None
+
+
+@pytest.mark.asyncio
+async def test_production_run_query_uses_latest_nonempty_trace_with_stable_tie_breaker() -> None:
+    queries: list[str] = []
+
+    class Store(ProductionObservatoryStore):
+        async def _overview_counts(self) -> dict[str, Any]:
+            return {"latest_sequence": 2, "observed_at": BASE_TIME}
+
+        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+            queries.append(statement)
+            return [
+                {
+                    "run_id": make_run_id("trace-lineage-production"),
+                    "started_at": BASE_TIME,
+                    "finished_at": BASE_TIME + timedelta(seconds=1),
+                    "observed_at": BASE_TIME + timedelta(seconds=1),
+                    "status": "succeeded",
+                    "model": "local-model",
+                    "deployment_id": "deploy-a",
+                    "component_ids": ["aura.runtime.model_inference"],
+                    "trace_id": "0123456789abcdef0123456789abcdef",
+                    "order_sequence": 2,
+                }
+            ]
+
+    store = Store(
+        lambda: None,
+        "http://clickhouse.test",
+        database="observatory",
+        user="u",
+        password="p",
+    )
+    result = await store.run_query(RunFilters(), cursor=None, limit=10)
+
+    assert result["items"][0]["traceId"] == "0123456789abcdef0123456789abcdef"
+    assert len(queries) == 1
+    assert (
+        "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id"
+        in queries[0]
+    )
+    assert "argMax(trace_id, observed_at)" not in queries[0]
+
+
+@pytest.mark.asyncio
+async def test_production_run_detail_keeps_trace_when_newest_row_is_untraced() -> None:
+    run_id = make_run_id("trace-lineage-production-detail")
+    trace_id = "0123456789abcdef0123456789abcdef"
+    span = make_payload(
+        "00000000-0000-4000-8000-0000000002d5",
+        observed_at=BASE_TIME,
+        run_id=run_id,
+        trace_id=trace_id,
+        span_id="0123456789abcdef",
+        parent_span_id="fedcba9876543210",
+    )
+    terminal = make_payload(
+        "00000000-0000-4000-8000-0000000002d6",
+        observed_at=BASE_TIME + timedelta(seconds=1),
+        run_id=run_id,
+        trace_id=trace_id,
+    ).model_copy(update={"trace": None})
+
+    def row(item: MetadataObservation) -> dict[str, Any]:
+        return {
+            "observation_id": item.observation_id,
+            "observed_at": item.observed_at,
+            "schema_version": 1,
+            "kind": item.kind,
+            "component_id": item.component.id,
+            "component_version": item.component.version,
+            "operation": item.operation,
+            "measurement_name": item.measurement.name,
+            "measurement_value": item.measurement.value,
+            "measurement_unit": item.measurement.unit,
+            "dimensions": item.dimensions,
+            "trace_id": item.trace.trace_id if item.trace else "",
+            "span_id": item.trace.span_id if item.trace else "",
+            "parent_span_id": item.trace.parent_span_id if item.trace else "",
+            "linked_span_ids": (
+                item.trace.linked_span_ids
+                if item.trace and item.trace.linked_span_ids
+                else (["1111111111111111"] if item.trace else [])
+            ),
+            "run_id": item.correlation.run_id if item.correlation else "",
+            "conversation_id": make_run_id("trace-lineage-conversation"),
+            "deployment_id": item.deployment.deployment_id,
+            "git_commit": item.deployment.git_commit,
+            "environment": item.deployment.environment,
+            "host_id": item.deployment.host_id,
+            "service_role": item.service_role,
+            "capture_policy": item.capture_policy,
+        }
+
+    class Store(ProductionObservatoryStore):
+        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+            return [row(span), row(terminal)]
+
+    store = Store(
+        lambda: None,
+        "http://clickhouse.test",
+        database="observatory",
+        user="u",
+        password="p",
+    )
+    result = await store.run_detail_query(run_id)
+
+    assert result is not None
+    assert result["traceId"] == trace_id
+
+
+@pytest.mark.asyncio
+async def test_production_components_merge_observed_only_and_registered_definitions() -> None:
+    registered_id = "aura.runtime.model_inference"
+    observed_only_id = "aura.runtime.stream_delivery"
+    queries: list[str] = []
+
+    class Store(ProductionObservatoryStore):
+        async def components(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "componentId": registered_id,
+                    "version": "1.0.0",
+                    "firstSeenAt": "2026-01-02T00:00:00Z",
+                    "lastSeenAt": "2026-01-04T00:00:00Z",
+                }
+            ]
+
+        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+            queries.append(statement)
+            if "quantileIf" in statement:
+                return [
+                    {
+                        "sample_count": 1,
+                        "p50": 12.0,
+                        "p95": 12.0,
+                        "failures": 0,
+                        "successes": 1,
+                        "cancelled": 0,
+                    }
+                ]
+            return [
+                {
+                    "component_id": registered_id,
+                    "component_version": "1.0.0",
+                    "first_seen_at": "2026-01-01 00:00:00",
+                    "last_seen_at": "2026-01-05 00:00:00",
+                },
+                {
+                    "component_id": observed_only_id,
+                    "component_version": "2.0.0",
+                    "first_seen_at": "2026-01-03 00:00:00",
+                    "last_seen_at": "2026-01-03 00:00:01",
+                },
+            ]
+
+    store = Store(
+        lambda: None,
+        "http://clickhouse.test",
+        database="observatory",
+        user="u",
+        password="p",
+    )
+    components = await store.components_query()
+    health = await store.component_health_query(observed_only_id, None, None)
+
+    assert [(item["componentId"], item["version"]) for item in components] == [
+        (registered_id, "1.0.0"),
+        (observed_only_id, "2.0.0"),
+    ]
+    registered = components[0]
+    assert registered["firstSeenAt"] == "2026-01-01T00:00:00Z"
+    assert registered["lastSeenAt"] == "2026-01-05T00:00:00Z"
+    assert health is not None
+    assert health["componentId"] == observed_only_id
+    assert health["summary"]["sampleCount"] == 1
+    assert "GROUP BY component_id, component_version" in queries[0]
+    assert "GROUP BY execution_id" in queries[1]
+
+
+@pytest.mark.asyncio
 async def test_live_catchup_uses_persisted_order_for_out_of_order_observations() -> None:
     store = MemoryObservatoryStore()
     newer_first = make_payload(
@@ -533,6 +774,18 @@ def test_clickhouse_literal_encoder_escapes_apostrophes_and_backslashes() -> Non
     assert literal.startswith("'") and literal.endswith("'")
 
 
+def test_clickhouse_datetime_literal_uses_utc_millisecond_storage_shape() -> None:
+    from aura_observatory.adapters.query import (
+        _clickhouse_time,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    value = _clickhouse_time(
+        datetime(2026, 1, 1, 13, 0, 0, 123456, tzinfo=timezone(timedelta(hours=1)))
+    )
+    assert value == "'2026-01-01 12:00:00.123'"
+    assert "T" not in value and "Z" not in value
+
+
 @pytest.mark.asyncio
 async def test_production_retention_state_is_bounded_and_guard_release_clears_active_refs() -> None:
     class Result:
@@ -671,6 +924,60 @@ async def test_production_retention_state_is_bounded_and_guard_release_clears_ac
     assert store._retention_guard is None  # type: ignore[attr-defined]
     assert database.active_locks == 0
     assert database.context_enters == database.context_exits
+
+
+@pytest.mark.asyncio
+async def test_production_retention_insert_matches_partial_idempotency_index() -> None:
+    """The production INSERT must match the deployed partial unique index."""
+
+    migration = (
+        SERVICE_ROOT / "migrations/postgresql/versions/0001_observatory_foundation.sql"
+    ).read_text()
+    assert "ON observatory_retention_actions(idempotency_key)" in migration
+    assert "WHERE idempotency_key IS NOT NULL" in migration
+
+    statements: list[str] = []
+
+    class Result:
+        async def fetchone(self) -> tuple[str] | None:
+            return (action.action_id,)
+
+    class Connection:
+        async def execute(self, statement: str, _params: tuple[Any, ...] = ()) -> Result:
+            statements.append(statement)
+            # A PostgreSQL partial index cannot be inferred by the bare
+            # ``ON CONFLICT (idempotency_key)`` form.  Keep this assertion
+            # production-shaped so a future SQL change fails before deploy.
+            assert (
+                "ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL"
+                in statement
+            )
+            assert "command_fingerprint" in statement
+            return Result()
+
+    class Context:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    action = RetentionAction(
+        "00000000-0000-4000-8000-000000000901",
+        RetentionKind.PURGE_ALL,
+        None,
+        idempotency_key="production-retention-key-0001",
+    )
+    store = ProductionObservatoryStore(
+        lambda: Context(),
+        "http://clickhouse.test",
+        database="observatory",
+        user="u",
+        password="p",
+    )
+
+    assert await store.save_retention(action)
+    assert len(statements) == 1
 
 
 @pytest.mark.asyncio
@@ -1280,6 +1587,38 @@ async def test_terminal_audit_failure_is_content_free_and_keeps_counts() -> None
         5,
         3,
     )
+
+
+@pytest.mark.asyncio
+async def test_retention_failure_logs_only_bounded_phase_and_exception_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    action = RetentionAction(
+        "00000000-0000-4000-8000-000000000603",
+        RetentionKind.PURGE_ALL,
+        None,
+        idempotency_key="diagnostic-failure",
+    )
+
+    class Store(MemoryObservatoryStore):
+        async def delete_observations(  # type: ignore[override]
+            self, cutoff: datetime | None
+        ) -> DeletionResult:
+            del cutoff
+            raise RuntimeError("SQL and private response details must not escape")
+
+    store = Store()
+    service = _query_service(store)
+    with caplog.at_level("ERROR", logger="aura_observatory.query"):
+        await service._run_retention(action)  # type: ignore[attr-defined]
+
+    messages = [record.getMessage() for record in caplog.records]
+    diagnostic = next(message for message in messages if "retention storage failure" in message)
+    assert diagnostic == (
+        "retention storage failure phase=storage_cleanup exception_class=RuntimeError"
+    )
+    assert "SQL" not in diagnostic
+    assert "private" not in diagnostic
 
 
 def test_query_use_case_has_explicit_ports_and_no_provider_sql() -> None:
@@ -2377,6 +2716,206 @@ async def test_retention_target_pages_are_bounded_and_survive_interleaving_actio
 
 
 @pytest.mark.asyncio
+async def test_retention_receipt_capture_casts_uuid_to_target_text() -> None:
+    """Receipt UUIDs compare safely with varchar retention target identities."""
+
+    statements: list[str] = []
+
+    class Result:
+        async def fetchone(self) -> tuple[int]:
+            return (0,)
+
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            return []
+
+    class Connection:
+        async def execute(self, statement: str, _params: tuple[Any, ...] = ()) -> Result:
+            statements.append(statement)
+            if "r.observation_id" in statement and "NOT EXISTS" in statement:
+                # Model PostgreSQL's real UUID/varchar operator resolution:
+                # the uncast comparison would fail before any rows are read.
+                if "r.observation_id::text" not in statement:
+                    raise RuntimeError("operator does not exist: character varying = uuid")
+            return Result()
+
+        async def commit(self) -> None:
+            return None
+
+    @asynccontextmanager
+    async def connection() -> AsyncGenerator[Connection]:
+        yield Connection()
+
+    class Store(ProductionObservatoryStore):
+        async def _rows(self, query: str) -> list[dict[str, Any]]:
+            if "SELECT observation_id, run_id, observed_at" in query:
+                return []
+            return [{"observations": 0, "runs": 0}]
+
+    store = Store(connection, "http://clickhouse.test", database="obs", user="u", password="p")
+    action = RetentionAction(
+        "00000000-0000-4000-8000-000000000832",
+        RetentionKind.PURGE_ALL,
+        None,
+        idempotency_key="uuid-target-cast",
+    )
+    await store.prepare_retention(action)
+    receipt_query = next(
+        statement
+        for statement in statements
+        if "NOT EXISTS" in statement and "observatory_observation_receipts" in statement
+    )
+    assert "t.observation_id = r.observation_id::text" in receipt_query
+    assert action.deletion_phase == "targeted"
+
+
+@pytest.mark.asyncio
+async def test_failed_retention_retries_are_time_bounded() -> None:
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    class Result:
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            return []
+
+        async def fetchone(self) -> None:
+            return None
+
+    class Connection:
+        async def execute(self, statement: str, params: tuple[Any, ...] = ()) -> Result:
+            calls.append((statement, params))
+            return Result()
+
+    @asynccontextmanager
+    async def connection() -> AsyncGenerator[Connection]:
+        yield Connection()
+
+    store = ProductionObservatoryStore(
+        connection, "http://clickhouse.test", database="obs", user="u", password="p"
+    )
+    await store.pending_retentions()
+    await store.claim_retention("00000000-0000-4000-8000-000000000833")
+    pending_sql, pending_params = calls[0]
+    claim_sql, claim_params = calls[1]
+    assert "completed_at IS NULL" in pending_sql
+    assert "completed_at IS NULL" in claim_sql
+    assert pending_params == (5,)
+    assert claim_params == ("00000000-0000-4000-8000-000000000833", 5, 60)
+
+
+@pytest.mark.asyncio
+async def test_production_retention_releases_session_lock_before_clickhouse_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An immutable target snapshot must not block continuous telemetry cleanup."""
+
+    state: dict[str, Any] = {
+        "locks": 0,
+        "phase": "queued",
+        "mutation_lock_levels": [],
+    }
+
+    class Result:
+        def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
+            self.rows = rows or []
+
+        async def fetchone(self) -> tuple[Any, ...] | None:
+            return self.rows[0] if self.rows else None
+
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            return list(self.rows)
+
+    class Connection:
+        async def execute(
+            self, statement: str, params: tuple[Any, ...] = ()
+        ) -> Result:
+            if statement == "SELECT pg_advisory_lock(830078)":
+                state["locks"] += 1
+            elif statement == "SELECT pg_advisory_unlock(830078)":
+                state["locks"] -= 1
+            elif "SELECT target_observation_count" in statement:
+                return Result([(1, 0, 0, state["phase"])])
+            elif "SELECT run_id FROM observatory_retention_targets" in statement:
+                return Result()
+            elif "SELECT observation_id FROM observatory_retention_targets" in statement:
+                return Result([("observation-1",)] if len(params) == 1 else [])
+            elif "SELECT count(*) FROM observatory_observation_receipts r" in statement:
+                return Result([(0,)])
+            elif "SELECT r.observation_id FROM observatory_observation_receipts" in statement:
+                return Result()
+            elif "UPDATE observatory_retention_actions SET deletion_phase" in statement:
+                state["phase"] = str(params[0])
+            return Result()
+
+        async def commit(self) -> None:
+            return None
+
+    class Context:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Store(ProductionObservatoryStore):
+        async def _rows(self, query: str) -> list[dict[str, Any]]:
+            if "SELECT count() AS observations" in query:
+                return [{"observations": 1, "runs": 0}]
+            return [
+                {
+                    "observation_id": "observation-1",
+                    "run_id": None,
+                    "observed_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _url: str, **_kwargs: Any) -> Response:
+            state["mutation_lock_levels"].append(state["locks"])
+            return Response()
+
+    monkeypatch.setattr("aura_observatory.adapters.query.httpx.AsyncClient", Client)
+    action = RetentionAction(
+        "00000000-0000-4000-8000-000000000831",
+        RetentionKind.PURGE_ALL,
+        None,
+        status=RetentionStatus.RUNNING,
+        idempotency_key="lock-scope",
+    )
+    store = Store(
+        lambda: Context(),
+        "http://clickhouse.test",
+        database="obs",
+        user="u",
+        password="p",
+    )
+    await store.attach_retention(action)
+    assert state["locks"] == 1
+    await store.prepare_retention(action)
+    assert action.deletion_phase == "targeted"
+    assert state["locks"] == 0
+    result = await store.delete_observations(None)
+
+    assert result == DeletionResult(1, 0, 0)
+    assert state["mutation_lock_levels"]
+    assert all(level == 0 for level in state["mutation_lock_levels"])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("helper_name", ("run_ids", "target_ids"))
 async def test_retention_keyset_helpers_reject_nonadvancing_pages(helper_name: str) -> None:
     """Every durable keyset helper rejects a page at or behind its cursor."""
@@ -3191,7 +3730,7 @@ async def test_production_component_health_keeps_earlier_duration_before_later_t
             # rows instead of returning a hard-coded aggregate.  The old broad
             # milliseconds predicate would select the later queue_time_ms row.
             predicate_start = statement.index("argMaxIf(measurement_value")
-            predicate_end = statement.index(") AS measurement_value", predicate_start)
+            predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
             if "measurement_name = 'duration_ms'" in predicate:
                 eligible = [
@@ -3269,7 +3808,7 @@ async def test_production_component_health_keeps_duration_and_uses_later_failure
     class Store(ProductionObservatoryStore):
         async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
             predicate_start = statement.index("argMaxIf(measurement_value")
-            predicate_end = statement.index(") AS measurement_value", predicate_start)
+            predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
             durations = [
                 row
@@ -3344,7 +3883,7 @@ async def test_production_component_health_equal_timestamp_uses_higher_observati
     class Store(ProductionObservatoryStore):
         async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
             predicate_start = statement.index("argMaxIf(measurement_value")
-            predicate_end = statement.index(") AS measurement_value", predicate_start)
+            predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
             durations = [
                 row
@@ -3499,7 +4038,7 @@ async def test_production_component_health_uses_status_only_map_values_for_outco
         async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
             queries.append(statement)
             predicate_start = statement.index("argMaxIf(measurement_value")
-            predicate_end = statement.index(") AS measurement_value", predicate_start)
+            predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
             eligible = [
                 row

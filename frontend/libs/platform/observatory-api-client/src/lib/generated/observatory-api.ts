@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: db8cdb3c58d311e720541f186bde6e8a0f49937d6cbb2eb23f08c30489109a15
+// Contract SHA-256: b9a6110caff73a1fc7e18334c08cb4e4ce6450b6b7f358c68107ca05056b0dfd
 
 export type Uuid = string;
 

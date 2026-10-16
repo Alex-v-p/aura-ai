@@ -18,7 +18,9 @@ from aura_observatory.auth import (
     Principal,
 )
 from aura_observatory.entrypoints.api.app import create_app
+from aura_observatory.query import decode_cursor, encode_cursor
 from aura_observatory.settings import Settings
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
@@ -26,6 +28,7 @@ from test_aura0080_query_retention import BASE_TIME, make_payload, make_run_id
 
 OWNER = "owner-subject"
 ISSUER = "https://identity.example.invalid/application/o/aura-observatory/"
+CORE_CANONICAL_ID = "01234567-89ab-0cde-7123-0123456789ab"
 
 
 async def _client() -> tuple[httpx.AsyncClient, MemoryObservatoryStore, Any]:
@@ -117,6 +120,33 @@ async def test_run_search_cursor_and_trace_resources_are_owner_scoped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_detail_accepts_canonical_core_id_without_uuid_marker_bits() -> None:
+    client, store, _ = await _client()
+    await store.insert_observation(
+        make_payload(
+            "00000000-0000-4000-8000-000000000103",
+            observed_at=BASE_TIME,
+            run_id=CORE_CANONICAL_ID,
+        )
+    )
+
+    async with client:
+        detail = await client.get(f"/api/v1/runs/{CORE_CANONICAL_ID}")
+
+    assert detail.status_code == 200
+    assert detail.json()["runId"] == CORE_CANONICAL_ID
+
+
+def test_cursor_accepts_canonical_identifier_without_uuid_marker_bits() -> None:
+    cursor = encode_cursor(BASE_TIME, CORE_CANONICAL_ID)
+
+    observed_at, identifier = decode_cursor(cursor)
+
+    assert observed_at == BASE_TIME
+    assert identifier == CORE_CANONICAL_ID
+
+
+@pytest.mark.asyncio
 async def test_component_health_filters_time_and_uses_true_percentiles() -> None:
     client, store, _ = await _client()
     store.observations.clear()
@@ -205,6 +235,123 @@ async def test_sse_snapshot_and_last_event_id_catch_up_without_url_credentials()
                 secret in json.dumps(payload).lower()
                 for secret in ("prompt", "response", "token", "credential")
             )
+
+
+def _sse_request(
+    settings: Settings,
+    session_id: str,
+    *,
+    headers: list[tuple[bytes, bytes]] | None = None,
+    host: str = "observatory.localhost:4300",
+    scheme: str = "http",
+) -> Request:
+    request_headers = [
+        (b"host", host.encode()),
+        (b"cookie", f"{settings.effective_session_cookie_name}={session_id}".encode()),
+    ]
+    if headers:
+        request_headers.extend(headers)
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": scheme,
+            "path": "/api/v1/events",
+            "raw_path": b"/api/v1/events",
+            "query_string": b"",
+            "headers": request_headers,
+            "client": ("127.0.0.1", 1),
+            "server": (host.split(":", 1)[0], 443 if scheme == "https" else 80),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_sse_accepts_real_browser_originless_eventsource_headers() -> None:
+    settings = Settings(owner_subject=OWNER)
+    sessions = MemorySessionBackend()
+    auth = ObservatoryAuth(settings, sessions, MemoryLoginStateBackend())
+    session_id, _ = await auth.create_session(Principal(ISSUER, OWNER, "Owner"))
+    store = MemoryObservatoryStore()
+    app = create_app(settings, auth=auth, query_store=store, testing=False)
+    route = cast(
+        APIRoute,
+        next(route for route in app.routes if getattr(route, "path", None) == "/api/v1/events"),
+    )
+
+    response = cast(
+        StreamingResponse,
+        await route.endpoint(
+            _sse_request(
+                settings,
+                session_id,
+                headers=[(b"sec-fetch-site", b"same-origin")],
+            ),
+            None,
+        ),
+    )
+    assert "event: snapshot" in await anext(cast(AsyncIterator[str], response.body_iterator))
+    await cast(Any, response.body_iterator).aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_kwargs",
+    [
+        {"headers": []},
+        {"headers": [(b"sec-fetch-site", b"same-site")]},
+        {
+            "headers": [(b"sec-fetch-site", b"same-origin")],
+            "host": "evil.example.invalid:4300",
+        },
+        {
+            "headers": [(b"sec-fetch-site", b"same-origin")],
+            "host": "observatory.localhost:bad",
+        },
+        {
+            "headers": [
+                (b"sec-fetch-site", b"same-origin"),
+                (b"host", b"observatory.localhost:4300"),
+            ]
+        },
+        {
+            "headers": [
+                (b"sec-fetch-site", b"same-origin"),
+                (b"x-forwarded-proto", b"https,http"),
+                (b"x-forwarded-host", b"observatory.localhost:4300"),
+            ]
+        },
+        {
+            "headers": [
+                (b"sec-fetch-site", b"same-origin"),
+                (b"forwarded", b"proto=http;host=observatory.localhost:4300,proto=http"),
+            ]
+        },
+        {
+            "headers": [
+                (b"sec-fetch-site", b"same-origin"),
+                (b"forwarded", b"proto=javascript;host=observatory.localhost:4300"),
+            ]
+        },
+    ],
+)
+async def test_sse_rejects_ambiguous_or_mismatched_originless_headers(
+    request_kwargs: dict[str, Any],
+) -> None:
+    settings = Settings(owner_subject=OWNER)
+    sessions = MemorySessionBackend()
+    auth = ObservatoryAuth(settings, sessions, MemoryLoginStateBackend())
+    session_id, _ = await auth.create_session(Principal(ISSUER, OWNER, "Owner"))
+    app = create_app(settings, auth=auth, query_store=MemoryObservatoryStore(), testing=False)
+    route = cast(
+        APIRoute,
+        next(route for route in app.routes if getattr(route, "path", None) == "/api/v1/events"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await route.endpoint(_sse_request(settings, session_id, **request_kwargs), None)
+    assert error.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -325,6 +472,47 @@ async def test_retention_endpoint_requires_csrf_confirmation_and_idempotency() -
             await asyncio.sleep(0)
         assert status_response.json()["status"] == "succeeded"
         assert await store.list_observations() == []
+
+
+@pytest.mark.asyncio
+async def test_retention_storage_failures_return_content_free_retryable_error() -> None:
+    class FailingStore(MemoryObservatoryStore):
+        async def save_retention(self, action: Any) -> bool:
+            del action
+            raise RuntimeError("private database host and SQL details")
+
+    settings = Settings(owner_subject=OWNER)
+    auth = ObservatoryAuth(settings, MemorySessionBackend(), MemoryLoginStateBackend())
+    session_id, session = await auth.create_session(Principal(ISSUER, OWNER, "Owner"))
+    app = create_app(
+        settings,
+        auth=auth,
+        query_store=FailingStore(),
+        testing=True,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url=settings.public_origin,
+        cookies={settings.effective_session_cookie_name: session_id},
+    ) as client:
+        response = await client.post(
+            "/api/v1/retention/actions",
+            json={"action": "purge_all"},
+            headers={
+                "Origin": settings.public_origin,
+                "X-CSRF-Token": session.csrf_token,
+                "Idempotency-Key": "storage-failure-key-0001",
+                "X-Observatory-Confirmation": "purge-all",
+            },
+        )
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == "service_unavailable"
+    assert body["message"] == "service unavailable"
+    assert body["retryable"] is True
+    assert set(body) <= {"code", "message", "retryable", "traceId"}
+    assert "private database" not in response.text
 
 
 def test_openapi_declares_versioned_owner_surface_and_sse() -> None:

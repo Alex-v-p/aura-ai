@@ -5,11 +5,12 @@ import { extractSessionCsrf } from './observatory-session';
 export const OBSERVATORY_API_BASE_URL = new InjectionToken<string>('OBSERVATORY_API_BASE_URL', { providedIn: 'root', factory: () => '' });
 export const OBSERVATORY_CSRF_TOKEN = new InjectionToken<string>('OBSERVATORY_CSRF_TOKEN', { providedIn: 'root', factory: () => '' });
 export type ObservatoryLiveHandler = (event: Event) => void;
+export type ObservatoryLogoutResult = 'confirmed' | 'already_absent';
 
 export interface ObservatoryGatewayPort {
   execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>): Promise<ObservatoryOperationResponse<K>>;
   ensureSession(): Promise<void>;
-  logout(): Promise<void>;
+  logout(): Promise<ObservatoryLogoutResult>;
   connectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   reconnectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   disconnectLive(): void;
@@ -18,6 +19,10 @@ export const OBSERVATORY_GATEWAY = new InjectionToken<ObservatoryGatewayPort>('O
 
 export class ObservatorySessionRequiredError extends Error {
   constructor() { super('Owner Observatory session required.'); this.name = 'ObservatorySessionRequiredError'; }
+}
+
+export class ObservatoryLogoutUnconfirmedError extends Error {
+  constructor() { super('Observatory sign-out could not be confirmed.'); this.name = 'ObservatoryLogoutUnconfirmedError'; }
 }
 
 export { extractSessionCsrf } from './observatory-session';
@@ -42,16 +47,21 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
     if (!this.sessionCsrf) throw new Error('Observatory session did not provide a CSRF token');
   }
 
-  async logout(): Promise<void> {
+  async logout(): Promise<ObservatoryLogoutResult> {
     const csrf = this.sessionCsrf ?? this.csrf;
-    if (csrf) {
-      try {
-        await this.client.execute('logoutOwnerSession', { ...blankInput('logoutOwnerSession'), headers: { 'X-Observatory-CSRF': csrf } });
-      } catch (error) {
-        if (!(error instanceof ObservatorySessionRequiredError)) throw error;
+    if (!csrf) throw new ObservatoryLogoutUnconfirmedError();
+    try {
+      await this.client.execute('logoutOwnerSession', { ...blankInput('logoutOwnerSession'), headers: { 'X-Observatory-CSRF': csrf } });
+      this.sessionCsrf = null;
+      return 'confirmed';
+    } catch (error) {
+      if (error instanceof ObservatorySessionRequiredError) {
+        this.sessionCsrf = null;
+        return 'already_absent';
       }
+      // Keep only the opaque in-memory CSRF value so the owner can retry.
+      throw error;
     }
-    this.sessionCsrf = null;
   }
 
   connectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {

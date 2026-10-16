@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Protocol, cast
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.platform.telemetry_export": "1.0.0",
@@ -1078,6 +1078,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     ),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
+_OTLP_NO_TRACE_ID = "0" * 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -1608,10 +1610,21 @@ class OtlpHttpTelemetryExporter:
         spans: list[dict[str, object]] = []
         for item in measurements:
             attributes = self._observation_attributes(item)
+            # Some background Core paths use UUID(int=0) as their internal
+            # "no trace" sentinel.  OTLP treats an all-zero trace ID as
+            # unset and drops it from JSON, which makes the Collector reject
+            # the whole batch.  Give that one sentinel a stable, content-free
+            # ID derived from the durable observation ID while preserving all
+            # supplied span parent/link fields.
+            trace_id = (
+                uuid5(_OTLP_NO_TRACE_NAMESPACE, f"observation:{item.observation_id}").hex
+                if item.trace_id == _OTLP_NO_TRACE_ID
+                else item.trace_id
+            )
             end_ns = int(item.observed_at.timestamp() * 1_000_000_000)
             start_ns = max(0, end_ns - int(item.value * 1_000_000))
             span: dict[str, object] = {
-                "traceId": item.trace_id,
+                "traceId": trace_id,
                 "spanId": item.span_id,
                 "name": dict(item.trace_attributes).get("operation", item.metric),
                 "startTimeUnixNano": str(start_ns),
@@ -1627,7 +1640,7 @@ class OtlpHttpTelemetryExporter:
                 span["parentSpanId"] = item.parent_span_id
             if item.link_span_ids:
                 span["links"] = [
-                    {"traceId": item.trace_id, "spanId": link}
+                    {"traceId": trace_id, "spanId": link}
                     for link in item.link_span_ids
                 ]
             spans.append(span)

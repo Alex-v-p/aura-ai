@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { isOverviewStale, RequestGenerationGate, resourceStateFor, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { hasSessionRequiredRejection, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, RequestGenerationGate, resourceStateFor, type ObservatoryAuthState, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -14,6 +14,7 @@ export class ObservatoryStore {
   readonly selectedRunState = signal<'idle' | 'loading' | 'ready' | 'error'>('idle');
   readonly selectedRunError = signal<string | null>(null);
   readonly retention = signal<RetentionState>({ action: null, running: false, error: null });
+  readonly authState = signal<ObservatoryAuthState>('checking');
   readonly sessionRequired = signal(false);
   readonly liveDisconnected = signal(false);
   readonly componentHealthById = signal<Record<string, ComponentHealth>>({});
@@ -24,14 +25,30 @@ export class ObservatoryStore {
   private loadSequence = 0;
   private openRunSequence = 0;
   private authGeneration = 0;
+  private hadAuthenticatedSession = false;
+  private pendingRecoveryState: ObservatoryAuthState | null = null;
   private readonly componentHealthRequests = new RequestGenerationGate();
+  private readonly liveRefresh = new LiveRefreshCoordinator();
+  private readonly catalogRefresh = new LiveRefreshCoordinator();
+  private catalogLoadSequence = 0;
 
-  async start(): Promise<void> {
-    await this.load();
-    if (!this.sessionRequired()) this.connectLive();
+  async start(initialRecoveryState: ObservatoryAuthState | null = null): Promise<void> {
+    await this.runSessionLifecycle(initialRecoveryState);
+  }
+
+  private async runSessionLifecycle(initialRecoveryState: ObservatoryAuthState | null = null): Promise<void> {
+    if (initialRecoveryState) this.pendingRecoveryState = initialRecoveryState;
+    if (this.authState() !== 'authenticated') this.authState.set('checking');
+    await this.loadLiveSnapshot();
+    if (this.authState() === 'authenticated' && !this.sessionRequired()) {
+      this.connectLive();
+      this.queueCatalogRefresh();
+    }
   }
 
   async load(): Promise<void> {
+    this.catalogLoadSequence += 1;
+    this.catalogRefresh.cancel();
     const sequence = ++this.loadSequence;
     const previous = this.snapshot();
     this.resourceStates.update((states) => ({
@@ -43,16 +60,23 @@ export class ObservatoryStore {
     this.snapshot.update((value) => ({ ...value, state: value.overview ? value.state : 'loading', error: null }));
     try {
       await this.gateway.ensureSession();
-      if (sequence !== this.loadSequence) return;
+      if (!isCurrentLoadSequence(sequence, this.loadSequence)) return;
       this.sessionRequired.set(false);
+      this.authState.set('authenticated');
+      this.hadAuthenticatedSession = true;
+      this.pendingRecoveryState = null;
       const results = await Promise.allSettled([
         this.gateway.execute('getOverview', blankInput('getOverview')),
         this.gateway.execute('listRuns', { ...blankInput('listRuns'), query: this.filters() }),
         this.gateway.execute('listComponents', blankInput('listComponents')),
         this.gateway.execute('listDeployments', blankInput('listDeployments')),
       ]);
-      if (sequence !== this.loadSequence) return;
-      if (results.some((result) => result.status === 'rejected' && result.reason instanceof ObservatorySessionRequiredError)) { this.markSignedOut('Owner Observatory session required.'); return; }
+      if (!isCurrentLoadSequence(sequence, this.loadSequence)) return;
+      // A parallel resource request can discover that the BFF session expired
+      // after ensureSession() succeeded. Promote that rejection through the
+      // lifecycle catch before assembling partial data, so an expired session
+      // can never be rendered as an authenticated partial snapshot.
+      if (hasSessionRequiredRejection(results, (reason) => reason instanceof ObservatorySessionRequiredError)) throw new ObservatorySessionRequiredError();
       const names = ['overview', 'runs', 'components', 'deployments'];
       const resourceErrors = results.flatMap((result, index) => result.status === 'rejected' ? [names[index]] : []);
       const overview = results[0].status === 'fulfilled' ? results[0].value : previous.overview;
@@ -66,10 +90,12 @@ export class ObservatoryStore {
         deployments: resourceStateFor('deployments', deployments, results[3].status === 'rejected'),
       });
       if (!overview) throw new Error('Observatory overview is unavailable.');
-      this.snapshot.set({ overview, runs, components, deployments, state: resourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0), lastUpdatedAt: overview.observedAt, lastEventId: runs?.latestObservationId ?? previous.lastEventId, error: resourceErrors.length ? `Some Observatory data is unavailable: ${resourceErrors.join(', ')}.` : null, partial: resourceErrors.length > 0, resourceErrors });
+      const latestEventId = this.snapshot().lastEventId ?? runs?.latestObservationId ?? previous.lastEventId;
+      this.snapshot.set({ overview, runs, components, deployments, state: resourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0), lastUpdatedAt: overview.observedAt, lastEventId: latestEventId, error: resourceErrors.length ? `Some Observatory data is unavailable: ${resourceErrors.join(', ')}.` : null, partial: resourceErrors.length > 0, resourceErrors });
     } catch (error) {
-      if (sequence !== this.loadSequence) return;
+      if (!isCurrentLoadSequence(sequence, this.loadSequence)) return;
       if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.');
+      else if (!this.hadAuthenticatedSession) this.markSignedOut('Owner Observatory identity is unavailable.', 'identity_unavailable');
       if (!this.snapshot().overview) this.resourceStates.update((states) => ({ ...states, overview: 'error' }));
       this.snapshot.update((value) => ({ ...value, state: value.overview ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Observatory is unavailable.' }));
     }
@@ -124,18 +150,128 @@ export class ObservatoryStore {
 
   async logout(): Promise<void> {
     this.disconnectLive();
-    try { await this.gateway.logout(); } finally {
-      this.markSignedOut('You are signed out of Observatory.');
+    try {
+      await this.gateway.logout();
+      this.markSignedOut('You are signed out of Observatory.', 'explicit_logout');
+    } catch {
+      this.markSignedOut('Observatory sign-out could not be confirmed.', 'logout_unconfirmed');
     }
   }
+
+  retryAuthentication(): void { void this.runSessionLifecycle(); }
+  refreshCatalog(): void { this.queueCatalogRefresh(); }
 
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
-    void this.load();
+    this.queueLiveRefresh();
   };
   private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); };
-  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); void this.load(); };
+  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); this.queueLiveRefresh(); };
+
+  private queueLiveRefresh(): void {
+    this.liveRefresh.request(() => this.loadLiveSnapshot(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  private queueCatalogRefresh(): void {
+    this.catalogRefresh.request(() => this.loadCatalogResources(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  /** Refresh only observation-driven resources; component health can be slow. */
+  private async loadLiveSnapshot(): Promise<void> {
+    const sequence = ++this.loadSequence;
+    const generation = this.authGeneration;
+    const previous = this.snapshot();
+    try {
+      await this.gateway.ensureSession();
+      if (!isCurrentLoadSequence(sequence, this.loadSequence) || generation !== this.authGeneration) return;
+      this.sessionRequired.set(false);
+      this.authState.set('authenticated');
+      this.hadAuthenticatedSession = true;
+      this.pendingRecoveryState = null;
+      const results = await Promise.allSettled([
+        this.gateway.execute('getOverview', blankInput('getOverview')),
+        this.gateway.execute('listRuns', { ...blankInput('listRuns'), query: this.filters() }),
+      ]);
+      if (!isCurrentLoadSequence(sequence, this.loadSequence) || generation !== this.authGeneration) return;
+      if (hasSessionRequiredRejection(results, (reason) => reason instanceof ObservatorySessionRequiredError)) throw new ObservatorySessionRequiredError();
+      const resourceErrors = results.flatMap((result, index) => result.status === 'rejected' ? [index === 0 ? 'overview' : 'runs'] : []);
+      const overview = results[0].status === 'fulfilled' ? results[0].value : previous.overview;
+      const runs = results[1].status === 'fulfilled' ? results[1].value : previous.runs;
+      this.resourceStates.update((states) => ({
+        ...states,
+        overview: resourceStateFor('overview', overview, results[0].status === 'rejected', overview?.observedAt),
+        runs: resourceStateFor('runs', runs, results[1].status === 'rejected'),
+      }));
+      if (!overview) throw new Error('Observatory overview is unavailable.');
+      const preservedErrors = previous.resourceErrors.filter((resource) => resource === 'components' || resource === 'deployments');
+      const allResourceErrors = [...resourceErrors, ...preservedErrors];
+      const latestEventId = this.snapshot().lastEventId ?? runs?.latestObservationId ?? previous.lastEventId;
+      this.snapshot.update((value) => ({
+        ...value,
+        overview,
+        runs,
+        state: allResourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0),
+        lastUpdatedAt: overview.observedAt,
+        lastEventId: latestEventId,
+        error: allResourceErrors.length ? `Some Observatory data is unavailable: ${allResourceErrors.join(', ')}.` : null,
+        partial: allResourceErrors.length > 0,
+        resourceErrors: allResourceErrors,
+      }));
+    } catch (error) {
+      if (!isCurrentLoadSequence(sequence, this.loadSequence) || generation !== this.authGeneration) return;
+      if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.');
+      else if (!this.hadAuthenticatedSession) this.markSignedOut('Owner Observatory identity is unavailable.', 'identity_unavailable');
+      if (!this.snapshot().overview) this.resourceStates.update((states) => ({ ...states, overview: 'error' }));
+      this.snapshot.update((value) => ({ ...value, state: value.overview ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Observatory is unavailable.' }));
+    }
+  }
+
+  /** Load the slower catalog resources independently after the live surface is ready. */
+  private async loadCatalogResources(): Promise<void> {
+    const sequence = ++this.catalogLoadSequence;
+    const generation = this.authGeneration;
+    try {
+      await this.gateway.ensureSession();
+      if (sequence !== this.catalogLoadSequence || generation !== this.authGeneration) return;
+      const results = await Promise.allSettled([
+        this.gateway.execute('listComponents', blankInput('listComponents')),
+        this.gateway.execute('listDeployments', blankInput('listDeployments')),
+      ]);
+      if (sequence !== this.catalogLoadSequence || generation !== this.authGeneration) return;
+      if (hasSessionRequiredRejection(results, (reason) => reason instanceof ObservatorySessionRequiredError)) throw new ObservatorySessionRequiredError();
+      const resourceErrors = results.flatMap((result, index) => result.status === 'rejected' ? [index === 0 ? 'components' : 'deployments'] : []);
+      const current = this.snapshot();
+      const components = results[0].status === 'fulfilled' ? results[0].value : current.components;
+      const deployments = results[1].status === 'fulfilled' ? results[1].value : current.deployments;
+      this.resourceStates.update((states) => ({
+        ...states,
+        components: resourceStateFor('components', components, results[0].status === 'rejected'),
+        deployments: resourceStateFor('deployments', deployments, results[1].status === 'rejected'),
+      }));
+      const preservedErrors = current.resourceErrors.filter((resource) => resource === 'overview' || resource === 'runs');
+      const allResourceErrors = [...preservedErrors, ...resourceErrors];
+      this.snapshot.update((value) => ({
+        ...value,
+        components,
+        deployments,
+        state: allResourceErrors.length ? 'stale' : value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : value.state,
+        error: allResourceErrors.length ? `Some Observatory data is unavailable: ${allResourceErrors.join(', ')}.` : null,
+        partial: allResourceErrors.length > 0,
+        resourceErrors: allResourceErrors,
+      }));
+    } catch (error) {
+      if (sequence !== this.catalogLoadSequence || generation !== this.authGeneration) return;
+      if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.');
+      else {
+        this.resourceStates.update((states) => ({ ...states, components: 'error', deployments: 'error' }));
+        this.snapshot.update((value) => {
+          const resourceErrors = [...value.resourceErrors.filter((resource) => resource === 'overview' || resource === 'runs'), 'components', 'deployments'];
+          return { ...value, state: value.overview ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Observatory catalog is unavailable.', partial: true, resourceErrors };
+        });
+      }
+    }
+  }
 
   private stateFor(overview: ObservatorySnapshot['overview'], runCount: number): ObservatorySnapshot['state'] {
     if (!overview) return 'loading';
@@ -144,13 +280,18 @@ export class ObservatoryStore {
     return runCount ? 'ready' : 'empty';
   }
 
-  private markSignedOut(message: string): void {
+  private markSignedOut(message: string, explicitState?: ObservatoryAuthState): void {
     this.disconnectLive();
+    this.liveRefresh.cancel();
+    this.catalogRefresh.cancel();
+    this.catalogLoadSequence += 1;
     this.loadSequence += 1;
     this.openRunSequence += 1;
     this.authGeneration += 1;
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); this.refreshTimer = null; }
     this.sessionRequired.set(true);
+    this.authState.set(explicitState ?? this.pendingRecoveryState ?? (this.hadAuthenticatedSession ? 'expired' : 'initial'));
+    this.pendingRecoveryState = null;
     this.filters.set({});
     this.resourceStates.set({ overview: 'error', runs: 'error', components: 'error', deployments: 'error' });
     this.snapshot.set({ overview: null, runs: null, components: null, deployments: null, state: 'error', lastUpdatedAt: null, lastEventId: null, error: message, partial: false, resourceErrors: [] });

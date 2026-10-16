@@ -1,0 +1,11 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0084
+verdict: PASS
+checked:
+  - Anonymous, expired, identity-unavailable, callback-failed, authorization-denied, and authenticated states remain distinct and use sanitized actionable copy.
+  - User-triggered recovery failure refocuses the recovery heading, successful recovery focuses the stable main landmark, and initial authentication does not steal focus.
+  - Recovery actions retain native semantics, visible focus, keyboard operation, live announcements, and redirect-loop prevention.
+  - Dark-theme tokens, reduced motion, responsive wrapping, loading, stale, disconnected, partial, unavailable, and destructive-retention states remain explicit and non-colour-only.
+  - Mocked Playwright acceptance passed 75 tests across desktop, tablet, and mobile, including axe, focus, keyboard, responsive, reduced-motion, logout, retention, and privacy checks.
+  - Full-stack browser acceptance passed authentication, Core telemetry, SSE, trace, components, retention, session preservation, reset reauthentication, and outage recovery.
+findings: []

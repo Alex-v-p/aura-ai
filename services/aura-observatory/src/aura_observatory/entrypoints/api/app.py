@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import zlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
-import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 
 from aura_observatory.adapters.memory import MemoryObservatoryStore
-from aura_observatory.auth import ObservatoryAuth
+from aura_observatory.auth import ObservatoryAuth, sanitize_return_to
 from aura_observatory.composition import build_auth, build_ingest_service
 from aura_observatory.ingest import IngestPayloadError, InvalidCredential, TelemetryIngestService
 from aura_observatory.otlp import OtlpPayloadError, metrics_to_observations, traces_to_observations
@@ -28,14 +31,67 @@ from aura_observatory.query import (
 )
 from aura_observatory.settings import Settings
 
+_LOGGER = logging.getLogger(__name__)
+
 _UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _COMPONENT_ID_RE = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9_-]{16,1024}$")
 _RUN_STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled", "unknown"})
+_AUTH_RECOVERY_QUERY = "auth_recovery"
+_AUTH_RECOVERY_MARKERS = frozenset(
+    {"state_missing", "state_invalid", "code_missing", "provider_denied", "callback_failed"}
+)
+
+
+def _otlp_rejection_class(exc: BaseException) -> str:
+    """Classify OTLP failures without putting submitted values in logs."""
+
+    if isinstance(exc, UnicodeDecodeError):
+        return "encoding"
+    if isinstance(exc, json.JSONDecodeError):
+        return "json"
+    if isinstance(exc, OtlpPayloadError):
+        # The exception text is inspected only in memory.  Emit a finite class,
+        # never the submitted field name, value, payload, or exception text.
+        message = str(exc).casefold()
+        if "contains unsupported fields" in message:
+            return "unsupported_fields"
+        if "dropped" in message and "must be zero" in message:
+            return "dropped_nonzero"
+        if "status code is unsupported" in message:
+            return "status_code"
+        if "status message is not accepted" in message:
+            return "status_message"
+        if message.endswith("must be an object"):
+            return "shape_object"
+        if message.endswith("must be an array"):
+            return "shape_array"
+        if message.endswith("must be a non-empty string"):
+            static_string_shapes = {
+                "traceid must be a non-empty string": "shape_trace_id",
+                "spanid must be a non-empty string": "shape_span_id",
+                "parentspanid must be a non-empty string": "shape_parent_span_id",
+                "link traceid must be a non-empty string": "shape_link_trace_id",
+                "link spanid must be a non-empty string": "shape_link_span_id",
+                "attribute key must be a non-empty string": "shape_attribute_key",
+            }
+            return static_string_shapes.get(message, "shape_attribute_value")
+        if "scope" in message:
+            return "scope"
+        if "link" in message:
+            return "link"
+        if "event" in message:
+            return "event"
+        if "attribute" in message:
+            return "attribute"
+        if any(marker in message for marker in ("must", "required", "array", "object")):
+            return "shape"
+        return "contract_value"
+    return "malformed"
 
 
 def create_app(
@@ -180,21 +236,99 @@ def create_app(
     async def login(return_to: str = "/") -> RedirectResponse:
         return RedirectResponse(await auth_service.authorization_url(return_to), status_code=307)
 
-    @app.get("/api/v1/auth/callback")
-    async def callback(code: str, state: str, request: Request) -> RedirectResponse:
-        login_state = await auth_service.login_states.consume(state)
+    @app.get("/api/v1/auth/callback", include_in_schema=False)
+    async def callback(
+        request: Request,
+        code: str | None = Query(default=None),
+        state: str | None = Query(default=None),
+        error: str | None = Query(default=None),
+    ) -> RedirectResponse:
+        started = monotonic()
+
+        def recover(
+            marker: str,
+            return_to: str | None = None,
+            *,
+            stage: str,
+            outcome: str,
+        ) -> RedirectResponse:
+            _record_auth_callback(app, started, stage, outcome)
+            return _callback_recovery_response(resolved, marker, return_to)
+
+        login_state = None
+        if state:
+            try:
+                login_state = await auth_service.login_states.consume(state)
+            except Exception:
+                # Provider/state backend details never cross the callback
+                # boundary. Treat malformed or unavailable state as a local
+                # recovery, with no return path because it cannot be trusted.
+                return recover(
+                    "state_invalid",
+                    stage="login_state_store",
+                    outcome="unavailable",
+                )
         if login_state is None:
-            raise HTTPException(status_code=400, detail="invalid or expired login state")
+            marker = "state_missing" if not state else "state_invalid"
+            return recover(
+                marker,
+                stage="login_state_store",
+                outcome="missing" if not state else "invalid",
+            )
+        return_to = sanitize_return_to(login_state.return_to)
+        if error is not None:
+            return recover(
+                "provider_denied",
+                return_to,
+                stage="provider",
+                outcome="denied",
+            )
+        if not code:
+            return recover(
+                "code_missing",
+                return_to,
+                stage="provider",
+                outcome="code_missing",
+            )
         try:
             tokens, claims = await auth_service.authenticate_code(code, login_state.nonce)
+        except PermissionError:
+            return recover(
+                "callback_failed",
+                return_to,
+                stage="authorization",
+                outcome="rejected",
+            )
+        except Exception:
+            return recover(
+                "callback_failed",
+                return_to,
+                stage="provider",
+                outcome="exchange_failed",
+            )
+        try:
             principal = auth_service.authorize_claims(claims)
+        except Exception:
+            return recover(
+                "callback_failed",
+                return_to,
+                stage="authorization",
+                outcome="rejected",
+            )
+        try:
             prior_session = request.cookies.get(resolved.effective_session_cookie_name)
             session_id, _session = await auth_service.create_session(
                 principal, tokens, replace_session_id=prior_session
             )
-        except (httpx.HTTPError, KeyError, TypeError, ValueError, PermissionError) as exc:
-            raise HTTPException(status_code=401, detail="OIDC authentication failed") from exc
-        redirect = RedirectResponse(login_state.return_to, status_code=303)
+        except Exception:
+            return recover(
+                "callback_failed",
+                return_to,
+                stage="session_store",
+                outcome="failed",
+            )
+        _record_auth_callback(app, started, "callback", "success")
+        redirect = RedirectResponse(return_to, status_code=303)
         _set_session_cookie(redirect, resolved, session_id)
         return redirect
 
@@ -358,8 +492,12 @@ def create_app(
         request: Request,
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ) -> StreamingResponse:
-        origin = request.headers.get("origin")
-        if origin != resolved.public_origin and not (testing and origin is None):
+        origin_values = request.headers.getlist("origin")
+        origin = origin_values[0] if len(origin_values) == 1 else None
+        browser_origin_allowed = _browser_sse_origin_allowed(request, resolved.public_origin)
+        if origin != resolved.public_origin and not (
+            not origin_values and browser_origin_allowed
+        ) and not (testing and not origin_values):
             raise HTTPException(status_code=403, detail="same-origin request required")
         await owner_session(request)
         try:
@@ -481,6 +619,11 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="invalid CSRF token") from exc
+        except Exception as exc:
+            # Storage/provider exceptions may contain SQL, host, or schema
+            # details. Keep the browser response fixed and content-free.
+            _LOGGER.error("retention action storage failure")
+            raise HTTPException(status_code=503, detail="retention storage unavailable") from exc
         return JSONResponse(action.to_dict(), status_code=status.HTTP_202_ACCEPTED)
 
     @app.get("/api/v1/retention/actions/{action_id}")
@@ -836,12 +979,7 @@ async def _ingest_otlp_signal(
     except InvalidCredential as exc:
         raise HTTPException(status_code=401, detail="invalid service credential") from exc
     try:
-        body = bytearray()
-        async for chunk in request.stream():
-            if len(body) + len(chunk) > settings.ingest_max_payload_bytes:
-                await service.record_malformed(credential=presented)
-                raise HTTPException(status_code=413, detail="telemetry payload too large")
-            body.extend(chunk)
+        body = await _read_otlp_body(request, settings)
         payload: object = json.loads(body)
         records = (
             metrics_to_observations(payload)
@@ -849,14 +987,72 @@ async def _ingest_otlp_signal(
             else traces_to_observations(payload)
         )
         summary = await service.ingest({"observations": records}, credential=presented)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            await service.record_malformed(credential=presented)
         raise
     except (UnicodeDecodeError, ValueError, OtlpPayloadError) as exc:
         await service.record_malformed(credential=presented)
+        _LOGGER.warning(
+            "OTLP %s rejected class=%s", signal, _otlp_rejection_class(exc)
+        )
         raise HTTPException(status_code=400, detail="malformed OTLP telemetry payload") from exc
     if summary["storage_failure"]:
         return JSONResponse(status_code=503, content=summary, headers={"Retry-After": "1"})
     return JSONResponse(status_code=202, content=summary)
+
+
+def _content_encoding(value: str | None) -> str | None:
+    """Accept only one identity or gzip content encoding at the ingest edge."""
+
+    if value is None or not value.strip():
+        return None
+    encodings = [item.strip().casefold() for item in value.split(",")]
+    if len(encodings) != 1 or encodings[0] not in {"identity", "gzip"}:
+        raise ValueError("unsupported content encoding")
+    return None if encodings[0] == "identity" else "gzip"
+
+
+async def _read_otlp_body(request: Request, settings: Settings) -> bytes:
+    """Read identity/gzip OTLP JSON with independent compressed/decompressed caps."""
+
+    encoding = _content_encoding(request.headers.get("content-encoding"))
+    compressed_size = 0
+    body = bytearray()
+    if encoding is None:
+        async for chunk in request.stream():
+            compressed_size += len(chunk)
+            if compressed_size > settings.ingest_max_payload_bytes:
+                raise HTTPException(status_code=413, detail="telemetry payload too large")
+            body.extend(chunk)
+        return bytes(body)
+
+    decompressor = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        compressed_size += len(chunk)
+        if compressed_size > settings.ingest_max_payload_bytes:
+            raise HTTPException(status_code=413, detail="telemetry payload too large")
+        if decompressor.eof:
+            raise ValueError("trailing gzip data")
+        remaining = settings.ingest_max_payload_bytes - len(body)
+        try:
+            decoded = decompressor.decompress(chunk, remaining + 1)
+        except zlib.error as exc:
+            raise ValueError("malformed gzip payload") from exc
+        if len(body) + len(decoded) > settings.ingest_max_payload_bytes:
+            raise HTTPException(status_code=413, detail="telemetry payload too large")
+        body.extend(decoded)
+        if decompressor.unused_data or decompressor.unconsumed_tail:
+            raise ValueError("trailing or oversized gzip data")
+    if not decompressor.eof:
+        raise ValueError("truncated gzip payload")
+    flushed = decompressor.flush()
+    if len(body) + len(flushed) > settings.ingest_max_payload_bytes:
+        raise HTTPException(status_code=413, detail="telemetry payload too large")
+    body.extend(flushed)
+    return bytes(body)
 
 
 def _set_session_cookie(response: Response, settings: Settings, session_id: str) -> None:
@@ -871,6 +1067,34 @@ def _set_session_cookie(response: Response, settings: Settings, session_id: str)
     )
 
 
+def _record_auth_callback(
+    app: FastAPI, started: float, stage: str, outcome: str
+) -> None:
+    """Record only bounded callback stage/outcome metadata in the metrics sink."""
+
+    duration = max(0.0, (monotonic() - started) * 1000.0)
+    labels = {"stage": stage, "outcome": outcome}
+    app.state.query.metrics.record("observatory_auth_callback_duration_ms", duration, labels)
+    app.state.query.metrics.record("observatory_auth_callback_outcome", labels=labels)
+
+
+def _callback_recovery_response(
+    settings: Settings, marker: str, return_to: str | None = None
+) -> RedirectResponse:
+    safe_marker = marker if marker in _AUTH_RECOVERY_MARKERS else "callback_failed"
+    target = urlsplit(sanitize_return_to(return_to))
+    query = [
+        (key, value)
+        for key, value in parse_qsl(target.query, keep_blank_values=True)
+        if key != _AUTH_RECOVERY_QUERY
+    ]
+    query.append((_AUTH_RECOVERY_QUERY, safe_marker))
+    location = urlunsplit(("", "", target.path or "/", urlencode(query), ""))
+    response = RedirectResponse(location, status_code=303)
+    _clear_session_cookie(response, settings)
+    return response
+
+
 def _clear_session_cookie(response: Response, settings: Settings) -> None:
     """Clear the opaque session without serializing an empty quoted value."""
 
@@ -879,6 +1103,147 @@ def _clear_session_cookie(response: Response, settings: Settings) -> None:
         attributes += "; Secure"
     response.headers.append(
         "set-cookie", f"{settings.effective_session_cookie_name}=; {attributes}"
+    )
+
+
+def _browser_sse_origin_allowed(request: Request, public_origin: str) -> bool:
+    """Validate an Origin-less browser EventSource request conservatively."""
+
+    fetch_site = request.headers.getlist("sec-fetch-site")
+    if len(fetch_site) != 1 or fetch_site[0] != "same-origin":
+        return False
+    request_origin = _request_origin_from_trusted_headers(request)
+    return request_origin is not None and _origins_match(request_origin, public_origin)
+
+
+def _request_origin_from_trusted_headers(request: Request) -> str | None:
+    """Reconstruct the external origin from one unambiguous proxy/header form."""
+
+    host_values = request.headers.getlist("host")
+    if len(host_values) != 1:
+        return None
+    direct_host = _validate_origin_host(host_values[0])
+    if direct_host is None:
+        return None
+
+    forwarded_values = request.headers.getlist("forwarded")
+    proto_values = request.headers.getlist("x-forwarded-proto")
+    forwarded_host_values = request.headers.getlist("x-forwarded-host")
+    if len(forwarded_values) > 1 or len(proto_values) > 1 or len(forwarded_host_values) > 1:
+        return None
+    if forwarded_values and (proto_values or forwarded_host_values):
+        return None
+
+    scheme: str | None
+    host = direct_host
+    if forwarded_values:
+        forwarded = forwarded_values[0]
+        if not forwarded or "," in forwarded:
+            return None
+        fields: dict[str, str] = {}
+        for item in forwarded.split(";"):
+            key, separator, value = item.partition("=")
+            key = key.strip().casefold()
+            value = value.strip()
+            if not separator or not key or not value or key in fields:
+                return None
+            if any(character in value for character in ('"', "'", "\\")):
+                return None
+            fields[key] = value
+        scheme = _validate_origin_scheme(fields.get("proto"))
+        forwarded_host = _validate_origin_host(fields.get("host"))
+        if scheme is None or forwarded_host is None:
+            return None
+        host = forwarded_host
+    elif proto_values or forwarded_host_values:
+        if len(proto_values) != 1 or len(forwarded_host_values) != 1:
+            return None
+        scheme = _validate_origin_scheme(proto_values[0])
+        forwarded_host = _validate_origin_host(forwarded_host_values[0])
+        if scheme is None or forwarded_host is None:
+            return None
+        host = forwarded_host
+    else:
+        scheme = _validate_origin_scheme(request.scope.get("scheme"))
+        if scheme is None:
+            return None
+    port = _origin_port(scheme, host)
+    if port is None:
+        return None
+    return f"{scheme}://{host}"
+
+
+def _validate_origin_scheme(value: object) -> str | None:
+    if not isinstance(value, str) or value not in {"http", "https"}:
+        return None
+    return value
+
+
+def _validate_origin_host(value: object) -> str | None:
+    if not isinstance(value, str) or not value or value != value.strip():
+        return None
+    if any(character in value for character in (",", "/", "\\", "?", "#", "@")):
+        return None
+    try:
+        parsed = urlsplit("//" + value)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.netloc != value
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.hostname is None
+    ):
+        return None
+    if port is not None and not 1 <= port <= 65535:
+        return None
+    hostname = parsed.hostname.casefold()
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    return hostname if port is None else f"{hostname}:{port}"
+
+
+def _default_port(scheme: str) -> int:
+    return 443 if scheme == "https" else 80
+
+
+def _origin_port(scheme: str, host: str) -> int | None:
+    try:
+        parsed = urlsplit("//" + host)
+        port = parsed.port
+    except ValueError:
+        return None
+    return port if port is not None else _default_port(scheme)
+
+
+def _origins_match(actual: str, expected: str) -> bool:
+    actual_parts = urlsplit(actual)
+    expected_parts = urlsplit(expected)
+    if (
+        actual_parts.scheme not in {"http", "https"}
+        or expected_parts.scheme not in {"http", "https"}
+        or expected_parts.path
+        or expected_parts.query
+        or expected_parts.fragment
+        or expected_parts.username is not None
+        or expected_parts.password is not None
+        or expected_parts.hostname is None
+    ):
+        return False
+    try:
+        expected_port = expected_parts.port or _default_port(expected_parts.scheme)
+    except ValueError:
+        return False
+    return (
+        actual_parts.scheme == expected_parts.scheme
+        and actual_parts.hostname is not None
+        and actual_parts.hostname.casefold() == expected_parts.hostname.casefold()
+        and _origin_port(actual_parts.scheme, actual_parts.netloc)
+        == expected_port
     )
 
 

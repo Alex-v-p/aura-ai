@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 ROOT = Path(__file__).parents[3]
 SCHEMA_PATH = ROOT / "contracts/telemetry/v1/metadata-observation.schema.json"
+OPENAPI_PATH = ROOT / "contracts/openapi/observatory-v1.yaml"
 
 
 def _valid_payload() -> dict[str, Any]:
@@ -91,6 +92,49 @@ def test_contract_accepts_a_bounded_metadata_observation() -> None:
     assert observation.to_payload()["capturePolicy"] == "metadata_only"
     assert observation.component.id.startswith("aura.")
     assert math.isfinite(observation.measurement.value)
+
+
+def test_contract_accepts_canonical_core_ids_without_uuid_marker_bits() -> None:
+    payload = _valid_payload()
+    core_identifier = "01234567-89ab-0cde-7123-0123456789ab"
+    payload["correlation"] = {
+        "runId": core_identifier,
+        "conversationId": "fedcba98-7654-f321-0123-fedcba987654",
+    }
+
+    observation = MetadataObservation.from_payload(payload)
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert observation.correlation is not None
+    assert observation.correlation.run_id == core_identifier
+    assert re.fullmatch(schema["$defs"]["Uuid"]["pattern"], core_identifier)
+
+
+def test_telemetry_and_query_contracts_share_the_canonical_uuid_bound() -> None:
+    telemetry = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    openapi = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
+
+    assert (
+        telemetry["$defs"]["Uuid"]["pattern"]
+        == openapi["components"]["schemas"]["Uuid"]["pattern"]
+        == r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "01234567-89AB-0cde-7123-0123456789ab",
+        "0123456789ab0cde71230123456789ab",
+        "01234567-89ab-0cde-7123-0123456789ag",
+    ],
+)
+def test_contract_rejects_noncanonical_or_unbounded_core_ids(identifier: str) -> None:
+    payload = _valid_payload()
+    payload["correlation"] = {"conversationId": identifier}
+
+    with pytest.raises(ValidationError):
+        MetadataObservation.from_payload(payload)
 
 
 def test_wire_schema_and_runtime_contract_do_not_drift() -> None:

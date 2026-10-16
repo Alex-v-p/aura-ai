@@ -1,0 +1,100 @@
+agent: core_worker
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0084_core
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-core.conversation-persistence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_telemetry.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      ./.venv/bin/pytest
+      services/aura-core/tests/test_conversations.py
+      -k sql_append_message_eager_loads_relationship_for_each_stream_chunk
+      (1 passed)
+    - >-
+      ./.venv/bin/pytest services/aura-core/tests/test_conversations.py
+      (73 passed)
+    - >-
+      ./.venv/bin/ruff check
+      services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+      services/aura-core/tests/test_conversations.py
+    - >-
+      ./.venv/bin/pyright
+      services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+      services/aura-core/tests/test_conversations.py
+      (0 errors)
+    - >-
+      ./.venv/bin/pytest services/aura-core/tests/test_telemetry.py
+      -k 'aura0084 or aura0079_otlp_span_uses_standard_trace_signal_route_and_shape'
+      (3 passed)
+    - >-
+      ./.venv/bin/pytest services/aura-core/tests/test_telemetry.py
+      (58 passed, 1 skipped)
+    - >-
+      ./.venv/bin/ruff check
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_telemetry.py
+    - >-
+      ./.venv/bin/pyright
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_telemetry.py
+      (0 errors)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0084.yaml
+      --role core_worker
+      --path services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+      --path services/aura-core/tests/test_conversations.py
+      --path services/aura-core/src/aura_core/platform/telemetry.py
+      --path services/aura-core/tests/test_telemetry.py
+      (4 changed paths validated)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Full-stack acceptance remains with the test/evaluation and integration
+      owners; this Core slice has no independent Docker acceptance requirement.
+decisions:
+  - >-
+    SqlConversationRepository.append_message now passes a selectinload option
+    with its row lock so _message can render normalized attachment links
+    without implicit asynchronous relationship IO for any streamed chunk.
+  - >-
+    The regression exercises two sequential assistant chunks and makes the
+    session boundary require relationship eager-loading options before it
+    hydrates attachment_links, reproducing the async-safe contract without
+    requiring a shared database.
+  - >-
+    OTLP trace serialization replaces only the exact all-zero internal
+    no-trace sentinel with UUIDv5(namespace, observation ID). This is stable
+    across retries, contains no content or identity, and uses the replacement
+    for links while preserving supplied parent span IDs and all non-sentinel
+    trace IDs.
+risks:
+  - >-
+    A disposable PostgreSQL full-stack run should continue to verify the
+    production driver path; the repository and focused test are isolated from
+    the concurrent Observatory changes.
+  - >-
+    The telemetry regression covers Core serialization and Collector-compatible
+    JSON shape; the complete disposable stack remains owned by integration.
+unresolved: []

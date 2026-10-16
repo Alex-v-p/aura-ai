@@ -1,0 +1,278 @@
+agent: observatory_worker
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0078_observatory
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.auth-session
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/test_aura0079_auth.py
+  - services/aura-observatory/tests/test_aura0084_auth_recovery.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0080_api.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added:
+    - observatory_auth_callback_duration_ms
+    - observatory_auth_callback_outcome
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role observatory_worker with all
+      Observatory-owned paths
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0084.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0084.yaml
+    - >-
+      cd services/aura-observatory && uv run ruff check src
+      tests/test_aura0079_auth.py tests/test_aura0084_auth_recovery.py
+    - cd services/aura-observatory && uv run pyright
+    - >-
+      cd services/aura-observatory && uv run pytest
+      tests/test_aura0079_auth.py tests/test_aura0084_auth_recovery.py (27 passed)
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/pytest -q
+      services/aura-observatory/tests/test_aura0084_auth_recovery.py
+      services/aura-observatory/tests/test_aura0079_auth.py (27 passed, 1
+      warning)
+    - >-
+      cd services/aura-observatory && uv run pytest
+      tests/test_aura0079_otlp_signal_regressions.py (36 passed)
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-uv uv run pytest
+      tests/test_aura0078_review_fixes.py -q (34 passed)
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-uv uv run pytest
+      tests/test_aura0080_api.py -q (20 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run ruff check
+      services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+      services/aura-observatory/tests/test_aura0078_review_fixes.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run ruff check
+      services/aura-observatory/src/aura_observatory/adapters/query.py
+      services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+      services/aura-observatory/tests/test_aura0078_review_fixes.py
+      services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py (passed)
+    - UV_CACHE_DIR=/tmp/aura-0084-uv uv run pyright services/aura-observatory (0 errors)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role observatory_worker --path
+      services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+      --path services/aura-observatory/src/aura_observatory/adapters/query.py
+      --path services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+      --path services/aura-observatory/tests/test_aura0078_review_fixes.py
+      --path services/aura-observatory/tests/test_aura0080_formal_regressions.py
+      --path services/aura-observatory/tests/test_aura0080_api.py
+      (6 changed paths validated)
+    - git diff --check
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run pytest services/aura-observatory/tests
+      -q (297 passed, 1 warning)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run pytest
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py -q
+      (101 passed, 1 warning)
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/pytest
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py
+      services/aura-observatory/tests/test_aura0080_api.py -q (122 passed, 1
+      warning)
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/pytest
+      services/aura-observatory/tests -q (297 passed, 1 warning)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run ruff check
+      services/aura-observatory/src/aura_observatory/query.py
+      services/aura-observatory/src/aura_observatory/adapters/query.py
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py
+      (passed)
+    - UV_CACHE_DIR=/tmp/aura-0084-uv uv run ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - UV_CACHE_DIR=/tmp/aura-0084-uv uv run pyright (0 errors, 0 warnings, 0 informations)
+  failed: []
+  not_run:
+    - cd frontend && pnpm exec nx run observatory:lint
+    - cd frontend && pnpm exec nx run observatory:test
+    - cd frontend && pnpm exec nx run observatory-web:lint
+    - cd frontend && pnpm exec nx run observatory-web:test
+    - cd frontend && pnpm exec nx run observatory-web:build:production
+    - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+    - bash deploy/compose/run-observatory-full-stack-e2e.sh
+decisions:
+  - >-
+    Callback recovery uses the finite same-origin query marker
+    auth_recovery with state_missing, state_invalid, code_missing,
+    provider_denied, and callback_failed values. Unknown markers cannot be
+    produced by the backend.
+  - >-
+    Missing, expired, malformed, denied, token/claim, and session failures all
+    return HTTP 303 to a bounded local path and clear the opaque Observatory
+    session cookie. Provider query values, credentials, issuers, and exception
+    text are ignored and never reflected.
+  - >-
+    One server-owned return-path sanitizer bounds relative paths to 2048
+    characters, strips fragments and exact normalized sensitive/OIDC/provider
+    keys (including canonical identity, request, and provider-endpoint names)
+    plus narrowly bounded credential suffix/prefix variants, and runs before
+    state persistence and before every redirect while preserving ordinary
+    Observatory route filters such as selected, status, component, model,
+    deployment, filter, from, and to.
+  - >-
+    The server denylist is synchronized with the browser policy for
+    content-bearing names body, content, document, file, filename, input,
+    memory, message, output, payload, tool, toolargument(s), and
+    toolresult(s), using the same separator/case normalization. Login-state
+    persistence and both successful and recovery callback redirects are
+    covered without reflecting those values.
+  - >-
+    Callback diagnostics use only finite stage/outcome labels: login-state
+    store unavailable/missing/invalid, provider denied/missing-code/exchange
+    failure, authorization rejection, session-store failure, and success.
+    They emit no trace or correlation identifiers because the callback does
+    not emit those fields.
+  - >-
+    Successful callbacks retain their normal local redirect, strictly reuse
+    issuer/audience/nonce/owner checks, and rotate any prior session. The
+    callback remains excluded from OpenAPI.
+  - >-
+    The query-api manifest declares observatory_auth_recovery as a
+    metadata-only evaluator and two callback metrics use only finite stage and
+    outcome labels with OIDC, login-state, and session-store dependencies.
+  - >-
+    The Collector's standard OTLP/HTTP gzip transport is an acceptance
+    dependency. The authenticated signal boundary accepts exactly one gzip
+    encoding or identity, enforces compressed and decompressed byte limits,
+    and rejects malformed, truncated, concatenated, trailing, or unsupported
+    encodings without exposing payload details.
+  - >-
+    ClickHouse DateTime64(3) insertion normalizes the already-validated
+    contract observedAt timestamp to UTC `YYYY-MM-DD HH:MM:SS.mmm`, truncating
+    sub-millisecond precision at the storage boundary while leaving the public
+    RFC3339 contract unchanged. Missing or invalid timezone-bearing timestamps
+    fail closed before the HTTP insert.
+  - >-
+    ClickHouse HTTP failures log only status, bounded numeric server code, and
+    a finite error class (parse, schema, syntax, auth, database, or unknown);
+    raw response bodies, SQL, observation rows, credentials, and exception
+    details are never logged. Standard Core-shaped OTLP metric normalization
+    was inspected and produces the same bounded row shape as the synthetic
+    preflight.
+  - >-
+    The OTLP trace boundary accepts the finite Collector/protobuf structural
+    defaults needed by version 0.138: omitted or zero dropped-item counts,
+    empty events, empty status messages, empty scope attributes, and zero link
+    dropped-attribute counts. Nonzero dropped counts, event content, status
+    messages, link attributes, unknown fields, and arbitrary attributes remain
+    rejected before normalization and storage.
+  - >-
+    ClickHouse query and retention HTTP failures emit only status, a numeric
+    server code, and a finite classified reason. SQL statements, response
+    bodies, credentials, and query values are classified in memory and never
+    logged.
+  - >-
+    OTLP structural rejection diagnostics emit only the bounded signal name
+    and finite class (encoding, JSON, unsupported_fields, dropped_nonzero,
+    status_code, status_message, scope, link, event, attribute, shape,
+    contract-value, or malformed); submitted field names, values, payloads,
+    and exception text are never logged.
+  - >-
+    Collector 0.138-compatible OTLP JSON status enum values accept the
+    symbolic names and numeric protobuf values 0, 1, and 2; link flags are
+    accepted only when the protobuf default is numeric zero. Non-default
+    values remain rejected before normalization.
+  - >-
+    Component-health latency percentiles use ClickHouse quantileIf aggregates
+    rather than SQL FILTER syntax, which avoids ILLEGAL_AGGREGATION on the
+    deployed ClickHouse version while preserving the metadata-only execution
+    grouping and outcome semantics. Inner argMaxIf results use the distinct
+    selected_measurement_value and selected_measurement_unit aliases so
+    ClickHouse 25.8 cannot substitute source-column aliases into nested
+    aggregates.
+  - >-
+    OTLP normalization canonicalizes only aura.run_id and
+    aura.conversation_id through UUID parsing before constructing the closed
+    observation. Compact 32-hex UUID text becomes canonical hyphenated text;
+    invalid correlation identifiers are rejected before storage.
+  - >-
+    OTLP shape diagnostics refine only static categories (shape_object,
+    shape_array, shape_trace_id, shape_span_id, shape_parent_span_id,
+    shape_link_trace_id, shape_link_span_id, shape_attribute_key, and
+    shape_attribute_value) without logging submitted keys, values, content,
+    or payloads. Collector-normalized numeric status and zero link-flag
+    defaults are covered by positive and negative fixtures.
+  - >-
+    Empty optional OTLP parentSpanId and instrumentation scope name/version
+    values are treated as omitted defaults; required trace/span IDs and
+    metadata attributes remain fail-closed.
+  - >-
+    Origin-less SSE EventSource requests are accepted only when the single
+    Sec-Fetch-Site value is exactly same-origin and a validated origin from
+    request scheme plus Host or one unambiguous trusted Forwarded form matches
+    public_origin. Multiple or malformed Host/forwarding values, cross-site or
+    same-site fetch metadata, and origin mismatches remain forbidden; explicit
+    Origin values still require an exact public-origin match.
+  - >-
+    Run summaries select the newest non-empty trace lineage independently of
+    the newest status/deployment/model observation. The ClickHouse run query
+    uses argMaxIf over (observed_at, observation_id) for deterministic
+    tie-breaking; reference and detail projections apply the same ordering.
+    Empty lineage remains null. Production row rehydration omits absent
+    optional trace, correlation, and measurement-unit fields rather than
+    emitting schema-invalid explicit nulls.
+  - >-
+    The production component catalogue converges PostgreSQL registered
+    definitions with a bounded ClickHouse GROUP BY of observed component IDs
+    and versions. It deduplicates by (componentId, version), preserves the
+    earliest/latest timestamps across both sources, and exposes observed-only
+    components to the existing bounded component-health query; no catalogue
+    definition is invented.
+  - >-
+    ClickHouse DateTime values without an explicit offset are interpreted as
+    UTC at the query adapter boundary, preventing process-local timezone
+    conversion from shifting observed component timestamps.
+  - >-
+    Durable retention serializes only target capture: the session advisory
+    lock is held through the ClickHouse scope read and committed PostgreSQL
+    target pages, then released before ClickHouse mutations and projection
+    rebuilds. Recovered targeted actions do not reacquire that ingest lock;
+    immutable targets preserve deletion semantics while avoiding telemetry
+    starvation. A production-shaped adapter regression verifies cleanup runs
+    with no session lock held and the service retention suite covers bounded
+    target pagination and restart phases.
+  - >-
+    PostgreSQL retention idempotency uses the deployed partial unique index
+    predicate explicitly in ON CONFLICT, avoiding production insert failures
+    caused by invalid constraint inference. Unexpected retention storage
+    failures are mapped to a fixed retryable 503 response; SQL, host, schema,
+    and provider exception details are not exposed to the browser.
+risks:
+  - >-
+    Frontend recovery-state rendering and opt-in full-stack acceptance remain
+    with the frontend and test/evaluation owners.
+unresolved: []

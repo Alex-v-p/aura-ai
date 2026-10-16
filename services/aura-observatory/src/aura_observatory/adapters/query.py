@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -29,9 +31,43 @@ from aura_observatory.query import (
     retention_from_row,
     run_dict,
     span_dict,
-    sql_time,
     tree,
 )
+
+_LOGGER = logging.getLogger(__name__)
+_CLICKHOUSE_ERROR_CLASSES = (
+    ("parse_error", re.compile(r"cannot parse|cannot convert|type mismatch", re.I)),
+    ("schema_error", re.compile(r"unknown (?:column|field)|no such column|missing column", re.I)),
+    ("syntax_error", re.compile(r"syntax error|multiquery", re.I)),
+    ("auth_error", re.compile(r"authentication|not authorized|access denied", re.I)),
+    ("database_error", re.compile(r"database .* does not exist|unknown database", re.I)),
+)
+_RETENTION_RETRY_DELAY_SECONDS = 5
+
+
+def _raise_for_clickhouse(response: httpx.Response) -> None:
+    """Raise an HTTP failure after recording bounded, content-free diagnostics."""
+
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        # ClickHouse may echo SQL and values in an error body. Classify only a
+        # bounded copy; neither the statement nor response body is logged.
+        body = response.text[:4_096]
+        code_match = re.search(r"\bCode:\s*(\d{1,5})\b", body, re.IGNORECASE)
+        code = code_match.group(1) if code_match else "0"
+        reason = "unclassified_error"
+        for candidate, pattern in _CLICKHOUSE_ERROR_CLASSES:
+            if pattern.search(body):
+                reason = candidate
+                break
+        _LOGGER.error(
+            "ClickHouse query failed status=%s code=%s reason=%s",
+            response.status_code,
+            code,
+            reason,
+        )
+        raise
 
 
 def _sql(value: str) -> str:
@@ -44,6 +80,15 @@ def _sql(value: str) -> str:
     """
 
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _clickhouse_time(value: datetime) -> str:
+    """Encode a UTC millisecond timestamp for ClickHouse DateTime64."""
+
+    normalized = value.astimezone(UTC).replace(tzinfo=None).isoformat(
+        sep=" ", timespec="milliseconds"
+    )
+    return _sql(normalized)
 
 
 _DIMENSION_STATUS_SQL = (
@@ -89,6 +134,7 @@ class _RetentionPersistenceAdapter:
         self._active_retention_action_id: str | None = None
         self._retention_guard: tuple[Any, Any] | None = None
         self._response_body_unavailable = False
+        self._retention_phase = "target_capture"
 
     async def find_retention_by_key(self, key: str) -> RetentionAction | None:
         async with self._connection_factory() as connection:
@@ -113,7 +159,8 @@ class _RetentionPersistenceAdapter:
                 "(action_id, requested_cutoff, action_kind, status, idempotency_key, "
                 "command_fingerprint, confirmation) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (idempotency_key) DO NOTHING RETURNING action_id",
+                "ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL "
+                "DO NOTHING RETURNING action_id",
                 (
                     action.action_id,
                     action.cutoff,
@@ -137,13 +184,20 @@ class _RetentionPersistenceAdapter:
 
         self._active_retention_action_id = action.action_id
         self._active_retention_action = action
+        # Targeted/recovering actions already have an immutable PostgreSQL
+        # target snapshot. They must not reacquire the ingest session lock
+        # while replaying ClickHouse mutations; doing so can block behind an
+        # active telemetry request for the entire mutation duration.
+        if action.deletion_phase != "queued":
+            return
         if self._retention_guard is None:
             context = self._connection_factory()
             connection = await context.__aenter__()
             try:
-                # Keep the session-scoped guard alive across target capture,
-                # ClickHouse mutations, and receipt completion.  This closes
-                # the target-capture/delete race with ingest and retention.
+                # Keep the session-scoped guard alive through target capture.
+                # The committed immutable target rows close the subsequent
+                # target-capture/delete race without holding up telemetry
+                # during ClickHouse mutations.
                 await connection.execute("SELECT pg_advisory_lock(830078)")
             except BaseException:
                 await context.__aexit__(None, None, None)
@@ -152,11 +206,12 @@ class _RetentionPersistenceAdapter:
                 raise
             self._retention_guard = (context, connection)
 
-    async def _release_retention_guard(self) -> None:
+    async def _release_retention_guard(self, *, clear_action: bool = True) -> None:
         guarded = self._retention_guard
         self._retention_guard = None
-        self._active_retention_action_id = None
-        self._active_retention_action = None
+        if clear_action:
+            self._active_retention_action_id = None
+            self._active_retention_action = None
         if guarded is None:
             return
         context, connection = guarded
@@ -281,8 +336,11 @@ class _RetentionPersistenceAdapter:
                 "error_code, idempotency_key, target_observation_count, "
                 "target_receipt_count, target_run_count, deletion_phase "
                 "FROM observatory_retention_actions WHERE status IN ('queued', 'running') "
-                "OR (status = 'failed' AND deletion_phase <> 'completed') "
-                "ORDER BY requested_at"
+                "OR (status = 'failed' AND deletion_phase <> 'completed' AND "
+                "(completed_at IS NULL OR completed_at <= CURRENT_TIMESTAMP - "
+                "(%s * INTERVAL '1 second'))) "
+                "ORDER BY requested_at",
+                (_RETENTION_RETRY_DELAY_SECONDS,),
             )
             rows = await result.fetchall()
         return [retention_from_row(row, str(row[11] or "")) for row in rows]
@@ -293,10 +351,12 @@ class _RetentionPersistenceAdapter:
                 "UPDATE observatory_retention_actions SET status = 'running', "
                 "started_at = CURRENT_TIMESTAMP, completed_at = NULL "
                 "WHERE action_id = %s AND (status = 'queued' OR "
-                "(status = 'failed' AND deletion_phase <> 'completed') OR "
+                "(status = 'failed' AND deletion_phase <> 'completed' AND "
+                "(completed_at IS NULL OR completed_at <= CURRENT_TIMESTAMP - "
+                "(%s * INTERVAL '1 second'))) OR "
                 "(status = 'running' AND started_at <= CURRENT_TIMESTAMP - "
                 "(%s * INTERVAL '1 second'))) RETURNING action_id",
-                (action_id, lease_seconds),
+                (action_id, _RETENTION_RETRY_DELAY_SECONDS, lease_seconds),
             )
             return (await result.fetchone()) is not None
 
@@ -313,7 +373,7 @@ class _RetentionPersistenceAdapter:
                 auth=(self._user, self._password),
                 content=query + " FORMAT JSONEachRow",
             )
-            response.raise_for_status()
+            _raise_for_clickhouse(response)
         rows: list[dict[str, Any]] = []
         for line in response.text.splitlines():
             if line.strip():
@@ -442,17 +502,23 @@ class _RetentionPersistenceAdapter:
     async def prepare_retention(self, action: RetentionAction) -> None:
         """Persist the target snapshot before any destructive mutation."""
 
+        self._retention_phase = "target_capture"
         self._active_retention_action_id = action.action_id
         if action.deletion_phase != "queued":
             return
 
         where = ""
         if action.cutoff is not None:
-            where = " WHERE observed_at < toDateTime64(" + sql_time(action.cutoff) + ", 3, 'UTC')"
+            where = (
+                " WHERE observed_at < toDateTime64("
+                + _clickhouse_time(action.cutoff)
+                + ", 3, 'UTC')"
+            )
         async with self._connection_factory() as connection:
-            # Scope is read only after attach_retention acquired the
-            # session-scoped destructive lock, so it remains serialized until
-            # the terminal audit update releases that lock.
+            # Scope is read only while attach_retention's session lock is
+            # held. Once the immutable target rows and phase are committed,
+            # late ingest cannot enter the target set and ClickHouse cleanup
+            # no longer needs to hold up telemetry.
             if self._retention_guard is None:
                 await connection.execute("SELECT pg_advisory_xact_lock(830078)")
             rows = await self._rows(
@@ -517,6 +583,7 @@ class _RetentionPersistenceAdapter:
             last_receipt_id: str | None = None
             previous_receipt_key: str | None = None
             while True:
+                self._retention_phase = "receipt_target_capture"
                 receipt_where = (
                     ""
                     if action.cutoff is None
@@ -525,7 +592,7 @@ class _RetentionPersistenceAdapter:
                 keyset = ""
                 params_list: list[Any] = []
                 if last_receipt_id is not None:
-                    keyset = " AND r.observation_id > %s"
+                    keyset = " AND r.observation_id > %s::uuid"
                 if action.cutoff is not None:
                     params_list.append(action.cutoff)
                 if last_receipt_id is not None:
@@ -538,7 +605,12 @@ class _RetentionPersistenceAdapter:
                     + receipt_where
                     + keyset
                     + " AND NOT EXISTS (SELECT 1 FROM observatory_retention_targets t "
-                    "WHERE t.action_id = %s AND t.observation_id = r.observation_id) "
+                    # Receipts use PostgreSQL UUID while durable target pages
+                    # intentionally retain the ClickHouse string identity.
+                    # Cast the UUID to text at the comparison boundary so
+                    # populated installations do not depend on implicit
+                    # operator resolution.
+                    "WHERE t.action_id = %s AND t.observation_id = r.observation_id::text) "
                     "ORDER BY r.observation_id LIMIT 1000",
                     params,
                 )
@@ -569,7 +641,7 @@ class _RetentionPersistenceAdapter:
             receipt_result = await connection.execute(
                 "SELECT count(*) FROM observatory_observation_receipts r "
                 "JOIN observatory_retention_targets t ON t.action_id = %s "
-                "AND t.observation_id = r.observation_id",
+                "AND t.observation_id = r.observation_id::text",
                 (action.action_id,),
             )
             receipt_row = await receipt_result.fetchone()
@@ -591,6 +663,7 @@ class _RetentionPersistenceAdapter:
             action.target_receipt_count = target_receipt_count
             action.target_run_count = target_run_count
             action.deletion_phase = "targeted"
+        await self._release_retention_guard(clear_action=False)
 
     async def _retention_target_ids(
         self, connection: Any, action_id: str, after: str | None = None
@@ -664,6 +737,7 @@ class _RetentionPersistenceAdapter:
                     last_run: str | None = None
                     previous_run_key: str | None = None
                     while True:
+                        self._retention_phase = "run_target_lookup"
                         run_ids = await self._retention_run_ids(connection, action_id, last_run)
                         if not run_ids:
                             break
@@ -672,6 +746,7 @@ class _RetentionPersistenceAdapter:
                             "run projections", previous_run_key, next_run
                         )
                         previous_run_key = next_run
+                        self._retention_phase = "run_projection_delete"
                         response = await client.post(
                             self._endpoint,
                             params={"database": self._database},
@@ -682,11 +757,12 @@ class _RetentionPersistenceAdapter:
                                 + ") SETTINGS mutations_sync=2"
                             ),
                         )
-                        response.raise_for_status()
+                        _raise_for_clickhouse(response)
                         last_run = next_run
                     last_observation: str | None = None
                     previous_observation_key: str | None = None
                     while True:
+                        self._retention_phase = "observation_target_lookup"
                         ids = await self._retention_target_ids(
                             connection, action_id, last_observation
                         )
@@ -697,6 +773,7 @@ class _RetentionPersistenceAdapter:
                             "observations", previous_observation_key, next_observation
                         )
                         previous_observation_key = next_observation
+                        self._retention_phase = "observation_delete"
                         response = await client.post(
                             self._endpoint,
                             params={"database": self._database},
@@ -707,18 +784,21 @@ class _RetentionPersistenceAdapter:
                                 + ") SETTINGS mutations_sync=2"
                             ),
                         )
-                        response.raise_for_status()
+                        _raise_for_clickhouse(response)
                         last_observation = next_observation
+                    self._retention_phase = "retention_phase_update"
                     await self._persist_retention_phase(connection, "source_deleted")
                     phase = "source_deleted"
                 if phase == "source_deleted":
+                    self._retention_phase = "projection_truncate"
                     truncate = await client.post(
                         self._endpoint,
                         params={"database": self._database},
                         auth=(self._user, self._password),
                         content="TRUNCATE TABLE run_projections",
                     )
-                    truncate.raise_for_status()
+                    _raise_for_clickhouse(truncate)
+                    self._retention_phase = "projection_rebuild"
                     rebuild = await client.post(
                         self._endpoint,
                         params={"database": self._database},
@@ -729,13 +809,15 @@ class _RetentionPersistenceAdapter:
                             "FROM observations WHERE run_id != '' GROUP BY run_id"
                         ),
                     )
-                    rebuild.raise_for_status()
+                    _raise_for_clickhouse(rebuild)
+                    self._retention_phase = "retention_phase_update"
                     await self._persist_retention_phase(connection, "projection_deleted")
                     phase = "projection_deleted"
             if phase == "projection_deleted":
                 last_receipt: str | None = None
                 previous_receipt_key: str | None = None
                 while True:
+                    self._retention_phase = "receipt_target_lookup"
                     ids = await self._retention_target_ids(connection, action_id, last_receipt)
                     if not ids:
                         break
@@ -744,13 +826,15 @@ class _RetentionPersistenceAdapter:
                         "receipt deletion", previous_receipt_key, next_receipt
                     )
                     previous_receipt_key = next_receipt
+                    self._retention_phase = "receipt_delete"
                     await connection.execute(
                         "DELETE FROM observatory_observation_receipts "
-                        "WHERE observation_id = ANY(%s)",
+                        "WHERE observation_id = ANY(%s::uuid[])",
                         (ids,),
                     )
                     last_receipt = next_receipt
                 await _commit_connection(connection)
+                self._retention_phase = "retention_phase_update"
                 await self._persist_retention_phase(connection, "receipts_deleted")
             return DeletionResult(observations, receipts, runs)
 
@@ -773,7 +857,8 @@ class _RetentionPersistenceAdapter:
             if cutoff is None
             else (
                 " WHERE observed_at < toDateTime64("
-                f"'{cutoff.astimezone(UTC).isoformat()}', 3, 'UTC')"
+                + _clickhouse_time(cutoff)
+                + ", 3, 'UTC')"
             )
         )
         deleted = len(selected)
@@ -785,7 +870,7 @@ class _RetentionPersistenceAdapter:
                 auth=(self._user, self._password),
                 content="ALTER TABLE observations DELETE" + where + " SETTINGS mutations_sync=1",
             )
-            response.raise_for_status()
+            _raise_for_clickhouse(response)
             # ClickHouse mutations do not cascade to aggregate projections;
             # delete the durable run scope captured before the source mutation.
             projection_where = ""
@@ -802,7 +887,7 @@ class _RetentionPersistenceAdapter:
                         + " SETTINGS mutations_sync=1"
                     ),
                 )
-                projection.raise_for_status()
+                _raise_for_clickhouse(projection)
         async with self._connection_factory() as connection:
             await connection.execute("SELECT pg_advisory_xact_lock(830078)")
             if cutoff is None:
@@ -815,14 +900,14 @@ class _RetentionPersistenceAdapter:
             else:
                 result = await connection.execute(
                     "SELECT count(*) FROM observatory_observation_receipts "
-                    "WHERE observed_at < %s OR observation_id = ANY(%s)",
+                    "WHERE observed_at < %s OR observation_id = ANY(%s::uuid[])",
                     (cutoff, list(ids)),
                 )
                 row = await result.fetchone()
                 receipt_count = int(row[0]) if row else 0
                 await connection.execute(
                     "DELETE FROM observatory_observation_receipts "
-                    "WHERE observed_at < %s OR observation_id = ANY(%s)",
+                    "WHERE observed_at < %s OR observation_id = ANY(%s::uuid[])",
                     (cutoff, list(ids)),
                 )
         return DeletionResult(deleted, receipt_count, len(run_ids))
@@ -843,7 +928,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 auth=(self._user, self._password),
                 content=statement + " FORMAT JSONEachRow",
             )
-            response.raise_for_status()
+            _raise_for_clickhouse(response)
         if not hasattr(response, "text"):
             # Small adapter doubles may omit the body.  Mark that bounded
             # compatibility mode explicitly; real ClickHouse responses always
@@ -857,7 +942,59 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         ]
 
     async def components_query(self) -> list[dict[str, Any]]:
-        return await self.components()
+        # PostgreSQL contains registered catalogue definitions, while
+        # ClickHouse is authoritative for what was actually observed.  An
+        # ingest-side catalogue write can be delayed or fail independently of
+        # the observation insert, so the query boundary must converge both
+        # bounded sources instead of hiding observed components.
+        definitions = await self.components()
+        observed_rows = await self._query_rows(
+            "SELECT component_id, component_version, min(observed_at) AS first_seen_at, "
+            "max(observed_at) AS last_seen_at FROM observations "
+            "WHERE component_id != '' AND component_version != '' "
+            "GROUP BY component_id, component_version "
+            "ORDER BY component_id, component_version"
+        )
+        merged: dict[tuple[str, str], dict[str, Any]] = {
+            (str(item["componentId"]), str(item["version"])): dict(item)
+            for item in definitions
+            if item.get("componentId") and item.get("version")
+        }
+
+        def merge_time(
+            current: Any, observed: Any, *, earliest: bool
+        ) -> str | None:
+            current_at = _parse_datetime(current)
+            observed_at = _parse_datetime(observed)
+            if current_at is None:
+                return iso(observed_at)
+            if observed_at is None:
+                return iso(current_at)
+            selected = min(current_at, observed_at) if earliest else max(current_at, observed_at)
+            return iso(selected)
+
+        for row in observed_rows:
+            component_id = str(row.get("component_id") or "")
+            version = str(row.get("component_version") or "")
+            if not component_id or not version:
+                continue
+            key = (component_id, version)
+            if key not in merged:
+                merged[key] = {
+                    "componentId": component_id,
+                    "version": version,
+                    "firstSeenAt": iso(_parse_datetime(row.get("first_seen_at"))),
+                    "lastSeenAt": iso(_parse_datetime(row.get("last_seen_at"))),
+                }
+                continue
+            item = merged[key]
+            item["firstSeenAt"] = merge_time(
+                item.get("firstSeenAt"), row.get("first_seen_at"), earliest=True
+            )
+            item["lastSeenAt"] = merge_time(
+                item.get("lastSeenAt"), row.get("last_seen_at"), earliest=False
+            )
+        return [merged[key] for key in sorted(merged)]
 
     async def _bounded_compatibility_page(self) -> list[MetadataObservation]:
         """Read one bounded page for response-body-less adapter doubles."""
@@ -957,13 +1094,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if filters.from_time:
             conditions.append(
                 "observed_at >= toDateTime64("
-                + _sql(filters.from_time.astimezone(UTC).isoformat())
+                + _clickhouse_time(filters.from_time)
                 + ", 3, 'UTC')"
             )
         if filters.to_time:
             conditions.append(
                 "observed_at < toDateTime64("
-                + _sql(filters.to_time.astimezone(UTC).isoformat())
+                + _clickhouse_time(filters.to_time)
                 + ", 3, 'UTC')"
             )
         # Cursor decoding is deliberately delegated to the use case; the
@@ -981,7 +1118,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if cursor_at is not None and cursor_id is not None:
             having_conditions.append(
                 "(max(observed_at), run_id) < (toDateTime64("
-                + _sql(cursor_at.astimezone(UTC).isoformat())
+                + _clickhouse_time(cursor_at)
                 + ", 3, 'UTC'), "
                 + _sql(cursor_id)
                 + ")"
@@ -998,7 +1135,12 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "argMax(dimensions['provider'], observed_at) AS model, "
             "argMax(deployment_id, observed_at) AS deployment_id, "
             "groupUniqArray(component_id) AS component_ids, "
-            "argMax(trace_id, observed_at) AS trace_id, max(ingest_sequence) AS order_sequence "
+            # Empty terminal measurements must not mask the latest span
+            # lineage.  The tuple argument makes equal-timestamp selection
+            # deterministic by observation ID while the condition keeps the
+            # aggregate explicitly metadata-only and non-empty.
+            "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id, "
+            "max(ingest_sequence) AS order_sequence "
             "FROM observations WHERE "
             + " AND ".join(conditions)
             + " GROUP BY run_id"
@@ -1048,7 +1190,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             cursor_at, cursor_id = decode_cursor(cursor)
             after = (
                 " AND (observed_at, observation_id) > (toDateTime64("
-                + _sql(cursor_at.astimezone(UTC).isoformat())
+                + _clickhouse_time(cursor_at)
                 + ", 3, 'UTC'), "
                 + _sql(cursor_id)
                 + ")"
@@ -1088,7 +1230,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             cursor_at, cursor_id = decode_cursor(cursor)
             after = (
                 " AND (observed_at, observation_id) > (toDateTime64("
-                + _sql(cursor_at.astimezone(UTC).isoformat())
+                + _clickhouse_time(cursor_at)
                 + ", 3, 'UTC'), "
                 + _sql(cursor_id)
                 + ")"
@@ -1139,13 +1281,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if from_time:
             conditions.append(
                 "observed_at >= toDateTime64("
-                + _sql(from_time.astimezone(UTC).isoformat())
+                + _clickhouse_time(from_time)
                 + ", 3, 'UTC')"
             )
         if to_time:
             conditions.append(
                 "observed_at < toDateTime64("
-                + _sql(to_time.astimezone(UTC).isoformat())
+                + _clickhouse_time(to_time)
                 + ", 3, 'UTC')"
             )
         # A component execution is one canonical span or the explicitly named
@@ -1157,10 +1299,10 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         )
         rows = await self._query_rows(
             "SELECT count() AS sample_count, "
-            "quantile(0.50)(measurement_value) FILTER "
-            "(WHERE measurement_unit = 'milliseconds') AS p50, "
-            "quantile(0.95)(measurement_value) FILTER "
-            "(WHERE measurement_unit = 'milliseconds') AS p95, "
+            "quantileIf(0.50)(selected_measurement_value, "
+            "selected_measurement_unit = 'milliseconds') AS p50, "
+            "quantileIf(0.95)(selected_measurement_value, "
+            "selected_measurement_unit = 'milliseconds') AS p95, "
             "countIf(outcome = 'failed') AS failures, "
             "countIf(outcome = 'succeeded') AS successes, "
             "countIf(outcome = 'cancelled') AS cancelled "
@@ -1169,10 +1311,10 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "observation_id, ''), span_id) AS execution_id, "
             "argMaxIf(measurement_value, (observed_at, observation_id), "
             + duration_predicate
-            + ") AS measurement_value, "
+            + ") AS selected_measurement_value, "
             "argMaxIf(measurement_unit, (observed_at, observation_id), "
             + duration_predicate
-            + ") AS measurement_unit, "
+            + ") AS selected_measurement_unit, "
             # Outcome is independent of the latency row.  Select the latest
             # non-empty normalized status/outcome from the whole execution;
             # a later secondary measurement must be able to replace an older
@@ -1271,7 +1413,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if cutoff is not None:
             where = (
                 " WHERE observed_at < toDateTime64("
-                + _sql(cutoff.astimezone(UTC).isoformat())
+                + _clickhouse_time(cutoff)
                 + ", 3, 'UTC')"
             )
         async with self._connection_factory() as connection:
@@ -1341,13 +1483,15 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                             + ",".join(_sql(run_id) for run_id in compatibility_run_ids)
                             + ") SETTINGS mutations_sync=2"
                         )
+                    self._retention_phase = "projection_delete"
                     projection = await client.post(
                         self._endpoint,
                         params={"database": self._database},
                         auth=(self._user, self._password),
                         content=projection_statement,
                     )
-                    projection.raise_for_status()
+                    _raise_for_clickhouse(projection)
+                    self._retention_phase = "observation_delete"
                     response = await client.post(
                         self._endpoint,
                         params={"database": self._database},
@@ -1358,7 +1502,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                             + " SETTINGS mutations_sync=2"
                         ),
                     )
-                    response.raise_for_status()
+                    _raise_for_clickhouse(response)
                     if self._active_retention_action_id is not None:
                         await connection.execute(
                             "UPDATE observatory_retention_actions SET deletion_phase = "
@@ -1367,6 +1511,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         )
                         await _commit_connection(connection)
                 if phase in {"queued", "targeted", "source_deleted", "failed"}:
+                    self._retention_phase = "projection_rebuild"
                     rebuild = await client.post(
                         self._endpoint,
                         params={"database": self._database},
@@ -1377,7 +1522,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                             "FROM observations WHERE run_id != '' GROUP BY run_id"
                         ),
                     )
-                    rebuild.raise_for_status()
+                    _raise_for_clickhouse(rebuild)
                     if self._active_retention_action_id is not None:
                         await connection.execute(
                             "UPDATE observatory_retention_actions SET deletion_phase = "
@@ -1390,6 +1535,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 in {"queued", "targeted", "source_deleted", "projection_deleted", "failed"}
                 and cutoff is None
             ):
+                self._retention_phase = "receipt_delete"
                 result = await connection.execute(
                     "SELECT count(*) FROM observatory_observation_receipts"
                 )
@@ -1431,10 +1577,15 @@ def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.astimezone(UTC)
-    return datetime.fromisoformat(str(value).replace(" ", "T").replace("Z", "+00:00")).astimezone(
-        UTC
-    )
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace(" ", "T").replace("Z", "+00:00"))
+    # ClickHouse DateTime64 JSON values are UTC but commonly omit an
+    # explicit offset. Treat a naive value as UTC rather than interpreting it
+    # in the API process's local timezone.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 async def _commit_connection(connection: Any) -> None:
@@ -1480,46 +1631,48 @@ def _run_status(value: str) -> str:
 def _observation(row: dict[str, Any]) -> MetadataObservation:
     observed = _parse_datetime(row["observed_at"])
     assert observed is not None
-    trace = None
+    payload: dict[str, Any] = {
+        "schemaVersion": int(row["schema_version"]),
+        "observationId": row["observation_id"],
+        "observedAt": observed.isoformat().replace("+00:00", "Z"),
+        "kind": row["kind"],
+        "component": {"id": row["component_id"], "version": row["component_version"]},
+        "operation": row["operation"],
+        "measurement": {
+            "name": row["measurement_name"],
+            "value": float(row["measurement_value"]),
+        },
+        "dimensions": row.get("dimensions") or {},
+        "deployment": {
+            "deploymentId": row["deployment_id"],
+            "gitCommit": row["git_commit"],
+            "environment": row["environment"],
+            "hostId": row["host_id"],
+        },
+        "serviceRole": row["service_role"],
+        "capturePolicy": row["capture_policy"],
+    }
+    if row.get("measurement_unit"):
+        payload["measurement"]["unit"] = row["measurement_unit"]
     if row.get("trace_id"):
-        trace = {
+        trace: dict[str, Any] = {
             "traceId": row["trace_id"],
-            "spanId": row.get("span_id") or None,
-            "parentSpanId": row.get("parent_span_id") or None,
-            "linkedSpanIds": row.get("linked_span_ids") or None,
         }
-    correlation = None
+        if row.get("span_id"):
+            trace["spanId"] = row["span_id"]
+        if row.get("parent_span_id"):
+            trace["parentSpanId"] = row["parent_span_id"]
+        if row.get("linked_span_ids"):
+            trace["linkedSpanIds"] = row["linked_span_ids"]
+        payload["trace"] = trace
     if row.get("run_id") or row.get("conversation_id"):
-        correlation = {
-            "runId": row.get("run_id") or None,
-            "conversationId": row.get("conversation_id") or None,
-        }
-    return MetadataObservation.from_payload(
-        {
-            "schemaVersion": int(row["schema_version"]),
-            "observationId": row["observation_id"],
-            "observedAt": observed.isoformat().replace("+00:00", "Z"),
-            "kind": row["kind"],
-            "component": {"id": row["component_id"], "version": row["component_version"]},
-            "operation": row["operation"],
-            "measurement": {
-                "name": row["measurement_name"],
-                "value": float(row["measurement_value"]),
-                "unit": row.get("measurement_unit") or None,
-            },
-            "dimensions": row.get("dimensions") or {},
-            "trace": trace,
-            "correlation": correlation,
-            "deployment": {
-                "deploymentId": row["deployment_id"],
-                "gitCommit": row["git_commit"],
-                "environment": row["environment"],
-                "hostId": row["host_id"],
-            },
-            "serviceRole": row["service_role"],
-            "capturePolicy": row["capture_policy"],
-        }
-    )
+        correlation: dict[str, Any] = {}
+        if row.get("run_id"):
+            correlation["runId"] = row["run_id"]
+        if row.get("conversation_id"):
+            correlation["conversationId"] = row["conversation_id"]
+        payload["correlation"] = correlation
+    return MetadataObservation.from_payload(payload)
 
 
 __all__ = ["ProductionObservatoryStore"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, MutableMapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from aura_observatory.adapters.memory import (
     MemoryObservationStore,
 )
 from aura_observatory.adapters.postgres import PostgresObservationIdRegistry
+from aura_observatory.adapters.query import ProductionObservatoryStore
 from aura_observatory.composition import build_ingest_service
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.entrypoints import cli
@@ -97,6 +99,33 @@ def test_clickhouse_row_contains_contract_kind_and_capture_policy() -> None:
 
     assert row["kind"] == "metric"
     assert row["capture_policy"] == "metadata_only"
+
+
+def test_clickhouse_row_normalizes_rfc3339_utc_to_datetime64_milliseconds() -> None:
+    wire = payload()
+    wire["observedAt"] = "2026-10-16T12:34:56.123987Z"
+
+    row = clickhouse_row(wire)
+
+    assert row["observed_at"] == "2026-10-16 12:34:56.123"
+
+
+def test_clickhouse_row_normalizes_explicit_utc_offset() -> None:
+    wire = payload()
+    wire["observedAt"] = "2026-10-16T12:34:56.123456+00:00"
+
+    row = clickhouse_row(wire)
+
+    assert row["observed_at"] == "2026-10-16 12:34:56.123"
+
+
+@pytest.mark.parametrize("observed_at", ["2026-10-16T12:34:56.123456", "not-a-timestamp"])
+def test_clickhouse_row_rejects_invalid_timestamp(observed_at: str) -> None:
+    wire = payload()
+    wire["observedAt"] = observed_at
+
+    with pytest.raises(ValueError, match="observedAt"):
+        clickhouse_row(wire)
 
 
 def test_clickhouse_row_maps_every_contract_field_without_private_payloads() -> None:
@@ -238,6 +267,132 @@ async def test_clickhouse_deduplication_token_is_stable_across_concurrent_retrie
     assert len(requests) == 1
     assert requests[0]["params"]["insert_deduplicate"] == "1"
     assert requests[0]["params"]["insert_deduplication_token"] == observation.observation_id
+
+
+@pytest.mark.asyncio
+async def test_clickhouse_http_failure_logs_only_bounded_safe_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class FakeClient:
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _endpoint: str, **_kwargs: Any) -> httpx.Response:
+            request = httpx.Request("POST", "http://clickhouse.test")
+            return httpx.Response(
+                500,
+                request=request,
+                text=(
+                    "Code: 27, e.displayText() = DB::Exception: Cannot parse input "
+                    "from 'private-value' in query observation_id=0123456789abcdef"
+                ),
+            )
+
+    monkeypatch.setattr("aura_observatory.adapters.clickhouse.httpx.AsyncClient", FakeClient)
+    observation = MetadataObservation.from_payload(payload())
+    store = ClickHouseObservationStore(
+        "http://clickhouse.test", id_registry=MemoryObservationIdRegistry()
+    )
+
+    with caplog.at_level(logging.ERROR, logger="aura_observatory.adapters.clickhouse"):
+        with pytest.raises(httpx.HTTPStatusError):
+            await store.insert_observation(observation)
+
+    assert "status=500" in caplog.text
+    assert "code=27" in caplog.text
+    assert "message=parse_error" in caplog.text
+    assert "private-value" not in caplog.text
+    assert "0123456789abcdef" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_clickhouse_query_failure_logs_only_bounded_safe_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class FakeClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _endpoint: str, **_kwargs: Any) -> httpx.Response:
+            request = httpx.Request("POST", "http://clickhouse.test")
+            return httpx.Response(
+                500,
+                request=request,
+                text=(
+                    "Code: 47, e.displayText() = DB::Exception: Unknown column "
+                    "'private-query-value' in SQL SELECT private-query-value"
+                ),
+            )
+
+    monkeypatch.setattr("aura_observatory.adapters.query.httpx.AsyncClient", FakeClient)
+    store = ProductionObservatoryStore(
+        lambda: None,
+        "http://clickhouse.test",
+        database="aura_observatory",
+        user="default",
+        password="secret",
+    )
+
+    with caplog.at_level(logging.ERROR, logger="aura_observatory.adapters.query"):
+        with pytest.raises(httpx.HTTPStatusError):
+            await store.list_observations()
+
+    assert "status=500" in caplog.text
+    assert "code=47" in caplog.text
+    assert "reason=schema_error" in caplog.text
+    assert "private-query-value" not in caplog.text
+    assert "SELECT" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_component_health_query_uses_clickhouse_conditional_quantiles() -> None:
+    queries: list[str] = []
+
+    class Store(ProductionObservatoryStore):
+        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+            queries.append(statement)
+            return [
+                {
+                    "sample_count": 1,
+                    "p50": 12.5,
+                    "p95": 12.5,
+                    "failures": 0,
+                    "successes": 1,
+                    "cancelled": 0,
+                }
+            ]
+
+    store = Store(
+        lambda: None,
+        "http://clickhouse.test",
+        database="aura_observatory",
+        user="default",
+        password="secret",
+    )
+
+    result = await store.component_health_query("aura.runtime.model_routing", None, None)
+
+    assert result is not None
+    assert result["summary"]["sampleCount"] == 1
+    assert result["summary"]["latencyP50Ms"] == 12.5
+    assert len(queries) == 1
+    assert "quantileIf(0.50)" in queries[0]
+    assert "quantileIf(0.95)" in queries[0]
+    assert "AS selected_measurement_value" in queries[0]
+    assert "AS selected_measurement_unit" in queries[0]
+    assert "selected_measurement_value, selected_measurement_unit" in queries[0]
+    assert "AS measurement_value" not in queries[0]
+    assert "AS measurement_unit" not in queries[0]
+    assert " FILTER " not in queries[0]
 
 
 @pytest.mark.asyncio
@@ -713,6 +868,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
             expected_metrics = {
                 "observatory_query_duration_ms",
                 "observatory_query_outcome",
+                "observatory_auth_callback_duration_ms",
+                "observatory_auth_callback_outcome",
             }
         elif manifest_id == "aura.observatory.live_updates":
             expected_metrics = {

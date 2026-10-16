@@ -1,0 +1,13 @@
+agent: security_privacy_reviewer
+work_item: AURA-0084
+verdict: PASS
+checked:
+  - Server and browser return-path denylist behavior is synchronized for credentials, provider fields, owner identity, prompts, content, filenames, memory, messages, payloads, and tool arguments or results.
+  - Return paths remain same-origin, fragment-free, bounded, and sanitized before login-state persistence and callback redirects.
+  - Separate Observatory issuer, audience, owner, nonce, state, opaque cookie, CSRF, session rotation, and Core-session boundaries remain enforced.
+  - Origin-less EventSource requests require same-origin Fetch Metadata and an unambiguous reconstructed origin including the configured port.
+  - Telemetry, SSE, diagnostics, browser storage, and acceptance artifacts remain metadata-only and exclude credentials, content, endpoints, and owner identity.
+  - Observatory session persistence remains password-protected on its internal network and writes only to its existing service-owned encrypted-state-root volume.
+  - Scoped browser acceptance proved down/up preservation, reset invalidation and reauthentication, Observatory outage isolation, and cleanup.
+  - Authentication, Observatory, topology, runtime, governance, contract, generated-client, and full-stack checks passed.
+findings: []

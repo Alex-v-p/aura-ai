@@ -2173,6 +2173,73 @@ async def test_aura0079_otlp_span_uses_standard_trace_signal_route_and_shape() -
     assert any(item["key"] == "aura.capture_policy" for item in span["attributes"])
 
 
+@pytest.mark.asyncio
+async def test_aura0084_otlp_replaces_only_zero_trace_sentinel_and_preserves_lineage() -> None:
+    transport = _Aura0079FakeTransport()
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        transport=transport,
+        deployment=_aura0079_deployment(),
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    zero_trace = "0" * 32
+    parent_span = "1111111111111111"
+    linked_span = "2222222222222222"
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        2.0,
+        trace_id=zero_trace,
+        span_id="3333333333333333",
+        parent_span_id=parent_span,
+        link_span_ids=(linked_span,),
+        dependency="model_provider",
+        outcome="ok",
+    )
+    valid_trace = "0123456789abcdef0123456789abcdef"
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        3.0,
+        trace_id=valid_trace,
+        span_id="4444444444444444",
+        parent_span_id=parent_span,
+        dependency="model_provider",
+        outcome="ok",
+    )
+
+    await exporter.start()
+    assert await metrics.flush()
+    await exporter.stop()
+
+    payload = json.loads(transport.requests[0][1])
+    spans = payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    sentinel_span, valid_span = spans
+    assert len(sentinel_span["traceId"]) == 32
+    assert sentinel_span["traceId"] != zero_trace
+    assert sentinel_span["traceId"] == spans[0]["links"][0]["traceId"]
+    assert sentinel_span["parentSpanId"] == parent_span
+    assert valid_span["traceId"] == valid_trace
+    assert valid_span["parentSpanId"] == parent_span
+
+
+def test_aura0084_otlp_trace_validation_still_rejects_malformed_ids() -> None:
+    metrics = MetadataMetrics()
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        1.0,
+        trace_id="not-a-trace-id",
+        span_id="5555555555555555",
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+    )
+
+    assert metrics.snapshot() == ()
+    assert metrics.stats().rejected == 1
+
+
 def test_aura0079_deployment_metadata_rejects_private_or_invalid_shapes() -> None:
     invalid = (
         {"deployment_id": "https://internal.example"},

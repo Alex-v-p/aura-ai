@@ -576,7 +576,7 @@ services:
     command:
       - >-
         export VALKEY_PASSWORD="$$(cat /run/secrets/observatory-session-password)";
-        exec valkey-server --save "" --appendonly no --requirepass "$${VALKEY_PASSWORD}"
+        exec valkey-server --save 60 1 --appendonly yes --appendfsync everysec --requirepass "$${VALKEY_PASSWORD}"
     secrets: [observatory-session-password]
     volumes:
       - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-observatory-session:/data

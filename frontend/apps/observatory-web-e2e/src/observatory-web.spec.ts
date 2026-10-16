@@ -72,6 +72,12 @@ function traceDetail() {
 }
 
 type FixtureOptions = {
+  anonymous?: boolean;
+  identityUnavailable?: boolean;
+  identityFailures?: number;
+  logoutStatuses?: number[];
+  csrfTokens?: string[];
+  expireNextRuns?: boolean;
   stale?: boolean;
   unavailable?: boolean;
   sseDisconnected?: boolean;
@@ -85,6 +91,8 @@ type FixtureHandle = {
   logoutRequests: Array<{ headers: Record<string, string> }>;
   deferredKinds: Set<string>;
   releaseDeferred: () => void;
+  restoreIdentity: () => void;
+  expireSession: () => void;
 };
 
 async function installFixture(page: Page, options: FixtureOptions = {}): Promise<FixtureHandle> {
@@ -94,7 +102,12 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
-  let loggedOut = false;
+  let loggedOut = options.anonymous ?? false;
+  let identityUnavailable = options.identityUnavailable ?? false;
+  let identityAttempts = 0;
+  let logoutAttempts = 0;
+  let sessionTokenIndex = 0;
+  let expireSessionRequested = false;
 
   const defer = async (kind: string): Promise<void> => {
     if (!options.deferAfterLogout) return;
@@ -107,17 +120,23 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     const url = new URL(request.url());
     const path = url.pathname;
     if (path.endsWith('/auth/logout') && request.method() === 'POST') {
-      loggedOut = true;
       logoutRequests.push({ headers: request.headers() });
-      await route.fulfill({ status: 204 });
+      const status = options.logoutStatuses?.[logoutAttempts++] ?? 204;
+      if (status === 204 || status === 401) loggedOut = true;
+      await route.fulfill(status === 204 ? { status } : { status, json: { code: status === 401 ? 'session_required' : 'logout_unavailable' } });
       return;
     }
     if (path.endsWith('/auth/me')) {
+      if (identityUnavailable || identityAttempts++ < (options.identityFailures ?? 0)) {
+        await route.fulfill({ status: 503, json: { code: 'identity_unavailable' } });
+        return;
+      }
       if (loggedOut) {
         await route.fulfill({ status: 401, json: { code: 'session_required' } });
         return;
       }
-      await route.fulfill({ json: { csrfToken: fixtureCsrfToken } });
+      const csrfToken = options.csrfTokens?.[Math.min(sessionTokenIndex++, (options.csrfTokens?.length ?? 1) - 1)] ?? fixtureCsrfToken;
+      await route.fulfill({ json: { csrfToken } });
       return;
     }
     if (path.endsWith('/overview')) {
@@ -126,6 +145,12 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       return;
     }
     if (path.endsWith('/runs') && request.method() === 'GET') {
+      if (options.expireNextRuns && expireSessionRequested) {
+        expireSessionRequested = false;
+        loggedOut = true;
+        await route.fulfill({ status: 401, json: { code: 'session_required' } });
+        return;
+      }
       if (options.partial) { await route.abort('failed'); return; }
       await route.fulfill({ json: { items: [run], nextCursor: null, snapshotAt: observedAt, latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22' } });
       return;
@@ -186,6 +211,8 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     logoutRequests,
     deferredKinds,
     releaseDeferred: () => { while (deferredResolvers.length) deferredResolvers.shift()?.(); },
+    restoreIdentity: () => { identityUnavailable = false; loggedOut = false; },
+    expireSession: () => { expireSessionRequested = true; },
   };
 }
 
@@ -212,6 +239,75 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openFixture(page, { unavailable: true });
     await expect(page.getByText(/unavailable|could not load/i).first()).toBeVisible();
     await expectNoA11yViolations(page);
+  });
+
+  test('renders an initial anonymous recovery state with a bounded sign-in return path', async ({ page }) => {
+    await installFixture(page, { anonymous: true });
+    await page.goto('/?status=succeeded');
+    await expect(page.getByRole('heading', { name: 'Sign in to Observatory', exact: true })).toBeVisible();
+    const signIn = page.getByRole('link', { name: 'Sign in as owner', exact: true });
+    await expect(signIn).toHaveAttribute('href', /return_to=%2F%3Fstatus%3Dsucceeded/);
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Sign in to Observatory', exact: true })).toBeFocused();
+    await expect(page.locator('main[aria-labelledby="auth-recovery-title"] [role="status"]')).toContainText('Sign in to Observatory');
+  });
+
+  test('consumes callback recovery markers and exposes only static denial copy', async ({ page }) => {
+    await installFixture(page, { anonymous: true });
+    await page.goto('/?auth_recovery=provider_denied&code=never-rendered&state=never-rendered');
+    await expect(page.getByRole('heading', { name: 'Owner sign-in was not authorized', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.url()).not.toContain('auth_recovery');
+    await expect(page.url()).not.toContain('never-rendered');
+    await expect(page.locator('body')).not.toContainText(/provider_denied|token|credential|exception/i);
+    await expect(page.getByRole('heading', { name: 'Owner sign-in was not authorized', exact: true })).toBeFocused();
+    await expect(page.locator('main[aria-labelledby="auth-recovery-title"] [role="status"]')).toContainText('not authorized');
+    const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }));
+    expect(storage.local).toEqual([]);
+    expect(storage.session).toEqual([]);
+  });
+
+  test('distinguishes identity unavailability and offers a keyboard retry', async ({ page }) => {
+    await installFixture(page, { identityUnavailable: true });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Owner sign-in is temporarily unavailable', exact: true })).toBeVisible();
+    const retry = page.getByRole('button', { name: 'Check session again', exact: true });
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await expect(page.getByRole('link', { name: 'Sign in as owner', exact: true })).toBeVisible();
+    await expect(page.locator('main[aria-labelledby="auth-recovery-title"] [role="status"]')).toContainText('temporarily unavailable');
+  });
+
+  test('retries identity recovery into the authenticated shell without a redirect loop', async ({ page }) => {
+    await installFixture(page, { identityFailures: 2 });
+    await page.goto('/');
+    const recoveryHeading = page.getByRole('heading', { name: 'Owner sign-in is temporarily unavailable', exact: true });
+    await expect(recoveryHeading).toBeVisible();
+    const retry = page.getByRole('button', { name: 'Check session again', exact: true });
+    await retry.click();
+    await expect(recoveryHeading).toBeFocused();
+    await retry.click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toBeVisible();
+    await expect(page.locator('main#observatory-main')).toBeFocused();
+    await expect(page.locator('header').getByRole('status')).toHaveText(/Live updates on|Disconnected|Connecting/i);
+    await expect(page.getByRole('heading', { name: 'Owner sign-in is temporarily unavailable', exact: true })).toHaveCount(0);
+  });
+
+  test('moves focus and announces an in-session expiry while clearing private navigation', async ({ page }) => {
+    const fixture = await openFixture(page, { expireNextRuns: true });
+    await page.getByRole('button', { name: 'Runs', exact: true }).click();
+    fixture.expireSession();
+    await page.evaluate(() => {
+      const form = document.querySelector('observatory-runs form');
+      if (!(form instanceof HTMLFormElement)) throw new Error('Runs form is unavailable');
+      form.requestSubmit();
+    });
+    const heading = page.getByRole('heading', { name: 'Your Observatory session expired', exact: true });
+    await expect(heading).toBeVisible();
+    await expect(heading).toBeFocused();
+    await expect(page.locator('main[aria-labelledby="auth-recovery-title"] [role="status"]')).toContainText('session expired');
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toHaveCount(0);
   });
 
   test('has no axe violations while retention confirmation is open', async ({ page }) => {
@@ -314,6 +410,22 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(layout.tabsTop).toBeGreaterThanOrEqual(layout.headerBottom - 1);
   });
 
+  test('uses semantic dark-theme tokens and reduced-motion browser preferences', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+    await installFixture(page, { anonymous: true });
+    await page.goto('/');
+    const preferences = await page.evaluate(() => ({
+      dark: matchMedia('(prefers-color-scheme: dark)').matches,
+      reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      canvas: getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim(),
+      text: getComputedStyle(document.documentElement).getPropertyValue('--text').trim(),
+    }));
+    expect(preferences.dark).toBe(true);
+    expect(preferences.reduced).toBe(true);
+    expect(preferences.canvas).toBe('#191517');
+    expect(preferences.text).toBe('#f6eef1');
+  });
+
   test('uses keyboard-accessible retention confirmation, progress, failure, and refreshes after completion', async ({ page }) => {
     const fixture = await openFixture(page);
     await page.getByRole('button', { name: 'Retention', exact: true }).click();
@@ -394,6 +506,44 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(storage.url).not.toMatch(/token|credential|secret|access_token/i);
   });
 
+  test('does not claim logout after a 403 and retries the same logout operation', async ({ page }) => {
+    const fixture = await openFixture(page, { logoutStatuses: [403, 204] });
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sign-out could not be confirmed', exact: true })).toBeVisible();
+    await expect(page.locator('main.signed-out > p').filter({ hasText: /session may still be active/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Try sign-out again', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Sign in as owner', exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toHaveCount(0);
+    await expect.poll(() => fixture.logoutRequests.length).toBe(1);
+    await page.getByRole('button', { name: 'Try sign-out again', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'You are signed out of Observatory', exact: true })).toBeVisible();
+    await expect.poll(() => fixture.logoutRequests.length).toBe(2);
+  });
+
+  test('does not claim logout after a 503 and keeps the retry available', async ({ page }) => {
+    const fixture = await openFixture(page, { logoutStatuses: [503] });
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sign-out could not be confirmed', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Try sign-out again', exact: true })).toBeEnabled();
+    await expect.poll(() => fixture.logoutRequests.length).toBe(1);
+  });
+
+  test('treats a logout 401 as already absent and offers no retry', async ({ page }) => {
+    const fixture = await openFixture(page, { logoutStatuses: [401, 204], csrfTokens: ['fixture-csrf-first-0123456789-abcdefghij', 'fixture-csrf-second-0123456789-abcdefghij'] });
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'You are signed out of Observatory', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /retry|try sign-out again/i })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Sign in as owner', exact: true })).toBeVisible();
+    await expect.poll(() => fixture.logoutRequests.length).toBe(1);
+    fixture.restoreIdentity();
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'You are signed out of Observatory', exact: true })).toBeVisible();
+    await expect.poll(() => fixture.logoutRequests.length).toBe(2);
+    expect(fixture.logoutRequests[0]?.headers['x-observatory-csrf']).not.toBe(fixture.logoutRequests[1]?.headers['x-observatory-csrf']);
+  });
+
   test('logs out with CSRF and prevents deferred authenticated data from repopulating state', async ({ page }) => {
     const fixture = await openFixture(page, { deferAfterLogout: true });
     await page.getByRole('button', { name: 'Runs', exact: true }).click();
@@ -409,7 +559,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect.poll(() => fixture.deferredKinds.has('retention')).toBe(true);
 
     await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Observatory sign-in required', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'You are signed out of Observatory', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Sign in as owner', exact: true })).toBeVisible();
     await expect.poll(() => fixture.logoutRequests.length).toBe(1);
     expect(fixture.logoutRequests[0]?.headers['x-observatory-csrf']).toBe(fixtureCsrfToken);

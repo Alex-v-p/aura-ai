@@ -51,6 +51,10 @@ class IngestCounters:
 class ObservatoryMetrics:
     """Content-free metric sink with bounded, allowlisted labels."""
 
+    HISTOGRAMS = frozenset(
+        {"observatory_query_duration_ms", "observatory_auth_callback_duration_ms"}
+    )
+
     ALLOWED = {
         "observatory_query_duration_ms",
         "observatory_query_outcome",
@@ -60,6 +64,8 @@ class ObservatoryMetrics:
         "observatory_retention_action_count",
         "observatory_retention_deleted_count",
         "observatory_retention_failure_count",
+        "observatory_auth_callback_duration_ms",
+        "observatory_auth_callback_outcome",
     }
     LABELS = {
         "observatory_query_duration_ms": {"resource"},
@@ -70,6 +76,8 @@ class ObservatoryMetrics:
         "observatory_retention_action_count": {"action", "status"},
         "observatory_retention_deleted_count": {"action"},
         "observatory_retention_failure_count": {"action", "failure_code"},
+        "observatory_auth_callback_duration_ms": {"stage", "outcome"},
+        "observatory_auth_callback_outcome": {"stage", "outcome"},
     }
     LABEL_VALUES = {
         "resource": {
@@ -82,11 +90,31 @@ class ObservatoryMetrics:
             "deployments",
             "events",
         },
-        "outcome": {"succeeded", "failed", "cancelled", "unknown"},
+        "outcome": {
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown",
+            "success",
+            "unavailable",
+            "missing",
+            "invalid",
+            "denied",
+            "code_missing",
+            "exchange_failed",
+            "rejected",
+        },
         "event_type": {"stream", "connection", "observation.changed", "heartbeat"},
         "action": {"delete_before", "purge_all"},
         "status": {"queued", "running", "succeeded", "failed"},
         "failure_code": {"storage_failure", "conflict", "cancelled", "unknown"},
+        "stage": {
+            "callback",
+            "login_state_store",
+            "provider",
+            "authorization",
+            "session_store",
+        },
     }
     DURATION_BUCKETS = (5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 
@@ -117,7 +145,7 @@ class ObservatoryMetrics:
             raise ValueError("metric value must be finite")
         key = (name, MetricLabels(sorted((str(k), str(v)) for k, v in supplied.items())))
         self.values[key] += float(value)
-        if name == "observatory_query_duration_ms":
+        if name in self.HISTOGRAMS:
             self._histogram_counts[key] += 1
             for bucket in self.DURATION_BUCKETS:
                 if value <= bucket:
@@ -161,7 +189,7 @@ class ObservatoryMetrics:
                 current["name"] = name
                 current["labels"] = dict(labels)
                 current["value"] = float(current.get("value", 0.0)) + value
-                if name == "observatory_query_duration_ms":
+                if name in self.HISTOGRAMS:
                     current["count"] = int(current.get("count", 0)) + 1
                     buckets = current.setdefault("buckets", {})
                     if isinstance(buckets, dict):
@@ -248,7 +276,7 @@ class ObservatoryMetrics:
                                     if not math.isfinite(value):
                                         continue
                                     external_values[(name, labels)] += float(record["value"])
-                                    if name == "observatory_query_duration_ms":
+                                    if name in self.HISTOGRAMS:
                                         histogram_counts[(name, labels)] = int(
                                             record.get("count", 0)
                                         )
@@ -282,7 +310,7 @@ class ObservatoryMetrics:
         for (name, labels), value in sorted(values.items()):
             metric_type = (
                 "histogram"
-                if name == "observatory_query_duration_ms"
+                if name in self.HISTOGRAMS
                 else "gauge"
                 if name
                 in {
@@ -304,7 +332,7 @@ class ObservatoryMetrics:
                     f'{key}="{escape(str(label))}"'
                     for key, label in labels
                 ) + "}"
-            if name == "observatory_query_duration_ms":
+            if name in self.HISTOGRAMS:
                 suffix = label_text
                 lines.append(f"{name}_sum{suffix} {value:g}")
                 lines.append(

@@ -217,6 +217,9 @@ class ComposeTopologyTests(unittest.TestCase):
         )
         self.assertIn("listen 8080;", nginx)
         self.assertIn("proxy_pass http://observatory-api:8000;", nginx)
+        self.assertIn("proxy_set_header Host $http_host;", nginx)
+        self.assertIn("proxy_set_header X-Forwarded-Host $http_host;", nginx)
+        self.assertNotIn("proxy_set_header X-Forwarded-Host $host;", nginx)
         self.assertIn("proxy_buffering off;", nginx)
         self.assertIn('add_header Cache-Control "no-store" always;', nginx)
         self.assertIn("try_files $uri $uri/ /index.html;", nginx)
@@ -354,8 +357,9 @@ class ComposeTopologyTests(unittest.TestCase):
             encoding="utf-8"
         )
         for setting in (
-            "AURA_OBSERVATORY_BASE_URL: http://observatory-web:8080",
-            "AURA_OBSERVATORY_FULL_STACK_BASE_URL: http://observatory-web:8080",
+            "AURA_OBSERVATORY_BASE_URL: http://observatory.localhost:4300",
+            "AURA_OBSERVATORY_FULL_STACK_BASE_URL: http://observatory.localhost:4300",
+            "AURA_OBSERVATORY_CORE_BASE_URL: http://aura-web:8080",
             "AURA_OBSERVATORY_IDENTITY_MODE: external-oidc",
             "AURA_OBSERVATORY_ISSUER: http://aura-e2e-oidc:8081",
             "AURA_OBSERVATORY_IDENTITY_URL: http://aura-e2e-oidc:8081",
@@ -372,9 +376,25 @@ class ComposeTopologyTests(unittest.TestCase):
             "--grep 'keeps Core usable after the platform stops Observatory services'",
             runner,
         )
-        self.assertIn("-e AURA_OBSERVATORY_SERVICES_STOPPED=1", runner)
         self.assertIn(
-            'stop observatory-web observatory-api observatory-worker observatory-collector',
+            "--grep 'preserves the owner session across a disposable Observatory restart'",
+            runner,
+        )
+        self.assertIn(
+            "--grep 'rejects the old session after reset and permits owner reauthentication'",
+            runner,
+        )
+        self.assertIn("-e AURA_OBSERVATORY_SERVICES_STOPPED=1", runner)
+        self.assertIn("-e AURA_OBSERVATORY_LIFECYCLE_PHASE=preserved", runner)
+        self.assertIn("-e AURA_OBSERVATORY_LIFECYCLE_PHASE=reset", runner)
+        self.assertIn("AURA_OBSERVATORY_LOAD_STORAGE_STATE=1", runner)
+        self.assertIn("AURA_E2E_OBSERVATORY_BROWSER_STATE_FILE", runner)
+        self.assertIn("test -s \"$browser_state\"", runner)
+        self.assertIn('docker volume rm "${project}_observatory_session_data"', runner)
+        self.assertNotIn("--save 60 1 --appendonly yes --appendfsync everysec", runner)
+        self.assertIn(
+            "down --remove-orphans \\\n  observatory-web observatory-api observatory-worker "
+            "observatory-collector observatory-session",
             runner,
         )
         self.assertIn("health/live", runner)
@@ -386,18 +406,30 @@ class ComposeTopologyTests(unittest.TestCase):
         )
 
         self.assertIn(
-            'fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/aura-observatory-e2e.XXXXXX")',
+            'fixture_root=$(mktemp -d "$ROOT/.aura-e2e.XXXXXX")',
             runner,
         )
-        self.assertNotIn("$ROOT/.aura-e2e.observatory", runner)
+        self.assertNotIn("${TMPDIR:-/tmp}/aura-observatory-e2e", runner)
+        self.assertIn("assert_fixture_ignored", runner)
+        self.assertIn("grep -Fqx '.aura-e2e.*/' \"$ROOT/.gitignore\"", runner)
+        self.assertIn(
+            "grep -Fqx '**/.aura-e2e.*/**' \"$ROOT/.dockerignore\"", runner
+        )
+        self.assertIn("umask 077", runner)
+        self.assertIn("chmod 0600", runner)
+        self.assertIn('env_file="$fixture_root/.env"', runner)
+        self.assertNotIn('source "$ROOT/.env"', runner)
+        self.assertNotIn('> "$ROOT/.env"', runner)
+        self.assertIn('rm -rf "$fixture_root"', runner)
+        self.assertIn('if [ "$status" -ne 0 ] && [ "$keep_on_failure" = "1" ]', runner)
         provider_start = runner.index("up --build --detach --wait")
         inventory = runner.index("mapfile -t network_id_array")
         self.assertLess(provider_start, inventory)
         self.assertIn("docker network inspect", runner)
         self.assertIn("mapfile -t network_id_array", runner)
         self.assertIn("10.254.192.0/18", runner)
-        self.assertIn("172.30.0.0/16", runner)
-        self.assertIn("172.31.0.0/16", runner)
+        self.assertNotIn("172.30.0.0/16", runner)
+        self.assertNotIn("172.31.0.0/16", runner)
         self.assertIn("no two free /28 subnets remain", runner)
         self.assertIn("AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet", runner)
         self.assertIn("AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet", runner)
@@ -413,7 +445,7 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn('"${project}_"*)', runner)
         self.assertIn('docker network rm "$network_id"', runner)
 
-    def test_observatory_full_stack_override_uses_named_state_and_environment_secrets(self) -> None:
+    def test_observatory_full_stack_override_uses_named_state_and_file_backed_secrets(self) -> None:
         runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
             encoding="utf-8"
         )
@@ -435,36 +467,84 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("aura-web:\n    ports: !override []", override)
         self.assertIn("observatory-web:\n    ports: !override []", override)
         for secret, environment in (
-            ("aura-core-database-password", "AURA_E2E_CORE_DATABASE_PASSWORD"),
-            ("aura-oidc-client-secret", "AURA_E2E_OIDC_CLIENT_SECRET"),
-            ("aura-nats-password", "AURA_E2E_NATS_PASSWORD"),
-            ("aura-valkey-password", "AURA_E2E_VALKEY_PASSWORD"),
-            ("aura-garage-rpc-secret", "AURA_E2E_GARAGE_RPC_SECRET"),
-            ("aura-garage-access-key", "AURA_E2E_GARAGE_ACCESS_KEY"),
-            ("aura-garage-secret-key", "AURA_E2E_GARAGE_SECRET_KEY"),
+            (
+                "aura-core-database-password",
+                "AURA_E2E_CORE_DATABASE_SECRET_SOURCE_FILE",
+            ),
+            ("aura-oidc-client-secret", "AURA_E2E_OIDC_CLIENT_SECRET_SOURCE_FILE"),
+            ("aura-nats-password", "AURA_E2E_NATS_PASSWORD_SECRET_SOURCE_FILE"),
+            ("aura-valkey-password", "AURA_E2E_VALKEY_PASSWORD_SECRET_SOURCE_FILE"),
+            (
+                "aura-garage-rpc-secret",
+                "AURA_E2E_GARAGE_RPC_SECRET_SOURCE_FILE",
+            ),
+            (
+                "aura-garage-access-key",
+                "AURA_E2E_GARAGE_ACCESS_KEY_SECRET_SOURCE_FILE",
+            ),
+            (
+                "aura-garage-secret-key",
+                "AURA_E2E_GARAGE_SECRET_KEY_SECRET_SOURCE_FILE",
+            ),
             (
                 "observatory-database-password",
-                "AURA_E2E_OBSERVATORY_DATABASE_PASSWORD",
+                "AURA_E2E_OBSERVATORY_DATABASE_PASSWORD_SECRET_SOURCE_FILE",
             ),
             (
                 "observatory-oidc-client-secret",
-                "AURA_E2E_OBSERVATORY_OIDC_CLIENT_SECRET",
+                "AURA_E2E_OBSERVATORY_OIDC_CLIENT_SECRET_SOURCE_FILE",
             ),
             (
                 "observatory-session-password",
-                "AURA_E2E_OBSERVATORY_SESSION_PASSWORD",
+                "AURA_E2E_OBSERVATORY_SESSION_PASSWORD_SECRET_SOURCE_FILE",
             ),
             (
                 "observatory-ingest-credential",
-                "AURA_E2E_OBSERVATORY_INGEST_CREDENTIAL",
+                "AURA_E2E_OBSERVATORY_INGEST_CREDENTIAL_SECRET_SOURCE_FILE",
             ),
             (
                 "observatory-clickhouse-password",
-                "AURA_E2E_OBSERVATORY_CLICKHOUSE_PASSWORD",
+                "AURA_E2E_OBSERVATORY_CLICKHOUSE_PASSWORD_SECRET_SOURCE_FILE",
             ),
         ):
             self.assertIn(f"{secret}: !override", override)
-            self.assertIn(f"environment: {environment}", override)
+            self.assertIn(f"file: ${{{environment}}}", override)
+            self.assertIn(f"{environment}=", runner)
+
+        for secret_name, setting_name in (
+            ("aura-core-database-password", "AURA_CORE_DATABASE_PASSWORD_FILE"),
+            ("aura-oidc-client-secret", "AURA_OIDC_CLIENT_SECRET_FILE"),
+            ("aura-nats-password", "AURA_NATS_PASSWORD_FILE"),
+            ("aura-valkey-password", "AURA_VALKEY_PASSWORD_FILE"),
+            ("aura-garage-rpc-secret", "AURA_GARAGE_RPC_SECRET_FILE"),
+            ("aura-garage-access-key", "AURA_GARAGE_ACCESS_KEY_FILE"),
+            ("aura-garage-secret-key", "AURA_GARAGE_SECRET_KEY_FILE"),
+            (
+                "observatory-database-password",
+                "AURA_OBSERVATORY_DATABASE_PASSWORD_FILE",
+            ),
+            (
+                "observatory-oidc-client-secret",
+                "AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE",
+            ),
+            (
+                "observatory-session-password",
+                "AURA_OBSERVATORY_SESSION_PASSWORD_FILE",
+            ),
+            (
+                "observatory-ingest-credential",
+                "AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE",
+            ),
+            (
+                "observatory-clickhouse-password",
+                "AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE",
+            ),
+        ):
+            self.assertIn(
+                f"{setting_name}=/run/secrets/{secret_name}",
+                runner,
+            )
+        self.assertNotIn("environment: AURA_E2E_", override)
 
         self.assertIn("volumes:\n  core_postgres_data:", override)
         self.assertIn("observatory_postgres_data:", override)
@@ -1070,6 +1150,10 @@ class ComposeTopologyTests(unittest.TestCase):
         }
         for mount in expected_mounts:
             self.assertIn(f"- {mount}", local_http)
+        session_block = local_http.split("  observatory-session:\n", 1)[1].split(
+            "  aura-core-api:\n", 1
+        )[0]
+        self.assertNotIn("command:", session_block)
         self.assertNotIn("${AURA_STATE_ROOT}", local_http)
         self.assertNotIn("${AURA_STATE_ROOT:?", local_http)
         self.assertIn("volumes: !override", local_http)

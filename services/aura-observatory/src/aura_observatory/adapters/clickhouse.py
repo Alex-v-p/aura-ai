@@ -7,6 +7,9 @@ the repository port remains the only interface visible to the ingest use case.
 from __future__ import annotations
 
 import json
+import logging
+import re
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
@@ -14,6 +17,14 @@ import httpx
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.ports import ClaimOutcome, InsertOutcome, ObservationIdRegistry
 
+_LOGGER = logging.getLogger(__name__)
+_CLICKHOUSE_ERROR_CLASSES = (
+    ("parse_error", re.compile(r"cannot parse|cannot convert|type mismatch", re.I)),
+    ("schema_error", re.compile(r"unknown (?:column|field)|no such column|missing column", re.I)),
+    ("syntax_error", re.compile(r"syntax error|multiquery", re.I)),
+    ("auth_error", re.compile(r"authentication|not authorized|access denied", re.I)),
+    ("database_error", re.compile(r"database .* does not exist|unknown database", re.I)),
+)
 
 class ClickHouseObservationStore:
     def __init__(
@@ -61,7 +72,17 @@ class ClickHouseObservationStore:
                     auth=(self.user, self.password),
                     content=insert,
                 )
-                inserted.raise_for_status()
+                try:
+                    inserted.raise_for_status()
+                except httpx.HTTPStatusError:
+                    code, message = _clickhouse_error_details(inserted)
+                    _LOGGER.error(
+                        "ClickHouse observation insert failed status=%s code=%s message=%s",
+                        inserted.status_code,
+                        code,
+                        message,
+                    )
+                    raise
             await self.id_registry.mark_ingest_visible(sequence)
             await self.id_registry.complete(observation.observation_id)
         except BaseException:
@@ -81,7 +102,7 @@ def clickhouse_row(payload: dict[str, Any], *, ingest_sequence: int = 0) -> dict
     deployment = cast(dict[str, Any], payload["deployment"])
     row = {
         "observation_id": payload["observationId"],
-        "observed_at": payload["observedAt"],
+        "observed_at": _clickhouse_timestamp(payload["observedAt"]),
         "kind": payload["kind"],
         "component_id": component["id"],
         "component_version": component["version"],
@@ -107,6 +128,37 @@ def clickhouse_row(payload: dict[str, Any], *, ingest_sequence: int = 0) -> dict
     if ingest_sequence:
         row["ingest_sequence"] = ingest_sequence
     return row
+
+
+def _clickhouse_timestamp(value: Any) -> str:
+    """Encode a contract timestamp in ClickHouse DateTime64(3) syntax."""
+
+    if not isinstance(value, str):
+        raise ValueError("observedAt must be an ISO-8601 timestamp")
+    wire_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(wire_value)
+    except ValueError as exc:
+        raise ValueError("observedAt must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("observedAt must include a timezone")
+    utc = parsed.astimezone(UTC)
+    milliseconds = utc.microsecond // 1_000
+    return utc.strftime("%Y-%m-%d %H:%M:%S") + f".{milliseconds:03d}"
+
+
+def _clickhouse_error_details(response: httpx.Response) -> tuple[str, str]:
+    """Return bounded, content-free diagnostics for a ClickHouse failure."""
+
+    # ClickHouse error bodies can echo query fragments. Only classify a bounded
+    # copy of the body; never log the raw response or insert payload.
+    body = response.text[:4_096]
+    code_match = re.search(r"\bCode:\s*(\d{1,5})\b", body, re.IGNORECASE)
+    code = code_match.group(1) if code_match else "unknown"
+    for message, pattern in _CLICKHOUSE_ERROR_CLASSES:
+        if pattern.search(body):
+            return code, message
+    return code, "unclassified_error"
 
 
 __all__ = ["ClickHouseObservationStore", "clickhouse_row"]

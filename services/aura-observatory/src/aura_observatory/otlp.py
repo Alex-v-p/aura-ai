@@ -12,7 +12,7 @@ import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import cast
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 
 class OtlpPayloadError(ValueError):
@@ -82,6 +82,7 @@ def metrics_to_observations(payload: object) -> list[dict[str, object]]:
         for scope in scopes:
             scope_object = _object(scope, "scope metric")
             _only_keys(scope_object, {"scope", "metrics", "schemaUrl"}, "scope metric")
+            _instrumentation_scope(scope_object.get("scope"))
             for metric in _list(scope_object.get("metrics"), "metrics"):
                 metric_object = _object(metric, "metric")
                 _only_keys(metric_object, {"name", "description", "unit", "gauge", "sum"}, "metric")
@@ -152,6 +153,7 @@ def traces_to_observations(payload: object) -> list[dict[str, object]]:
         for scope in scopes:
             scope_object = _object(scope, "scope span")
             _only_keys(scope_object, {"scope", "spans", "schemaUrl"}, "scope span")
+            _instrumentation_scope(scope_object.get("scope"))
             for span in _list(scope_object.get("spans"), "spans"):
                 span_object = _object(span, "span")
                 _only_keys(
@@ -168,14 +170,27 @@ def traces_to_observations(payload: object) -> list[dict[str, object]]:
                         "kind",
                         "traceState",
                         "flags",
+                        "droppedAttributesCount",
+                        "droppedEventsCount",
+                        "droppedLinksCount",
+                        "events",
                         "links",
                     },
                     "span",
                 )
-                if span_object.get("events"):
-                    raise OtlpPayloadError("span events are not accepted")
-                links = span_object.get("links")
-                if links:
+                _zero_count(span_object, "droppedAttributesCount", "span dropped attributes")
+                _zero_count(span_object, "droppedEventsCount", "span dropped events")
+                _zero_count(span_object, "droppedLinksCount", "span dropped links")
+                if "events" in span_object:
+                    events = span_object["events"]
+                    if not isinstance(events, list):
+                        raise OtlpPayloadError("span events must be an array")
+                    if events:
+                        raise OtlpPayloadError("span events are not accepted")
+                if "status" in span_object:
+                    _status(span_object["status"])
+                if "links" in span_object:
+                    links = span_object["links"]
                     link_ids = _links(links, span_object.get("traceId"))
                 else:
                     link_ids = None
@@ -235,9 +250,11 @@ def _observation(
     # Build correlation explicitly to avoid ever passing arbitrary attributes.
     correlation = {}
     if "aura.run_id" in attrs:
-        correlation["runId"] = attrs["aura.run_id"]
+        correlation["runId"] = _canonical_correlation_id(attrs["aura.run_id"])
     if "aura.conversation_id" in attrs:
-        correlation["conversationId"] = attrs["aura.conversation_id"]
+        correlation["conversationId"] = _canonical_correlation_id(
+            attrs["aura.conversation_id"]
+        )
     result: dict[str, object] = {
         "schemaVersion": 1,
         "observationId": attrs["aura.observation_id"],
@@ -267,8 +284,19 @@ def _observation(
     return result
 
 
+def _canonical_correlation_id(value: str) -> str:
+    """Canonicalize only the UUID correlation fields at the OTLP boundary."""
+
+    try:
+        return str(UUID(value))
+    except (ValueError, AttributeError) as exc:
+        raise OtlpPayloadError("correlation identifier is invalid") from exc
+
+
 def _deployment(value: object) -> dict[str, str]:
     resource = _object(value, "resource")
+    _only_keys(resource, {"attributes", "droppedAttributesCount", "schemaUrl"}, "resource")
+    _zero_count(resource, "droppedAttributesCount", "resource dropped attributes")
     attrs = _attributes(resource.get("attributes"), _RESOURCE_KEYS)
     required = {
         "service.role": "serviceRole",
@@ -327,7 +355,20 @@ def _links(value: object, trace_id: object) -> list[str]:
     result: list[str] = []
     for item in links:
         link = _object(item, "span link")
-        _only_keys(link, {"traceId", "spanId", "attributes", "traceState"}, "span link")
+        _only_keys(
+            link,
+            {
+                "traceId",
+                "spanId",
+                "attributes",
+                "traceState",
+                "flags",
+                "droppedAttributesCount",
+            },
+            "span link",
+        )
+        _zero_count(link, "droppedAttributesCount", "span link dropped attributes")
+        _zero_count(link, "flags", "span link flags")
         if link.get("attributes"):
             raise OtlpPayloadError("span link attributes are not accepted")
         if _string(link.get("traceId"), "link traceId") != trace:
@@ -337,6 +378,54 @@ def _links(value: object, trace_id: object) -> list[str]:
             raise OtlpPayloadError("duplicate span link")
         result.append(span_id)
     return result
+
+
+def _zero_count(mapping: Mapping[str, object], key: str, label: str) -> None:
+    """Accept only omitted or protobuf-default zero dropped-item counts."""
+
+    if key not in mapping:
+        return
+    value = mapping[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value != 0:
+        raise OtlpPayloadError(f"{label} must be zero")
+
+
+def _status(value: object) -> None:
+    """Accept status metadata while refusing free-form status messages."""
+
+    if value is None:
+        raise OtlpPayloadError("span status must be an object")
+    status = _object(value, "span status")
+    _only_keys(status, {"code", "message"}, "span status")
+    code = status.get("code")
+    valid_symbolic = isinstance(code, str) and code in {
+        "STATUS_CODE_UNSET",
+        "STATUS_CODE_OK",
+        "STATUS_CODE_ERROR",
+    }
+    valid_numeric = isinstance(code, int) and not isinstance(code, bool) and code in {0, 1, 2}
+    if "code" in status and not (valid_symbolic or valid_numeric):
+        raise OtlpPayloadError("span status code is unsupported")
+    if "message" in status and status["message"] != "":
+        raise OtlpPayloadError("span status message is not accepted")
+
+
+def _instrumentation_scope(value: object) -> None:
+    """Accept Collector scope defaults without allowing scope attributes."""
+
+    if value is None:
+        return
+    scope = _object(value, "instrumentation scope")
+    _only_keys(
+        scope,
+        {"name", "version", "attributes", "droppedAttributesCount"},
+        "instrumentation scope",
+    )
+    _zero_count(scope, "droppedAttributesCount", "scope dropped attributes")
+    if "attributes" in scope:
+        attributes = scope["attributes"]
+        if not isinstance(attributes, list) or attributes:
+            raise OtlpPayloadError("scope attributes are not accepted")
 
 
 def _number(value: Mapping[str, object]) -> float:

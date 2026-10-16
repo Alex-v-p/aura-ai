@@ -1,3 +1,6 @@
 @import 'tailwindcss';
 :root { --canvas:#fcf9fa; --surface:#fff; --surface-raised:#fff; --surface-subtle:#f7f1f3; --text:#2a2225; --text-muted:#6f6267; --border:#ded4d8; --control-border:#8a747d; --accent:#a84f70; --accent-hover:#8e3f5e; --on-accent:#fff; --accent-soft:#f8dde6; --focus:#326fa8; --success:#287a52; --success-surface:#eaf6ef; --success-text:#1b5c3c; --warning-surface:#fff7df; --warning-text:#725014; --danger:#b33a4a; --danger-surface:#fff0f2; --danger-text:#8c2534; --info-surface:#edf5fc; --info-text:#245b8a; }
 * { box-sizing:border-box; } html,body { background:var(--canvas); color:var(--text); margin:0; min-height:100%; } body { font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:16px; } button,input,select { font:inherit; }
+@media (prefers-color-scheme: dark) {
+  :root { --canvas:#191517; --surface:#251e21; --surface-raised:#2d2528; --surface-subtle:#30272a; --text:#f6eef1; --text-muted:#c7b8be; --border:#55464c; --control-border:#bcaab2; --accent:#e38aa8; --accent-hover:#f0a5be; --on-accent:#24141b; --accent-soft:#51303d; --focus:#8fc7ff; --success:#72d39d; --success-surface:#183d2a; --success-text:#a9eac3; --warning-surface:#493817; --warning-text:#ffdda0; --danger:#ff8798; --danger-surface:#4b2029; --danger-text:#ffc0c9; --info-surface:#19354c; --info-text:#b9ddff; }
+}

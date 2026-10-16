@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from authlib.jose import JsonWebKey, jwt
@@ -45,6 +45,132 @@ class LoginState:
     nonce: str
     return_to: str
     expires_at: datetime
+
+
+_MAX_RETURN_TO_LENGTH = 2048
+_SENSITIVE_RETURN_KEYS = frozenset(
+    {
+        # These are exact normalized names.  Deliberately do not reject
+        # arbitrary substrings such as ``id`` or ``auth``: route filters such
+        # as ``selected`` must survive the server-owned redirect sanitizer.
+        "access",
+        "accesstoken",
+        "apikey",
+        "aud",
+        "authorization",
+        "authorisation",
+        "authorizationcode",
+        "authorisationcode",
+        "authorizationendpoint",
+        "authorisationendpoint",
+        "azp",
+        "bearer",
+        "bearertoken",
+        "clientkey",
+        "clientid",
+        "clientassertion",
+        "clientsecret",
+        "cookie",
+        "cookievalue",
+        "code",
+        "credential",
+        "credentials",
+        "credentialvalue",
+        "endpoint",
+        "body",
+        "content",
+        "document",
+        "file",
+        "filename",
+        "input",
+        "memory",
+        "message",
+        "output",
+        "payload",
+        "tool",
+        "toolargument",
+        "toolarguments",
+        "toolresult",
+        "toolresults",
+        "audience",
+        "error",
+        "errordescription",
+        "erroruri",
+        "endsessionendpoint",
+        "idtoken",
+        "issuer",
+        "iss",
+        "jwksuri",
+        "loginhint",
+        "jwt",
+        "nonce",
+        "password",
+        "prompt",
+        "privatekey",
+        "provider",
+        "redirecturi",
+        "redirecturl",
+        "request",
+        "requesturi",
+        "response",
+        "responsemode",
+        "responsetype",
+        "refreshtoken",
+        "secret",
+        "secretkey",
+        "session",
+        "sessionid",
+        "scope",
+        "state",
+        "sub",
+        "subject",
+        "token",
+        "tokenhint",
+        "tokenendpoint",
+        "userinfoendpoint",
+        "owner",
+        "owneridentity",
+        "displayname",
+        "preferredusername",
+        "authrecovery",
+    }
+)
+_SENSITIVE_RETURN_SUFFIXES = ("token", "credential", "credentials", "secret", "password")
+_SENSITIVE_RETURN_PREFIXES = ("error", "oauthstate", "loginstate", "authcode", "oauthcode")
+
+
+def sanitize_return_to(value: str | None) -> str:
+    """Return a bounded relative path without callback or credential material."""
+
+    if (
+        not isinstance(value, str)
+        or not value.startswith("/")
+        or value.startswith("//")
+        or len(value) > _MAX_RETURN_TO_LENGTH
+    ):
+        return "/"
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return "/"
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return "/"
+    query: list[tuple[str, str]] = []
+    for key, query_value in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized = "".join(character for character in key.casefold() if character.isalnum())
+        if _is_sensitive_return_key(normalized):
+            continue
+        query.append((key, query_value))
+    sanitized = urlunsplit(("", "", parsed.path, urlencode(query), ""))
+    return sanitized if len(sanitized) <= _MAX_RETURN_TO_LENGTH else "/"
+
+
+def _is_sensitive_return_key(normalized: str) -> bool:
+    if normalized in _SENSITIVE_RETURN_KEYS:
+        return True
+    if normalized.startswith(_SENSITIVE_RETURN_PREFIXES):
+        return True
+    return normalized.endswith(_SENSITIVE_RETURN_SUFFIXES)
 
 
 class SessionBackend(Protocol):
@@ -184,8 +310,7 @@ class ObservatoryAuth:
         self.login_states = login_states
 
     async def begin_login(self, return_to: str = "/") -> tuple[str, str]:
-        if not return_to.startswith("/") or return_to.startswith("//"):
-            return_to = "/"
+        return_to = sanitize_return_to(return_to)
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(32)
         await self.login_states.put(
@@ -380,4 +505,5 @@ __all__ = [
     "RedisLoginStateBackend",
     "RedisSessionBackend",
     "Session",
+    "sanitize_return_to",
 ]

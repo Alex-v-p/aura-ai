@@ -73,6 +73,19 @@ def test_all_clickhouse_clients_mount_the_same_file_backed_credential() -> None:
         assert "CLICKHOUSE_PASSWORD_FILE" in environment
 
 
+def test_observatory_session_store_is_durable_without_changing_core_cache_semantics() -> None:
+    services = _services()
+    observatory_session = services["observatory-session"]
+    session_command = repr(observatory_session.get("command", []))
+    assert "--save 60 1 --appendonly yes --appendfsync everysec" in session_command
+    assert "/data" in repr(observatory_session.get("volumes", []))
+
+    core_cache = services["aura-valkey"]
+    core_command = repr(core_cache.get("command", []))
+    assert '--save "" --appendonly no' in core_command
+    assert "--appendonly yes" not in core_command
+
+
 def test_observatory_web_is_a_same_origin_bff_gateway_and_api_stays_private() -> None:
     services = _observatory_services()
     web = services["observatory-web"]
@@ -96,6 +109,9 @@ def test_observatory_web_is_a_same_origin_bff_gateway_and_api_stays_private() ->
     text = config.read_text(encoding="utf-8")
     assert "location /api/" in text
     assert "proxy_pass http://observatory-api" in text
+    assert "proxy_set_header Host $http_host;" in text
+    assert "proxy_set_header X-Forwarded-Host $http_host;" in text
+    assert "proxy_set_header X-Forwarded-Host $host;" not in text
 
 
 def test_collector_uses_standard_signal_paths_and_explicit_metadata_allowlist() -> None:
