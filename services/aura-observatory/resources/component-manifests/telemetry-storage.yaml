@@ -16,16 +16,80 @@ metrics:
   - telemetry_ingest_rejected_count
   - telemetry_ingest_duplicate_count
   - telemetry_ingest_storage_failure_count
+  - observatory_ingest_visibility_lag_count
+  - observatory_ingest_storage_duration_ms
+  - observatory_ingest_backlog_count
 metric_semantics:
   telemetry_ingest_accepted_count: Metadata observations committed to Observatory-owned storage.
   telemetry_ingest_rejected_count: Contract-invalid observations rejected before storage.
   telemetry_ingest_duplicate_count: Completed receipt deliveries ignored by stable observation identifier.
   telemetry_ingest_storage_failure_count: Failed or pending storage deliveries classified without retaining payloads.
+  observatory_ingest_visibility_lag_count: Count of non-contiguous visibility ledger entries behind the committed watermark.
+  observatory_ingest_storage_duration_ms: Bounded duration of storage operations owned by Observatory.
+  observatory_ingest_backlog_count: Count of pending Observatory receipt work, independent of Core and Collector queues.
+metric_definitions:
+  - name: telemetry_ingest_accepted_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_rejected_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_duplicate_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_storage_failure_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: observatory_ingest_visibility_lag_count
+    type: gauge
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
+  - name: observatory_ingest_storage_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: observatory_ingest_backlog_count
+    type: gauge
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
 evaluators:
   - metadata_observation_contract_rejection
   - telemetry_ingestion_idempotency
   - observatory_service_isolation
 capture_policy: metadata_only
+retention: manual_owner_delete_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency]
   trace_only: [trace_id, span_id, parent_span_id, run_id, observation_id]

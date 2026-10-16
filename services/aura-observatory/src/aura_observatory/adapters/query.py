@@ -19,6 +19,7 @@ from typing import Any, cast
 import httpx
 
 from aura_observatory.contract import MetadataObservation
+from aura_observatory.ports import NullObservatoryHealthPort, ObservatoryHealthPort
 from aura_observatory.query import (
     DeletionResult,
     RetentionAction,
@@ -85,8 +86,8 @@ def _sql(value: str) -> str:
 def _clickhouse_time(value: datetime) -> str:
     """Encode a UTC millisecond timestamp for ClickHouse DateTime64."""
 
-    normalized = value.astimezone(UTC).replace(tzinfo=None).isoformat(
-        sep=" ", timespec="milliseconds"
+    normalized = (
+        value.astimezone(UTC).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
     )
     return _sql(normalized)
 
@@ -120,12 +121,14 @@ class _RetentionPersistenceAdapter:
         database: str,
         user: str,
         password: str,
+        health_port: ObservatoryHealthPort | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self._endpoint = clickhouse_url.rstrip("/")
         self._database = database
         self._user = user
         self._password = password
+        self._health_port = health_port or NullObservatoryHealthPort()
         # PostgreSQL is authoritative for retention state and idempotency.
         # Keep only the currently attached action needed while its guarded
         # multi-store deletion is in progress; never retain a process-lifetime
@@ -283,7 +286,10 @@ class _RetentionPersistenceAdapter:
             action = str(row[0])
             status = str(row[1])
             if action not in {"delete_before", "purge_all"} or status not in {
-                "queued", "running", "succeeded", "failed"
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
             }:
                 continue
             series.append(
@@ -309,6 +315,7 @@ class _RetentionPersistenceAdapter:
                         "labels": {"action": action, "failure_code": "storage_failure"},
                     }
                 )
+        series.extend(await self._health_port.metric_series())
         return series
 
     async def get_retention(self, action_id: str) -> RetentionAction | None:
@@ -497,7 +504,23 @@ class _RetentionPersistenceAdapter:
             "lastIngestAt": iso(row[5]),
             "lastAcceptedAt": iso(row[6]),
             "lastFailureAt": iso(row[7]),
+            "health": await self.health_snapshot_query(),
         }
+
+    async def health_snapshot_query(self) -> dict[str, object] | None:
+        return await self._health_port.health_snapshot()
+
+    async def health_history_query(
+        self,
+        *,
+        cursor: str | None,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        limit: int,
+    ) -> dict[str, object]:
+        return await self._health_port.health_history(
+            cursor=cursor, from_time=from_time, to_time=to_time, limit=limit
+        )
 
     async def prepare_retention(self, action: RetentionAction) -> None:
         """Persist the target snapshot before any destructive mutation."""
@@ -688,7 +711,8 @@ class _RetentionPersistenceAdapter:
         params: tuple[Any, ...] = (action_id,) if after is None else (action_id, after)
         result = await connection.execute(
             "SELECT run_id FROM observatory_retention_targets "
-            "WHERE action_id = %s AND run_id IS NOT NULL" + keyset
+            "WHERE action_id = %s AND run_id IS NOT NULL"
+            + keyset
             + " GROUP BY run_id ORDER BY run_id LIMIT 1000",
             params,
         )
@@ -703,8 +727,7 @@ class _RetentionPersistenceAdapter:
         if action_id is None:
             return
         await connection.execute(
-            "UPDATE observatory_retention_actions SET deletion_phase = %s "
-            "WHERE action_id = %s",
+            "UPDATE observatory_retention_actions SET deletion_phase = %s WHERE action_id = %s",
             (phase, action_id),
         )
         await _commit_connection(connection)
@@ -855,11 +878,7 @@ class _RetentionPersistenceAdapter:
         where = (
             ""
             if cutoff is None
-            else (
-                " WHERE observed_at < toDateTime64("
-                + _clickhouse_time(cutoff)
-                + ", 3, 'UTC')"
-            )
+            else (" WHERE observed_at < toDateTime64(" + _clickhouse_time(cutoff) + ", 3, 'UTC')")
         )
         deleted = len(selected)
         receipt_count = 0
@@ -920,6 +939,8 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     target_observation_count and deletion_phase survive worker restart.
     """
 
+    _health_port: ObservatoryHealthPort = NullObservatoryHealthPort()
+
     async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
@@ -961,9 +982,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             if item.get("componentId") and item.get("version")
         }
 
-        def merge_time(
-            current: Any, observed: Any, *, earliest: bool
-        ) -> str | None:
+        def merge_time(current: Any, observed: Any, *, earliest: bool) -> str | None:
             current_at = _parse_datetime(current)
             observed_at = _parse_datetime(observed)
             if current_at is None:
@@ -1040,6 +1059,47 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             result["latest_sequence"] = min(int(result.get("latest_sequence", 0) or 0), watermark)
         return result
 
+    async def refresh_health_inputs(self) -> None:
+        """Refresh durable health inputs from storage, outside read requests."""
+
+        watermark = await self._committed_watermark()
+        await self._sync_visibility_health(watermark)
+        counts = await self._overview_counts()
+        await self._health_port.record_query_freshness(_parse_datetime(counts.get("observed_at")))
+
+    async def _sync_visibility_health(self, watermark: int | None) -> None:
+        if watermark is None:
+            return
+        try:
+            async with self._connection_factory() as connection:
+                visibility_result = await connection.execute(
+                    "SELECT count(*) FROM observatory_ingest_visibility "
+                    "WHERE sequence > %s AND visible = FALSE",
+                    (watermark,),
+                )
+                visibility_row = await visibility_result.fetchone()
+                backlog_result = await connection.execute(
+                    "SELECT count(*), min(updated_at) FROM observatory_observation_receipts "
+                    "WHERE status = 'pending'"
+                )
+                backlog_row = await backlog_result.fetchone()
+            backlog_count = int(backlog_row[0] or 0) if backlog_row else 0
+            oldest_age = None
+            if backlog_row and backlog_row[1] is not None:
+                oldest_age = max(
+                    0.0,
+                    (datetime.now(UTC) - backlog_row[1].astimezone(UTC)).total_seconds() * 1000,
+                )
+            await self._health_port.record_visibility(
+                watermark,
+                int(visibility_row[0] or 0) if visibility_row else 0,
+                backlog_count,
+                oldest_age,
+            )
+        except Exception:
+            # Health diagnostics are best effort and cannot make a read fail.
+            return
+
     async def _committed_watermark(self) -> int | None:
         """Read the PostgreSQL visibility fence without hydrating observations."""
 
@@ -1068,6 +1128,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "deployments": len(await self.deployments()),
             "latestObservationId": counts.get("latest_observation_id"),
             "snapshotSequence": int(counts.get("latest_sequence", 0) or 0),
+            "health": ingest.get("health"),
         }
 
     async def run_query(
@@ -1093,15 +1154,11 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             conditions.append(f"dimensions['provider'] = {_sql(filters.model)}")
         if filters.from_time:
             conditions.append(
-                "observed_at >= toDateTime64("
-                + _clickhouse_time(filters.from_time)
-                + ", 3, 'UTC')"
+                "observed_at >= toDateTime64(" + _clickhouse_time(filters.from_time) + ", 3, 'UTC')"
             )
         if filters.to_time:
             conditions.append(
-                "observed_at < toDateTime64("
-                + _clickhouse_time(filters.to_time)
-                + ", 3, 'UTC')"
+                "observed_at < toDateTime64(" + _clickhouse_time(filters.to_time) + ", 3, 'UTC')"
             )
         # Cursor decoding is deliberately delegated to the use case; the
         # opaque value is carried as a stable boundary in its query contract.
@@ -1112,7 +1169,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             # success keep a run visible after a later failure (or vice
             # versa), and could make one run appear in both result sets.
             having_conditions.append(
-                "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) = "
+                "argMax("
+                + _RUN_STATUS_SQL
+                + ", (observed_at, observation_id)) = "
                 + _sql(filters.status)
             )
         if cursor_at is not None and cursor_id is not None:
@@ -1123,11 +1182,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 + _sql(cursor_id)
                 + ")"
             )
-        having = (
-            " HAVING " + " AND ".join(having_conditions)
-            if having_conditions
-            else ""
-        )
+        having = " HAVING " + " AND ".join(having_conditions) if having_conditions else ""
         statement = (
             "SELECT run_id, min(observed_at) AS started_at, max(observed_at) AS finished_at, "
             "argMax(observed_at, observed_at) AS latest_at, "
@@ -1214,9 +1269,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         result = run_dict(run_id, items, newest, include_spans=True)
         result["partial"] = truncated
         result["nextCursor"] = (
-            encode_cursor(items[-1].observed_at, items[-1].observation_id)
-            if truncated
-            else None
+            encode_cursor(items[-1].observed_at, items[-1].observation_id) if truncated else None
         )
         return result
 
@@ -1280,15 +1333,11 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         conditions = [f"component_id = {_sql(component_id)}"]
         if from_time:
             conditions.append(
-                "observed_at >= toDateTime64("
-                + _clickhouse_time(from_time)
-                + ", 3, 'UTC')"
+                "observed_at >= toDateTime64(" + _clickhouse_time(from_time) + ", 3, 'UTC')"
             )
         if to_time:
             conditions.append(
-                "observed_at < toDateTime64("
-                + _clickhouse_time(to_time)
-                + ", 3, 'UTC')"
+                "observed_at < toDateTime64(" + _clickhouse_time(to_time) + ", 3, 'UTC')"
             )
         # A component execution is one canonical span or the explicitly named
         # primary duration measurement. Secondary spanless metrics (including
@@ -1319,10 +1368,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             # non-empty normalized status/outcome from the whole execution;
             # a later secondary measurement must be able to replace an older
             # duration-row outcome.
-            "argMaxIf(" + _RUN_STATUS_SQL + ", (observed_at, observation_id), "
+            "argMaxIf("
+            + _RUN_STATUS_SQL
+            + ", (observed_at, observation_id), "
             + _DIMENSION_STATUS_SQL
             + " != '') AS outcome "
-            "FROM observations WHERE " + " AND ".join(conditions)
+            "FROM observations WHERE "
+            + " AND ".join(conditions)
             + " AND (span_id != '' OR measurement_name = 'duration_ms') "
             + "GROUP BY execution_id)"
         )
@@ -1353,23 +1405,32 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     async def events_after_query(
         self, last_event_id: str | None, snapshot_sequence: int | None = None
     ) -> AsyncIterator[dict[str, Any]]:
-        # Replay is fenced by the contiguous visibility watermark; a later
-        # sequence remains hidden while an earlier ClickHouse insert is absent.
+        # Replay is fenced by the shared Observatory allocator and contiguous
+        # visibility watermark; observation and health.changed events therefore
+        # have one strict exclusive cursor.
         snapshot = await self._overview_counts()
         upper = (
             int(snapshot_sequence)
             if snapshot_sequence is not None
             else int(snapshot.get("latest_sequence", 0) or 0)
         )
+        health_upper = await self._health_port.latest_health_event_sequence()
+        upper = max(upper, health_upper)
         replay_upper = upper
-        anchor = upper
-        if last_event_id:
+        anchor = (
+            await self._health_port.health_event_sequence(last_event_id)
+            if last_event_id
+            else None
+        )
+        if anchor is None and last_event_id:
             rows = await self._query_rows(
                 "SELECT ingest_sequence FROM observations WHERE observation_id = "
                 + _sql(last_event_id)
                 + " LIMIT 1"
             )
             anchor = int(rows[0]["ingest_sequence"]) if rows else 0
+        if anchor is None:
+            anchor = int(snapshot_sequence or 0)
         heartbeat_at = asyncio.get_running_loop().time() + 15.0
         while True:
             rows = await self._query_rows(
@@ -1377,22 +1438,49 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 f"WHERE ingest_sequence > {anchor} AND ingest_sequence <= {upper} "
                 "ORDER BY ingest_sequence LIMIT 1000"
             )
-            for row in rows:
-                anchor = int(row["ingest_sequence"])
-                yield {
+            health_rows = await self._health_port.health_events_after(last_event_id, upper)
+            health_rows = [
+                row
+                for row in health_rows
+                if isinstance(row.get("_sequence"), (int, float))
+                and int(cast(int | float, row["_sequence"])) > anchor
+            ]
+            events = [
+                {
                     "id": row["observation_id"],
                     "type": "observation.changed",
+                    "sequence": int(row["ingest_sequence"]),
                     "data": {
                         "observationId": row["observation_id"],
                         "runId": row.get("run_id") or None,
                         "traceId": row.get("trace_id") or None,
                     },
-                    "_persisted_replay": int(row["ingest_sequence"]) <= replay_upper,
                 }
-            if rows:
+                for row in rows
+            ] + [
+                {
+                    "id": row["id"],
+                    "type": "health.changed",
+                    "sequence": int(cast(int | float, row["_sequence"])),
+                    "data": {},
+                }
+                for row in health_rows
+            ]
+            events.sort(key=lambda item: (int(cast(int, item["sequence"])), str(item["id"])))
+            for event in events:
+                anchor = int(cast(int, event["sequence"]))
+                yield {
+                    "id": event["id"],
+                    "type": event["type"],
+                    "data": event["data"],
+                    "_persisted_replay": int(cast(int, event["sequence"])) <= replay_upper,
+                }
+            if events:
                 continue
             latest = await self._overview_counts()
             upper = max(upper, int(latest.get("latest_sequence", upper) or upper))
+            health_upper = await self._health_port.latest_health_event_sequence()
+            upper = max(upper, int(latest.get("latest_sequence", upper) or upper), health_upper)
             if upper > anchor:
                 continue
             await asyncio.sleep(1.0)
@@ -1411,11 +1499,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
 
         where = ""
         if cutoff is not None:
-            where = (
-                " WHERE observed_at < toDateTime64("
-                + _clickhouse_time(cutoff)
-                + ", 3, 'UTC')"
-            )
+            where = " WHERE observed_at < toDateTime64(" + _clickhouse_time(cutoff) + ", 3, 'UTC')"
         async with self._connection_factory() as connection:
             receipts = 0
             compatibility_run_ids: list[str] = []
@@ -1426,8 +1510,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 await connection.execute("SELECT pg_advisory_xact_lock(830078)")
             if self._active_retention_action_id is not None:
                 phase_result = await connection.execute(
-                    "SELECT deletion_phase FROM observatory_retention_actions "
-                    "WHERE action_id = %s",
+                    "SELECT deletion_phase FROM observatory_retention_actions WHERE action_id = %s",
                     (self._active_retention_action_id,),
                 )
                 phase_row = await phase_result.fetchone()
@@ -1454,9 +1537,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     # aggregate count query above and never hydrates rows.
                     page = await self._bounded_compatibility_page()
                     selected = [
-                        item
-                        for item in page
-                        if cutoff is None or item.observed_at < cutoff
+                        item for item in page if cutoff is None or item.observed_at < cutoff
                     ]
                     deleted = len(selected)
                     compatibility_run_ids = sorted(
@@ -1474,8 +1555,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     # survive. This avoids materializing an unbounded run-id
                     # list in Python or constructing a giant IN predicate.
                     projection_statement = (
-                        "ALTER TABLE run_projections DELETE WHERE 1 = 1 "
-                        "SETTINGS mutations_sync=2"
+                        "ALTER TABLE run_projections DELETE WHERE 1 = 1 SETTINGS mutations_sync=2"
                     )
                     if compatibility_run_ids:
                         projection_statement = (
@@ -1497,9 +1577,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         params={"database": self._database},
                         auth=(self._user, self._password),
                         content=(
-                            "ALTER TABLE observations DELETE"
-                            + where
-                            + " SETTINGS mutations_sync=2"
+                            "ALTER TABLE observations DELETE" + where + " SETTINGS mutations_sync=2"
                         ),
                     )
                     _raise_for_clickhouse(response)
@@ -1531,8 +1609,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         )
                         await _commit_connection(connection)
             if (
-                phase
-                in {"queued", "targeted", "source_deleted", "projection_deleted", "failed"}
+                phase in {"queued", "targeted", "source_deleted", "projection_deleted", "failed"}
                 and cutoff is None
             ):
                 self._retention_phase = "receipt_delete"

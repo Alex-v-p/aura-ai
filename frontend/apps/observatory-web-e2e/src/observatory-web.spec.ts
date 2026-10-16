@@ -11,7 +11,9 @@ const traceId = '0123456789abcdef0123456789abcdef';
 const actionId = 'fda9d3fb-79c7-472b-bf18-1c76a9ec4f25';
 const fixtureCsrfToken = 'fixture-observatory-csrf-token-0123456789abcdef';
 
-const overview = (state: 'healthy' | 'degraded' | 'unavailable' = 'healthy', stale = false) => ({
+type FixtureHealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable';
+
+const overview = (state: 'healthy' | 'degraded' | 'unavailable' = 'healthy', stale = false, healthState: FixtureHealthState = state === 'healthy' ? 'healthy' : 'degraded') => ({
   observedAt: stale ? oldObservedAt : observedAt,
   systemState: state,
   ingest: {
@@ -23,7 +25,30 @@ const overview = (state: 'healthy' | 'degraded' | 'unavailable' = 'healthy', sta
   observationCount: 12,
   runCount: 1,
   latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
+  health: {
+    snapshotId: '3cbd2a62-8a4e-4596-9e59-9fd2d52a5de5',
+    observedAt: stale ? oldObservedAt : observedAt,
+    state: healthState,
+    intakeLagMs: healthState === 'healthy' ? 120 : 7200,
+    visibilityWatermark: 10,
+    visibilityLagCount: state === 'healthy' ? 0 : 2,
+    rejectionReasons: [{ reason: 'schema_validation', count: 1 }],
+    duplicateCount: 2,
+    storageLatency: { sampleCount: 12, latestMs: 18, p50Ms: 20, p95Ms: 42 },
+    queryLatency: { sampleCount: 6, latestMs: 11, p50Ms: 12, p95Ms: 24 },
+    queryFreshnessLagMs: healthState === 'healthy' ? 160 : 7400,
+    workerHeartbeatAt: observedAt,
+    workerHeartbeatAgeMs: healthState === 'healthy' ? 500 : 80000,
+    backlogCount: healthState === 'healthy' ? 0 : 4,
+    oldestBacklogAgeMs: healthState === 'healthy' ? null : 120000,
+  },
 });
+
+const healthHistory = {
+  items: [overview('healthy').health, { ...overview('degraded').health, snapshotId: '0baf6fc7-2c63-49e3-8740-0b707aaeb2dd' }],
+  nextCursor: null,
+  snapshotAt: observedAt,
+};
 
 const run = {
   runId,
@@ -83,6 +108,10 @@ type FixtureOptions = {
   sseDisconnected?: boolean;
   retentionFailure?: boolean;
   partial?: boolean;
+  healthUnavailable?: boolean;
+  emptyHealthHistory?: boolean;
+  healthChanged?: boolean;
+  healthState?: FixtureHealthState;
   deferAfterLogout?: boolean;
 };
 
@@ -108,6 +137,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   let logoutAttempts = 0;
   let sessionTokenIndex = 0;
   let expireSessionRequested = false;
+  let healthChanged = false;
 
   const defer = async (kind: string): Promise<void> => {
     if (!options.deferAfterLogout) return;
@@ -140,8 +170,14 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       return;
     }
     if (path.endsWith('/overview')) {
-      const currentOverview = overview(options.sseDisconnected ? 'degraded' : 'healthy', options.stale);
+      const currentHealthState = healthChanged ? 'delayed' : options.healthState ?? (options.sseDisconnected ? 'degraded' : 'healthy');
+      const currentOverview = overview(options.sseDisconnected ? 'degraded' : 'healthy', options.stale, currentHealthState);
       await route.fulfill({ status: options.unavailable ? 503 : 200, json: options.unavailable ? { code: 'service_unavailable', message: 'temporarily unavailable', retryable: true, traceId } : { ...currentOverview, observationCount: namedObservationReconciled ? 13 : currentOverview.observationCount } });
+      return;
+    }
+    if (path.endsWith('/health/history')) {
+      const currentHistory = options.emptyHealthHistory ? { ...healthHistory, items: [] } : healthChanged ? { ...healthHistory, items: [{ ...healthHistory.items[0], state: 'delayed', intakeLagMs: 7200, snapshotId: '9a8b7c6d-5e4f-4321-9abc-def012345678' }, ...healthHistory.items.slice(1)] } : healthHistory;
+      await route.fulfill(options.healthUnavailable ? { status: 503, json: { code: 'service_unavailable', message: 'health history unavailable', retryable: true, traceId } } : { json: currentHistory });
       return;
     }
     if (path.endsWith('/runs') && request.method() === 'GET') {
@@ -189,7 +225,10 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       }
       namedObservationReconciled = true;
       const event = { schemaVersion: 1, eventId: '1c3b8f28-cf6f-48a1-9c84-5603a8e84c55', eventType: 'observation.changed', occurredAt: observedAt, resourceType: 'run', resourceId: runId, capturePolicy: 'metadata_only' };
-      await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' }, body: `id: ${event.eventId}\nevent: observation.changed\ndata: ${JSON.stringify(event)}\n\n` });
+      const healthEvent = { schemaVersion: 1, eventId: '2d4e6f80-1234-4567-89ab-cdef01234567', eventType: 'health.changed', occurredAt: observedAt, resourceType: 'system', resourceId: null, capturePolicy: 'metadata_only' };
+      if (options.healthChanged) healthChanged = true;
+      const healthFrame = options.healthChanged ? `id: ${healthEvent.eventId}\nevent: health.changed\ndata: ${JSON.stringify(healthEvent)}\n\n` : '';
+      await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' }, body: `id: ${event.eventId}\nevent: observation.changed\ndata: ${JSON.stringify(event)}\n\n${healthFrame}` });
       return;
     }
     if (path.endsWith('/retention/actions') && request.method() === 'POST') {
@@ -323,14 +362,63 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openFixture(page, { stale: true });
     await expect(page.getByRole('status').filter({ hasText: /stale|disconnected/i }).first()).toBeVisible();
     await expect(page.getByText('Accepted')).toBeVisible();
-    await expect(page.getByText('Rejected')).toBeVisible();
-    await expect(page.getByText('Duplicate')).toBeVisible();
-    await expect(page.getByText('Malformed')).toBeVisible();
-    await expect(page.getByText('Storage failure')).toBeVisible();
+    const ingest = page.locator('observatory-overview .ingest-card');
+    await expect(ingest.getByText('Rejected', { exact: true })).toBeVisible();
+    await expect(ingest.getByText('Duplicates', { exact: true })).toBeVisible();
+    await expect(ingest.getByText('Malformed', { exact: true })).toBeVisible();
+    await expect(ingest.getByText('Storage failures', { exact: true })).toBeVisible();
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.route('**/api/v1/overview', async (route) => route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'temporarily unavailable', retryable: true, traceId } }));
     await page.reload();
     await expect(page.getByText(/unavailable|could not load/i).first()).toBeVisible();
+  });
+
+  test('shows bounded self-monitoring health, finite rejection reasons, and an accessible history table', async ({ page }) => {
+    await openFixture(page);
+    await expect(page.getByRole('heading', { name: 'Ingest quality and worker health', exact: true })).toBeVisible();
+    const health = page.locator('observatory-overview .health-section');
+    await expect(health.getByText('Intake lag', { exact: true })).toBeVisible();
+    await expect(health.getByText('Visibility watermark', { exact: true })).toBeVisible();
+    await expect(page.getByText('schema validation', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Recent health snapshots', exact: true })).toBeVisible();
+    await expect(page.getByRole('table', { name: 'Recent Observatory health snapshots' })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('offers a keyboard retry when bounded health history is unavailable', async ({ page }) => {
+    await openFixture(page, { healthUnavailable: true });
+    const retry = page.getByRole('button', { name: 'Retry history', exact: true });
+    await expect(retry).toBeVisible();
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await expect(page.getByRole('alert')).toContainText('Health history is unavailable');
+  });
+
+  test('keeps an empty health history empty while the live stream is disconnected', async ({ page }) => {
+    await openFixture(page, { sseDisconnected: true, emptyHealthHistory: true });
+    const history = page.locator('observatory-overview .history-section');
+    await expect(history.getByRole('status')).toContainText('No health snapshots');
+    await expect(page.locator('header').getByRole('status')).toHaveText(/Disconnected/i);
+    await expect(history.getByText(/last known health history/i)).toHaveCount(0);
+  });
+
+  test('refreshes overview and bounded history after a health.changed notification', async ({ page }) => {
+    await openFixture(page, { healthChanged: true });
+    await expect(page.locator('observatory-overview .state-badge').filter({ hasText: 'delayed' })).toBeVisible();
+    await expect(page.locator('observatory-overview .health-section').getByText('7.2 s', { exact: true })).toBeVisible();
+    await expect(page.locator('observatory-overview .history-section').getByText('7.2 s', { exact: true }).first()).toBeVisible();
+  });
+
+  test('distinguishes delayed health with explicit copy', async ({ page }) => {
+    await openFixture(page, { healthState: 'delayed' });
+    await expect(page.locator('observatory-overview .state-badge').filter({ hasText: 'delayed' })).toBeVisible();
+    await expect(page.getByText(/freshness or backlog thresholds need attention/i)).toBeVisible();
+  });
+
+  test('distinguishes partial health with explicit copy', async ({ page }) => {
+    await openFixture(page, { healthState: 'partial' });
+    await expect(page.locator('observatory-overview .state-badge').filter({ hasText: 'partial' })).toBeVisible();
+    await expect(page.getByText(/measurements are incomplete/i)).toBeVisible();
   });
 
   test('reconciles REST snapshot with SSE and marks a disconnected stream', async ({ page }) => {
@@ -371,8 +459,8 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openFixture(page);
     await page.getByRole('button', { name: 'Components', exact: true }).click();
     await expect(page.getByText('aura.core.api')).toBeVisible();
-    await expect(page.getByText(/p50|latency/i).first()).toBeVisible();
-    await expect(page.getByText(/errors?/i).first()).toBeVisible();
+    await expect(page.locator('observatory-components').getByText(/p50|latency/i).first()).toBeVisible();
+    await expect(page.locator('observatory-components').getByText(/errors?/i).first()).toBeVisible();
     await expect(page.locator('observatory-components').getByRole('article').first().getByText('3', { exact: true })).toBeVisible();
     const trendValues = page.locator('observatory-components [role="img"][aria-label]');
     await expect(trendValues.first()).toBeVisible({ timeout: 10_000 });

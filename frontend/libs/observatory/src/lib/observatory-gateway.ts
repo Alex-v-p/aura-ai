@@ -69,7 +69,7 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
     this.source = new EventSource(`${this.baseUrl}${OBSERVATORY_API_OPERATIONS.streamEvents.pathTemplate}`, { withCredentials: true });
     this.source.onopen = onOpen;
     this.source.onmessage = onMessage;
-    for (const eventName of ['snapshot', 'observation.changed', 'retention.changed', 'heartbeat']) this.source.addEventListener(eventName, onMessage);
+    for (const eventName of ['snapshot', 'observation.changed', 'health.changed', 'retention.changed', 'heartbeat']) this.source.addEventListener(eventName, onMessage);
     this.source.onerror = onError;
   }
 

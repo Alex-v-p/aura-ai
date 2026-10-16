@@ -428,7 +428,8 @@ def test_callback_is_excluded_from_openapi_and_manifest_declares_recovery_evalua
         "session_store",
     ]
     assert all(
-        "trace" not in definition and "correlation" not in definition
+        definition["trace"] == "auth_callback"
+        and definition["correlation"] == "request_id"
         for definition in callback_definitions.values()
     )
 

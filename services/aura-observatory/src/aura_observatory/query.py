@@ -8,19 +8,20 @@ import json
 import logging
 import re
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from functools import wraps
 from time import monotonic
 from typing import Any, Protocol, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import (
     DeletionResult,
+    ObservatoryHealthPort,
     ObservatoryQueryPort,
     ObservatoryReferencePort,
     ObservatoryRetentionPort,
@@ -178,7 +179,8 @@ def decode_cursor(value: str) -> tuple[datetime, str]:
         raise ValueError("invalid cursor")
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-        data = json.loads(raw)
+        decoded: object = json.loads(raw)
+        data = cast(dict[str, object], decoded) if isinstance(decoded, dict) else {}
         when = datetime.fromisoformat(str(data["at"])).astimezone(UTC)
         identifier = str(data["id"])
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -186,6 +188,29 @@ def decode_cursor(value: str) -> tuple[datetime, str]:
     if _UUID_RE.fullmatch(identifier) is None:
         raise ValueError("invalid cursor")
     return when, identifier
+
+
+def decode_health_cursor(value: str) -> tuple[datetime, str]:
+    """Decode the closed health-history cursor shape at the use-case boundary."""
+
+    if _CURSOR_RE.fullmatch(value) is None:
+        raise ValueError("invalid cursor")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+        decoded: object = json.loads(raw)
+        data: dict[str, object] = (
+            cast(dict[str, object], decoded) if isinstance(decoded, dict) else {}
+        )
+        if set(data) != {"at", "id"}:
+            raise ValueError("invalid cursor")
+        when = datetime.fromisoformat(str(data["at"]))
+        if when.tzinfo is None or when.utcoffset() is None:
+            raise ValueError("invalid cursor")
+        identifier = str(UUID(str(data["id"])))
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid cursor") from exc
+    return when.astimezone(UTC), identifier
 
 
 def decode_run_cursor(value: str) -> tuple[int | None, datetime, str]:
@@ -222,14 +247,70 @@ def _query_resource(name: str) -> Any:
         async def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
             started = monotonic()
             try:
-                return await function(self, *args, **kwargs)
+                result = await function(self, *args, **kwargs)
             except Exception:
                 self._record_query_metrics(name, started, "failed")
+                await self._record_query_health_latency(started)
                 raise
+            await self._record_query_health_latency(started)
+            return result
 
         return wrapped
 
     return decorate
+
+
+class ObservatoryHealthProjector:
+    """Persist material health transitions independently of read requests."""
+
+    def __init__(
+        self,
+        health_port: ObservatoryHealthPort,
+        *,
+        interval_seconds: float = 15.0,
+        refresh: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be positive")
+        self.health_port = health_port
+        self.interval_seconds = interval_seconds
+        self.refresh = refresh
+
+    async def project_once(self) -> dict[str, object] | None:
+        if self.refresh is not None:
+            await self.refresh()
+        snapshot = await self.health_port.health_snapshot()
+        if not isinstance(snapshot, dict) or not snapshot:
+            return None
+        await self.health_port.save_health_snapshot(snapshot)
+        return snapshot
+
+    async def run(self, stop: Any = None) -> None:
+        """Project current health on a bounded cadence until stopped."""
+
+        while True:
+            try:
+                await self.project_once()
+            except Exception:
+                # Diagnostics must not stop the worker or affect Core-facing
+                # activity; the next tick retries projection.
+                pass
+            if stop is None:
+                await asyncio.sleep(self.interval_seconds)
+                continue
+            if hasattr(stop, "is_set"):
+                if stop.is_set():
+                    return
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=self.interval_seconds)
+                except TimeoutError:
+                    continue
+                return
+            try:
+                await asyncio.wait_for(asyncio.shield(stop), timeout=self.interval_seconds)
+                return
+            except TimeoutError:
+                continue
 
 
 class ObservatoryQueryService:
@@ -242,6 +323,7 @@ class ObservatoryQueryService:
         *,
         query_port: ObservatoryQueryPort | None = None,
         retention_port: ObservatoryRetentionPort | None = None,
+        health_port: ObservatoryHealthPort | None = None,
     ) -> None:
         self.store = store
         self.metrics = metrics or ObservatoryMetrics()
@@ -250,6 +332,7 @@ class ObservatoryQueryService:
         # production composition always supplies both narrow ports.
         self.query_port = query_port
         self.retention_port = retention_port or cast(ObservatoryRetentionPort, store)
+        self.health_port = health_port or cast(ObservatoryHealthPort, store)
         self._durable_retention = retention_port is not None
 
     @_query_resource("overview")
@@ -259,6 +342,12 @@ class ObservatoryQueryService:
             narrow = self.query_port
             started = monotonic()
             result = await narrow.overview_query()
+            health = result.get("health")
+            self._record_health_metrics(
+                cast(dict[str, object] | None, health)
+                if isinstance(health, dict)
+                else None
+            )
             self._record_query_metrics("overview", started, "succeeded")
             return result
         observations = await self.store.list_observations()
@@ -290,8 +379,43 @@ class ObservatoryQueryService:
             "components": len(await self.store.components()),
             "deployments": len(await self.store.deployments()),
             "latestObservationId": latest.observation_id if latest else None,
+            "health": ingest.get("health") or await self.health_port.health_snapshot(),
         }
+        health = result.get("health")
+        if self.query_port is None:
+            result["snapshotSequence"] = cast(
+                ObservatoryReferencePort, self.store
+            ).snapshot_sequence
+        self._record_health_metrics(cast(dict[str, object] | None, result.get("health")))
         self._record_query_metrics("overview", started, "succeeded")
+        return result
+
+    @_query_resource("health_history")
+    async def health_history(
+        self,
+        *,
+        cursor: str | None = None,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        if cursor is not None:
+            decode_health_cursor(cursor)
+        started = monotonic()
+        if self.query_port is not None:
+            result = await self.query_port.health_history_query(
+                cursor=cursor, from_time=from_time, to_time=to_time, limit=limit
+            )
+        else:
+            result = await self.health_port.health_history(
+                cursor=cursor,
+                from_time=from_time,
+                to_time=to_time,
+                limit=limit,
+            )
+        self._record_query_metrics("health_history", started, "succeeded")
         return result
 
     @_query_resource("runs")
@@ -518,8 +642,10 @@ class ObservatoryQueryService:
             )
         except Exception:
             self._record_query_metrics("components", started, "failed")
+            await self._record_query_health_latency(started)
             raise
         self._record_query_metrics("components", started, "succeeded")
+        await self._record_query_health_latency(started)
         return result
 
     @_query_resource("component_health")
@@ -615,6 +741,46 @@ class ObservatoryQueryService:
             "observatory_query_outcome", labels={"resource": resource, "outcome": outcome}
         )
 
+    async def _record_query_health_latency(self, started: float) -> None:
+        """Persist one bounded use-case query duration without affecting reads."""
+
+        try:
+            await self.health_port.record_latency("query", (monotonic() - started) * 1000.0)
+        except Exception:
+            # Health persistence is diagnostic and must never turn a successful
+            # owner query into a service failure.
+            return
+
+    def _record_health_metrics(self, health: dict[str, object] | None) -> None:
+        if not health:
+            return
+        numeric = {
+            "observatory_ingest_intake_lag_ms": health.get("intakeLagMs"),
+            "observatory_ingest_visibility_lag_count": health.get("visibilityLagCount"),
+            "observatory_ingest_duplicate_count": health.get("duplicateCount"),
+            "observatory_ingest_worker_heartbeat_age_ms": health.get("workerHeartbeatAgeMs"),
+            "observatory_ingest_backlog_count": health.get("backlogCount"),
+            "observatory_query_freshness_lag_ms": health.get("queryFreshnessLagMs"),
+        }
+        for name, value in numeric.items():
+            if isinstance(value, (int, float)):
+                self.metrics.set(name, float(value))
+        reasons_value = health.get("rejectionReasons")
+        reasons = cast(list[object], reasons_value) if isinstance(reasons_value, list) else []
+        for item in reasons:
+            if isinstance(item, dict):
+                reason = cast(dict[str, object], item).get("reason")
+                count = cast(dict[str, object], item).get("count")
+                if isinstance(reason, str) and isinstance(count, (int, float)):
+                    try:
+                        self.metrics.set(
+                            "observatory_ingest_rejection_count",
+                            float(count),
+                            {"reason": reason},
+                        )
+                    except ValueError:
+                        continue
+
     async def deployments(self) -> list[dict[str, Any]]:
         started = monotonic()
         try:
@@ -625,8 +791,10 @@ class ObservatoryQueryService:
             )
         except Exception:
             self._record_query_metrics("deployments", started, "failed")
+            await self._record_query_health_latency(started)
             raise
         self._record_query_metrics("deployments", started, "succeeded")
+        await self._record_query_health_latency(started)
         return result
 
     async def events_after(
@@ -680,10 +848,12 @@ class ObservatoryQueryService:
                 "observatory_sse_connection_count", labels={"event_type": "connection"}
             )
             async for event in narrow.events_after_query(last_event_id, snapshot_sequence):
-                if event.pop("_persisted_replay", False):
+                replayed = bool(event.pop("_persisted_replay", False))
+                event_type = str(event.get("type", "heartbeat"))
+                if replayed and event_type in {"observation.changed", "health.changed"}:
                     self.metrics.record(
                         "observatory_sse_replay_count",
-                        labels={"event_type": "observation.changed"},
+                        labels={"event_type": event_type},
                     )
                 yield event
             return
@@ -702,22 +872,37 @@ class ObservatoryQueryService:
                     item.observation_id,
                 )
             )
+            health_events = memory.health_events
             identifiers = {item.observation_id for item in observations}
-            if cursor is None and snapshot_anchor is not None:
-                observations = [
-                    item
-                    for item in observations
-                    if sequence_by_id.get(item.observation_id, 0) > snapshot_anchor
-                ]
-            if cursor is not None and cursor not in identifiers:
+            identifiers.update(str(item.get("id", "")) for item in health_events)
+            cursor_sequence = (
+                sequence_by_id.get(cursor, 0)
+                if cursor is not None and cursor in identifiers
+                else None
+            )
+            initial_cursor_was_missing = last_event_id is None
+            if cursor is not None and cursor_sequence is None:
                 # A deleted/unknown cursor deterministically resets to the
                 # oldest persisted event; the preceding REST/SSE snapshot is
                 # the consistency boundary for the client.
                 cursor = None
-            for item in observations:
-                if cursor is not None:
-                    if item.observation_id == cursor:
-                        cursor = None
+            # A REST/SSE snapshot anchor is only a boundary for a stream that
+            # opened without a cursor.  An unknown supplied cursor retains the
+            # historical deterministic reset to the oldest persisted event;
+            # a known cursor, including health.changed, is strictly exclusive.
+            replay_after = (
+                snapshot_anchor or 0
+                if initial_cursor_was_missing and cursor_sequence is None
+                else cursor_sequence or 0
+            )
+            replay_observations = [
+                item
+                for item in observations
+                if sequence_by_id.get(item.observation_id, 0) > replay_after
+            ]
+            for item in replay_observations:
+                sequence = sequence_by_id.get(item.observation_id, 0)
+                if sequence <= replay_after:
                     continue
                 self.metrics.record(
                     "observatory_sse_replay_count", labels={"event_type": "observation.changed"}
@@ -730,9 +915,32 @@ class ObservatoryQueryService:
                         "runId": item.correlation.run_id if item.correlation else None,
                         "traceId": item.trace.trace_id if item.trace else None,
                     },
+                    "_persisted_replay": True,
+                }
+            for health_event in health_events:
+                event_id = str(health_event.get("id", ""))
+                sequence = sequence_by_id.get(event_id, 0)
+                if sequence <= replay_after:
+                    continue
+                self.metrics.record(
+                    "observatory_sse_replay_count", labels={"event_type": "health.changed"}
+                )
+                yield {
+                    "id": event_id,
+                    "type": "health.changed",
+                    "data": {},
+                    "_persisted_replay": True,
                 }
             wait_for_event = memory.wait_for_event
-            before = observations[-1].observation_id if observations else None
+            before = (
+                replay_observations[-1].observation_id
+                if replay_observations
+                else None
+                if snapshot_anchor is not None and initial_cursor_was_missing
+                else observations[-1].observation_id
+                if observations
+                else None
+            )
             await wait_for_event(0.1)
             after = await self.store.list_observations()
             if not observations and after:

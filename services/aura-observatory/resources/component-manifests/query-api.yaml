@@ -13,6 +13,7 @@ metrics:
   - observatory_query_outcome
   - observatory_auth_callback_duration_ms
   - observatory_auth_callback_outcome
+  - observatory_query_freshness_lag_ms
 metric_definitions:
   - name: observatory_query_duration_ms
     type: histogram
@@ -35,12 +36,24 @@ metric_definitions:
     unit: milliseconds
     labels: [stage, outcome]
     dependencies: [oidc_provider, login_state_store, session_store]
+    trace: auth_callback
+    correlation: request_id
     export: prometheus
   - name: observatory_auth_callback_outcome
     type: counter
     unit: occurrences
     labels: [stage, outcome]
     dependencies: [oidc_provider, login_state_store, session_store]
+    trace: auth_callback
+    correlation: request_id
+    export: prometheus
+  - name: observatory_query_freshness_lag_ms
+    type: gauge
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
     export: prometheus
 evaluators:
   - observatory_query_contract

@@ -6,12 +6,181 @@ import json
 import math
 import os
 import tempfile
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
+from uuid import uuid4
+
+MAX_LAG_MS = 604_800_000.0
+MAX_LATENCY_MS = 600_000.0
+HEALTH_HISTORY_LIMIT = 1000
+REJECTION_REASONS = frozenset(
+    {
+        "encoding",
+        "json",
+        "unsupported_fields",
+        "dropped_nonzero",
+        "status_code",
+        "status_message",
+        "shape_object",
+        "shape_array",
+        "shape_trace_id",
+        "shape_span_id",
+        "shape_parent_span_id",
+        "shape_link_trace_id",
+        "shape_link_span_id",
+        "shape_attribute_key",
+        "shape_attribute_value",
+        "scope",
+        "link",
+        "event",
+        "attribute",
+        "shape",
+        "contract_value",
+        "payload_too_large",
+        "schema_validation",
+        "malformed",
+    }
+)
+
+# Request/envelope and OTLP contract failures are malformed input, not
+# rejected-but-well-formed observations.  Keep this finite so durable
+# counters cannot be confused by arbitrary caller-controlled reason strings.
+MALFORMED_REASONS = frozenset(REJECTION_REASONS - {"schema_validation"})
+
+
+class HealthState(StrEnum):
+    HEALTHY = "healthy"
+    DELAYED = "delayed"
+    PARTIAL = "partial"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+
+
+def bounded_lag_ms(value: float | int | None) -> float | None:
+    """Return a finite, non-negative lag bounded to the public contract."""
+
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except TypeError, ValueError:
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(MAX_LAG_MS, max(0.0, number))
+
+
+def bounded_latency_ms(value: float | int | None) -> float | None:
+    """Return a finite latency bounded to ten minutes."""
+
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except TypeError, ValueError:
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(MAX_LATENCY_MS, max(0.0, number))
+
+
+@dataclass(frozen=True, slots=True)
+class LatencySummary:
+    sample_count: int
+    latest_ms: float | None
+    p50_ms: float | None
+    p95_ms: float | None
+
+    def as_dict(self) -> dict[str, int | float | None]:
+        return {
+            "sampleCount": self.sample_count,
+            "latestMs": self.latest_ms,
+            "p50Ms": self.p50_ms,
+            "p95Ms": self.p95_ms,
+        }
+
+
+class BoundedLatencyWindow:
+    """Small deterministic latency reservoir; it never stores request data."""
+
+    def __init__(self, max_samples: int = 128) -> None:
+        self._values: deque[float] = deque(maxlen=max_samples)
+
+    def add(self, value: float | int | None) -> None:
+        bounded = bounded_latency_ms(value)
+        if bounded is not None:
+            self._values.append(bounded)
+
+    def summary(self) -> LatencySummary:
+        if not self._values:
+            return LatencySummary(0, None, None, None)
+        # Keep insertion order for the latest retained observation. Percentiles
+        # deliberately operate on a separate sorted copy so a low-latency
+        # observation arriving after a high one is not misreported as stale.
+        values = sorted(self._values)
+
+        def percentile(rank: float) -> float:
+            position = (len(values) - 1) * rank
+            lower = int(position)
+            upper = min(len(values) - 1, lower + 1)
+            fraction = position - lower
+            return round(values[lower] + (values[upper] - values[lower]) * fraction, 3)
+
+        return LatencySummary(len(values), self._values[-1], percentile(0.50), percentile(0.95))
+
+
+@dataclass(slots=True)
+class HealthSnapshot:
+    """Content-free operational snapshot shared by REST and SSE."""
+
+    snapshot_id: str
+    observed_at: datetime
+    state: HealthState
+    intake_lag_ms: float | None
+    visibility_watermark: int
+    visibility_lag_count: int
+    rejection_reasons: dict[str, int]
+    duplicate_count: int
+    storage_latency: LatencySummary
+    query_latency: LatencySummary
+    query_freshness_lag_ms: float | None
+    worker_heartbeat_at: datetime | None
+    worker_heartbeat_age_ms: float | None
+    backlog_count: int
+    oldest_backlog_age_ms: float | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "snapshotId": self.snapshot_id,
+            "observedAt": _iso(self.observed_at),
+            "state": self.state.value,
+            "intakeLagMs": self.intake_lag_ms,
+            "visibilityWatermark": max(0, int(self.visibility_watermark)),
+            "visibilityLagCount": max(0, int(self.visibility_lag_count)),
+            "rejectionReasons": [
+                {"reason": reason, "count": max(0, int(count))}
+                for reason, count in sorted(self.rejection_reasons.items())
+                if reason in REJECTION_REASONS and count > 0
+            ][:24],
+            "duplicateCount": max(0, int(self.duplicate_count)),
+            "storageLatency": self.storage_latency.as_dict(),
+            "queryLatency": self.query_latency.as_dict(),
+            "queryFreshnessLagMs": self.query_freshness_lag_ms,
+            "workerHeartbeatAt": _iso(self.worker_heartbeat_at),
+            "workerHeartbeatAgeMs": self.worker_heartbeat_age_ms,
+            "backlogCount": max(0, int(self.backlog_count)),
+            "oldestBacklogAgeMs": self.oldest_backlog_age_ms,
+        }
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z") if value else None
 
 
 class MetricLabels(tuple[tuple[str, str], ...]):
@@ -48,14 +217,140 @@ class IngestCounters:
         }
 
 
+class IngestHealth:
+    """Bounded in-process health accumulator for one Observatory process."""
+
+    def __init__(self) -> None:
+        self.rejection_reasons: dict[str, int] = defaultdict(int)
+        self.storage_latency = BoundedLatencyWindow()
+        self.query_latency = BoundedLatencyWindow()
+        self.duplicate_count = 0
+        self.visibility_watermark = 0
+        self.visibility_lag_count = 0
+        self.backlog_count = 0
+        self.oldest_backlog_age_ms: float | None = None
+        self.last_observed_at: datetime | None = None
+        self.last_accepted_at: datetime | None = None
+        self.last_rejection_at: datetime | None = None
+        self.last_duplicate_at: datetime | None = None
+        self.last_storage_failure_at: datetime | None = None
+        self.worker_heartbeat_at: datetime | None = None
+        self.query_freshness_lag_ms: float | None = None
+        self._last_snapshot: HealthSnapshot | None = None
+
+    def rejection(self, reason: str, amount: int = 1) -> None:
+        self.rejection_reasons[reason if reason in REJECTION_REASONS else "malformed"] += max(
+            0, amount
+        )
+        if amount > 0:
+            self.last_rejection_at = datetime.now(UTC)
+
+    def accepted(self, observed_at: datetime, *, now: datetime | None = None) -> None:
+        current = now or datetime.now(UTC)
+        normalized = observed_at.astimezone(UTC)
+        self.last_observed_at = max(self.last_observed_at or normalized, normalized)
+        self.last_accepted_at = current
+
+    def duplicate(self) -> None:
+        self.duplicate_count += 1
+        self.last_duplicate_at = datetime.now(UTC)
+
+    def storage_failure(self, amount: int = 1) -> None:
+        if amount > 0:
+            self.last_storage_failure_at = datetime.now(UTC)
+
+    def heartbeat(self, at: datetime | None = None) -> None:
+        self.worker_heartbeat_at = (at or datetime.now(UTC)).astimezone(UTC)
+
+    def visibility(
+        self,
+        watermark: int,
+        lag_count: int,
+        backlog_count: int = 0,
+        oldest_backlog_age_ms: float | int | None = None,
+    ) -> None:
+        self.visibility_watermark = max(0, int(watermark))
+        self.visibility_lag_count = max(0, int(lag_count))
+        self.backlog_count = max(0, int(backlog_count))
+        self.oldest_backlog_age_ms = bounded_lag_ms(oldest_backlog_age_ms)
+
+    def snapshot(self, *, now: datetime | None = None) -> HealthSnapshot:
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        intake_lag = (
+            bounded_lag_ms((current - self.last_observed_at).total_seconds() * 1000)
+            if self.last_observed_at is not None
+            else None
+        )
+        heartbeat_age = (
+            bounded_lag_ms((current - self.worker_heartbeat_at).total_seconds() * 1000)
+            if self.worker_heartbeat_at is not None
+            else None
+        )
+        recent_failure = any(
+            timestamp is not None
+            and (current - timestamp.astimezone(UTC)).total_seconds() * 1000 <= 120_000
+            for timestamp in (
+                self.last_rejection_at,
+                self.last_duplicate_at,
+                self.last_storage_failure_at,
+            )
+        )
+        state = HealthState.HEALTHY
+        if self.worker_heartbeat_at is None or (
+            heartbeat_age is not None and heartbeat_age > 120_000
+        ):
+            state = HealthState.UNAVAILABLE
+        elif self.visibility_lag_count > 0 or self.backlog_count > 0:
+            state = HealthState.PARTIAL
+        elif intake_lag is not None and intake_lag > 120_000:
+            state = HealthState.DELAYED
+        elif recent_failure:
+            state = HealthState.DEGRADED
+        snapshot = HealthSnapshot(
+            snapshot_id=str(uuid4()),
+            observed_at=current,
+            state=state,
+            intake_lag_ms=intake_lag,
+            visibility_watermark=self.visibility_watermark,
+            visibility_lag_count=self.visibility_lag_count,
+            rejection_reasons=dict(self.rejection_reasons),
+            duplicate_count=self.duplicate_count,
+            storage_latency=self.storage_latency.summary(),
+            query_latency=self.query_latency.summary(),
+            query_freshness_lag_ms=bounded_lag_ms(self.query_freshness_lag_ms),
+            worker_heartbeat_at=self.worker_heartbeat_at,
+            worker_heartbeat_age_ms=heartbeat_age,
+            backlog_count=self.backlog_count,
+            oldest_backlog_age_ms=self.oldest_backlog_age_ms,
+        )
+        self._last_snapshot = snapshot
+        return snapshot
+
+    @property
+    def last_snapshot(self) -> HealthSnapshot | None:
+        return self._last_snapshot
+
+
 class ObservatoryMetrics:
     """Content-free metric sink with bounded, allowlisted labels."""
 
     HISTOGRAMS = frozenset(
-        {"observatory_query_duration_ms", "observatory_auth_callback_duration_ms"}
+        {
+            "observatory_query_duration_ms",
+            "observatory_auth_callback_duration_ms",
+            "observatory_ingest_storage_duration_ms",
+        }
     )
 
     ALLOWED = {
+        "observatory_ingest_intake_lag_ms",
+        "observatory_ingest_visibility_lag_count",
+        "observatory_ingest_rejection_count",
+        "observatory_ingest_duplicate_count",
+        "observatory_ingest_storage_duration_ms",
+        "observatory_ingest_worker_heartbeat_age_ms",
+        "observatory_ingest_backlog_count",
+        "observatory_query_freshness_lag_ms",
         "observatory_query_duration_ms",
         "observatory_query_outcome",
         "observatory_sse_connection_count",
@@ -67,7 +362,15 @@ class ObservatoryMetrics:
         "observatory_auth_callback_duration_ms",
         "observatory_auth_callback_outcome",
     }
-    LABELS = {
+    LABELS: dict[str, set[str]] = {
+        "observatory_ingest_intake_lag_ms": set(),
+        "observatory_ingest_visibility_lag_count": set(),
+        "observatory_ingest_rejection_count": {"reason"},
+        "observatory_ingest_duplicate_count": set(),
+        "observatory_ingest_storage_duration_ms": set(),
+        "observatory_ingest_worker_heartbeat_age_ms": set(),
+        "observatory_ingest_backlog_count": set(),
+        "observatory_query_freshness_lag_ms": set(),
         "observatory_query_duration_ms": {"resource"},
         "observatory_query_outcome": {"resource", "outcome"},
         "observatory_sse_connection_count": {"event_type"},
@@ -80,6 +383,7 @@ class ObservatoryMetrics:
         "observatory_auth_callback_outcome": {"stage", "outcome"},
     }
     LABEL_VALUES = {
+        "reason": set(REJECTION_REASONS),
         "resource": {
             "overview",
             "runs",
@@ -89,6 +393,7 @@ class ObservatoryMetrics:
             "component_health",
             "deployments",
             "events",
+            "health_history",
         },
         "outcome": {
             "succeeded",
@@ -104,7 +409,13 @@ class ObservatoryMetrics:
             "exchange_failed",
             "rejected",
         },
-        "event_type": {"stream", "connection", "observation.changed", "heartbeat"},
+        "event_type": {
+            "stream",
+            "connection",
+            "observation.changed",
+            "health.changed",
+            "heartbeat",
+        },
         "action": {"delete_before", "purge_all"},
         "status": {"queued", "running", "succeeded", "failed"},
         "failure_code": {"storage_failure", "conflict", "cancelled", "unknown"},
@@ -120,17 +431,15 @@ class ObservatoryMetrics:
 
     def __init__(self, export_path: Path | None = None) -> None:
         self.values: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
-        self._histogram_counts: dict[
-            tuple[str, tuple[tuple[str, str], ...]], int
-        ] = defaultdict(int)
-        self._histogram_buckets: dict[
-            tuple[str, tuple[tuple[str, str], ...]], dict[int, int]
-        ] = defaultdict(lambda: defaultdict(int))
-        # The API and dedicated worker are separate processes.  A bounded,
-        # content-free compact series file gives both processes a shared
-        # Prometheus exposition without making worker metrics depend on the
-        # API process being alive.  Deployments place this file below the
-        # encrypted Observatory state root.
+        self._histogram_counts: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(
+            int
+        )
+        self._histogram_buckets: dict[tuple[str, tuple[tuple[str, str], ...]], dict[int, int]] = (
+            defaultdict(lambda: defaultdict(int))
+        )
+        # File export is an explicit local/test seam only. Production
+        # cross-process health histograms come from the Observatory-owned
+        # PostgreSQL health port and are rendered as persisted series.
         self.export_path = export_path
         self._external_write_failed = False
 
@@ -158,8 +467,32 @@ class ObservatoryMetrics:
                 # shared sink is temporarily unavailable.
                 self._external_write_failed = True
 
+    def set(
+        self, name: str, value: float, labels: Mapping[str, str] | None = None
+    ) -> None:
+        """Set an authoritative gauge/current total without read inflation."""
+
+        if name not in self.ALLOWED:
+            raise ValueError("unknown Observatory metric")
+        supplied = dict(labels or {})
+        self._validate_labels(name, supplied)
+        if not math.isfinite(float(value)):
+            raise ValueError("metric value must be finite")
+        key = (name, MetricLabels(sorted((str(k), str(v)) for k, v in supplied.items())))
+        self.values[key] = float(value)
+        if self.export_path is not None:
+            try:
+                self._write_external(name, key[1], float(value), replace=True)
+            except OSError:
+                self._external_write_failed = True
+
     def _write_external(
-        self, name: str, labels: tuple[tuple[str, str], ...], value: float
+        self,
+        name: str,
+        labels: tuple[tuple[str, str], ...],
+        value: float,
+        *,
+        replace: bool = False,
     ) -> None:
         """Atomically update one bounded series in the shared sink."""
 
@@ -182,13 +515,13 @@ class ObservatoryMetrics:
                                 for key, value in loaded_dict.items()
                                 if isinstance(value, dict)
                             }
-                except (FileNotFoundError, json.JSONDecodeError):
+                except FileNotFoundError, json.JSONDecodeError:
                     pass
                 series_key = json.dumps([name, list(labels)], separators=(",", ":"))
                 current = records.get(series_key, {})
                 current["name"] = name
                 current["labels"] = dict(labels)
-                current["value"] = float(current.get("value", 0.0)) + value
+                current["value"] = value if replace else float(current.get("value", 0.0)) + value
                 if name in self.HISTOGRAMS:
                     current["count"] = int(current.get("count", 0)) + 1
                     buckets = current.setdefault("buckets", {})
@@ -236,14 +569,14 @@ class ObservatoryMetrics:
         histogram_counts: dict[tuple[str, tuple[tuple[str, str], ...]], int] = dict(
             self._histogram_counts
         )
-        histogram_buckets: dict[
-            tuple[str, tuple[tuple[str, str], ...]], dict[int, int]
-        ] = {key: dict(value) for key, value in self._histogram_buckets.items()}
+        histogram_buckets: dict[tuple[str, tuple[tuple[str, str], ...]], dict[int, int]] = {
+            key: dict(value) for key, value in self._histogram_buckets.items()
+        }
         values: dict[tuple[str, tuple[tuple[str, str], ...]], float] = dict(self.values)
         if self.export_path is not None and not self._external_write_failed:
-            external_values: defaultdict[
-                tuple[str, tuple[tuple[str, str], ...]], float
-            ] = defaultdict(float)
+            external_values: defaultdict[tuple[str, tuple[tuple[str, str], ...]], float] = (
+                defaultdict(float)
+            )
             histogram_counts = {}
             try:
                 import fcntl
@@ -290,7 +623,7 @@ class ObservatoryMetrics:
                                                 and isinstance(count, (int, float))
                                                 and int(count) >= 0
                                             }
-                            except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                            except ValueError, TypeError, KeyError, json.JSONDecodeError:
                                 continue
                     finally:
                         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -317,6 +650,12 @@ class ObservatoryMetrics:
                     "observatory_sse_active",
                     "observatory_retention_action_count",
                     "observatory_retention_failure_count",
+                    "observatory_ingest_intake_lag_ms",
+                    "observatory_ingest_visibility_lag_count",
+                    "observatory_ingest_duplicate_count",
+                    "observatory_ingest_worker_heartbeat_age_ms",
+                    "observatory_ingest_backlog_count",
+                    "observatory_query_freshness_lag_ms",
                 }
                 else "counter"
             )
@@ -325,30 +664,24 @@ class ObservatoryMetrics:
                 emitted_types.add(name)
             label_text = ""
             if labels:
+
                 def escape(label: str) -> str:
                     return label.replace("\\", "\\\\").replace('"', '\\"')
 
-                label_text = "{" + ",".join(
-                    f'{key}="{escape(str(label))}"'
-                    for key, label in labels
-                ) + "}"
+                label_text = (
+                    "{" + ",".join(f'{key}="{escape(str(label))}"' for key, label in labels) + "}"
+                )
             if name in self.HISTOGRAMS:
                 suffix = label_text
                 lines.append(f"{name}_sum{suffix} {value:g}")
-                lines.append(
-                    f"{name}_count{suffix} {histogram_counts.get((name, labels), 0)}"
-                )
+                lines.append(f"{name}_count{suffix} {histogram_counts.get((name, labels), 0)}")
                 buckets = histogram_buckets.get((name, labels), {})
                 for bucket in self.DURATION_BUCKETS:
-                    bucket_labels = label_text[:-1] + (
-                        "," if label_text else "{"
-                    ) + f'le="{bucket}"}}'
-                    lines.append(
-                        f"{name}_bucket{bucket_labels} {buckets.get(bucket, 0)}"
+                    bucket_labels = (
+                        label_text[:-1] + ("," if label_text else "{") + f'le="{bucket}"}}'
                     )
-                inf_labels = label_text[:-1] + (
-                    "," if label_text else "{"
-                ) + 'le="+Inf"}'
+                    lines.append(f"{name}_bucket{bucket_labels} {buckets.get(bucket, 0)}")
+                inf_labels = label_text[:-1] + ("," if label_text else "{") + 'le="+Inf"}'
                 lines.append(f"{name}_bucket{inf_labels} {histogram_counts.get((name, labels), 0)}")
             else:
                 lines.append(f"{name}{label_text} {value:g}")
@@ -374,15 +707,53 @@ class ObservatoryMetrics:
             ):
                 continue
             try:
+                normalized_labels = {
+                    cast(str, key): cast(str, label)
+                    for key, label in label_mapping.items()
+                }
+                if name in cls.HISTOGRAMS and (
+                    isinstance(item.get("count"), (int, float))
+                    or isinstance(item.get("buckets"), Mapping)
+                ):
+                    if not cls._labels_valid(name, normalized_labels):
+                        continue
+                    total = float(value)
+                    raw_count = item.get("count", 0)
+                    if not isinstance(raw_count, (int, float)) or not math.isfinite(
+                        float(raw_count)
+                    ):
+                        continue
+                    count = int(raw_count)
+                    raw_buckets = item.get("buckets", {})
+                    if (
+                        not math.isfinite(total)
+                        or count < 0
+                        or not isinstance(raw_buckets, Mapping)
+                    ):
+                        continue
+                    raw_bucket_mapping = cast(Mapping[object, object], raw_buckets)
+                    buckets: dict[int, int] = {}
+                    for bucket, bucket_count in raw_bucket_mapping.items():
+                        bucket_text = str(bucket)
+                        if (
+                            bucket_text.isdigit()
+                            and isinstance(bucket_count, (int, float))
+                            and math.isfinite(float(bucket_count))
+                            and int(bucket_count) >= 0
+                        ):
+                            buckets[int(bucket_text)] = int(bucket_count)
+                    label_key = MetricLabels(sorted(normalized_labels.items()))
+                    key = (name, label_key)
+                    metrics.values[key] = total
+                    metrics._histogram_counts[key] = count
+                    metrics._histogram_buckets[key] = buckets
+                    continue
                 metrics.record(
                     name,
                     float(value),
-                    {
-                        cast(str, key): cast(str, label)
-                        for key, label in label_mapping.items()
-                    },
+                    normalized_labels,
                 )
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
         return metrics.prometheus()
 
@@ -396,10 +767,7 @@ class ObservatoryMetrics:
         allowed = cls.LABELS[name]
         if set(normalized) - allowed:
             return False
-        return all(
-            value in cls.LABEL_VALUES.get(key, set())
-            for key, value in normalized.items()
-        )
+        return all(value in cls.LABEL_VALUES.get(key, set()) for key, value in normalized.items())
 
     @classmethod
     def _validate_labels(cls, name: str, labels: Mapping[str, str]) -> None:
@@ -407,4 +775,16 @@ class ObservatoryMetrics:
             raise ValueError("metric labels are not bounded")
 
 
-__all__ = ["IngestCounters", "ObservatoryMetrics"]
+__all__ = [
+    "HEALTH_HISTORY_LIMIT",
+    "REJECTION_REASONS",
+    "BoundedLatencyWindow",
+    "HealthSnapshot",
+    "HealthState",
+    "IngestCounters",
+    "IngestHealth",
+    "LatencySummary",
+    "ObservatoryMetrics",
+    "bounded_lag_ms",
+    "bounded_latency_ms",
+]

@@ -3,11 +3,13 @@ import type {
   ComponentHealth,
   CreateRetentionActionRequest,
   DeploymentCollection,
+  HealthHistoryPage,
   LiveEvent,
   Overview,
   RetentionAction,
   RunDetail,
   RunPage,
+  SelfMonitoringSnapshot,
   TraceDetail,
 } from '@aura/observatory-api-client';
 import { OBSERVATORY_API_OPERATIONS } from '@aura/observatory-api-client';
@@ -173,6 +175,27 @@ export type ObservatorySnapshot = {
   partial: boolean;
   resourceErrors: ReadonlyArray<string>;
 };
+
+/**
+ * The health history surface is deliberately separate from the observation
+ * snapshot. It is bounded by the API page size and is never persisted by the
+ * web application.
+ */
+export type ObservatoryHealthHistory = {
+  page: HealthHistoryPage | null;
+  state: 'loading' | 'ready' | 'empty' | 'stale' | 'error';
+  error: string | null;
+};
+
+/** A disconnected stream must not turn an already-empty history into stale data. */
+export function healthHistoryAfterDisconnect(history: ObservatoryHealthHistory): ObservatoryHealthHistory {
+  const hasCachedSnapshots = Boolean(history.page?.items.length);
+  return {
+    ...history,
+    state: hasCachedSnapshots ? 'stale' : history.state,
+    error: hasCachedSnapshots ? 'Live updates are disconnected. Showing the last known health history.' : null,
+  };
+}
 export function resourceStateFor(
   resource: ObservatoryResource,
   value: unknown,
@@ -209,4 +232,4 @@ export function normalizeRunFilters(filters: RunFilters): RunFilters {
   const to = filters.to ? datetimeLocalToUtc(filters.to) : undefined;
   return { status: filters.status, component: filters.component, model: filters.model, deployment: filters.deployment, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
-export type { ComponentCollection, ComponentHealth, DeploymentCollection, LiveEvent, Overview, RetentionAction, RunDetail, RunPage, TraceDetail };
+export type { ComponentCollection, ComponentHealth, DeploymentCollection, HealthHistoryPage, LiveEvent, Overview, RetentionAction, RunDetail, RunPage, SelfMonitoringSnapshot, TraceDetail };

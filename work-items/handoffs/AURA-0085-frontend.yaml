@@ -1,0 +1,95 @@
+agent: frontend_worker
+work_item: AURA-0085
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.system-health
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - git diff --check -- frontend/libs/observatory frontend/apps/observatory-web frontend/apps/observatory-web-e2e
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0085.yaml --role frontend_worker with the five
+      frontend-owned paths explicitly supplied
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --ignoreConfig --target ES2022
+      --module ESNext --moduleResolution Bundler --esModuleInterop
+      --skipLibCheck apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      cd frontend && NX_SOCKET_DIR=/tmp/aura-nx NX_DAEMON=false pnpm exec
+      playwright test --config apps/observatory-web-e2e/playwright.config.ts
+      (93 passed across desktop, tablet, and mobile; axe checks included,
+      including empty/disconnected, health.changed, delayed, and partial state
+      regressions)
+  failed: []
+  not_run:
+    - >-
+      bash deploy/compose/run-observatory-full-stack-e2e.sh (owned by the
+      full-stack integration phase; no backend/deploy files were changed here)
+    - >-
+      Whole-repository architecture, service, contract, observability, and
+      baseline validators (owned by the integration maintainer)
+decisions:
+  - >-
+    Current self-monitoring data is consumed from the generated observatory-v1
+    client types. The web feature remains transport-only at the gateway and
+    keeps all health state in the owning Observatory store.
+  - >-
+    Health history is requested through the bounded page_size 50 endpoint and
+    remains in memory only. No authenticated response, health snapshot, or SSE
+    payload is written to browser storage or a service-worker cache.
+  - >-
+    Overview health is backward compatible: older responses without the
+    optional health snapshot render an explicit self-monitoring-unavailable
+    retry state while the health-history resource reports its own loading,
+    empty, stale, error, and ready states.
+  - >-
+    health.changed is subscribed through the existing authenticated SSE
+    transport and refreshes the bounded history through the existing
+    one-active-plus-one-trailing coordinator. Heartbeats do not trigger a
+    history read.
+  - >-
+    The owner UI presents finite rejection reason codes, bounded lag/backlog,
+    visibility watermark, worker heartbeat, storage/query latency, and
+    timestamps with explicit units and text-plus-symbol state indicators.
+  - >-
+    Responsive and accessible behavior uses a keyboard-focusable horizontal
+    table region on narrow screens, non-colour-only state labels, explicit
+    empty/stale/unavailable/retry announcements, reduced-motion styles, and
+    bounded layouts at mobile widths.
+  - >-
+    A disconnected live stream preserves an empty history as empty and leaves
+    the disconnected state to the separate connection notice; only a cached
+    non-empty history becomes stale. Unit coverage locks this distinction.
+  - >-
+    Mocked SSE coverage emits health.changed and verifies both the current
+    overview and bounded history refresh to delayed metadata. Dedicated delayed
+    and partial fixtures assert distinct state labels and explanatory copy.
+risks:
+  - >-
+    Full-stack acceptance and repository-wide checks remain integration-owned
+    because this worker was restricted to the Observatory frontend zone.
+unresolved: []

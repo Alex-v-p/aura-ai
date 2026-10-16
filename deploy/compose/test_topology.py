@@ -352,6 +352,24 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("  observatory-session:\n    internal: true", self.compose)
         self.assertIn("  observatory-ingest:\n    internal: true", self.compose)
 
+    def test_observatory_metrics_use_postgres_provider_without_state_mounts(self) -> None:
+        api = service_block(self.compose, "observatory-api", "observatory-worker")
+        worker = service_block(self.compose, "observatory-worker", "observatory-migrate")
+        settings = (ROOT / "services/aura-observatory/src/aura_observatory/settings.py").read_text(
+            encoding="utf-8"
+        )
+        api_app = (
+            ROOT / "services/aura-observatory/src/aura_observatory/entrypoints/api/app.py"
+        ).read_text(encoding="utf-8")
+        for service in (api, worker):
+            self.assertNotIn("AURA_OBSERVATORY_METRICS_FILE", service)
+            self.assertNotIn("/state/aura-observatory/metrics", service)
+            self.assertNotIn("user: \"10002:10002\"", service)
+            self.assertNotIn("volumes:", service)
+        self.assertIn("default=None", settings)
+        self.assertIn("persisted_metric_series", api_app)
+        self.assertIn("metric_series", api_app)
+
     def test_observatory_full_stack_runner_supplies_owner_login_and_outage_phase(self) -> None:
         runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
             encoding="utf-8"

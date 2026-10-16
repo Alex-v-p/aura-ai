@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: b9a6110caff73a1fc7e18334c08cb4e4ce6450b6b7f358c68107ca05056b0dfd
+// Contract SHA-256: fcf696447c974204516ee92e651766f84db5e6f4b64b96da9d10bd6d6f160084
 
 export type Uuid = string;
 
@@ -21,6 +21,16 @@ export type Outcome = "succeeded" | "failed" | "cancelled" | "unknown";
 
 export type ServiceState = "healthy" | "degraded" | "unavailable";
 
+export type HealthState = "healthy" | "delayed" | "partial" | "degraded" | "unavailable";
+
+export type RejectionReason = "encoding" | "json" | "unsupported_fields" | "dropped_nonzero" | "status_code" | "status_message" | "shape_object" | "shape_array" | "shape_trace_id" | "shape_span_id" | "shape_parent_span_id" | "shape_link_trace_id" | "shape_link_span_id" | "shape_attribute_key" | "shape_attribute_value" | "scope" | "link" | "event" | "attribute" | "shape" | "contract_value" | "payload_too_large" | "schema_validation" | "malformed";
+
+export type NonNegativeCount = number;
+
+export type BoundedLatencyMs = number;
+
+export type BoundedLagMs = number;
+
 export type OwnerSession = { readonly "csrfToken": string; };
 
 export type Problem = { readonly "code": string; readonly "message": string; readonly "retryable": boolean; readonly "traceId": TraceId; };
@@ -29,7 +39,15 @@ export type IngestCounts = { readonly "accepted": number; readonly "rejected": n
 
 export type IngestOverview = { readonly "state": ServiceState; readonly "counts": IngestCounts; readonly "lastAcceptedAt": string | null; readonly "lastFailureAt": string | null; };
 
-export type Overview = { readonly "observedAt": UtcInstant; readonly "systemState": ServiceState; readonly "ingest": IngestOverview; readonly "observationCount": number; readonly "runCount": number; readonly "latestObservationId": Uuid | null; };
+export type RejectionReasonCount = { readonly "reason": RejectionReason; readonly "count": NonNegativeCount; };
+
+export type LatencySummary = { readonly "sampleCount": NonNegativeCount; readonly "latestMs": BoundedLatencyMs | null; readonly "p50Ms": BoundedLatencyMs | null; readonly "p95Ms": BoundedLatencyMs | null; };
+
+export type SelfMonitoringSnapshot = { readonly "snapshotId": Uuid; readonly "observedAt": UtcInstant; readonly "state": HealthState; readonly "intakeLagMs": BoundedLagMs | null; readonly "visibilityWatermark": NonNegativeCount; readonly "visibilityLagCount": NonNegativeCount; readonly "rejectionReasons": ReadonlyArray<RejectionReasonCount>; readonly "duplicateCount": NonNegativeCount; readonly "storageLatency": LatencySummary; readonly "queryLatency": LatencySummary; readonly "queryFreshnessLagMs": BoundedLagMs | null; readonly "workerHeartbeatAt": UtcInstant | null; readonly "workerHeartbeatAgeMs": BoundedLagMs | null; readonly "backlogCount": NonNegativeCount; readonly "oldestBacklogAgeMs": BoundedLagMs | null; };
+
+export type HealthHistoryPage = { readonly "items": ReadonlyArray<SelfMonitoringSnapshot>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; };
+
+export type Overview = { readonly "observedAt": UtcInstant; readonly "systemState": ServiceState; readonly "ingest": IngestOverview; readonly "observationCount": number; readonly "runCount": number; readonly "latestObservationId": Uuid | null; readonly "health"?: SelfMonitoringSnapshot; };
 
 export type RunSummary = { readonly "runId": Uuid; readonly "status": RunStatus; readonly "startedAt": UtcInstant; readonly "finishedAt": UtcInstant | null; readonly "durationMs": number | null; readonly "model": SafeLabel | null; readonly "deploymentId": SafeLabel; readonly "componentIds": ReadonlyArray<ComponentId>; readonly "traceId": TraceId | null; };
 
@@ -59,7 +77,7 @@ export type Deployment = { readonly "deploymentId": SafeLabel; readonly "gitComm
 
 export type DeploymentCollection = { readonly "items": ReadonlyArray<Deployment>; readonly "snapshotAt": UtcInstant; };
 
-export type LiveEventType = "observation.changed" | "retention.changed" | "heartbeat";
+export type LiveEventType = "observation.changed" | "retention.changed" | "health.changed" | "heartbeat";
 
 export type LiveEvent = { readonly "schemaVersion": 1; readonly "eventId": Uuid; readonly "eventType": LiveEventType; readonly "occurredAt": UtcInstant; readonly "resourceType": "observation" | "run" | "trace" | "component" | "deployment" | "retention" | "system"; readonly "resourceId": string | null; readonly "capturePolicy": "metadata_only"; };
 
@@ -80,6 +98,7 @@ export interface ObservatoryApiOperations {
   readonly getOwnerSession: { readonly response: OwnerSession; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly logoutOwnerSession: { readonly response: void; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; }; };
   readonly getOverview: { readonly response: Overview; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listHealthHistory: { readonly response: HealthHistoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listRuns: { readonly response: RunPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "status"?: RunStatus; readonly "component"?: ComponentId; readonly "model"?: SafeLabel; readonly "deployment"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getRun: { readonly response: RunDetail; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getTrace: { readonly response: TraceDetail; readonly body: never; readonly path: { readonly "trace_id": TraceId; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
@@ -112,6 +131,7 @@ export const OBSERVATORY_API_OPERATIONS = {
   getOwnerSession: { method: 'GET', pathTemplate: '/api/v1/auth/me', requestMode: 'none', responseMode: 'json' },
   logoutOwnerSession: { method: 'POST', pathTemplate: '/api/v1/auth/logout', requestMode: 'none', responseMode: 'none' },
   getOverview: { method: 'GET', pathTemplate: '/api/v1/overview', requestMode: 'none', responseMode: 'json' },
+  listHealthHistory: { method: 'GET', pathTemplate: '/api/v1/health/history', requestMode: 'none', responseMode: 'json' },
   listRuns: { method: 'GET', pathTemplate: '/api/v1/runs', requestMode: 'none', responseMode: 'json' },
   getRun: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}', requestMode: 'none', responseMode: 'json' },
   getTrace: { method: 'GET', pathTemplate: '/api/v1/traces/{trace_id}', requestMode: 'none', responseMode: 'json' },

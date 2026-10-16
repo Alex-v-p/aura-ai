@@ -1,12 +1,13 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { hasSessionRequiredRejection, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, RequestGenerationGate, resourceStateFor, type ObservatoryAuthState, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, RequestGenerationGate, resourceStateFor, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
   private readonly gateway = inject(OBSERVATORY_GATEWAY) as ObservatoryGatewayPort;
   readonly snapshot = signal<ObservatorySnapshot>({ overview: null, runs: null, components: null, deployments: null, state: 'loading', lastUpdatedAt: null, lastEventId: null, error: null, partial: false, resourceErrors: [] });
+  readonly healthHistory = signal<ObservatoryHealthHistory>({ page: null, state: 'loading', error: null });
   readonly resourceStates = signal<Record<ObservatoryResource, ObservatoryResourceState>>({ overview: 'loading', runs: 'loading', components: 'loading', deployments: 'loading' });
   readonly filters = signal<RunFilters>({});
   readonly selectedRun = signal<SelectedRun>({ detail: null, trace: null });
@@ -29,8 +30,10 @@ export class ObservatoryStore {
   private pendingRecoveryState: ObservatoryAuthState | null = null;
   private readonly componentHealthRequests = new RequestGenerationGate();
   private readonly liveRefresh = new LiveRefreshCoordinator();
+  private readonly healthHistoryRefresh = new LiveRefreshCoordinator();
   private readonly catalogRefresh = new LiveRefreshCoordinator();
   private catalogLoadSequence = 0;
+  private healthHistorySequence = 0;
 
   async start(initialRecoveryState: ObservatoryAuthState | null = null): Promise<void> {
     await this.runSessionLifecycle(initialRecoveryState);
@@ -41,6 +44,7 @@ export class ObservatoryStore {
     if (this.authState() !== 'authenticated') this.authState.set('checking');
     await this.loadLiveSnapshot();
     if (this.authState() === 'authenticated' && !this.sessionRequired()) {
+      await this.loadHealthHistory();
       this.connectLive();
       this.queueCatalogRefresh();
     }
@@ -92,6 +96,7 @@ export class ObservatoryStore {
       if (!overview) throw new Error('Observatory overview is unavailable.');
       const latestEventId = this.snapshot().lastEventId ?? runs?.latestObservationId ?? previous.lastEventId;
       this.snapshot.set({ overview, runs, components, deployments, state: resourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0), lastUpdatedAt: overview.observedAt, lastEventId: latestEventId, error: resourceErrors.length ? `Some Observatory data is unavailable: ${resourceErrors.join(', ')}.` : null, partial: resourceErrors.length > 0, resourceErrors });
+      void this.loadHealthHistory();
     } catch (error) {
       if (!isCurrentLoadSequence(sequence, this.loadSequence)) return;
       if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.');
@@ -160,17 +165,44 @@ export class ObservatoryStore {
 
   retryAuthentication(): void { void this.runSessionLifecycle(); }
   refreshCatalog(): void { this.queueCatalogRefresh(); }
+  refreshHealthHistory(): void { this.queueHealthHistory(); }
 
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
     this.queueLiveRefresh();
+    if (event.type === 'health.changed') this.queueHealthHistory();
   };
   private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); };
-  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); this.queueLiveRefresh(); };
+  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); this.queueLiveRefresh(); };
 
   private queueLiveRefresh(): void {
     this.liveRefresh.request(() => this.loadLiveSnapshot(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  private queueHealthHistory(): void {
+    this.healthHistoryRefresh.request(() => this.loadHealthHistory(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  /** Load only the bounded, content-free operational history page. */
+  private async loadHealthHistory(): Promise<void> {
+    const sequence = ++this.healthHistorySequence;
+    const generation = this.authGeneration;
+    const previous = this.healthHistory();
+    this.healthHistory.update((value) => ({ ...value, state: value.page ? 'stale' : 'loading', error: null }));
+    try {
+      await this.gateway.ensureSession();
+      const page = await this.gateway.execute('listHealthHistory', { ...blankInput('listHealthHistory'), query: { page_size: 50 } });
+      if (sequence !== this.healthHistorySequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      this.healthHistory.set({ page, state: page.items.length ? 'ready' : 'empty', error: null });
+    } catch (error) {
+      if (error instanceof ObservatorySessionRequiredError) {
+        this.markSignedOut('Owner Observatory session required.');
+        return;
+      }
+      if (sequence !== this.healthHistorySequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      this.healthHistory.set({ page: previous.page, state: previous.page ? 'stale' : 'error', error: previous.page ? 'Health history could not be refreshed.' : 'Health history is unavailable.' });
+    }
   }
 
   private queueCatalogRefresh(): void {
@@ -284,7 +316,9 @@ export class ObservatoryStore {
     this.disconnectLive();
     this.liveRefresh.cancel();
     this.catalogRefresh.cancel();
+    this.healthHistoryRefresh.cancel();
     this.catalogLoadSequence += 1;
+    this.healthHistorySequence += 1;
     this.loadSequence += 1;
     this.openRunSequence += 1;
     this.authGeneration += 1;
@@ -295,6 +329,7 @@ export class ObservatoryStore {
     this.filters.set({});
     this.resourceStates.set({ overview: 'error', runs: 'error', components: 'error', deployments: 'error' });
     this.snapshot.set({ overview: null, runs: null, components: null, deployments: null, state: 'error', lastUpdatedAt: null, lastEventId: null, error: message, partial: false, resourceErrors: [] });
+    this.healthHistory.set({ page: null, state: 'error', error: null });
     this.selectedRun.set({ detail: null, trace: null });
     this.selectedRunId.set(null);
     this.selectedRunState.set('idle');

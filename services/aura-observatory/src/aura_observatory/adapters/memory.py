@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any
 
 from aura_observatory.contract import MetadataObservation
+from aura_observatory.metrics import IngestHealth, ObservatoryMetrics, bounded_lag_ms
 from aura_observatory.ports import ClaimOutcome, DeletionResult, InsertOutcome
 
 
@@ -26,6 +27,29 @@ def _normalize_outcome(observation: MetadataObservation) -> str:
     }.get(
         value, value if value in {"succeeded", "failed", "cancelled"} else "unknown"
     )
+
+
+def _storage_metric_series(health: IngestHealth) -> list[dict[str, object]]:
+    summary = health.storage_latency.summary()
+    if summary.sample_count == 0:
+        return []
+    # The reference health accumulator intentionally exposes only a bounded
+    # latest/percentile summary, so use the latest sample as a one-value
+    # persisted-series approximation for deterministic local compositions.
+    latest = summary.latest_ms or 0.0
+    buckets = {
+        str(bucket): int(latest <= bucket) for bucket in ObservatoryMetrics.DURATION_BUCKETS
+    }
+    return [
+        {
+            "name": "observatory_ingest_storage_duration_ms",
+            "value": latest,
+            "sum": latest,
+            "count": 1,
+            "buckets": buckets,
+            "labels": {},
+        }
+    ]
 
 
 class MemoryObservationStore:
@@ -97,6 +121,9 @@ class MemoryCatalog:
         self.deployments: set[tuple[str, str, str, str]] = set()
         self._counters: dict[str, int] = {}
         self._last_ingest_at: datetime | None = None
+        self.health = IngestHealth()
+        self.health.heartbeat()
+        self.health_history_rows: list[dict[str, object]] = []
 
     async def record_component(self, component_id: str, version: str) -> None:
         self.components.add((component_id, version))
@@ -116,6 +143,60 @@ class MemoryCatalog:
     async def last_ingest_at(self) -> datetime | None:
         return self._last_ingest_at
 
+    async def record_rejection(self, reason: str, amount: int = 1) -> None:
+        self.health.rejection(reason, amount)
+        key = "rejected" if reason == "schema_validation" else "malformed"
+        self._counters[key] = self._counters.get(key, 0) + max(0, amount)
+
+    async def record_accepted_observation(self, observed_at: datetime, amount: int = 1) -> None:
+        self.health.accepted(observed_at)
+        self._counters["accepted"] = self._counters.get("accepted", 0) + max(0, amount)
+
+    async def record_duplicate(self, amount: int = 1) -> None:
+        for _ in range(max(0, amount)):
+            self.health.duplicate()
+        self._counters["duplicate"] = self._counters.get("duplicate", 0) + max(0, amount)
+
+    async def record_storage_failure(self, amount: int = 1) -> None:
+        self.health.storage_failure(amount)
+        self._counters["storage_failure"] = self._counters.get("storage_failure", 0) + max(
+            0, amount
+        )
+
+    async def record_latency(self, kind: str, duration_ms: float) -> None:
+        if kind == "storage":
+            self.health.storage_latency.add(duration_ms)
+        elif kind == "query":
+            self.health.query_latency.add(duration_ms)
+
+    async def record_worker_heartbeat(self, at: datetime | None = None) -> None:
+        self.health.heartbeat(at)
+
+    async def record_query_freshness(self, observed_at: datetime | None) -> None:
+        if observed_at is not None:
+            self.health.query_freshness_lag_ms = bounded_lag_ms(
+                (datetime.now(UTC) - observed_at.astimezone(UTC)).total_seconds() * 1000
+            )
+
+    async def record_visibility(
+        self,
+        watermark: int,
+        lag_count: int,
+        backlog_count: int = 0,
+        oldest_backlog_age_ms: float | None = None,
+    ) -> None:
+        self.health.visibility(watermark, lag_count, backlog_count, oldest_backlog_age_ms)
+
+    async def health_snapshot(self) -> dict[str, object]:
+        return self.health.snapshot().as_dict()
+
+    async def metric_series(self) -> list[dict[str, object]]:
+        return _storage_metric_series(self.health)
+
+    async def save_health_snapshot(self, snapshot: dict[str, object]) -> None:
+        self.health_history_rows.append(dict(snapshot))
+        self.health_history_rows = self.health_history_rows[-1000:]
+
 class MemoryObservatoryStore:
     """Concurrency-safe reference store with the complete query semantics."""
 
@@ -134,6 +215,10 @@ class MemoryObservatoryStore:
         self.idempotency: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._event_condition = asyncio.Condition()
+        self.health = IngestHealth()
+        self.health.heartbeat()
+        self.health_history_rows: list[dict[str, object]] = []
+        self.health_events: list[dict[str, object]] = []
 
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome:
         async with self._lock:
@@ -154,6 +239,8 @@ class MemoryObservatoryStore:
             )
             self.deployments_seen.setdefault(dkey, observation.observed_at)
             self.deployment_roles[dkey].add(observation.service_role)
+            self.health.accepted(observation.observed_at)
+            self.health.visibility(self._next_sequence, 0, 0, 0)
             async with self._event_condition:
                 self._event_condition.notify_all()
             return InsertOutcome.ACCEPTED
@@ -188,6 +275,121 @@ class MemoryObservatoryStore:
             self._last_accepted_at = now
         elif name in {"rejected", "malformed", "storage_failure"}:
             self._last_failure_at = now
+
+    async def record_rejection(self, reason: str, amount: int = 1) -> None:
+        self.health.rejection(reason, amount)
+        key = "rejected" if reason == "schema_validation" else "malformed"
+        self._counter_values[key] = self._counter_values.get(key, 0) + max(0, amount)
+
+    async def record_accepted_observation(self, observed_at: datetime, amount: int = 1) -> None:
+        self.health.accepted(observed_at)
+        self._counter_values["accepted"] = self._counter_values.get("accepted", 0) + max(
+            0, amount
+        )
+
+    async def record_duplicate(self, amount: int = 1) -> None:
+        for _ in range(max(0, amount)):
+            self.health.duplicate()
+        self._counter_values["duplicate"] = self._counter_values.get("duplicate", 0) + max(
+            0, amount
+        )
+
+    async def record_storage_failure(self, amount: int = 1) -> None:
+        self.health.storage_failure(amount)
+        self._counter_values["storage_failure"] = self._counter_values.get(
+            "storage_failure", 0
+        ) + max(0, amount)
+
+    async def record_latency(self, kind: str, duration_ms: float) -> None:
+        if kind == "storage":
+            self.health.storage_latency.add(duration_ms)
+        elif kind == "query":
+            self.health.query_latency.add(duration_ms)
+
+    async def record_worker_heartbeat(self, at: datetime | None = None) -> None:
+        self.health.heartbeat(at)
+
+    async def record_query_freshness(self, observed_at: datetime | None) -> None:
+        if observed_at is not None:
+            self.health.query_freshness_lag_ms = bounded_lag_ms(
+                (datetime.now(UTC) - observed_at.astimezone(UTC)).total_seconds() * 1000
+            )
+
+    async def record_visibility(
+        self,
+        watermark: int,
+        lag_count: int,
+        backlog_count: int = 0,
+        oldest_backlog_age_ms: float | None = None,
+    ) -> None:
+        self.health.visibility(watermark, lag_count, backlog_count, oldest_backlog_age_ms)
+
+    async def health_snapshot(self) -> dict[str, object]:
+        return self.health.snapshot().as_dict()
+
+    async def metric_series(self) -> list[dict[str, object]]:
+        return _storage_metric_series(self.health)
+
+    async def save_health_snapshot(self, snapshot: dict[str, object]) -> None:
+        previous = self.health_history_rows[-1] if self.health_history_rows else None
+        material = previous is None or any(
+            snapshot.get(key) != previous.get(key)
+            for key in (
+                "state",
+                "visibilityWatermark",
+            )
+        )
+        if not material:
+            return
+        self.health_history_rows.append(dict(snapshot))
+        self.health_history_rows = self.health_history_rows[-1000:]
+        event_id = str(snapshot.get("snapshotId"))
+        self._next_sequence += 1
+        self.event_sequence[event_id] = self._next_sequence
+        self.health_events.append(
+            {"id": event_id, "type": "health.changed", "data": {}}
+        )
+
+    async def health_history(
+        self,
+        *,
+        cursor: str | None,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        limit: int,
+    ) -> dict[str, object]:
+        del cursor
+        rows = self.health_history_rows[-limit:]
+        if from_time is not None or to_time is not None:
+            rows = [
+                row
+                for row in rows
+                if (from_time is None or str(row.get("observedAt", "")) >= from_time.isoformat())
+                and (to_time is None or str(row.get("observedAt", "")) < to_time.isoformat())
+            ]
+        rows.reverse()
+        return {"items": rows[:limit], "nextCursor": None, "snapshotAt": _iso(datetime.now(UTC))}
+
+    async def health_events_after(
+        self, last_event_id: str | None, upper_sequence: int | None = None
+    ) -> list[dict[str, object]]:
+        cursor = self.event_sequence.get(last_event_id, 0) if last_event_id else 0
+        upper = upper_sequence or self._next_sequence
+        return [
+            {**event, "_sequence": self.event_sequence.get(str(event["id"]), 0)}
+            for event in self.health_events
+            if cursor < self.event_sequence.get(str(event["id"]), 0) <= upper
+        ]
+
+    async def health_event_sequence(self, event_id: str) -> int | None:
+        sequence = self.event_sequence.get(event_id)
+        return sequence if event_id in {str(item["id"]) for item in self.health_events} else None
+
+    async def latest_health_event_sequence(self) -> int:
+        return max(
+            (self.event_sequence.get(str(event["id"]), 0) for event in self.health_events),
+            default=0,
+        )
 
     async def counters(self) -> Mapping[str, int]:
         return dict(self._counter_values)
@@ -271,6 +473,7 @@ class MemoryObservatoryStore:
             "lastIngestAt": _iso(await self.last_ingest_at()),
             "lastAcceptedAt": _iso(self._last_accepted_at),
             "lastFailureAt": _iso(self._last_failure_at),
+            "health": await self.health_snapshot(),
         }
 
     async def delete_observations(self, cutoff: datetime | None) -> DeletionResult:
@@ -396,6 +599,7 @@ class MemoryObservatoryStore:
                         },
                     }
                 )
+        series.extend(await self.metric_series())
         return series
 
 

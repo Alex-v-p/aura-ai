@@ -861,8 +861,23 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
         manifest_id = manifest["component"]["id"]
         expected_metrics = ingestion_metrics
-        if manifest_id == "aura.observatory.telemetry_storage":
+        if manifest_id == "aura.observatory.telemetry_ingestion":
+            expected_metrics = ingestion_metrics | {
+                "observatory_ingest_intake_lag_ms",
+                "observatory_ingest_visibility_lag_count",
+                "observatory_ingest_rejection_count",
+                "observatory_ingest_duplicate_count",
+                "observatory_ingest_storage_duration_ms",
+                "observatory_ingest_worker_heartbeat_age_ms",
+                "observatory_ingest_backlog_count",
+            }
+        elif manifest_id == "aura.observatory.telemetry_storage":
             expected_metrics = ingestion_metrics - {"telemetry_ingest_duration_ms"}
+            expected_metrics |= {
+                "observatory_ingest_visibility_lag_count",
+                "observatory_ingest_storage_duration_ms",
+                "observatory_ingest_backlog_count",
+            }
             assert "telemetry_ingest_duration_ms" not in manifest["metric_semantics"]
         elif manifest_id == "aura.observatory.query_api":
             expected_metrics = {
@@ -870,10 +885,12 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_query_outcome",
                 "observatory_auth_callback_duration_ms",
                 "observatory_auth_callback_outcome",
+                "observatory_query_freshness_lag_ms",
             }
         elif manifest_id == "aura.observatory.live_updates":
             expected_metrics = {
                 "observatory_sse_connection_count",
+                "observatory_sse_active",
                 "observatory_sse_replay_count",
             }
         elif manifest_id == "aura.observatory.retention":

@@ -12,6 +12,7 @@
   "tags": [
     { "name": "Authentication" },
     { "name": "Overview" },
+    { "name": "Health" },
     { "name": "Runs" },
     { "name": "Traces" },
     { "name": "Components" },
@@ -63,6 +64,26 @@
         "tags": ["Overview"],
         "responses": {
           "200": { "description": "Current system and ingest health snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Overview" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/health/history": {
+      "get": {
+        "operationId": "listHealthHistory",
+        "tags": ["Health"],
+        "description": "Return a bounded, newest-first history of content-free Observatory self-monitoring snapshots. Cursors are opaque and every page is capped independently of the requested time range.",
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/PageSize" },
+          { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded self-monitoring history ordered by descending observation time and snapshot identifier", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthHistoryPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
@@ -255,6 +276,11 @@
       "RunStatus": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"] },
       "Outcome": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "unknown"] },
       "ServiceState": { "type": "string", "enum": ["healthy", "degraded", "unavailable"] },
+      "HealthState": { "type": "string", "enum": ["healthy", "delayed", "partial", "degraded", "unavailable"] },
+      "RejectionReason": { "type": "string", "enum": ["encoding", "json", "unsupported_fields", "dropped_nonzero", "status_code", "status_message", "shape_object", "shape_array", "shape_trace_id", "shape_span_id", "shape_parent_span_id", "shape_link_trace_id", "shape_link_span_id", "shape_attribute_key", "shape_attribute_value", "scope", "link", "event", "attribute", "shape", "contract_value", "payload_too_large", "schema_validation", "malformed"] },
+      "NonNegativeCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+      "BoundedLatencyMs": { "type": "number", "minimum": 0, "maximum": 600000, "description": "Finite duration clamped to ten minutes." },
+      "BoundedLagMs": { "type": "number", "minimum": 0, "maximum": 604800000, "description": "Finite non-negative lag clamped to seven days. Intake lag is derived only from successfully validated observation time, and future-skewed timestamps clamp to zero." },
       "OwnerSession": {
         "type": "object", "additionalProperties": false,
         "required": ["csrfToken"],
@@ -286,11 +312,60 @@
           "state": { "$ref": "#/components/schemas/ServiceState" }, "counts": { "$ref": "#/components/schemas/IngestCounts" }, "lastAcceptedAt": { "type": ["string", "null"], "format": "date-time" }, "lastFailureAt": { "type": ["string", "null"], "format": "date-time" }
         }
       },
+      "RejectionReasonCount": {
+        "type": "object", "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": { "$ref": "#/components/schemas/RejectionReason" },
+          "count": { "$ref": "#/components/schemas/NonNegativeCount" }
+        }
+      },
+      "LatencySummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sampleCount", "latestMs", "p50Ms", "p95Ms"],
+        "properties": {
+          "sampleCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "latestMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLatencyMs" }, { "type": "null" }] },
+          "p50Ms": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLatencyMs" }, { "type": "null" }] },
+          "p95Ms": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLatencyMs" }, { "type": "null" }] }
+        }
+      },
+      "SelfMonitoringSnapshot": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free aggregate health snapshot. It contains no source telemetry identifiers, payloads, attributes, exception text, endpoints, credentials, or owner data; snapshotId identifies only this persisted health record.",
+        "required": ["snapshotId", "observedAt", "state", "intakeLagMs", "visibilityWatermark", "visibilityLagCount", "rejectionReasons", "duplicateCount", "storageLatency", "queryLatency", "queryFreshnessLagMs", "workerHeartbeatAt", "workerHeartbeatAgeMs", "backlogCount", "oldestBacklogAgeMs"],
+        "properties": {
+          "snapshotId": { "$ref": "#/components/schemas/Uuid" },
+          "observedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "state": { "$ref": "#/components/schemas/HealthState" },
+          "intakeLagMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLagMs" }, { "type": "null" }] },
+          "visibilityWatermark": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "visibilityLagCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "rejectionReasons": { "type": "array", "maxItems": 24, "uniqueItems": true, "items": { "$ref": "#/components/schemas/RejectionReasonCount" } },
+          "duplicateCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "storageLatency": { "$ref": "#/components/schemas/LatencySummary" },
+          "queryLatency": { "$ref": "#/components/schemas/LatencySummary" },
+          "queryFreshnessLagMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLagMs" }, { "type": "null" }] },
+          "workerHeartbeatAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "workerHeartbeatAgeMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLagMs" }, { "type": "null" }] },
+          "backlogCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "oldestBacklogAgeMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLagMs" }, { "type": "null" }] }
+        }
+      },
+      "HealthHistoryPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "snapshotAt"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/SelfMonitoringSnapshot" } },
+          "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] },
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" }
+        }
+      },
       "Overview": {
         "type": "object", "additionalProperties": false,
         "required": ["observedAt", "systemState", "ingest", "observationCount", "runCount", "latestObservationId"],
         "properties": {
-          "observedAt": { "$ref": "#/components/schemas/UtcInstant" }, "systemState": { "$ref": "#/components/schemas/ServiceState" }, "ingest": { "$ref": "#/components/schemas/IngestOverview" }, "observationCount": { "type": "integer", "minimum": 0 }, "runCount": { "type": "integer", "minimum": 0 }, "latestObservationId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }
+          "observedAt": { "$ref": "#/components/schemas/UtcInstant" }, "systemState": { "$ref": "#/components/schemas/ServiceState" }, "ingest": { "$ref": "#/components/schemas/IngestOverview" }, "observationCount": { "type": "integer", "minimum": 0 }, "runCount": { "type": "integer", "minimum": 0 }, "latestObservationId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }, "health": { "$ref": "#/components/schemas/SelfMonitoringSnapshot", "description": "Current bounded self-monitoring snapshot. Optional only for compatibility during a rolling observatory-v1 producer rollout." }
         }
       },
       "RunSummary": {
@@ -353,7 +428,7 @@
         "properties": { "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "gitCommit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, "environment": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_.-]{0,31}$" }, "hostId": { "$ref": "#/components/schemas/SafeLabel" }, "serviceRoles": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "enum": ["api", "worker", "scheduler", "cli"] } }, "firstSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "lastSeenAt": { "$ref": "#/components/schemas/UtcInstant" } }
       },
       "DeploymentCollection": { "type": "object", "additionalProperties": false, "required": ["items", "snapshotAt"], "properties": { "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/Deployment" } }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" } } },
-      "LiveEventType": { "type": "string", "enum": ["observation.changed", "retention.changed", "heartbeat"] },
+      "LiveEventType": { "type": "string", "enum": ["observation.changed", "retention.changed", "health.changed", "heartbeat"] },
       "LiveEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "resourceType", "resourceId", "capturePolicy"],

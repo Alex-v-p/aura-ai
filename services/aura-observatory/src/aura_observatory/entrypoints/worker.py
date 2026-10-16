@@ -11,7 +11,10 @@ import asyncio
 from collections.abc import Awaitable
 from typing import Any
 
-from aura_observatory.composition import build_ingest_service, build_query_service
+from aura_observatory.composition import (
+    build_ingest_service,
+    build_query_service,
+)
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.settings import Settings
 
@@ -32,10 +35,16 @@ class IngestWorker:
         await self._queue.put((payload, credential))
 
     async def run(self, stop: Awaitable[None] | None = None) -> None:
+        heartbeat_stop = asyncio.Event()
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(heartbeat_stop))
         if stop is None:
-            while True:
-                payload, credential = await self._queue.get()
-                await self.service.ingest(payload, credential=credential)
+            try:
+                while True:
+                    payload, credential = await self._queue.get()
+                    await self.service.ingest(payload, credential=credential)
+            finally:
+                heartbeat_stop.set()
+                heartbeat_task.cancel()
         else:
             stop_task = asyncio.create_task(_await_stop(stop))
             try:
@@ -51,6 +60,16 @@ class IngestWorker:
                     await self.service.ingest(payload, credential=credential)
             finally:
                 stop_task.cancel()
+                heartbeat_stop.set()
+                heartbeat_task.cancel()
+
+    async def _heartbeat_loop(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await self.service.record_worker_heartbeat()
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=15.0)
+            except TimeoutError:
+                continue
 
 
 async def _await_stop(stop: Awaitable[None]) -> None:

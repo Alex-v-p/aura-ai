@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     deployment_host: str = "local"
     service_role: str = "api"
     metrics_file: Path | None = Field(
-        default=Path("/state/aura-observatory/metrics/series.json"),
+        default=None,
         validation_alias=AliasChoices(
             "AURA_OBSERVATORY_METRICS_FILE", "AURA_OBSERVATORY_METRICS_PATH"
         ),

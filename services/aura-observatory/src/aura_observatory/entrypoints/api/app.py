@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import zlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, cast
@@ -19,23 +21,23 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 
 from aura_observatory.adapters.memory import MemoryObservatoryStore
 from aura_observatory.auth import ObservatoryAuth, sanitize_return_to
-from aura_observatory.composition import build_auth, build_ingest_service
+from aura_observatory.composition import build_auth, build_health_projector, build_ingest_service
 from aura_observatory.ingest import IngestPayloadError, InvalidCredential, TelemetryIngestService
 from aura_observatory.otlp import OtlpPayloadError, metrics_to_observations, traces_to_observations
 from aura_observatory.query import (
+    ObservatoryHealthProjector,
     ObservatoryQueryService,
     RetentionConflictError,
     RetentionKind,
     RetentionRequest,
     RunFilters,
+    decode_health_cursor,
 )
 from aura_observatory.settings import Settings
 
 _LOGGER = logging.getLogger(__name__)
 
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _COMPONENT_ID_RE = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
@@ -119,7 +121,35 @@ def create_app(
     else:
         service = build_ingest_service(resolved)
     auth_service = auth or build_auth(resolved, testing=testing)
-    app = FastAPI(title="Aura Observatory API", version="1.0.0")
+    @asynccontextmanager
+    async def lifespan(live_app: FastAPI) -> AsyncGenerator[None]:
+        if live_app.state.background_tasks_enabled:
+            if live_app.state.health_projector_task is None:
+                stop = asyncio.Event()
+                live_app.state.health_projector_stop = stop
+                live_app.state.health_projector_task = asyncio.create_task(
+                    live_app.state.health_projector.run(stop)
+                )
+        try:
+            yield
+        finally:
+            stop = live_app.state.health_projector_stop
+            task = live_app.state.health_projector_task
+            if stop is not None and task is not None:
+                stop.set()
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                finally:
+                    live_app.state.health_projector_stop = None
+                    live_app.state.health_projector_task = None
+
+    app = FastAPI(title="Aura Observatory API", version="1.0.0", lifespan=lifespan)
     app.state.ingest = service
     app.state.auth = auth_service
 
@@ -213,6 +243,18 @@ def create_app(
             app.state.query = build_query_service(resolved)
     else:
         app.state.query = ObservatoryQueryService(query_store)  # type: ignore[arg-type]
+
+    # Health projection belongs to the API lifecycle, independently of the
+    # ingest worker.  Testing compositions opt out by default so unit tests
+    # never leak a background task; lifecycle tests can enable it explicitly.
+    app.state.health_projector = (
+        ObservatoryHealthProjector(app.state.query.health_port)
+        if testing or query_store is not None
+        else build_health_projector(resolved)
+    )
+    app.state.background_tasks_enabled = not testing
+    app.state.health_projector_stop = None
+    app.state.health_projector_task = None
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -377,6 +419,28 @@ def create_app(
         await owner_session(request)
         return JSONResponse(_overview_payload(await app.state.query.overview()))
 
+    @app.get("/api/v1/health/history")
+    async def health_history(
+        request: Request,
+        cursor: str | None = None,
+        from_time: str | None = Query(default=None, alias="from"),
+        to_time: str | None = Query(default=None, alias="to"),
+        limit: str | None = None,
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            _validate_health_cursor(cursor)
+            requested_limit = _parse_history_limit(limit)
+            result = await app.state.query.health_history(
+                cursor=cursor,
+                from_time=_parse_time(from_time),
+                to_time=_parse_time(to_time),
+                limit=requested_limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        return JSONResponse(_health_history_payload(result))
+
     @app.get("/api/v1/runs")
     async def runs(
         request: Request,
@@ -495,9 +559,11 @@ def create_app(
         origin_values = request.headers.getlist("origin")
         origin = origin_values[0] if len(origin_values) == 1 else None
         browser_origin_allowed = _browser_sse_origin_allowed(request, resolved.public_origin)
-        if origin != resolved.public_origin and not (
-            not origin_values and browser_origin_allowed
-        ) and not (testing and not origin_values):
+        if (
+            origin != resolved.public_origin
+            and not (not origin_values and browser_origin_allowed)
+            and not (testing and not origin_values)
+        ):
             raise HTTPException(status_code=403, detail="same-origin request required")
         await owner_session(request)
         try:
@@ -547,8 +613,12 @@ def create_app(
                     "eventId": event_id or str(uuid4()),
                     "eventType": event["type"],
                     "occurredAt": _now_iso(),
-                    "resourceType": "observation",
-                    "resourceId": data.get("observationId"),
+                    "resourceType": "system"
+                    if event["type"] == "health.changed"
+                    else "observation",
+                    "resourceId": data.get("observationId")
+                    if event["type"] != "health.changed"
+                    else None,
                     "capturePolicy": "metadata_only",
                 }
                 id_line = f"id: {event_id}\n" if event_id else ""
@@ -655,14 +725,14 @@ def create_app(
             body = bytearray()
             async for chunk in request.stream():
                 if len(body) + len(chunk) > resolved.ingest_max_payload_bytes:
-                    await service.record_malformed(credential=presented)
+                    await service.record_malformed(credential=presented, reason="payload_too_large")
                     raise HTTPException(status_code=413, detail="telemetry payload too large")
                 body.extend(chunk)
             payload = json.loads(body)
         except HTTPException:
             raise
         except (UnicodeDecodeError, ValueError) as exc:
-            await service.record_malformed(credential=presented)
+            await service.record_malformed(credential=presented, reason="json")
             raise HTTPException(status_code=400, detail="malformed telemetry payload") from exc
         try:
             summary = await service.ingest(payload, credential=presented)
@@ -718,11 +788,21 @@ def _overview_payload(value: dict[str, Any]) -> dict[str, Any]:
     current_failure = bool(
         last_failure and (not last_accepted or str(last_failure) > str(last_accepted))
     )
+    health_value = value.get("health")
+    health = cast(dict[str, Any] | None, health_value) if isinstance(health_value, dict) else None
+    health_state = health.get("state") if isinstance(health, dict) else None
+    service_state = (
+        "unavailable"
+        if health_state == "unavailable"
+        else "degraded"
+        if current_failure or health_state in {"delayed", "partial", "degraded"}
+        else "healthy"
+    )
     return {
         "observedAt": _now_iso(),
-        "systemState": "degraded" if current_failure else "healthy",
+        "systemState": service_state,
         "ingest": {
-            "state": "degraded" if current_failure else "healthy",
+            "state": service_state,
             "counts": counts,
             "lastAcceptedAt": last_accepted,
             "lastFailureAt": last_failure,
@@ -730,6 +810,16 @@ def _overview_payload(value: dict[str, Any]) -> dict[str, Any]:
         "observationCount": int(value.get("observationCount", 0)),
         "runCount": int(value.get("runCount", 0)),
         "latestObservationId": value.get("latestObservationId"),
+        **({"health": health} if isinstance(health, dict) else {}),
+    }
+
+
+def _health_history_payload(value: dict[str, Any]) -> dict[str, Any]:
+    items = value.get("items", [])
+    return {
+        "items": items if isinstance(items, list) else [],
+        "nextCursor": value.get("nextCursor"),
+        "snapshotAt": value.get("snapshotAt") or _now_iso(),
     }
 
 
@@ -793,9 +883,11 @@ def _trace_payload(value: dict[str, Any]) -> dict[str, Any]:
             flatten(node_value.get("children"), depth + 1)
 
     flatten(value.get("spans"))
-    partial = any(bool(span.get("partial", False)) for span in spans) or (
-        value.get("nextCursor") is not None
-    ) or bool(value.get("partial", False))
+    partial = (
+        any(bool(span.get("partial", False)) for span in spans)
+        or (value.get("nextCursor") is not None)
+        or bool(value.get("partial", False))
+    )
     return {
         "traceId": value.get("traceId"),
         "runId": value.get("runId"),
@@ -916,6 +1008,15 @@ def _validate_cursor(value: str | None) -> None:
         raise ValueError("invalid cursor")
 
 
+def _validate_health_cursor(value: str | None) -> None:
+    if value is not None:
+        decode_health_cursor(value)
+
+
+def _parse_history_limit(value: str | None) -> int:
+    return _parse_limit(value)
+
+
 def _parse_time(value: object) -> datetime | None:
     if value is None:
         return None
@@ -989,13 +1090,11 @@ async def _ingest_otlp_signal(
         summary = await service.ingest({"observations": records}, credential=presented)
     except HTTPException as exc:
         if exc.status_code == 413:
-            await service.record_malformed(credential=presented)
+            await service.record_malformed(credential=presented, reason="payload_too_large")
         raise
     except (UnicodeDecodeError, ValueError, OtlpPayloadError) as exc:
-        await service.record_malformed(credential=presented)
-        _LOGGER.warning(
-            "OTLP %s rejected class=%s", signal, _otlp_rejection_class(exc)
-        )
+        await service.record_malformed(credential=presented, reason=_otlp_rejection_class(exc))
+        _LOGGER.warning("OTLP %s rejected class=%s", signal, _otlp_rejection_class(exc))
         raise HTTPException(status_code=400, detail="malformed OTLP telemetry payload") from exc
     if summary["storage_failure"]:
         return JSONResponse(status_code=503, content=summary, headers={"Retry-After": "1"})
@@ -1067,9 +1166,7 @@ def _set_session_cookie(response: Response, settings: Settings, session_id: str)
     )
 
 
-def _record_auth_callback(
-    app: FastAPI, started: float, stage: str, outcome: str
-) -> None:
+def _record_auth_callback(app: FastAPI, started: float, stage: str, outcome: str) -> None:
     """Record only bounded callback stage/outcome metadata in the metrics sink."""
 
     duration = max(0.0, (monotonic() - started) * 1000.0)
@@ -1242,8 +1339,7 @@ def _origins_match(actual: str, expected: str) -> bool:
         actual_parts.scheme == expected_parts.scheme
         and actual_parts.hostname is not None
         and actual_parts.hostname.casefold() == expected_parts.hostname.casefold()
-        and _origin_port(actual_parts.scheme, actual_parts.netloc)
-        == expected_port
+        and _origin_port(actual_parts.scheme, actual_parts.netloc) == expected_port
     )
 
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
 import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, ownerLoginHref } from './observatory-models';
-import { datetimeLocalToUtc, hasSessionRequiredRejection, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, RequestGenerationGate, resourceStateFor } from './observatory-models';
+import { datetimeLocalToUtc, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, RequestGenerationGate, resourceStateFor } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
   it('promotes a 401 rejection from any parallel resource before partial assembly', () => {
@@ -199,6 +199,13 @@ describe('observatory metadata boundaries', () => {
     gate.finish(first!);
     expect(gate.isCurrent(afterRetention!)).toBe(true);
     gate.finish(afterRetention!);
+  });
+
+  it('keeps an empty health history empty while the live stream is disconnected', () => {
+    const empty = { page: { items: [], nextCursor: null, snapshotAt: '2026-10-16T19:00:00Z' }, state: 'empty' as const, error: null };
+    expect(healthHistoryAfterDisconnect(empty)).toEqual(empty);
+    const populated = { page: { items: [{ snapshotId: 'snapshot-1' }], nextCursor: null, snapshotAt: '2026-10-16T19:00:00Z' }, state: 'ready' as const, error: null };
+    expect(healthHistoryAfterDisconnect(populated)).toMatchObject({ state: 'stale', error: 'Live updates are disconnected. Showing the last known health history.' });
   });
 
 });

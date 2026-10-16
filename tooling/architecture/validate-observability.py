@@ -9,6 +9,155 @@ from common import ROOT, emit, read_yaml, resolve_work_item, validate_document
 
 ManifestEntry = tuple[Path, Any]
 
+# Observatory's health manifests are the first component catalogue entries
+# with a typed metric contract.  Keep this set explicit so the stronger checks
+# apply only to the manifests that opted into that contract; older Core
+# manifests continue to use the repository's compatible catalogue rules.
+OBSERVATORY_TYPED_COMPONENTS = frozenset(
+    {
+        "aura.observatory.telemetry_ingestion",
+        "aura.observatory.telemetry_storage",
+        "aura.observatory.query_api",
+        "aura.observatory.live_updates",
+    }
+)
+OBSERVATORY_METRIC_TYPES = frozenset({"counter", "gauge", "histogram"})
+OBSERVATORY_REQUIRED_PROHIBITED_FIELDS = frozenset(
+    {
+        "prompt",
+        "response",
+        "content",
+        "filename",
+        "arguments",
+        "result",
+        "endpoint",
+        "token",
+        "credential",
+        "owner_identity",
+    }
+)
+
+
+def _string_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
+
+
+def _nonempty_string_list(value: Any) -> bool:
+    return _string_list(value) and bool(value)
+
+
+def _typed_observatory_errors(path: Path, manifest: dict[str, Any]) -> list[str]:
+    """Validate the closed, content-free metric contract for AURA-0085."""
+
+    location = str(path.relative_to(ROOT))
+    errors: list[str] = []
+    component = manifest.get("component")
+    if not isinstance(component, dict) or component.get("id") not in OBSERVATORY_TYPED_COMPONENTS:
+        return errors
+
+    metrics = manifest.get("metrics")
+    metric_names = set(metrics) if _string_list(metrics) else set()
+    definitions = manifest.get("metric_definitions")
+    if not isinstance(definitions, list) or not definitions:
+        errors.append(f"{location}: typed Observatory manifests require metric_definitions")
+        return errors
+    definition_names: list[str] = []
+    for index, definition in enumerate(definitions):
+        prefix = f"{location}: metric_definitions[{index}]"
+        if not isinstance(definition, dict):
+            errors.append(f"{prefix} must be a mapping")
+            continue
+        name = definition.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{prefix}.name is required")
+        else:
+            definition_names.append(name)
+        if definition.get("type") not in OBSERVATORY_METRIC_TYPES:
+            errors.append(f"{prefix}.type must be counter, gauge, or histogram")
+        if not isinstance(definition.get("unit"), str) or not definition["unit"].strip():
+            errors.append(f"{prefix}.unit is required")
+        labels = definition.get("labels")
+        if not _string_list(labels):
+            errors.append(f"{prefix}.labels must be a bounded string list")
+        dependencies = definition.get("dependencies")
+        if not _nonempty_string_list(dependencies):
+            errors.append(f"{prefix}.dependencies must be a non-empty string list")
+        if not isinstance(definition.get("trace"), str) or not definition["trace"].strip():
+            errors.append(f"{prefix}.trace is required")
+        if (
+            not isinstance(definition.get("correlation"), str)
+            or not definition["correlation"].strip()
+        ):
+            errors.append(f"{prefix}.correlation is required")
+        if definition.get("export") != "prometheus":
+            errors.append(f"{prefix}.export must be prometheus")
+
+    if len(definition_names) != len(set(definition_names)):
+        errors.append(f"{location}: metric definition names must be unique")
+    if metric_names != set(definition_names):
+        errors.append(f"{location}: metrics and metric_definitions must contain the same names")
+
+    semantics = manifest.get("metric_semantics")
+    if semantics is not None and (
+        not isinstance(semantics, dict) or set(semantics) != metric_names
+    ):
+        errors.append(f"{location}: metric_semantics must cover each declared metric exactly once")
+
+    top_dependencies = manifest.get("dependencies")
+    if top_dependencies is not None and not _string_list(top_dependencies):
+        errors.append(f"{location}: dependencies must be a bounded string list when present")
+
+    input_metadata = manifest.get("input")
+    output_metadata = manifest.get("output")
+    for name, metadata in (("input", input_metadata), ("output", output_metadata)):
+        if not isinstance(metadata, dict):
+            continue
+        if not isinstance(metadata.get("schema"), str) or not metadata["schema"].strip():
+            errors.append(f"{location}: {name}.schema is required")
+        if "replayable" in metadata and not isinstance(metadata.get("replayable"), bool):
+            errors.append(f"{location}: {name}.replayable must be boolean")
+
+    evaluators = manifest.get("evaluators")
+    if not _nonempty_string_list(evaluators):
+        errors.append(f"{location}: typed Observatory manifests require bounded evaluators")
+    if manifest.get("capture_policy") != "metadata_only":
+        errors.append(f"{location}: capture_policy must be metadata_only")
+    if manifest.get("retention") != "manual_owner_delete_only":
+        errors.append(f"{location}: retention must be manual_owner_delete_only")
+
+    cardinality = manifest.get("cardinality")
+    if not isinstance(cardinality, dict):
+        errors.append(f"{location}: cardinality metadata is required")
+        cardinality = {}
+    metric_attributes = cardinality.get("metric_attributes")
+    trace_only = cardinality.get("trace_only")
+    prohibited = cardinality.get("prohibited")
+    if not _string_list(metric_attributes):
+        errors.append(f"{location}: cardinality.metric_attributes must be a bounded string list")
+        metric_attributes = []
+    if trace_only is not None and not _string_list(trace_only):
+        errors.append(f"{location}: cardinality.trace_only must be a bounded string list")
+        trace_only = []
+    elif trace_only is None:
+        trace_only = []
+    if not _string_list(prohibited):
+        errors.append(f"{location}: cardinality.prohibited must be a bounded string list")
+        prohibited = []
+    if not OBSERVATORY_REQUIRED_PROHIBITED_FIELDS <= set(prohibited):
+        errors.append(f"{location}: cardinality.prohibited lacks required content/privacy fields")
+
+    metric_attribute_set = set(metric_attributes)
+    for index, definition in enumerate(definitions):
+        if not isinstance(definition, dict):
+            continue
+        labels = definition.get("labels")
+        if _string_list(labels) and not set(labels) <= metric_attribute_set:
+            errors.append(
+                f"{location}: metric_definitions[{index}].labels must be declared "
+                "in cardinality.metric_attributes"
+            )
+    return errors
+
 
 def component_manifests() -> list[ManifestEntry]:
     manifests: list[ManifestEntry] = []
@@ -89,6 +238,7 @@ def catalogue_errors(
             or not manifest["capture_policy"].strip()
         ):
             errors.append(f"{location}: capture_policy is required")
+        errors.extend(_typed_observatory_errors(path, manifest))
     if not entries:
         errors.append("No observable component manifests exist in the component catalogue.")
     return sorted(set(errors))

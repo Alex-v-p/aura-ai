@@ -21,7 +21,7 @@ from aura_observatory.auth import (
 )
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.metrics import ObservatoryMetrics
-from aura_observatory.query import ObservatoryQueryService
+from aura_observatory.query import ObservatoryHealthProjector, ObservatoryQueryService
 from aura_observatory.settings import Settings
 
 
@@ -53,6 +53,8 @@ def build_ingest_service(settings: Settings) -> TelemetryIngestService:
         catalog,
         credential=settings.ingest_credential(),
         max_batch_size=settings.ingest_max_batch_size,
+        health_port=catalog,
+        metrics=ObservatoryMetrics(),
     )
 
 
@@ -81,22 +83,46 @@ def build_auth(settings: Settings, *, testing: bool = False) -> ObservatoryAuth:
 def build_query_service(settings: Settings) -> ObservatoryQueryService:
     """Compose the independent PostgreSQL/ClickHouse query boundary."""
 
+    catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
     store = ProductionObservatoryStore(
         lambda: postgres_connection(settings.database_url),
         settings.clickhouse_url,
         database=settings.clickhouse_database,
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
+        health_port=catalog,
     )
     return ObservatoryQueryService(
         store,
         query_port=store,
         retention_port=store,
-        # Retention metrics are derived from the shared Observatory PostgreSQL
-        # audit rows at API scrape time; no cross-container filesystem is
+        health_port=catalog,
+        # Retention and health metrics are derived from Observatory-owned
+        # PostgreSQL rows at API scrape time; no cross-container filesystem is
         # required for worker-to-API metric visibility.
         metrics=ObservatoryMetrics(),
     )
 
 
-__all__ = ["build_auth", "build_ingest_service", "build_query_service", "postgres_connection"]
+def build_health_projector(settings: Settings) -> ObservatoryHealthProjector:
+    """Compose the read-independent health projection loop."""
+
+    catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
+    store = ProductionObservatoryStore(
+        lambda: postgres_connection(settings.database_url),
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        health_port=catalog,
+    )
+    return ObservatoryHealthProjector(catalog, refresh=store.refresh_health_inputs)
+
+
+__all__ = [
+    "build_auth",
+    "build_health_projector",
+    "build_ingest_service",
+    "build_query_service",
+    "postgres_connection",
+]
