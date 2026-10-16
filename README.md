@@ -14,6 +14,17 @@ Open Aura at <http://aura.localhost:4200> and Observatory at
 account; its password is stored in `.secrets/authentik-owner-password`.
 Authentik is available at <http://authentik.localhost:9000>.
 
+The stack reserves `AURA_FRONTEND_SUBNET=10.254.241.0/24` for its browser-facing
+network so Docker does not capture routes to a LAN Ollama provider. Override
+that value in `.env` if the range conflicts with a trusted local network.
+
+If Docker Desktop cannot route to a remote LAN Ollama host, set
+`AURA_LOCAL_OLLAMA_RELAY_TARGET=192.168.0.40:11434` in `.env`. The launcher then
+manages a transient user service bound only to `127.0.0.1:11435` and points Core
+at the loopback relay; `down` and `reset` stop it. Leave the target empty when
+direct routing works. The relay requires `systemd-run`, `systemctl`, and
+`socat` on the host.
+
 This identity and its HTTP issuer are development-only and disposable. Stop
 the stack with:
 

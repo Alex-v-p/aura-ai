@@ -664,6 +664,12 @@ networks:
   aura-edge: {}
   aura-frontend:
     internal: true
+    # Reserve a non-LAN browser network so Docker cannot capture the route to
+    # an operator's Ollama host or VPN. Override on hosts with a conflicting
+    # trusted range.
+    ipam:
+      config:
+        - subnet: ${AURA_FRONTEND_SUBNET:-10.254.241.0/24}
   aura-core-db:
     internal: true
   aura-core-bus:

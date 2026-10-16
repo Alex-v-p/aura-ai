@@ -132,7 +132,15 @@ OIDC discovery/JWKS and Ollama; the worker receives it only for Ollama. Linux
 hosts map the local Ollama default through Docker's `host-gateway`; configure
 an operator-controlled LAN URL instead when appropriate. The browser-facing,
 database, NATS, and Valkey networks remain internal and no Core provider
-endpoint is host-published. When the optional identity override is selected,
+endpoint is host-published. The browser-facing network reserves
+`AURA_FRONTEND_SUBNET` (default `10.254.241.0/24`) so Docker cannot install an
+overlapping LAN route; override it when that range conflicts with a trusted
+network. If Docker Desktop still cannot route to a remote LAN Ollama host, set
+`AURA_LOCAL_OLLAMA_RELAY_TARGET=192.168.0.40:11434`; the local launcher starts
+a transient user-level `socat` service on `127.0.0.1:11435`, rewrites the local
+Core URL to `http://host.docker.internal:11435`, and stops the service during
+`down` or `reset`. The relay requires `systemd-run`, `systemctl`, and `socat`,
+and never binds the LAN interface. When the optional identity override is selected,
 only the Core API also joins Authentik's control network so it can discover the
 temporary issuer; workers, Core persistence, Valkey, and NATS never join it.
 Nginx access logs record normalized paths without query strings, and Core's

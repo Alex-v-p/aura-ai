@@ -3,9 +3,11 @@
 import ipaddress
 import json
 import os
+import signal
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -164,6 +166,30 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("networks: [aura-frontend, aura-edge]", web)
         self.assertIn("aura-edge: {}", self.compose)
         self.assertIn('"127.0.0.1:${AURA_WEB_PORT:-4200}:8080"', web)
+
+    def test_browser_network_uses_an_explicit_operator_configurable_subnet(self) -> None:
+        frontend = self.compose.split("  aura-frontend:\n", 1)[1].split(
+            "  aura-core-db:\n", 1
+        )[0]
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("internal: true", frontend)
+        self.assertIn(
+            "subnet: ${AURA_FRONTEND_SUBNET:-10.254.241.0/24}",
+            frontend,
+        )
+        self.assertIn("AURA_FRONTEND_SUBNET=10.254.241.0/24", environment)
+
+    def test_local_http_authentik_has_the_observatory_identity_network_alias(self) -> None:
+        local_http = (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8")
+        authentik = local_http.split("  authentik-server:\n", 1)[1].split(
+            "  authentik-owner-bootstrap:\n", 1
+        )[0]
+
+        self.assertIn(
+            "observatory-identity-egress:\n        aliases: [authentik.localhost]",
+            authentik,
+        )
 
     def test_observatory_web_is_a_loopback_only_production_shell(self) -> None:
         web = self.compose.split("  observatory-web:\n", 1)[1].split(
@@ -942,6 +968,15 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("profiles: [local-http-bootstrap]", local_http)
         owner_start = local_http.index("  authentik-owner-bootstrap:\n")
         owner_block = local_http[owner_start:].split("\nsecrets:", 1)[0]
+        self.assertIn(
+            "AURA_OBSERVATORY_AUTHENTIK_CLIENT_ID: "
+            "${AURA_OBSERVATORY_OIDC_CLIENT_ID:-aura-observatory}",
+            owner_block,
+        )
+        self.assertIn(
+            "AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback",
+            owner_block,
+        )
         self.assertNotIn("aura-identity-edge", owner_block)
         self.assertIn("blueprint_attempt=1", owner_block)
         self.assertIn("blueprint_max_attempts=30", owner_block)
@@ -968,6 +1003,39 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("--profile local-http-bootstrap", script)
         self.assertIn("--profile observatory", script)
         self.assertIn("AURA_OBSERVATORY_OWNER_SUBJECT=$subject", script)
+        self.assertIn("AURA_LOCAL_OLLAMA_RELAY_TARGET", script)
+        self.assertIn("systemd-run --user", script)
+        self.assertIn("socat", script)
+        self.assertIn('"${relay_command[@]}"', script)
+        self.assertIn("bind=127.0.0.1", script)
+        self.assertIn('AURA_OLLAMA_URL=%s\\n', script)
+        self.assertIn("OLLAMA_RELAY_URL=http://host.docker.internal:$relay_port", script)
+        self.assertIn("AURA_LOCAL_OLLAMA_RELAY_PORT must be 1-5 decimal digits", script)
+        self.assertIn("AURA_LOCAL_OLLAMA_RELAY_TARGET must be an IPv4 address and port", script)
+        self.assertIn(
+            "AURA_LOCAL_OLLAMA_RELAY_TARGET must not self-forward the loopback listener",
+            script,
+        )
+        self.assertIn("stop_ollama_relay", script)
+        self.assertIn("trap cleanup_failed_up ERR EXIT", script)
+        self.assertIn("trap 'cleanup_interrupted_up 130' INT", script)
+        self.assertIn("trap 'cleanup_interrupted_up 143' TERM", script)
+        self.assertIn("trap - ERR INT TERM EXIT", script)
+        self.assertIn("if ! systemctl --user is-active --quiet", script)
+        down_start = script.index("\ndown() {")
+        reset_start = script.index("\nreset() {")
+        down_block = script[down_start:reset_start]
+        reset_block = script[reset_start:]
+        self.assertIn("stop_ollama_relay", down_block)
+        self.assertIn("stop_ollama_relay", reset_block)
+        self.assertLess(
+            down_block.index("stop_ollama_relay"), down_block.index('[ -f "$ENV_FILE" ]')
+        )
+        self.assertLess(
+            reset_block.index("stop_ollama_relay"), reset_block.index('[ -f "$ENV_FILE" ]')
+        )
+        self.assertNotIn("eval ", script)
+        self.assertNotIn("bind=0.0.0.0", script)
         for variable in (
             "AURA_PUBLIC_ORIGIN",
             "AURA_OIDC_ISSUER",
@@ -977,6 +1045,9 @@ class ComposeTopologyTests(unittest.TestCase):
             "AUTHENTIK_HOST_BROWSER",
         ):
             self.assertIn(f"-u {variable}", script)
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("AURA_LOCAL_OLLAMA_RELAY_TARGET=", environment)
+        self.assertIn("AURA_LOCAL_OLLAMA_RELAY_PORT=11435", environment)
         self.assertIn(
             "Never rotate",
             (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8"),
@@ -1128,6 +1199,199 @@ class ComposeTopologyTests(unittest.TestCase):
             rejected = run_helper(link)
             self.assertNotEqual(0, rejected.returncode)
             self.assertEqual("unchanged\n", target.read_text(encoding="utf-8"))
+
+    def test_local_http_launcher_cleans_relay_on_failed_up_and_keeps_successful_relay(self) -> None:
+        script = ROOT / "deploy/compose/local-http.sh"
+
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            bin_dir = fixture / "bin"
+            bin_dir.mkdir()
+            events = fixture / "events.log"
+            env_file = fixture / ".env"
+            local_env_file = fixture / ".env.local-http"
+            password = fixture / "owner-password"
+            env_file.write_text("# launcher test environment\n", encoding="utf-8")
+
+            def install_stub(name: str, body: str) -> None:
+                path = bin_dir / name
+                path.write_text(
+                    "#!/usr/bin/env bash\nset -Eeuo pipefail\n" + body,
+                    encoding="utf-8",
+                )
+                path.chmod(0o755)
+
+            install_stub(
+                "systemctl",
+                """
+printf 'systemctl %s\\n' "$*" >>"$AURA_TEST_EVENTS"
+case "${2:-}" in
+  show|stop|reset-failed) exit 0 ;;
+  is-active)
+    [[ "${AURA_TEST_SYSTEMCTL_ACTIVE_FAILURE:-}" != 1 ]]
+    ;;
+  *) exit 0 ;;
+esac
+""",
+            )
+            install_stub(
+                "systemd-run",
+                """
+printf 'systemd-run %s\\n' "$*" >>"$AURA_TEST_EVENTS"
+exit 0
+""",
+            )
+            install_stub("socat", "exit 0\n")
+            install_stub(
+                "docker",
+                """
+printf 'docker %s\\n' "$*" >>"$AURA_TEST_EVENTS"
+if [[ "$*" == *" run --rm authentik-owner-bootstrap"* ]]; then
+  if [[ "${AURA_TEST_COMPOSE_FAILURE:-}" == bootstrap ]]; then
+    exit 1
+  fi
+  printf 'AURA_OWNER_SUBJECT=test-owner-subject\\n'
+  exit 0
+fi
+if [[ "$*" == *" up --build --detach --wait"* ]]; then
+  if [[ "${AURA_TEST_BLOCK_PHASE:-}" == auth ]] &&
+     [[ "$*" == *"authentik-server authentik-worker"* ]]; then
+    printf 'blocked-auth\\n' >>"$AURA_TEST_EVENTS"
+    while :; do sleep 1; done
+  fi
+  if [[ "${AURA_TEST_COMPOSE_FAILURE:-}" == auth ]] &&
+     [[ "$*" == *"authentik-server authentik-worker"* ]]; then
+    exit 1
+  fi
+  if [[ "${AURA_TEST_COMPOSE_FAILURE:-}" == final ]] &&
+     [[ "$*" != *"authentik-server authentik-worker"* ]]; then
+    exit 1
+  fi
+fi
+exit 0
+""",
+            )
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_dir}:{environment['PATH']}",
+                    "AURA_ENV_FILE": str(env_file),
+                    "AURA_LOCAL_ENV_FILE": str(local_env_file),
+                    "AUTHENTIK_OWNER_PASSWORD_FILE": str(password),
+                    "AURA_LOCAL_OLLAMA_RELAY_TARGET": "192.168.0.40:11434",
+                    "AURA_LOCAL_OLLAMA_RELAY_PORT": "11435",
+                    "AURA_TEST_EVENTS": str(events),
+                }
+            )
+
+            def run_launcher(
+                failure: str,
+                *,
+                active_failure: bool = False,
+                target: str | None = None,
+                relay_port: str | None = None,
+            ) -> subprocess.CompletedProcess[str]:
+                events.write_text("", encoding="utf-8")
+                run_environment = environment | {
+                    "AURA_TEST_COMPOSE_FAILURE": failure,
+                    "AURA_TEST_SYSTEMCTL_ACTIVE_FAILURE": "1" if active_failure else "",
+                }
+                if target is not None:
+                    run_environment["AURA_LOCAL_OLLAMA_RELAY_TARGET"] = target
+                if relay_port is not None:
+                    run_environment["AURA_LOCAL_OLLAMA_RELAY_PORT"] = relay_port
+                return subprocess.run(
+                    [str(script), "up"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=run_environment,
+                )
+
+            for failure in ("bootstrap", "final"):
+                result = run_launcher(failure)
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                stops = [
+                    line
+                    for line in events.read_text(encoding="utf-8").splitlines()
+                    if line.startswith("systemctl --user stop ")
+                ]
+                self.assertGreaterEqual(len(stops), 2, failure)
+
+            result = run_launcher("none", active_failure=True)
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            stops = [
+                line
+                for line in events.read_text(encoding="utf-8").splitlines()
+                if line.startswith("systemctl --user stop ")
+            ]
+            self.assertGreaterEqual(len(stops), 2, "is-active failure")
+
+            for target, relay_port, label in (
+                ("127.0.0.1:01135", "01135", "loopback self-target"),
+                ("192.168.0.40:11434", "114350", "overlong relay port"),
+            ):
+                result = run_launcher("none", target=target, relay_port=relay_port)
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertNotIn(
+                    "systemd-run ", events.read_text(encoding="utf-8"), label
+                )
+
+            result = run_launcher("none")
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            events_text = events.read_text(encoding="utf-8")
+            self.assertEqual(
+                1,
+                sum(line.startswith("systemctl --user stop ") for line in events_text.splitlines()),
+            )
+            self.assertIn(
+                "AURA_OLLAMA_URL=http://host.docker.internal:11435\n",
+                local_env_file.read_text(encoding="utf-8"),
+            )
+
+            for interrupt, expected_status in (
+                (signal.SIGINT, 130),
+                (signal.SIGTERM, 143),
+            ):
+                events.write_text("", encoding="utf-8")
+                run_environment = environment | {
+                    "AURA_TEST_COMPOSE_FAILURE": "none",
+                    "AURA_TEST_BLOCK_PHASE": "auth",
+                    "AURA_TEST_SYSTEMCTL_ACTIVE_FAILURE": "",
+                }
+                process = subprocess.Popen(
+                    [str(script), "up"],
+                    start_new_session=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=run_environment,
+                )
+                try:
+                    for _ in range(200):
+                        if "blocked-auth" in events.read_text(encoding="utf-8"):
+                            break
+                        time.sleep(0.01)
+                    else:
+                        self.fail("launcher did not reach the blocked startup phase")
+                    os.killpg(process.pid, interrupt)
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    stdout, stderr = process.communicate(timeout=5)
+                    self.fail(f"launcher did not terminate: {stdout}{stderr}")
+                self.assertEqual(expected_status, process.returncode, stdout + stderr)
+                event_lines = events.read_text(encoding="utf-8").splitlines()
+                self.assertGreaterEqual(
+                    sum(line.startswith("systemctl --user stop ") for line in event_lines),
+                    2,
+                    interrupt.name,
+                )
+                self.assertNotIn(
+                    " run --rm authentik-owner-bootstrap",
+                    events.read_text(encoding="utf-8"),
+                )
 
 
 if __name__ == "__main__":

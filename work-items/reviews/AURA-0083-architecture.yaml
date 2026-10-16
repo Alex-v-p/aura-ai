@@ -1,0 +1,14 @@
+agent: architecture_guardian
+work_item: AURA-0083
+verdict: PASS
+checked:
+  - INT and TERM use explicit 130 and 143 cleanup handlers that stop the relay and terminate startup.
+  - ERR and EXIT preserve failure status and clean the relay, while successful startup disarms all cleanup traps.
+  - Executable tests cover signals, ordinary startup failures, relay verification failure, and successful startup.
+  - Loopback self-forwarding and overlong relay ports are rejected before systemd-run.
+  - The operator-configurable frontend subnet remains internal.
+  - Core and Observatory retain separate identity clients, audiences, sessions, databases, and networks.
+  - No Core-to-Observatory dependency or data path was introduced.
+  - Work-item, ownership, repository-shape, service-isolation, shell-syntax, topology, and diff checks passed.
+  - The owner-authorized deployment helper preserves ADR-0015; no ADR is required.
+findings: []

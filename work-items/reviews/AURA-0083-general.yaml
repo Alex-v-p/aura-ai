@@ -1,0 +1,15 @@
+agent: general_reviewer
+work_item: AURA-0083
+verdict: PASS
+checked:
+  - The rendered Compose graph gives aura-frontend the explicit operator-configurable 10.254.241.0/24 default without changing the existing Core egress boundary.
+  - Authentik has the authentik.localhost alias only on Observatory's existing identity-egress network, and Core and Observatory retain separate OIDC clients, audiences, callbacks, and sessions.
+  - The local bootstrap job receives the Observatory client ID and exact disposable callback before reapplying the Authentik blueprint.
+  - Relay target and port parsing is bounded to valid five-digit ports, numeric-equivalent loopback self-forwarding is rejected, socat is invoked as an argument array, and the listener binds only to 127.0.0.1.
+  - Relay cleanup is armed immediately after successful unit creation, uses explicit nonzero INT and TERM exits, covers ERR and EXIT failures, handles immediate is-active failure, and is removed only after successful final startup.
+  - Executable stubbed lifecycle coverage verifies cleanup after bootstrap and final Compose failures, immediate activity-check failure, SIGINT, and SIGTERM; it also verifies pre-launch self-loop rejection and successful relay persistence.
+  - Documentation describes the reserved subnet, optional relay, prerequisites, loopback binding, and down/reset behavior without committing a provider endpoint.
+  - Work-item, changed-path, repository-shape, shell-syntax, Compose-rendering, diff-hygiene, and all 41 topology checks passed.
+  - Runtime evidence confirms separate Core and Observatory authorization redirects, healthy services, protected unauthenticated model inventory, and a 12-model response through the exact Core relay URL.
+  - Browser acceptance completed the Observatory owner callback and session, then authenticated Core through its separate client and session; the authenticated model selector contained exactly the same 12 models reported by the provider and Core relay.
+findings: []

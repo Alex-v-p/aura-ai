@@ -96,7 +96,8 @@ services:
       aura-identity-db: {}
       aura-identity-cache: {}
       aura-identity-edge: {}
-      observatory-identity-egress: {}
+      observatory-identity-egress:
+        aliases: [authentik.localhost]
     ports: ["127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"]
 
   authentik-owner-bootstrap:
@@ -136,6 +137,8 @@ services:
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
       AURA_AUTHENTIK_CLIENT_ID: aura-web
       AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
+      AURA_OBSERVATORY_AUTHENTIK_CLIENT_ID: ${AURA_OBSERVATORY_OIDC_CLIENT_ID:-aura-observatory}
+      AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback
       AUTHENTIK_OWNER_USERNAME: ${AUTHENTIK_OWNER_USERNAME:-aura-owner}
       AUTHENTIK_OWNER_NAME: ${AUTHENTIK_OWNER_NAME:-Aura Owner}
     secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, observatory-oidc-client-secret, authentik-owner-password]
