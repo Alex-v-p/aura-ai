@@ -47,7 +47,11 @@ def test_migrations_are_rerunnable_and_do_not_enable_automatic_ttl(migration_dir
     assert migrations, f"missing migrations under {migration_dir}"
     text = "\n".join(path.read_text(encoding="utf-8").lower() for path in migrations)
     assert "create table if not exists" in text
-    assert "drop table" not in text
+    if migration_dir.name == "clickhouse":
+        assert "drop table if exists observatory_legacy_ordering" in text
+        assert "drop table if exists observatory_legacy_ordering;" in text
+    else:
+        assert "drop table" not in text
     # Comments may explain that automatic TTL is intentionally absent; a
     # ClickHouse TTL clause must never become executable retention behavior.
     executable_lines = [line for line in text.splitlines() if not line.lstrip().startswith("--")]

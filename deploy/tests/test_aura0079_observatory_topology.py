@@ -100,7 +100,7 @@ def test_only_observatory_web_has_a_loopback_browser_port() -> None:
     assert web_names == {"observatory-web"}
 
     web_ports = services["observatory-web"].get("ports")
-    assert web_ports == ["127.0.0.1:${AURA_OBSERVATORY_PORT:-4300}:80"]
+    assert web_ports == ["127.0.0.1:${AURA_OBSERVATORY_PORT:-4300}:8080"]
 
     for name, definition in observatory.items():
         if name != "observatory-web":
@@ -191,11 +191,22 @@ def test_observatory_auth_configuration_has_separate_audience_owner_and_https_de
 
 def test_collector_is_authenticated_buffered_and_metadata_only() -> None:
     collector = (ROOT / "deploy/compose/observatory-collector.yaml").read_text(encoding="utf-8")
+    config = yaml.safe_load(collector)
+    assert isinstance(config, dict)
+    raw_config = cast(dict[Any, Any], config)
+    extensions = cast(dict[Any, Any], raw_config["extensions"])
+    exporter = cast(dict[Any, Any], raw_config["exporters"]["otlphttp/observatory"])
+    service = cast(dict[Any, Any], raw_config["service"])
 
     assert "capture_policy" in collector
     assert "metadata_only" in collector
-    assert "Authorization: Bearer" in collector
-    assert "OBSERVATORY_INGEST_CREDENTIAL" in collector
+    assert "Authorization: Bearer" not in collector
+    assert "OBSERVATORY_INGEST_CREDENTIAL" not in collector
+    assert extensions["bearertokenauth"]["filename"] == (
+        "/run/secrets/observatory-ingest-credential"
+    )
+    assert exporter["auth"]["authenticator"] == "bearertokenauth"
+    assert "bearertokenauth" in service["extensions"]
     assert "retry_on_failure:" in collector
     assert "sending_queue:" in collector
     assert "queue_size:" in collector

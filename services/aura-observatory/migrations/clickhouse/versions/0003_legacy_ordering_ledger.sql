@@ -12,28 +12,36 @@ ORDER BY version;
 -- idempotent and is intentionally separate from aggregate projection DDL.
 ALTER TABLE observations ADD COLUMN IF NOT EXISTS ingest_sequence UInt64 DEFAULT 0;
 
--- Materialize one deterministic order key for rows written before the
--- visibility fence existed. The INSERT is idempotent by observation id and
--- the subsequent mutation is rerunnable because only zero keys are updated.
-CREATE TABLE IF NOT EXISTS observatory_legacy_ordering (
+-- Recreate the transient lookup so installations left with the original
+-- ReplacingMergeTree helper recover before the 25.8-compatible mutation runs.
+-- The helper contains only observation IDs and their derived order keys.
+DROP TABLE IF EXISTS observatory_legacy_ordering;
+
+CREATE TABLE observatory_legacy_ordering (
     observation_id String,
     ingest_sequence UInt64
-) ENGINE = ReplacingMergeTree
-ORDER BY observation_id;
+) ENGINE = Join(ANY, LEFT, observation_id);
 
+-- Materialize one deterministic order key for rows written before the
+-- visibility fence existed. The helper is rebuilt on every retry, while only
+-- zero-valued source rows are selected and updated.
 INSERT INTO observatory_legacy_ordering (observation_id, ingest_sequence)
 SELECT observation_id,
        row_number() OVER (ORDER BY observed_at ASC, observation_id ASC)
        + (SELECT ifNull(max(ingest_sequence), 0) FROM observations)
 FROM observations
-WHERE ingest_sequence = 0
-  AND observation_id NOT IN (SELECT observation_id FROM observatory_legacy_ordering);
+WHERE ingest_sequence = 0;
 
+-- ClickHouse 25.8 does not resolve a correlated scalar subquery in an ALTER
+-- mutation. joinGet reads the freshly populated in-memory lookup instead.
 ALTER TABLE observations UPDATE ingest_sequence =
-    (SELECT ingest_sequence FROM observatory_legacy_ordering
-     WHERE observatory_legacy_ordering.observation_id = observations.observation_id)
+    joinGet('observatory_legacy_ordering', 'ingest_sequence', observation_id)
 WHERE ingest_sequence = 0
 SETTINGS mutations_sync = 2;
+
+-- The lookup is migration scratch state, not a catalogue or retention store.
+-- Dropping it also makes a retry recover cleanly after a post-mutation failure.
+DROP TABLE IF EXISTS observatory_legacy_ordering;
 
 INSERT INTO observatory_migration_ledger (version, applied_at)
 SELECT '0003_legacy_ordering_ledger', now64(3)

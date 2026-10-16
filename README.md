@@ -9,16 +9,24 @@ secret files. For a disposable, loopback-only Docker Desktop login, run:
 ./deploy/compose/local-http.sh up
 ```
 
-Open Aura at <http://aura.localhost:4200>. Sign in with the generated
-`aura-owner` account; its password is stored in
-`.secrets/authentik-owner-password`. Authentik is available at
-<http://authentik.localhost:9000>.
+Open Aura at <http://aura.localhost:4200> and Observatory at
+<http://observatory.localhost:4300>. Sign in with the generated `aura-owner`
+account; its password is stored in `.secrets/authentik-owner-password`.
+Authentik is available at <http://authentik.localhost:9000>.
 
 This identity and its HTTP issuer are development-only and disposable. Stop
 the stack with:
 
 ```sh
 ./deploy/compose/local-http.sh down
+```
+
+`down` preserves the disposable Docker-managed volumes. To intentionally
+discard the local Core, Authentik, and Observatory state and start fresh, run:
+
+```sh
+./deploy/compose/local-http.sh reset
+./deploy/compose/local-http.sh up
 ```
 
 For an external Authentik instance with stable HTTPS configuration, start only

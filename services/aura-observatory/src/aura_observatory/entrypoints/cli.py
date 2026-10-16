@@ -28,8 +28,8 @@ def migrate(revision: str = "head") -> None:
             connection.execute(path.read_text(encoding="utf-8"))  # type: ignore[arg-type]
         connection.commit()
     # The installed HTTP client supports response-body ledger reads. Minimal
-    # injected test doubles use the legacy one-request fallback because they
-    # intentionally do not model response bodies.
+    # injected test doubles skip the read path and exercise only the migration
+    # posts; all actual ClickHouse requests remain explicitly authenticated.
     supports_ledger_reads = str(getattr(httpx.post, "__module__", "")).startswith("httpx")
     if supports_ledger_reads:
         _clickhouse_post(
@@ -65,66 +65,122 @@ __all__ = ["app", "main"]
 
 
 def _clickhouse_post(settings: Settings, content: str) -> object:
-    params = {
-        "database": settings.clickhouse_database,
-        "user": settings.clickhouse_user,
-        "multiquery": "1",
-    }
-    try:
-        response = httpx.post(
-            settings.clickhouse_url,
-            params=params,
-            content=content,
-            timeout=10.0,
-            auth=(settings.clickhouse_user, settings.clickhouse_password),
-        )
-    except TypeError as exc:
-        if "unexpected keyword argument 'auth'" not in str(exc):
-            raise
-        response = httpx.post(
-            settings.clickhouse_url,
-            params=params,
-            content=content,
-            timeout=10.0,
-        )
+    # ClickHouse 25.8 no longer accepts the old ``multiquery`` setting.  Send
+    # each statement independently, preserving file order and failing at the
+    # first unsuccessful statement so a retry can safely resume the ledgered
+    # migration.  The splitter is intentionally local to the migration CLI:
+    # query and ingest paths only ever send one statement at a time.
+    statements = _split_clickhouse_statements(content)
+    if not statements:
+        raise ValueError("ClickHouse migration content did not contain a statement")
+    response: object | None = None
+    for statement in statements:
+        response = _clickhouse_post_statement(settings, statement)
+    assert response is not None
+    return response
+
+
+def _split_clickhouse_statements(content: str) -> list[str]:
+    """Split migration SQL without treating quoted/commented semicolons as delimiters."""
+
+    statements: list[str] = []
+    start = 0
+    state: str | None = None
+    has_code = False
+    index = 0
+    while index < len(content):
+        character = content[index]
+        next_character = content[index + 1] if index + 1 < len(content) else ""
+
+        if state == "line_comment":
+            if character in "\r\n":
+                state = None
+            index += 1
+            continue
+        if state == "block_comment":
+            if character == "*" and next_character == "/":
+                state = None
+                index += 2
+            else:
+                index += 1
+            continue
+        if state in {"'", '"', "`"}:
+            has_code = True
+            if character == "\\" and state in {"'", '"'}:
+                index += 2
+                continue
+            if character == state:
+                if next_character == state:
+                    index += 2
+                    continue
+                state = None
+            index += 1
+            continue
+
+        if character in {"'", '"', "`"}:
+            state = character
+            has_code = True
+            index += 1
+            continue
+        if character == "-" and next_character == "-":
+            state = "line_comment"
+            index += 2
+            continue
+        if character == "#":
+            state = "line_comment"
+            index += 1
+            continue
+        if character == "/" and next_character == "*":
+            state = "block_comment"
+            index += 2
+            continue
+        if character == ";":
+            statement = content[start:index].strip()
+            if has_code and statement:
+                statements.append(statement)
+            start = index + 1
+            has_code = False
+            index += 1
+            continue
+        if not character.isspace():
+            has_code = True
+        index += 1
+
+    if state in {"'", '"', "`", "block_comment"}:
+        raise ValueError("unterminated quoted value or block comment in ClickHouse SQL")
+    statement = content[start:].strip()
+    if has_code and statement:
+        statements.append(statement)
+    return statements
+
+
+def _clickhouse_post_statement(settings: Settings, content: str) -> object:
+    params = {"database": settings.clickhouse_database}
+    response = httpx.post(
+        settings.clickhouse_url,
+        params=params,
+        content=content,
+        timeout=10.0,
+        auth=(settings.clickhouse_user, settings.clickhouse_password),
+    )
     response.raise_for_status()
     return response
 
 
 def _clickhouse_applied(settings: Settings, version: str) -> bool:
-    try:
-        response = httpx.post(
-            settings.clickhouse_url,
-            params={
-                "database": settings.clickhouse_database,
-                "user": settings.clickhouse_user,
-                "format": "TabSeparatedRaw",
-            },
-            content=(
-                "SELECT version FROM observatory_migration_ledger WHERE version = '"
-                + version.replace("'", "''")
-                + "' LIMIT 1"
-            ),
-            timeout=10.0,
-            auth=(settings.clickhouse_user, settings.clickhouse_password),
-        )
-    except TypeError as exc:
-        if "unexpected keyword argument 'auth'" not in str(exc):
-            raise
-        response = httpx.post(
-            settings.clickhouse_url,
-            params={
-                "database": settings.clickhouse_database,
-                "user": settings.clickhouse_user,
-                "format": "TabSeparatedRaw",
-            },
-            content=(
-                "SELECT version FROM observatory_migration_ledger WHERE version = '"
-                + version.replace("'", "''")
-                + "' LIMIT 1"
-            ),
-            timeout=10.0,
-        )
+    params = {"database": settings.clickhouse_database}
+    query = (
+        "SELECT version FROM observatory_migration_ledger WHERE version = '"
+        + version.replace("'", "''")
+        + "' LIMIT 1 FORMAT TabSeparatedRaw"
+    )
+    response = httpx.post(
+        settings.clickhouse_url,
+        params=params,
+        content=query,
+        timeout=10.0,
+        auth=(settings.clickhouse_user, settings.clickhouse_password),
+    )
     response.raise_for_status()
     return bool(getattr(response, "text", "").strip())
 
@@ -170,28 +226,15 @@ def _synchronize_legacy_watermark(settings: Settings) -> None:
 
 
 def _clickhouse_query(settings: Settings, content: str) -> object:
-    params = {
-        "database": settings.clickhouse_database,
-        "user": settings.clickhouse_user,
-        "format": "TabSeparatedRaw",
-    }
-    try:
-        response = httpx.post(
-            settings.clickhouse_url,
-            params=params,
-            content=content,
-            timeout=10.0,
-            auth=(settings.clickhouse_user, settings.clickhouse_password),
-        )
-    except TypeError as exc:
-        if "unexpected keyword argument 'auth'" not in str(exc):
-            raise
-        response = httpx.post(
-            settings.clickhouse_url,
-            params=params,
-            content=content,
-            timeout=10.0,
-        )
+    params = {"database": settings.clickhouse_database}
+    query = content.rstrip() + " FORMAT TabSeparatedRaw"
+    response = httpx.post(
+        settings.clickhouse_url,
+        params=params,
+        content=query,
+        timeout=10.0,
+        auth=(settings.clickhouse_user, settings.clickhouse_password),
+    )
     response.raise_for_status()
     return response
 

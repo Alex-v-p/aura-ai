@@ -2,15 +2,17 @@
 set -Eeuo pipefail
 
 # Start Aura with a disposable, loopback-only HTTP Authentik deployment.  This
-# script owns only ignored local state (.env.local-http and one password file);
-# it never edits the tracked .env or emits credentials.
+# script owns only the ignored local identity inputs (.env.local-http and one
+# password file); Compose owns the disposable named volumes. It never edits
+# the tracked .env or emits credentials.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 ENV_FILE=${AURA_ENV_FILE:-"$ROOT/.env"}
 LOCAL_ENV_FILE=${AURA_LOCAL_ENV_FILE:-"$ROOT/.env.local-http"}
 COMPOSE=(docker compose --env-file "$ENV_FILE" --env-file "$LOCAL_ENV_FILE" \
   -f "$ROOT/compose.yaml" -f "$ROOT/deploy/compose/local-identity.yaml" \
-  -f "$ROOT/deploy/compose/local-http.yaml" --profile local-identity)
+  -f "$ROOT/deploy/compose/local-http.yaml" --profile local-identity \
+  --profile observatory)
 COMPOSE_BOOTSTRAP=("${COMPOSE[@]}" --profile local-http-bootstrap)
 # Compose gives ambient shell variables precedence over every --env-file.
 # Remove only the fixed local-HTTP identity values so generated .env.local-http
@@ -23,6 +25,7 @@ COMPOSE_ENV_UNSET=(env
   -u AURA_OIDC_CLIENT_ID
   -u AURA_OIDC_REDIRECT_URI
   -u AURA_OWNER_SUBJECT
+  -u AURA_OBSERVATORY_OWNER_SUBJECT
   -u AURA_SECURE_COOKIES
   -u AUTHENTIK_HOST_BROWSER)
 
@@ -140,6 +143,7 @@ AURA_OIDC_AUDIENCE=aura-web
 AURA_OIDC_CLIENT_ID=aura-web
 AURA_OIDC_REDIRECT_URI=http://aura.localhost:4200/api/v1/auth/callback
 AURA_OWNER_SUBJECT=$subject
+AURA_OBSERVATORY_OWNER_SUBJECT=$subject
 AURA_SECURE_COOKIES=false
 AUTHENTIK_HOST_BROWSER=http://authentik.localhost:9000
 AUTHENTIK_OWNER_USERNAME=$owner_username
@@ -187,6 +191,20 @@ down() {
   fi
 }
 
+reset() {
+  [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; copy .env.example to .env first"
+  if [ -f "$LOCAL_ENV_FILE" ]; then
+    # All durable mounts in the disposable overlay are project-scoped named
+    # volumes. This explicit command is the only local launcher operation that
+    # removes them; normal `down` preserves the disposable state.
+    compose down --volumes --remove-orphans
+    rm -f -- "$LOCAL_ENV_FILE"
+    printf 'local-http: disposable state reset; owner password file preserved\n'
+  else
+    printf 'local-http: no local HTTP environment exists; nothing to reset\n'
+  fi
+}
+
 verify_idempotency() {
   local configured password_path before_hash after_hash before_subject after_subject
   up
@@ -205,6 +223,7 @@ verify_idempotency() {
 case ${1:-up} in
   up) up ;;
   down) down ;;
+  reset) reset ;;
   verify-idempotency) verify_idempotency ;;
-  *) die "usage: $0 {up|down|verify-idempotency}" ;;
+  *) die "usage: $0 {up|down|reset|verify-idempotency}" ;;
 esac

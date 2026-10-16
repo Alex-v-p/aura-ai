@@ -611,9 +611,18 @@ def test_cli_migrate_executes_both_service_owned_migration_sets(
     def connect(_database_url: str) -> FakeConnection:
         return FakeConnection()
 
-    def post(_url: str, *, params: dict[str, str], content: str, timeout: float) -> FakeResponse:
+    def post(
+        _url: str,
+        *,
+        params: dict[str, str],
+        content: str,
+        timeout: float,
+        auth: tuple[str, str],
+    ) -> FakeResponse:
         assert params["database"] == "aura_observatory"
         assert timeout == 10.0
+        expected_settings = Settings()
+        assert auth == (expected_settings.clickhouse_user, expected_settings.clickhouse_password)
         clickhouse_statements.append(content)
         return FakeResponse()
 
@@ -631,8 +640,11 @@ def test_cli_migrate_executes_both_service_owned_migration_sets(
     expected_clickhouse_migrations = sorted(
         (Path(__file__).parents[1] / "migrations/clickhouse/versions").glob("*.sql")
     )
-    assert len(clickhouse_statements) == len(expected_clickhouse_migrations)
-    assert "CREATE TABLE IF NOT EXISTS observations" in clickhouse_statements[0]
+    assert len(clickhouse_statements) > len(expected_clickhouse_migrations)
+    assert any(
+        "CREATE TABLE IF NOT EXISTS observations" in statement
+        for statement in clickhouse_statements
+    )
 
 
 def test_module_registry_and_component_manifests_describe_the_same_service_surface() -> None:

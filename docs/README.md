@@ -92,7 +92,25 @@ docker compose up --build --detach --wait aura-core-api aura-core-worker aura-we
 ```
 
 The temporary Authentik deployment is an explicit, optional override. It is
-never interpolated by normal Compose commands. The override defaults to the
+never interpolated by normal Compose commands. For the disposable loopback
+stack, use the single launcher below; it starts Aura, Authentik, and the
+optional Observatory profile together:
+
+```sh
+./deploy/compose/local-http.sh up
+```
+
+Aura is available at `http://aura.localhost:4200`, Observatory at
+`http://observatory.localhost:4300`, and Authentik at
+`http://authentik.localhost:9000`. The launcher uses project-scoped Docker
+named volumes for disposable database, broker, object-store, identity-media,
+and Observatory state so Docker Desktop does not need to share those database
+write paths with the host. `./deploy/compose/local-http.sh down` stops the
+stack while preserving those volumes; `./deploy/compose/local-http.sh reset`
+explicitly removes the disposable volumes and the generated local identity
+subject before the next start. The owner password file is preserved.
+
+The override defaults to the
 verified immutable Authentik 2026.5.7 multi-architecture digest. Operators may
 override `AUTHENTIK_IMAGE` only with another verified digest-qualified image.
 Set stable HTTPS issuer and browser-host inputs, stable OIDC
@@ -122,10 +140,12 @@ Uvicorn access log is disabled, so OIDC callback `code` and `state` values do
 not enter ordinary request logs. Core and Authentik use separate nonpersistent,
 password-protected Valkey services and isolated Compose networks; identity
 never shares Aura's cache.
-Every durable PostgreSQL, JetStream, and Authentik media mount requires the
-operator-provided encrypted `AURA_STATE_ROOT`. The normal config command is
-`docker compose config --quiet`; it does not read the optional override or
-require any Authentik variables.
+Every durable PostgreSQL, JetStream, and Authentik media mount in the normal
+Compose and stable HTTPS deployment requires the operator-provided encrypted
+`AURA_STATE_ROOT`. The explicit disposable local HTTP overlay is the sole
+exception and uses project-scoped named volumes as described above. The normal
+config command is `docker compose config --quiet`; it does not read the
+optional override or require any Authentik variables.
 
 ### Disposable full-stack verification
 

@@ -194,7 +194,32 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("proxy_buffering off;", nginx)
         self.assertIn('add_header Cache-Control "no-store" always;', nginx)
         self.assertIn("try_files $uri $uri/ /index.html;", nginx)
+        for temp_path in (
+            "client_body_temp_path /tmp/client_temp;",
+            "proxy_temp_path /tmp/proxy_temp;",
+            "fastcgi_temp_path /tmp/fastcgi_temp;",
+            "uwsgi_temp_path /tmp/uwsgi_temp;",
+            "scgi_temp_path /tmp/scgi_temp;",
+        ):
+            self.assertIn(temp_path, nginx)
         self.assertNotIn("nginx:1.29-alpine", web)
+
+    def test_observatory_collector_uses_file_backed_native_bearer_auth(self) -> None:
+        collector = service_block(self.compose, "observatory-collector", "observatory-web")
+        config = (ROOT / "deploy/compose/observatory-collector.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("command: [--config=/etc/otelcol-contrib/config.yaml]", collector)
+        self.assertNotIn("entrypoint:", collector)
+        self.assertIn("secrets: [observatory-ingest-credential]", collector)
+        self.assertNotIn("OBSERVATORY_INGEST_CREDENTIAL", collector)
+        self.assertIn("bearertokenauth:", config)
+        self.assertIn("filename: /run/secrets/observatory-ingest-credential", config)
+        self.assertIn("authenticator: bearertokenauth", config)
+        self.assertIn("extensions: [bearertokenauth]", config)
+        self.assertNotIn("Authorization: Bearer", config)
+        self.assertNotIn("${OBSERVATORY_INGEST_CREDENTIAL}", config)
 
     def test_observatory_web_build_context_excludes_secrets_and_unneeded_inputs(self) -> None:
         dockerfile = (ROOT / "deploy/docker/observatory-web.Dockerfile").read_text(
@@ -491,6 +516,37 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("/app/.venv/bin/python -m aura_core.entrypoints.cli seed", migrate_script)
         self.assertNotIn("uv run", migrate_script)
 
+    def test_observatory_migration_image_uses_the_single_command_cli(self) -> None:
+        dockerfile = (ROOT / "deploy/docker/aura-observatory.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        expected = (
+            'CMD ["/app/.venv/bin/python", "-m", '
+            '"aura_observatory.entrypoints.cli"]'
+        )
+        self.assertIn(expected, dockerfile)
+        self.assertNotIn(
+            'CMD ["/app/.venv/bin/python", "-m", '
+            '"aura_observatory.entrypoints.cli", "migrate"]',
+            dockerfile,
+        )
+
+        python = ROOT / ".venv/bin/python"
+        if not python.is_file():
+            self.skipTest("project virtualenv is unavailable for CLI help smoke test")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(ROOT / "services/aura-observatory/src")
+        result = subprocess.run(
+            [str(python), "-m", "aura_observatory.entrypoints.cli", "--help"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=30,
+        )
+        self.assertIn("Usage:", result.stdout)
+
     def test_scheduler_starts_prebuilt_runtime_without_package_manager(self) -> None:
         scheduler_dockerfile = (ROOT / "deploy/docker/aura-scheduler.Dockerfile").read_text(
             encoding="utf-8"
@@ -731,6 +787,90 @@ class ComposeTopologyTests(unittest.TestCase):
             )
             return json.loads(result.stdout)
 
+    def _render_local_http_compose_config(self) -> dict[str, object]:
+        """Render the disposable overlay with fixture-only secret files."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_root = root / "state"
+            state_root.mkdir()
+            secret_names = (
+                "AURA_CORE_DATABASE_PASSWORD_FILE",
+                "AURA_OIDC_CLIENT_SECRET_FILE",
+                "AURA_NATS_PASSWORD_FILE",
+                "AURA_VALKEY_PASSWORD_FILE",
+                "AURA_GARAGE_RPC_SECRET_FILE",
+                "AURA_GARAGE_ACCESS_KEY_FILE",
+                "AURA_GARAGE_SECRET_KEY_FILE",
+                "AURA_OBSERVATORY_DATABASE_PASSWORD_FILE",
+                "AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE",
+                "AURA_OBSERVATORY_SESSION_PASSWORD_FILE",
+                "AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE",
+                "AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE",
+                "AUTHENTIK_DATABASE_PASSWORD_FILE",
+                "AUTHENTIK_SECRET_KEY_FILE",
+                "AUTHENTIK_BOOTSTRAP_PASSWORD_FILE",
+                "AUTHENTIK_VALKEY_PASSWORD_FILE",
+                "AUTHENTIK_OWNER_PASSWORD_FILE",
+            )
+            env_lines = {
+                "AURA_STATE_ROOT": str(state_root),
+                "AURA_PUBLIC_ORIGIN": "https://aura.example.invalid",
+                "AURA_OIDC_ISSUER": "https://authentik.example.invalid",
+                "AURA_OIDC_AUDIENCE": "aura-web",
+                "AURA_OIDC_CLIENT_ID": "aura-web",
+                "AURA_OIDC_REDIRECT_URI": "https://aura.example.invalid/api/v1/auth/callback",
+                "AURA_OWNER_SUBJECT": "topology-test-owner",
+                "AURA_OBSERVATORY_OWNER_SUBJECT": "topology-test-owner",
+                "AUTHENTIK_HOST_BROWSER": "https://authentik.example.invalid",
+            }
+            for name in secret_names:
+                secret = root / name
+                secret.write_text("topology-test-secret\n", encoding="utf-8")
+                env_lines[name] = str(secret)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(f"{name}={value}" for name, value in env_lines.items()) + "\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "docker",
+                    "compose",
+                    "--project-directory",
+                    str(ROOT),
+                    "--env-file",
+                    str(env_file),
+                    "-f",
+                    str(ROOT / "compose.yaml"),
+                    "-f",
+                    str(ROOT / "deploy/compose/local-identity.yaml"),
+                    "-f",
+                    str(ROOT / "deploy/compose/local-http.yaml"),
+                    "--profile",
+                    "local-identity",
+                    "--profile",
+                    "observatory",
+                    "config",
+                    "--format",
+                    "json",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(result.stdout)
+
+    def test_local_http_observatory_postgres_healthcheck_has_no_nul(self) -> None:
+        rendered = self._render_local_http_compose_config()
+        test = rendered["services"]["observatory-postgres"]["healthcheck"]["test"]
+        expected = (
+            r'''test "$$(tr -d '\000' </proc/1/cmdline)" = postgres && '''
+            r'''pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'''
+        )
+        self.assertEqual(["CMD-SHELL", expected], test)
+        self.assertFalse(any("\x00" in value for value in test if isinstance(value, str)))
+
     def test_full_stack_runner_uses_the_pinned_garage_default(self) -> None:
         runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(encoding="utf-8")
         digest = (
@@ -749,13 +889,15 @@ class ComposeTopologyTests(unittest.TestCase):
 
         self.assertIn(expected_image, postgres)
         for path in (
-            ROOT / "deploy/compose/local-http.yaml",
             ROOT / "deploy/compose/e2e/external-aura.yaml",
             ROOT / "deploy/compose/e2e/local-aura.yaml",
         ):
             overlay = path.read_text(encoding="utf-8")
             self.assertNotIn("  aura-core-postgres:\n", overlay)
             self.assertNotIn("postgres:", overlay)
+        local_http = (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8")
+        self.assertIn("  aura-core-postgres:\n", local_http)
+        self.assertIn("volumes: !override", local_http)
 
     def test_full_stack_fixture_keeps_external_provider_outside_aura_project(self) -> None:
         external = (ROOT / "deploy/compose/e2e/external-aura.yaml").read_text(encoding="utf-8")
@@ -801,6 +943,17 @@ class ComposeTopologyTests(unittest.TestCase):
         owner_start = local_http.index("  authentik-owner-bootstrap:\n")
         owner_block = local_http[owner_start:].split("\nsecrets:", 1)[0]
         self.assertNotIn("aura-identity-edge", owner_block)
+        self.assertIn("blueprint_attempt=1", owner_block)
+        self.assertIn("blueprint_max_attempts=30", owner_block)
+        self.assertIn(
+            'if [ "$${blueprint_attempt}" -ge "$${blueprint_max_attempts}" ]; then',
+            owner_block,
+        )
+        self.assertIn("sleep 2", owner_block)
+        self.assertIn(
+            "Authentik OIDC dependencies did not become ready within 60 seconds",
+            owner_block,
+        )
         server_start = local_http.index("  authentik-server:\n")
         server_end = local_http.index("  authentik-owner-bootstrap:\n")
         self.assertIn("aura-identity-edge: {}", local_http[server_start:server_end])
@@ -813,11 +966,14 @@ class ComposeTopologyTests(unittest.TestCase):
         )
         self.assertIn("verify-idempotency", script)
         self.assertIn("--profile local-http-bootstrap", script)
+        self.assertIn("--profile observatory", script)
+        self.assertIn("AURA_OBSERVATORY_OWNER_SUBJECT=$subject", script)
         for variable in (
             "AURA_PUBLIC_ORIGIN",
             "AURA_OIDC_ISSUER",
             "AURA_OIDC_REDIRECT_URI",
             "AURA_OWNER_SUBJECT",
+            "AURA_OBSERVATORY_OWNER_SUBJECT",
             "AUTHENTIK_HOST_BROWSER",
         ):
             self.assertIn(f"-u {variable}", script)
@@ -825,6 +981,62 @@ class ComposeTopologyTests(unittest.TestCase):
             "Never rotate",
             (ROOT / "deploy/authentik/bootstrap-local-owner.py").read_text(encoding="utf-8"),
         )
+
+    def test_local_http_replaces_all_host_state_with_project_scoped_named_volumes(self) -> None:
+        local_http = (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8")
+
+        expected_mounts = {
+            "local_http_core_postgres_data:/var/lib/postgresql/data",
+            "local_http_core_nats_data:/data",
+            "local_http_core_garage_data:/var/lib/garage",
+            "local_http_core_garage_config:/run/garage-config",
+            "local_http_authentik_postgres_data:/var/lib/postgresql/data",
+            "local_http_authentik_media:/media",
+            "local_http_observatory_postgres_data:/var/lib/postgresql/data",
+            "local_http_observatory_clickhouse_data:/var/lib/clickhouse",
+            "local_http_observatory_clickhouse_logs:/var/log/clickhouse-server",
+            "local_http_observatory_session_data:/data",
+        }
+        for mount in expected_mounts:
+            self.assertIn(f"- {mount}", local_http)
+        self.assertNotIn("${AURA_STATE_ROOT}", local_http)
+        self.assertNotIn("${AURA_STATE_ROOT:?", local_http)
+        self.assertIn("volumes: !override", local_http)
+        for volume in (
+            "local_http_core_postgres_data:",
+            "local_http_core_nats_data:",
+            "local_http_core_garage_data:",
+            "local_http_core_garage_config:",
+            "local_http_authentik_postgres_data:",
+            "local_http_authentik_media:",
+            "local_http_observatory_postgres_data:",
+            "local_http_observatory_clickhouse_data:",
+            "local_http_observatory_clickhouse_logs:",
+            "local_http_observatory_session_data:",
+        ):
+            self.assertIn(volume, local_http)
+        self.assertIn(
+            "./deploy/docker/garage.toml:/etc/garage/garage.toml.template:ro",
+            local_http,
+        )
+        self.assertIn(
+            "./deploy/authentik/blueprints:/blueprints/custom:ro",
+            local_http,
+        )
+
+    def test_local_http_documents_urls_stop_and_explicit_disposable_reset(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        docs_readme = (ROOT / "docs/README.md").read_text(encoding="utf-8")
+        for document in (readme, docs_readme):
+            self.assertIn("./deploy/compose/local-http.sh up", document)
+            self.assertIn("./deploy/compose/local-http.sh down", document)
+            self.assertIn("./deploy/compose/local-http.sh reset", document)
+            self.assertIn("http://aura.localhost:4200", document)
+            self.assertIn("http://observatory.localhost:4300", document)
+            self.assertIn("http://authentik.localhost:9000", document)
+        self.assertIn("AURA_STATE_ROOT", docs_readme)
+        self.assertIn("sole", docs_readme)
+        self.assertIn("exception", docs_readme)
 
     def test_local_http_edge_networks_have_exact_merged_membership(self) -> None:
         documents = [

@@ -1,0 +1,125 @@
+agent: platform_worker
+work_item: AURA-0082
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0082_platform
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: deployment.local-http, deployment.local-state, documentation.local-start, evaluation.compose-topology
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/observatory-collector.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - deploy/tests/test_aura0079_observatory_topology.py
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/docker/observatory-web.nginx.conf
+  - compose.yaml
+  - README.md
+  - docs/README.md
+  - work-items/active/AURA-0082.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0082.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0082.yaml --role platform_worker with all eleven
+      platform-owned changed paths explicitly supplied
+    - python3 tooling/architecture/validate-repository-shape.py
+    - bash -n deploy/compose/local-http.sh
+    - python3 -m py_compile deploy/compose/test_topology.py
+    - timeout 90s python3 deploy/compose/test_topology.py (38 passed)
+    - >-
+      timeout 120s prlimit --as=805306368 --cpu=90 -- env .venv/bin/pytest
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      deploy/tests/test_aura0079_observatory_topology.py -q (14 passed)
+    - >-
+      Docker Compose merged config validation passed; rendered Observatory
+      Collector uses the direct collector entrypoint and file-backed secret
+      mount, with no shell command or credential environment variable.
+    - >-
+      Python YAML parsing of compose and Collector configuration passed.
+    - >-
+      RAYON_NUM_THREADS=1 .venv/bin/ruff check deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      deploy/tests/test_aura0079_observatory_topology.py (passed)
+    - >-
+      timeout 60s docker compose --env-file .env --env-file .env.local-http
+      -f compose.yaml -f deploy/compose/local-identity.yaml
+      -f deploy/compose/local-http.yaml --profile local-identity
+      --profile observatory config --quiet
+    - >-
+      timeout 60s docker compose --env-file .env --env-file .env.local-http
+      -f compose.yaml -f deploy/compose/local-identity.yaml
+      -f deploy/compose/local-http.yaml --profile local-identity
+      --profile observatory --profile local-http-bootstrap config --format json;
+      rendered bootstrap command confirmed bounded retry configuration
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      ./deploy/compose/local-http.sh up was not run because the assignment
+      explicitly prohibited Docker startup and destructive commands.
+decisions:
+  - >-
+    The disposable local HTTP overlay replaces Core PostgreSQL, NATS, Garage
+    data/config, Authentik PostgreSQL/media, and Observatory PostgreSQL,
+    ClickHouse data/logs, and session state binds with project-scoped named
+    volumes. Normal Compose and stable HTTPS mounts were left unchanged.
+  - >-
+    The overlay keeps source/configuration binds read-only, including the
+    Garage template and Authentik blueprints, and uses !override so production
+    host paths cannot leak into the disposable profile.
+  - >-
+    The disposable overlay overrides Observatory PostgreSQL's healthcheck with
+    the double-escaped cmdline NUL sequence used by the working Core and
+    Authentik checks. The rendered command contains a literal backslash-zero
+    sequence and no NUL byte.
+  - >-
+    The local Authentik owner bootstrap retries blueprint application for at
+    most 30 attempts with a two-second delay, covering first-boot creation of
+    managed flows and property mappings. It fails loudly after the bounded
+    60-second window instead of sleeping indefinitely or masking a permanent
+    blueprint error.
+  - >-
+    The Observatory migration image invokes the single-command Typer app
+    without an extra `migrate` argument; the CLI help smoke test confirms the
+    container command shape without opening database connections.
+  - >-
+    Observatory Collector uses the contrib bearertokenauth extension with
+    filename=/run/secrets/observatory-ingest-credential (the pinned 0.138.0
+    schema key) and the exporter
+    authenticator hook. Compose restores the image's native collector
+    entrypoint, so the raw credential remains file-injected and never enters
+    an environment variable, URL, or log.
+  - >-
+    Observatory nginx writes all client, proxy, FastCGI, uWSGI, and SCGI
+    temporary files under the writable /tmp tmpfs while preserving read-only,
+    no-new-privileges, and capability-drop hardening.
+  - >-
+    local-http.sh selects the observatory profile and writes the owner subject
+    returned by Authentik into both Core and Observatory environment keys.
+  - >-
+    Normal down preserves disposable volumes. An explicit reset subcommand
+    removes only the current Compose project's named volumes and generated
+    local environment while preserving the owner password file.
+  - >-
+    Documentation names the three loopback URLs, the canonical launcher, and
+    the distinction between encrypted AURA_STATE_ROOT production storage and
+    the disposable named-volume exception.
+risks:
+  - >-
+    Runtime startup remains unverified until Docker Desktop is restarted and
+    the canonical launcher is exercised against a healthy daemon.
+unresolved: []

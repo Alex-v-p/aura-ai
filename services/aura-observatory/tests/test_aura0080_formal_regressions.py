@@ -1321,7 +1321,12 @@ def test_populated_migrations_are_rerunnable_without_duplicate_objects() -> None
     for path in (SERVICE_ROOT / "migrations/clickhouse/versions").glob("*.sql"):
         text = path.read_text(encoding="utf-8").lower()
         for statement in re.findall(r"create\s+(?:table|materialized view|index)[^;]+", text):
-            assert "if not exists" in statement, path
+            if path.name == "0003_legacy_ordering_ledger.sql" and (
+                "observatory_legacy_ordering" in statement
+            ):
+                assert "drop table if exists observatory_legacy_ordering" in text
+            else:
+                assert "if not exists" in statement, path
 
 
 @pytest.mark.asyncio
@@ -1487,6 +1492,19 @@ def test_ordering_migration_uses_a_durable_ledger_for_populated_reruns() -> None
     assert "observatory_migration_ledger" in cli
     assert "select" in cli and "version" in cli
     assert "on conflict" in migration or "not exists" in migration
+    assert "drop table if exists observatory_legacy_ordering" in migration
+    assert "engine = join(any, left, observation_id)" in migration
+    assert "joinget('observatory_legacy_ordering', 'ingest_sequence', observation_id)" in migration
+    assert "settings mutations_sync = 2" in migration
+    assert "select ingest_sequence from observatory_legacy_ordering" not in migration
+    assert "engine = replacingmergetree\norder by observation_id" not in migration
+    assert migration.count("drop table if exists observatory_legacy_ordering") == 2
+    assert migration.index("drop table if exists observatory_legacy_ordering") < migration.index(
+        "create table observatory_legacy_ordering"
+    )
+    assert migration.rindex("drop table if exists observatory_legacy_ordering") > migration.index(
+        "settings mutations_sync = 2"
+    )
 
 
 def test_delete_guard_spans_ingest_visibility_and_has_no_unbounded_run_id_array() -> None:
@@ -1722,10 +1740,14 @@ def test_migration_ledger_skips_populated_versions_and_syncs_legacy_ordering(
         if "INSERT INTO observatory_migration_ledger" in value
     ]
     assert second_migrations == []
+    expected_versions = sorted(
+        path.stem
+        for path in (SERVICE_ROOT / "migrations/clickhouse/versions").glob("*.sql")
+    )
     assert sum(
         "SELECT version FROM observatory_migration_ledger" in value
         for value in clickhouse_posts
-    ) == 2 * len(first_migrations)
+    ) == 2 * len(expected_versions)
     assert any(
         "setval('observatory_ingest_sequence'" in statement
         for statement, _ in postgres_calls
@@ -2755,7 +2777,10 @@ def test_clickhouse_migration_retries_a_partial_0002_without_replaying_completed
     assert failed_0002 is True
     assert sum("0002_observation_ordering" in value for value in migration_calls) == 2
     assert sum("0001_observations" in value for value in migration_calls) == 1
-    assert sum("0003_legacy_ordering_ledger" in value for value in migration_calls) == 1
+    # The 0003 file contains its own guarded ledger statement and the runner
+    # appends a second guarded marker. Both are sent independently now that
+    # ClickHouse no longer accepts multiquery requests.
+    assert sum("0003_legacy_ordering_ledger" in value for value in migration_calls) == 2
 
 
 @pytest.mark.asyncio

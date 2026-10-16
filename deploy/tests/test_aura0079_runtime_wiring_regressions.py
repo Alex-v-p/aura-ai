@@ -89,10 +89,10 @@ def test_observatory_web_is_a_same_origin_bff_gateway_and_api_stays_private() ->
         ROOT / "deploy/docker/aura-observatory-web.nginx.conf",
         ROOT / "deploy/docker/observatory-web.nginx.conf",
     ]
-    configured_paths = " ".join(str(value) for value in web.get("volumes", []))
     config = next((path for path in candidate_paths if path.exists()), None)
-    assert config is not None, configured_paths
-    assert str(config.relative_to(ROOT)) in configured_paths
+    assert config is not None
+    dockerfile = (ROOT / "deploy/docker/observatory-web.Dockerfile").read_text(encoding="utf-8")
+    assert "COPY deploy/docker/observatory-web.nginx.conf /etc/nginx/nginx.conf" in dockerfile
     text = config.read_text(encoding="utf-8")
     assert "location /api/" in text
     assert "proxy_pass http://observatory-api" in text
@@ -104,14 +104,21 @@ def test_collector_uses_standard_signal_paths_and_explicit_metadata_allowlist() 
     config = yaml.safe_load(text)
     assert isinstance(config, dict)
     raw_config = cast(dict[Any, Any], config)
+    extensions = cast(dict[Any, Any], raw_config.get("extensions", {}))
     exporters = cast(dict[Any, Any], raw_config.get("exporters", {}))
     exporter_text = repr(exporters)
     assert "observatory-api" in exporter_text
     assert "/internal" in exporter_text
-    assert "Authorization: Bearer" in text
-    assert "OBSERVATORY_INGEST_CREDENTIAL" in text
+    assert "Authorization: Bearer" not in text
+    assert "OBSERVATORY_INGEST_CREDENTIAL" not in text
+    assert extensions["bearertokenauth"]["filename"] == (
+        "/run/secrets/observatory-ingest-credential"
+    )
     observatory_exporter = cast(dict[Any, Any], exporters["otlphttp/observatory"])
     assert observatory_exporter.get("encoding") == "json"
+    assert observatory_exporter["auth"]["authenticator"] == "bearertokenauth"
+    service = cast(dict[Any, Any], raw_config["service"])
+    assert "bearertokenauth" in service["extensions"]
 
     processors = cast(dict[Any, Any], raw_config.get("processors", {}))
     processor_text = repr(processors).casefold()

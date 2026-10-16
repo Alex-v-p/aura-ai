@@ -3,6 +3,58 @@
 # deploy/compose/local-http.sh.
 
 services:
+  # The disposable HTTP profile deliberately replaces every durable state
+  # bind from the normal stack with project-scoped Docker volumes.  This keeps
+  # Docker Desktop away from the host filesystem's database write paths while
+  # leaving the normal encrypted AURA_STATE_ROOT mounts unchanged.
+  aura-core-postgres:
+    volumes: !override
+      - local_http_core_postgres_data:/var/lib/postgresql/data
+
+  aura-nats:
+    volumes: !override
+      - local_http_core_nats_data:/data
+
+  aura-garage:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage
+      - local_http_core_garage_config:/run/garage-config:ro
+
+  aura-garage-config:
+    volumes: !override
+      - local_http_core_garage_config:/run/garage-config
+      - ./deploy/docker/garage.toml:/etc/garage/garage.toml.template:ro
+
+  aura-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
+  authentik-postgres:
+    volumes: !override
+      - local_http_authentik_postgres_data:/var/lib/postgresql/data
+
+  observatory-postgres:
+    volumes: !override
+      - local_http_observatory_postgres_data:/var/lib/postgresql/data
+    # The base stack's historical expression is parsed as a literal NUL by
+    # Compose. Keep the disposable overlay on the same safe escaped command
+    # used by Core and Authentik PostgreSQL.
+    healthcheck:
+      test: [CMD-SHELL, "test \"$$(tr -d '\\000' </proc/1/cmdline)\" = postgres && pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  observatory-clickhouse:
+    volumes: !override
+      - local_http_observatory_clickhouse_data:/var/lib/clickhouse
+      - local_http_observatory_clickhouse_logs:/var/log/clickhouse-server
+
+  observatory-session:
+    volumes: !override
+      - local_http_observatory_session_data:/data
+
   aura-core-api:
     environment:
       AURA_ENVIRONMENT: development
@@ -32,6 +84,9 @@ services:
       AURA_OIDC_ISSUER: http://authentik.localhost:9000/application/o/aura-web/
       AURA_AUTHENTIK_REDIRECT_URI: http://aura.localhost:4200/api/v1/auth/callback
       AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback
+    volumes: !override
+      - local_http_authentik_media:/media
+      - ./deploy/authentik/blueprints:/blueprints/custom:ro
     # Docker Desktop does not publish ports for containers attached only to an
     # internal network.  This edge network is loopback-published and belongs
     # only to Authentik Server.
@@ -60,7 +115,16 @@ services:
         export AURA_OBSERVATORY_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/observatory-oidc-client-secret)";
         export AUTHENTIK_OWNER_PASSWORD_FILE=/run/secrets/authentik-owner-password;
         case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
-        ak apply_blueprint /blueprints/custom/aura-oidc.yaml >/dev/null;
+        blueprint_attempt=1;
+        blueprint_max_attempts=30;
+        until ak apply_blueprint /blueprints/custom/aura-oidc.yaml >/dev/null 2>&1; do
+          if [ "$${blueprint_attempt}" -ge "$${blueprint_max_attempts}" ]; then
+            echo 'Authentik OIDC dependencies did not become ready within 60 seconds' >&2;
+            exit 1;
+          fi;
+          blueprint_attempt=$$((blueprint_attempt + 1));
+          sleep 2;
+        done;
         exec ak shell -c "exec(open('/bootstrap-local-owner.py', encoding='utf-8').read())"
     environment:
       AUTHENTIK_IMAGE: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}
@@ -90,3 +154,17 @@ secrets:
 
 networks:
   aura-identity-edge: {}
+
+volumes:
+  # No explicit `name` is set: Compose prefixes these names with the local
+  # project, so reset operations cannot affect another stack's state.
+  local_http_core_postgres_data: {}
+  local_http_core_nats_data: {}
+  local_http_core_garage_data: {}
+  local_http_core_garage_config: {}
+  local_http_authentik_postgres_data: {}
+  local_http_authentik_media: {}
+  local_http_observatory_postgres_data: {}
+  local_http_observatory_clickhouse_data: {}
+  local_http_observatory_clickhouse_logs: {}
+  local_http_observatory_session_data: {}

@@ -591,11 +591,7 @@ services:
   observatory-collector:
     profiles: [observatory]
     image: ${AURA_OBSERVATORY_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.138.0}
-    entrypoint: [/bin/sh, -ec]
-    command:
-      - >-
-        export OBSERVATORY_INGEST_CREDENTIAL="$$(cat /run/secrets/observatory-ingest-credential)";
-        exec /otelcol-contrib --config=/etc/otelcol-contrib/config.yaml
+    command: [--config=/etc/otelcol-contrib/config.yaml]
     secrets: [observatory-ingest-credential]
     volumes:
       - ./deploy/compose/observatory-collector.yaml:/etc/otelcol-contrib/config.yaml:ro

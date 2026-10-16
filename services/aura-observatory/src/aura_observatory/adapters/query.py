@@ -309,7 +309,7 @@ class _RetentionPersistenceAdapter:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 self._endpoint,
-                params={"database": self._database, "user": self._user},
+                params={"database": self._database},
                 auth=(self._user, self._password),
                 content=query + " FORMAT JSONEachRow",
             )
@@ -674,7 +674,7 @@ class _RetentionPersistenceAdapter:
                         previous_run_key = next_run
                         response = await client.post(
                             self._endpoint,
-                            params={"database": self._database, "user": self._user},
+                            params={"database": self._database},
                             auth=(self._user, self._password),
                             content=(
                                 "ALTER TABLE run_projections DELETE WHERE run_id IN ("
@@ -699,7 +699,7 @@ class _RetentionPersistenceAdapter:
                         previous_observation_key = next_observation
                         response = await client.post(
                             self._endpoint,
-                            params={"database": self._database, "user": self._user},
+                            params={"database": self._database},
                             auth=(self._user, self._password),
                             content=(
                                 "ALTER TABLE observations DELETE WHERE observation_id IN ("
@@ -714,14 +714,14 @@ class _RetentionPersistenceAdapter:
                 if phase == "source_deleted":
                     truncate = await client.post(
                         self._endpoint,
-                        params={"database": self._database, "user": self._user},
+                        params={"database": self._database},
                         auth=(self._user, self._password),
                         content="TRUNCATE TABLE run_projections",
                     )
                     truncate.raise_for_status()
                     rebuild = await client.post(
                         self._endpoint,
-                        params={"database": self._database, "user": self._user},
+                        params={"database": self._database},
                         auth=(self._user, self._password),
                         content=(
                             "INSERT INTO run_projections "
@@ -781,7 +781,7 @@ class _RetentionPersistenceAdapter:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 self._endpoint,
-                params={"database": self._database, "user": self._user},
+                params={"database": self._database},
                 auth=(self._user, self._password),
                 content="ALTER TABLE observations DELETE" + where + " SETTINGS mutations_sync=1",
             )
@@ -794,7 +794,7 @@ class _RetentionPersistenceAdapter:
                 projection_where = f" WHERE run_id IN ({quoted})"
                 projection = await client.post(
                     self._endpoint,
-                    params={"database": self._database, "user": self._user},
+                    params={"database": self._database},
                     auth=(self._user, self._password),
                     content=(
                         "ALTER TABLE run_projections DELETE"
@@ -839,7 +839,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 self._endpoint,
-                params={"database": self._database, "user": self._user},
+                params={"database": self._database},
                 auth=(self._user, self._password),
                 content=statement + " FORMAT JSONEachRow",
             )
@@ -1343,14 +1343,14 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         )
                     projection = await client.post(
                         self._endpoint,
-                        params={"database": self._database, "user": self._user},
+                        params={"database": self._database},
                         auth=(self._user, self._password),
                         content=projection_statement,
                     )
                     projection.raise_for_status()
                     response = await client.post(
                         self._endpoint,
-                        params={"database": self._database, "user": self._user},
+                        params={"database": self._database},
                         auth=(self._user, self._password),
                         content=(
                             "ALTER TABLE observations DELETE"
@@ -1369,7 +1369,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 if phase in {"queued", "targeted", "source_deleted", "failed"}:
                     rebuild = await client.post(
                         self._endpoint,
-                        params={"database": self._database, "user": self._user},
+                        params={"database": self._database},
                         auth=(self._user, self._password),
                         content=(
                             "INSERT INTO run_projections "

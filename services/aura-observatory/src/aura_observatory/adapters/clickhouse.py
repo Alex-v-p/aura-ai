@@ -55,7 +55,6 @@ class ClickHouseObservationStore:
                     self.endpoint,
                     params={
                         "database": self.database,
-                        "user": self.user,
                         "insert_deduplicate": "1",
                         "insert_deduplication_token": observation.observation_id,
                     },

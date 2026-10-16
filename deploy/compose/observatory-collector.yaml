@@ -28,12 +28,16 @@ processors:
           - delete_key(attributes, "events")
           - delete_key(attributes, "links")
 
+extensions:
+  bearertokenauth:
+    filename: /run/secrets/observatory-ingest-credential
+
 exporters:
   otlphttp/observatory:
     endpoint: http://observatory-api:8000/internal/v1/telemetry
     encoding: json
-    headers:
-      Authorization: Bearer ${OBSERVATORY_INGEST_CREDENTIAL}
+    auth:
+      authenticator: bearertokenauth
     retry_on_failure:
       enabled: true
       initial_interval: 1s
@@ -45,6 +49,7 @@ exporters:
       queue_size: 256
 
 service:
+  extensions: [bearertokenauth]
   pipelines:
     traces:
       receivers: [otlp]

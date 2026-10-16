@@ -32,4 +32,4 @@ FROM runtime AS worker
 CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.worker"]
 
 FROM runtime AS migrate
-CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.cli", "migrate"]
+CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.cli"]

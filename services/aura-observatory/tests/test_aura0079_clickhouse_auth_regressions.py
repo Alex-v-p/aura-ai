@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
 from aura_observatory.adapters.memory import MemoryObservationIdRegistry
+from aura_observatory.adapters.query import ProductionObservatoryStore
 from aura_observatory.composition import build_ingest_service
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.entrypoints import cli
@@ -87,6 +88,133 @@ async def test_clickhouse_insert_uses_configured_basic_auth_without_url_credenti
         assert getattr(auth, "password", None) == "clickhouse-private"
     assert "clickhouse-private" not in client_options["endpoint"]
     assert "clickhouse-private" not in repr(request.get("params", {}))
+    assert "user" not in request.get("params", {})
+
+
+@pytest.mark.asyncio
+async def test_query_adapter_uses_basic_auth_without_duplicate_user_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    class Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, endpoint: str, **kwargs: Any) -> _Response:
+            requests.append({"endpoint": endpoint, **kwargs})
+            class Response(_Response):
+                text = ""
+
+            return Response()
+
+    monkeypatch.setattr("aura_observatory.adapters.query.httpx.AsyncClient", Client)
+    store = ProductionObservatoryStore(
+        lambda: None,
+        "http://observatory-clickhouse:8123",
+        database="aura_observatory",
+        user="observatory",
+        password="clickhouse-private",
+    )
+
+    assert await store._query_rows("SELECT 1") == []  # pyright: ignore[reportPrivateUsage]
+    assert len(requests) == 1
+    request = requests[0]
+    assert request["params"] == {"database": "aura_observatory"}
+    assert request["auth"] == ("observatory", "clickhouse-private")
+
+
+def test_clickhouse_migration_splitter_preserves_quoted_and_commented_semicolons() -> None:
+    statements = cli._split_clickhouse_statements(  # pyright: ignore[reportPrivateUsage]
+        """
+        -- Header ; semicolon is part of a comment.
+        INSERT INTO observations VALUES ('one;two', 'it''s fine');
+        -- Trailing ; comment stays with the next statement boundary.
+        /* Block ; comment. */ INSERT INTO observations VALUES ('backslash\\;still');
+        """
+    )
+
+    assert len(statements) == 2
+    assert "'one;two'" in statements[0]
+    assert "'it''s fine'" in statements[0]
+    assert "Block ; comment" in statements[1]
+    assert "'backslash\\;still'" in statements[1]
+
+
+def test_clickhouse_migration_posts_each_statement_without_multiquery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+    def post(url: str, **kwargs: Any) -> Response:
+        requests.append({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(cli.httpx, "post", post)
+    settings = Settings(
+        clickhouse_url="http://observatory-clickhouse:8123",
+        clickhouse_user="observatory",
+        clickhouse_password="clickhouse-private",
+    )
+
+    cli._clickhouse_post(  # pyright: ignore[reportPrivateUsage]
+        settings,
+        "CREATE TABLE observations (id String) ENGINE = MergeTree ORDER BY id;"
+        "INSERT INTO observations VALUES ('a;b');",
+    )
+
+    assert [request["content"] for request in requests] == [
+        "CREATE TABLE observations (id String) ENGINE = MergeTree ORDER BY id",
+        "INSERT INTO observations VALUES ('a;b')",
+    ]
+    assert all(request["params"] == {"database": "aura_observatory"} for request in requests)
+    assert all("multiquery" not in request["params"] for request in requests)
+    assert all(request["auth"] == ("observatory", "clickhouse-private") for request in requests)
+
+
+def test_cli_query_results_use_sql_format_without_pseudo_http_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+
+    class Response:
+        text = "0001_observations\n"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def post(url: str, **kwargs: Any) -> Response:
+        requests.append({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(cli.httpx, "post", post)
+    settings = Settings(
+        clickhouse_url="http://observatory-clickhouse:8123",
+        clickhouse_user="observatory",
+        clickhouse_password="clickhouse-private",
+    )
+
+    assert cli._clickhouse_applied(  # pyright: ignore[reportPrivateUsage]
+        settings, "0001_observations"
+    )
+    cli._clickhouse_query(settings, "SELECT 1")  # pyright: ignore[reportPrivateUsage]
+
+    assert len(requests) == 2
+    assert all(request["params"] == {"database": "aura_observatory"} for request in requests)
+    assert all("format" not in request["params"] for request in requests)
+    assert requests[0]["content"].endswith("LIMIT 1 FORMAT TabSeparatedRaw")
+    assert requests[1]["content"] == "SELECT 1 FORMAT TabSeparatedRaw"
+
 
 
 def test_clickhouse_password_is_loaded_only_from_the_configured_secret_file(tmp_path: Path) -> None:
@@ -171,4 +299,7 @@ def test_migration_clickhouse_requests_are_authenticated_and_keep_secret_out_of_
         else:
             assert getattr(auth, "username", None) == "observatory"
             assert getattr(auth, "password", None) == "clickhouse-private"
+        assert "user" not in request.get("params", {})
+        assert "multiquery" not in request.get("params", {})
+        assert "format" not in request.get("params", {})
         assert "clickhouse-private" not in request["url"]
