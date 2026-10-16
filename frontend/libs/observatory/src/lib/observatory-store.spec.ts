@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
 import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, ownerLoginHref } from './observatory-models';
-import { datetimeLocalToUtc, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, RequestGenerationGate, resourceStateFor } from './observatory-models';
+import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseComponentDefinition, parseComponentDependencyTopology, RequestGenerationGate, resourceStateFor } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
   it('promotes a 401 rejection from any parallel resource before partial assembly', () => {
@@ -187,6 +187,31 @@ describe('observatory metadata boundaries', () => {
     expect(resourceStateFor('components', { items: [{ componentId: 'api' }] }, true)).toBe('stale');
   });
 
+  it('keeps cached component data visible while a stale catalogue has recovery copy', () => {
+    expect(componentCatalogueViewFor('stale', 1)).toBe('data');
+    expect(componentCatalogueViewFor('stale', 0)).toBe('empty');
+    expect(componentCatalogueViewFor('ready', 1)).toBe('data');
+  });
+
+  it('maps bounded dependency availability enums to readable labels', () => {
+    expect(componentAvailabilityLabel('observed')).toBe('Observed');
+    expect(componentAvailabilityLabel('unobserved')).toBe('Unobserved');
+    expect(componentAvailabilityLabel('unavailable')).toBe('Unavailable');
+    expect(componentAvailabilityLabel('unexpected')).toBe('Unavailable');
+  });
+
+  it('matches dependency topology nodes by id and exact nullable version', () => {
+    const nodes = [
+      { dependencyId: 'storage', componentVersion: '1.0.0', availability: 'observed' },
+      { dependencyId: 'storage', componentVersion: '2.0.0', availability: 'unavailable' },
+      { dependencyId: 'provider', componentVersion: null, availability: 'unobserved' },
+    ] as const;
+    expect(dependencyNodeForEdge(nodes, 'storage', '1.0.0')?.availability).toBe('observed');
+    expect(dependencyNodeForEdge(nodes, 'storage', '2.0.0')?.availability).toBe('unavailable');
+    expect(dependencyNodeForEdge(nodes, 'provider', null)?.availability).toBe('unobserved');
+    expect(dependencyNodeForEdge(nodes, 'storage', null)).toBeUndefined();
+  });
+
   it('deduplicates health reads and invalidates pre-retention completions', () => {
     const gate = new RequestGenerationGate();
     const first = gate.begin('aura.core.api');
@@ -199,6 +224,73 @@ describe('observatory metadata boundaries', () => {
     gate.finish(first!);
     expect(gate.isCurrent(afterRetention!)).toBe(true);
     gate.finish(afterRetention!);
+  });
+
+  it('invalidates superseded component detail requests after close and reset', () => {
+    const gate = new ComponentDetailRequestGate();
+    const first = gate.begin('component-a', '1.0.0');
+    expect(gate.isCurrent(first)).toBe(true);
+    const second = gate.begin('component-b', '2.0.0');
+    expect(gate.isCurrent(first)).toBe(false);
+    expect(gate.isCurrent(second)).toBe(true);
+    gate.invalidate();
+    expect(gate.isCurrent(second)).toBe(false);
+    const afterReset = gate.begin('component-a', '1.0.0');
+    expect(gate.isCurrent(afterReset)).toBe(true);
+  });
+
+  it('rejects malformed component definitions without exposing arbitrary fields', () => {
+    const definition = { componentId: 'component', componentVersion: '1.0.0', owner: null, category: 'api', inputSchemaId: 'in', outputSchemaId: 'out', measurements: ['duration'], evaluators: [] };
+    expect(parseComponentDefinition(definition)).toBeNull();
+    expect(parseComponentDefinition({ ...definition, owner: 'observatory', measurements: undefined })).toBeNull();
+
+    const validDefinition = { ...definition, owner: 'observatory', dependencies: [] };
+    const malformedDefinitions: unknown[] = [
+      { ...validDefinition, measurements: ['duration', { name: 'private' }] },
+      { ...validDefinition, evaluators: 'not-an-array' },
+      { ...validDefinition, dependencies: [{ dependencyId: 'dependency', kind: 'unexpected', requiredVersion: null }] },
+      { ...validDefinition, dependencies: [{ dependencyId: 'dependency', kind: 'component', requiredVersion: ['1.0.0'] }] },
+    ];
+    for (const malformed of malformedDefinitions) expect(parseComponentDefinition(malformed)).toBeNull();
+  });
+
+  it('rejects malformed and unbounded dependency topology responses', () => {
+    const topology = { rootComponentId: 'component', rootComponentVersion: '1.0.0', partial: false, snapshotAt: '2026-10-16T00:00:00Z', directDependencyIds: [], reverseDependencyIds: [], nodes: [], edges: [] };
+    expect(parseComponentDependencyTopology({ ...topology, nodes: Array.from({ length: 101 }, (_, index) => ({ dependencyId: `node-${index}`, kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: [], availability: 'unobserved', health: null, partialHealth: false })) })).toBeNull();
+    expect(parseComponentDependencyTopology({ ...topology, directDependencyIds: [null] })).toBeNull();
+
+    const validHealth = { sampleCount: 2, latencyP50Ms: 10, latencyP95Ms: 20, errorRate: 0.5, outcomes: { succeeded: 1, failed: 1, cancelled: 0, unknown: 0 } };
+    const validNode = { dependencyId: 'dependency', kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: ['1.0.0'], availability: 'observed', health: validHealth, partialHealth: false };
+    const validEdge = { sourceId: 'component', sourceVersion: '1.0.0', targetId: 'dependency', targetVersion: '1.0.0', targetKind: 'component', resolution: 'resolved' };
+    const validTopology = { ...topology, directDependencyIds: ['dependency'], nodes: [validNode], edges: [validEdge] };
+    const malformedTopologies: unknown[] = [
+      { ...validTopology, nodes: [{ ...validNode, health: 'unavailable' }] },
+      { ...validTopology, nodes: [{ ...validNode, health: { ...validHealth, outcomes: [] } }] },
+      { ...validTopology, nodes: [{ ...validNode, health: { ...validHealth, sampleCount: '2' } }] },
+      { ...validTopology, nodes: [{ ...validNode, definitionState: 'declared-ish' }] },
+      { ...validTopology, nodes: [{ ...validNode, deployedVersions: '1.0.0' }] },
+      { ...validTopology, edges: [{ ...validEdge, resolution: 'unknown' }] },
+      { ...validTopology, edges: [{ ...validEdge, targetKind: ['component'] }] },
+    ];
+    for (const malformed of malformedTopologies) expect(parseComponentDependencyTopology(malformed)).toBeNull();
+  });
+
+  it('cancels a pending live refresh without starting a trailing request', async () => {
+    const coordinator = new LiveRefreshCoordinator();
+    let runs = 0;
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => { release = resolve; });
+    const refresh = async (): Promise<void> => { runs += 1; await first; };
+
+    coordinator.request(refresh);
+    coordinator.request(refresh);
+    expect(coordinator.hasPending).toBe(true);
+    coordinator.cancel();
+    expect(coordinator.hasPending).toBe(false);
+    release();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(runs).toBe(1);
+    expect(coordinator.isRunning).toBe(false);
   });
 
   it('keeps an empty health history empty while the live stream is disconnected', () => {

@@ -10,11 +10,12 @@ from __future__ import annotations
 import base64
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
+from aura_observatory.catalogue import manifest_hash
 from aura_observatory.metrics import (
     HEALTH_HISTORY_LIMIT,
     MALFORMED_REASONS,
@@ -32,6 +33,81 @@ class AsyncConnection(Protocol):
     async def execute(self, query: str, params: tuple[Any, ...] = ()) -> Any: ...
 
 
+def _definition_statements(definition: Mapping[str, object]) -> list[tuple[str, tuple[Any, ...]]]:
+    """Build the service-owned SQL for one normalized manifest definition."""
+
+    component_id = str(definition["componentId"])
+    version = str(definition["componentVersion"])
+    dependencies = definition.get("dependencies", [])
+    dependency_rows = (
+        cast(list[Mapping[str, object]], dependencies)
+        if isinstance(dependencies, list)
+        else []
+    )
+    statements: list[tuple[str, tuple[Any, ...]]] = [
+        (
+            """INSERT INTO observatory_component_definitions(
+            component_id, component_version, owner, category,
+            input_schema_id, output_schema_id, measurements, evaluators,
+            manifest_hash, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (component_id, component_version) DO UPDATE SET
+            owner = EXCLUDED.owner, category = EXCLUDED.category,
+            input_schema_id = EXCLUDED.input_schema_id,
+            output_schema_id = EXCLUDED.output_schema_id,
+            measurements = EXCLUDED.measurements,
+            evaluators = EXCLUDED.evaluators,
+            manifest_hash = EXCLUDED.manifest_hash,
+            updated_at = CURRENT_TIMESTAMP""",
+            (
+                component_id, version, str(definition["owner"]), str(definition["category"]),
+                str(definition["inputSchemaId"]), str(definition["outputSchemaId"]),
+                list(cast(list[object], definition.get("measurements", []))),
+                list(cast(list[object], definition.get("evaluators", []))),
+                manifest_hash(definition),
+            ),
+        ),
+        (
+            "DELETE FROM observatory_component_dependencies "
+            "WHERE source_component_id = %s AND source_component_version = %s",
+            (component_id, version),
+        ),
+    ]
+    statements.extend(
+        (
+            """INSERT INTO observatory_component_dependencies(
+            source_component_id, source_component_version, dependency_id,
+            dependency_kind, required_version) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING""",
+            (
+                component_id,
+                version,
+                str(dependency["dependencyId"]),
+                str(dependency["kind"]),
+                dependency.get("requiredVersion"),
+            ),
+        )
+        for dependency in dependency_rows
+    )
+    return statements
+
+
+class PostgresSyncCatalogueAdapter:
+    """Synchronous migration-time adapter for the same catalogue SQL."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def sync_component_definitions(self, definitions: Sequence[Mapping[str, object]]) -> int:
+        for definition in definitions:
+            statement, params = _definition_statements(definition)[0]
+            self._connection.execute(statement, params)
+        for definition in definitions:
+            for statement, params in _definition_statements(definition)[1:]:
+                self._connection.execute(statement, params)
+        return len(definitions)
+
+
 class PostgresCatalog:
     def __init__(self, connection_factory: Any) -> None:
         self._connection_factory = connection_factory
@@ -46,6 +122,93 @@ class PostgresCatalog:
                 """,
                 (component_id, version),
             )
+
+    async def sync_component_definitions(
+        self, definitions: Sequence[Mapping[str, object]]
+    ) -> int:
+        """Atomically upsert the bounded, already-validated manifest set.
+
+        The caller owns parsing and validation.  This adapter only accepts the
+        normalized metadata shape produced by the service-owned manifest
+        loader; it never reads a Core module or accepts arbitrary definition
+        text.  Existing definitions are retained when a later sync omits them
+        so manual retention cannot remove catalogue history.
+        """
+
+        async with self._connection_factory() as connection:
+            for definition in definitions:
+                statement, params = _definition_statements(definition)[0]
+                await connection.execute(statement, params)
+            for definition in definitions:
+                for statement, params in _definition_statements(definition)[1:]:
+                    await connection.execute(statement, params)
+        return len(definitions)
+
+    async def component_definitions(
+        self, *, definition_state: str | None = None
+    ) -> list[dict[str, object]]:
+        """Return definitions in stable identifier/version order."""
+
+        del definition_state  # state is applied after merging observations.
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT component_id, component_version, owner, category,
+                input_schema_id, output_schema_id, measurements, evaluators
+                FROM observatory_component_definitions
+                ORDER BY component_id, component_version LIMIT 2000"""
+            )
+            rows = await result.fetchall()
+        return [_definition_from_row(row) for row in rows]
+
+    async def component_definition(
+        self, component_id: str, component_version: str
+    ) -> dict[str, object] | None:
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT component_id, component_version, owner, category,
+                input_schema_id, output_schema_id, measurements, evaluators
+                FROM observatory_component_definitions
+                WHERE component_id = %s AND component_version = %s LIMIT 1""",
+                (component_id, component_version),
+            )
+            row = await result.fetchone()
+        return _definition_from_row(row) if row is not None else None
+
+    async def component_dependencies(
+        self, component_id: str, component_version: str
+    ) -> list[dict[str, object]]:
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT dependency_id, dependency_kind, required_version
+                FROM observatory_component_dependencies
+                WHERE source_component_id = %s AND source_component_version = %s
+                ORDER BY dependency_kind, dependency_id, required_version NULLS FIRST
+                LIMIT 64""",
+                (component_id, component_version),
+            )
+            rows = await result.fetchall()
+        return [
+            {
+                "dependencyId": str(row[0]),
+                "kind": str(row[1]),
+                "requiredVersion": str(row[2]) if row[2] is not None else None,
+            }
+            for row in rows
+        ]
+
+    async def reverse_component_dependencies(
+        self, dependency_id: str
+    ) -> list[tuple[str, str]]:
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT source_component_id, source_component_version
+                FROM observatory_component_dependencies
+                WHERE dependency_id = %s AND dependency_kind = 'component'
+                ORDER BY source_component_id, source_component_version LIMIT 200""",
+                (dependency_id,),
+            )
+            rows = await result.fetchall()
+        return [(str(row[0]), str(row[1])) for row in rows]
 
     async def record_deployment(
         self, deployment_id: str, git_commit: str, environment: str, host_id: str
@@ -132,7 +295,6 @@ class PostgresCatalog:
             )
             row = await result.fetchone()
         return None if row is None else row[0]
-
     async def record_rejection(self, reason: str, amount: int = 1) -> None:
         if amount < 1:
             return
@@ -771,6 +933,21 @@ def _int_value(value: object) -> int:
 
 health_snapshot_from_row = _health_snapshot_from_row
 health_snapshot_from_history_row = _health_snapshot_from_history_row
+
+
+def _definition_from_row(row: Any) -> dict[str, object]:
+    """Hydrate only the closed public definition shape."""
+
+    return {
+        "componentId": str(row[0]),
+        "componentVersion": str(row[1]),
+        "owner": str(row[2]),
+        "category": str(row[3]),
+        "inputSchemaId": str(row[4]),
+        "outputSchemaId": str(row[5]),
+        "measurements": sorted(str(value) for value in cast(list[Any], row[6] or [])),
+        "evaluators": sorted(str(value) for value in cast(list[Any], row[7] or [])),
+    }
 
 
 class PostgresObservationIdRegistry:

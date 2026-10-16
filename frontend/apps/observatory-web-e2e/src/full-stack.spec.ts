@@ -570,12 +570,11 @@ test.describe('Observatory real Core-to-browser acceptance', () => {
     if (!core) return;
     await signIn(page, core, '/api/v1/auth/session', 'core');
     const outagePrompt = `${prompt}_CORE_STILL_USABLE`;
-    const composer = page.getByRole('textbox', { name: /message aura|message|prompt/i }).first();
-    await expect(composer).toBeVisible();
-    await composer.fill(outagePrompt);
-    await page.getByRole('button', { name: /^send$/i }).click();
-    const latestUserMessage = page.getByRole('article', { name: 'Your message' }).last();
-    await expect(latestUserMessage.getByText(outagePrompt, { exact: true })).toBeVisible();
-    await expect(page.getByRole('article', { name: 'Aura response' }).last()).toBeVisible({ timeout: 90_000 });
+    // Reuse the normal Core path so this outage assertion waits for
+    // asynchronous conversation/model/agent readiness, verifies that the
+    // configured selectable model is present, and still proves a completed
+    // response after Observatory services have stopped.
+    const accepted = await createCoreRun(page, core, outagePrompt);
+    await waitForCoreRun(page, core, accepted);
   });
 });

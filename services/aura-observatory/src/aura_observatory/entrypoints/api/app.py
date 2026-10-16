@@ -20,6 +20,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 
 from aura_observatory.adapters.memory import MemoryObservatoryStore
+from aura_observatory.adapters.query import StorageUnavailableError
 from aura_observatory.auth import ObservatoryAuth, sanitize_return_to
 from aura_observatory.composition import build_auth, build_health_projector, build_ingest_service
 from aura_observatory.ingest import IngestPayloadError, InvalidCredential, TelemetryIngestService
@@ -182,6 +183,22 @@ def create_app(
                 },
             )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(StorageUnavailableError)
+    async def storage_unavailable_response(
+        request: Request, _exc: StorageUnavailableError
+    ) -> JSONResponse:
+        if request.url.path.startswith("/api/v1/"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "service_unavailable",
+                    "message": "service unavailable",
+                    "retryable": True,
+                    "traceId": uuid4().hex,
+                },
+            )
+        return JSONResponse(status_code=503, content={"detail": "service unavailable"})
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(
@@ -514,31 +531,100 @@ def create_app(
         return JSONResponse(_trace_payload(result))
 
     @app.get("/api/v1/components")
-    async def components(request: Request) -> JSONResponse:
+    async def components(
+        request: Request,
+        cursor: str | None = None,
+        page_size: str | None = Query(default=None, alias="page_size"),
+        definition_state: str | None = Query(default=None, alias="definition_state"),
+    ) -> JSONResponse:
         await owner_session(request)
-        values = await app.state.query.components()
+        try:
+            _validate_cursor(cursor)
+            if definition_state is not None and definition_state not in {
+                "declared",
+                "observed_only",
+                "missing",
+            }:
+                raise ValueError("invalid definition state")
+            collection = await app.state.query.component_collection(
+                definition_state=definition_state,
+                cursor=cursor,
+                limit=_parse_limit(page_size),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        values = cast(list[dict[str, Any]], collection.get("items", []))
         health = {
             str(value["componentId"]): await app.state.query.component_health(
                 str(value["componentId"])
             )
             for value in values
         }
-        return JSONResponse(_component_collection_payload(values, health))
+        payload = _component_collection_payload(values, health)
+        payload["nextCursor"] = collection.get("nextCursor")
+        payload["snapshotAt"] = collection.get("snapshotAt") or _now_iso()
+        return JSONResponse(payload)
+
+    @app.get("/api/v1/components/{component_id:path}/definitions/{component_version}")
+    async def component_definition(
+        component_id: str, component_version: str, request: Request
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            _validate_component_id(component_id)
+            _validate_safe_label(component_version, "component version")
+            definition = await app.state.query.component_definition(component_id, component_version)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        if definition is None:
+            raise HTTPException(status_code=404, detail="component definition not found")
+        return JSONResponse(definition)
+
+    @app.get("/api/v1/components/{component_id:path}/definitions/{component_version}/dependencies")
+    async def component_dependencies(
+        component_id: str,
+        component_version: str,
+        request: Request,
+        depth: str | None = None,
+        max_nodes: str | None = Query(default=None, alias="max_nodes"),
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            _validate_component_id(component_id)
+            _validate_safe_label(component_version, "component version")
+            requested_depth = _parse_bounded_int(depth, default=1, minimum=1, maximum=4)
+            requested_nodes = _parse_bounded_int(max_nodes, default=100, minimum=1, maximum=200)
+            topology = await app.state.query.component_dependencies(
+                component_id,
+                component_version,
+                depth=requested_depth,
+                max_nodes=requested_nodes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        if topology is None:
+            raise HTTPException(status_code=404, detail="component definition not found")
+        return JSONResponse(topology)
 
     @app.get("/api/v1/components/{component_id:path}/health")
     async def component_health(
         component_id: str,
         request: Request,
+        component_version: str | None = Query(default=None, alias="component_version"),
         from_time: str | None = Query(default=None, alias="from"),
         to_time: str | None = Query(default=None, alias="to"),
+        point_limit: str | None = Query(default=None, alias="point_limit"),
     ) -> JSONResponse:
         await owner_session(request)
         try:
             _validate_component_id(component_id)
+            _validate_safe_label(component_version, "component version")
             health = await app.state.query.component_health(
                 component_id,
                 from_time=_parse_time(from_time),
                 to_time=_parse_time(to_time),
+                component_version=component_version,
+                point_limit=_parse_bounded_int(point_limit, default=200, minimum=1, maximum=1000),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid request") from exc
@@ -905,6 +991,31 @@ def _component_collection_payload(
         grouped.setdefault(str(value["componentId"]), []).append(value)
     items: list[dict[str, Any]] = []
     for component_id, versions in sorted(grouped.items()):
+        if any("versions" in item for item in versions):
+            value = next(item for item in versions if "versions" in item)
+            health_value = health.get(component_id)
+            items.append(
+                {
+                    "componentId": component_id,
+                    "versions": sorted(
+                        {str(version) for version in value.get("versions", [])}
+                    )[:64],
+                    "firstSeenAt": str(value.get("firstSeenAt") or _now_iso()),
+                    "lastSeenAt": str(
+                        value.get("lastSeenAt") or value.get("firstSeenAt") or _now_iso()
+                    ),
+                    "health": (
+                        health_value.get("summary")
+                        if health_value is not None
+                        else _health_summary(0, 0, [])
+                    ),
+                    "definitionState": str(value.get("definitionState", "observed_only")),
+                    "definitionVersions": sorted(
+                        {str(version) for version in value.get("definitionVersions", [])}
+                    )[:64],
+                }
+            )
+            continue
         observations = sum(int(item.get("observations", 0)) for item in versions)
         errors = sum(int(item.get("errorCount", 0)) for item in versions)
         latencies = [
@@ -920,10 +1031,24 @@ def _component_collection_payload(
         items.append(
             {
                 "componentId": component_id,
-                "versions": sorted(str(item["version"]) for item in versions),
+                "versions": sorted(
+                    str(item["version"])
+                    for item in versions
+                    if bool(item.get("observed", "observations" in item))
+                ),
                 "firstSeenAt": min(str(item["firstSeenAt"]) for item in versions),
                 "lastSeenAt": max(str(item["lastSeenAt"]) for item in versions),
                 "health": summary,
+                "definitionState": (
+                    "declared"
+                    if any(item.get("definitionState") == "declared" for item in versions)
+                    else "observed_only"
+                ),
+                "definitionVersions": sorted(
+                    str(item["version"])
+                    for item in versions
+                    if item.get("definitionState") == "declared"
+                ),
             }
         )
     return {"items": items, "snapshotAt": _now_iso()}
@@ -1039,6 +1164,20 @@ def _parse_limit(value: str | None) -> int:
     parsed = int(value)
     if not 1 <= parsed <= 200:
         raise ValueError("page size must be between 1 and 200")
+    return parsed
+
+
+def _parse_bounded_int(
+    value: str | None, *, default: int, minimum: int, maximum: int
+) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid integer") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError("integer is outside the allowed bound")
     return parsed
 
 

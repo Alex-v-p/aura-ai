@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, RequestGenerationGate, resourceStateFor, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { ComponentDetailRequestGate, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseComponentDefinition, parseComponentDependencyTopology, RequestGenerationGate, resourceStateFor, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -21,6 +21,7 @@ export class ObservatoryStore {
   readonly componentHealthById = signal<Record<string, ComponentHealth>>({});
   readonly componentHealthErrors = signal<Record<string, string>>({});
   readonly componentHealthLoading = signal<Record<string, boolean>>({});
+  readonly selectedComponent = signal<ComponentCatalogueSelection | null>(null);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
@@ -33,6 +34,10 @@ export class ObservatoryStore {
   private readonly healthHistoryRefresh = new LiveRefreshCoordinator();
   private readonly catalogRefresh = new LiveRefreshCoordinator();
   private catalogLoadSequence = 0;
+  /** Last successful catalogue pages survive a later refresh failure. */
+  private lastKnownComponents: ObservatorySnapshot['components'] = null;
+  private lastKnownDeployments: ObservatorySnapshot['deployments'] = null;
+  private readonly componentDetailRequests = new ComponentDetailRequestGate();
   private healthHistorySequence = 0;
 
   async start(initialRecoveryState: ObservatoryAuthState | null = null): Promise<void> {
@@ -138,6 +143,35 @@ export class ObservatoryStore {
     this.componentHealthLoading.update((value) => ({ ...value, [componentId]: true }));
     try { const health = await this.gateway.execute('getComponentHealth', { ...blankInput('getComponentHealth'), path: { component_id: componentId }, query: {} }); if (generation !== this.authGeneration || this.sessionRequired() || !this.componentHealthRequests.isCurrent(requestToken)) return null; this.componentHealthById.update((value) => ({ ...value, [componentId]: health })); return health; } catch (error) { if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.'); else if (generation === this.authGeneration && !this.sessionRequired() && this.componentHealthRequests.isCurrent(requestToken)) this.componentHealthErrors.update((value) => ({ ...value, [componentId]: error instanceof Error ? error.message : 'Component health is unavailable.' })); return null; } finally { const wasCurrent = this.componentHealthRequests.isCurrent(requestToken); this.componentHealthRequests.finish(requestToken); if (wasCurrent) this.componentHealthLoading.update((value) => { const next = { ...value }; delete next[componentId]; return next; }); }
   }
+  async openComponent(componentId: string, componentVersion: string): Promise<void> {
+    const request = this.componentDetailRequests.begin(componentId, componentVersion);
+    const previous = this.selectedComponent();
+    const canPreserve = previous?.componentId === componentId && previous.componentVersion === componentVersion;
+    const selection: ComponentCatalogueSelection = { componentId, componentVersion, definition: canPreserve ? previous.definition : null, topology: canPreserve ? previous.topology : null, state: canPreserve ? 'partial' : 'loading', error: canPreserve ? 'Refreshing component details…' : null };
+    this.selectedComponent.set(selection);
+    const generation = this.authGeneration;
+    try {
+      await this.gateway.ensureSession();
+      const results = await Promise.allSettled([
+        this.gateway.execute('getComponentDefinition', { ...blankInput('getComponentDefinition'), path: { component_id: componentId, component_version: componentVersion }, query: {} }),
+        this.gateway.execute('getComponentDependencies', { ...blankInput('getComponentDependencies'), path: { component_id: componentId, component_version: componentVersion }, query: { depth: 2, max_nodes: 100 } }),
+      ]);
+      if (generation !== this.authGeneration || this.sessionRequired() || !this.componentDetailRequests.isCurrent(request)) return;
+      if (hasSessionRequiredRejection(results, (reason) => reason instanceof ObservatorySessionRequiredError)) throw new ObservatorySessionRequiredError();
+      const parsedDefinition = results[0].status === 'fulfilled' ? parseComponentDefinition(results[0].value) : null;
+      const parsedTopology = results[1].status === 'fulfilled' ? parseComponentDependencyTopology(results[1].value) : null;
+      const definition = parsedDefinition ?? (canPreserve ? previous.definition : null);
+      const topology = parsedTopology ?? (canPreserve ? previous.topology : null);
+      const failed = results.flatMap((result, index) => result.status === 'rejected' || (index === 0 ? parsedDefinition === null : parsedTopology === null) ? [index === 0 ? 'definition' : 'dependencies'] : []);
+      this.selectedComponent.set({ ...selection, definition, topology, state: failed.length === 2 ? 'error' : failed.length ? 'partial' : 'ready', error: failed.length ? `Some component details are unavailable: ${failed.join(', ')}.` : null });
+    } catch (error) {
+      if (!this.componentDetailRequests.isCurrent(request)) return;
+      if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
+      if (generation !== this.authGeneration || this.sessionRequired() || !this.componentDetailRequests.isCurrent(request)) return;
+      this.selectedComponent.set({ ...selection, state: 'error', error: error instanceof Error ? error.message : 'Component details are unavailable.' });
+    }
+  }
+  closeComponent(): void { this.componentDetailRequests.invalidate(); this.selectedComponent.set(null); }
   async createRetention(request: RetentionRequest): Promise<void> {
     const generation = this.authGeneration;
     this.retention.set({ action: null, running: true, error: null });
@@ -243,7 +277,7 @@ export class ObservatoryStore {
         ...value,
         overview,
         runs,
-        state: allResourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0),
+        state: this.liveDisconnected() ? 'disconnected' : allResourceErrors.length ? 'stale' : this.stateFor(overview, runs?.items.length ?? 0),
         lastUpdatedAt: overview.observedAt,
         lastEventId: latestEventId,
         error: allResourceErrors.length ? `Some Observatory data is unavailable: ${allResourceErrors.join(', ')}.` : null,
@@ -274,8 +308,10 @@ export class ObservatoryStore {
       if (hasSessionRequiredRejection(results, (reason) => reason instanceof ObservatorySessionRequiredError)) throw new ObservatorySessionRequiredError();
       const resourceErrors = results.flatMap((result, index) => result.status === 'rejected' ? [index === 0 ? 'components' : 'deployments'] : []);
       const current = this.snapshot();
-      const components = results[0].status === 'fulfilled' ? results[0].value : current.components;
-      const deployments = results[1].status === 'fulfilled' ? results[1].value : current.deployments;
+      if (results[0].status === 'fulfilled') this.lastKnownComponents = results[0].value;
+      if (results[1].status === 'fulfilled') this.lastKnownDeployments = results[1].value;
+      const components = results[0].status === 'fulfilled' ? results[0].value : current.components ?? this.lastKnownComponents;
+      const deployments = results[1].status === 'fulfilled' ? results[1].value : current.deployments ?? this.lastKnownDeployments;
       this.resourceStates.update((states) => ({
         ...states,
         components: resourceStateFor('components', components, results[0].status === 'rejected'),
@@ -287,7 +323,7 @@ export class ObservatoryStore {
         ...value,
         components,
         deployments,
-        state: allResourceErrors.length ? 'stale' : value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : value.state,
+        state: this.liveDisconnected() ? 'disconnected' : allResourceErrors.length ? 'stale' : value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : value.state,
         error: allResourceErrors.length ? `Some Observatory data is unavailable: ${allResourceErrors.join(', ')}.` : null,
         partial: allResourceErrors.length > 0,
         resourceErrors: allResourceErrors,
@@ -299,7 +335,7 @@ export class ObservatoryStore {
         this.resourceStates.update((states) => ({ ...states, components: 'error', deployments: 'error' }));
         this.snapshot.update((value) => {
           const resourceErrors = [...value.resourceErrors.filter((resource) => resource === 'overview' || resource === 'runs'), 'components', 'deployments'];
-          return { ...value, state: value.overview ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Observatory catalog is unavailable.', partial: true, resourceErrors };
+          return { ...value, components: value.components ?? this.lastKnownComponents, deployments: value.deployments ?? this.lastKnownDeployments, state: value.overview ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Observatory catalog is unavailable.', partial: true, resourceErrors };
         });
       }
     }
@@ -338,6 +374,10 @@ export class ObservatoryStore {
     this.componentHealthErrors.set({});
     this.componentHealthLoading.set({});
     this.componentHealthRequests.invalidate();
+    this.componentDetailRequests.invalidate();
+    this.lastKnownComponents = null;
+    this.lastKnownDeployments = null;
+    this.selectedComponent.set(null);
     this.retention.set({ action: null, running: false, error: null });
   }
 
@@ -352,6 +392,10 @@ export class ObservatoryStore {
     this.componentHealthErrors.set({});
     this.componentHealthLoading.set({});
     this.componentHealthRequests.invalidate();
+    this.componentDetailRequests.invalidate();
+    this.lastKnownComponents = null;
+    this.lastKnownDeployments = null;
+    this.selectedComponent.set(null);
     await this.load();
   }
   private pollRetention(actionId: string, generation: number): void {

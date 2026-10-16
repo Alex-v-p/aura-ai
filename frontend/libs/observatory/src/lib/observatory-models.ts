@@ -1,5 +1,7 @@
 import type {
   ComponentCollection,
+  ComponentDefinition,
+  ComponentDependencyTopology,
   ComponentHealth,
   CreateRetentionActionRequest,
   DeploymentCollection,
@@ -162,6 +164,19 @@ export class RequestGenerationGate {
   isCurrent(token: RequestToken): boolean { return token.generation === this.generation && this.active.get(token.key) === token.generation; }
   finish(token: RequestToken): void { if (this.active.get(token.key) === token.generation) this.active.delete(token.key); }
 }
+export type ComponentDetailRequestToken = { readonly componentId: string; readonly componentVersion: string; readonly generation: number };
+/** Only the latest selected component detail request may publish or focus. */
+export class ComponentDetailRequestGate {
+  private generation = 0;
+  private current: ComponentDetailRequestToken | null = null;
+  begin(componentId: string, componentVersion: string): ComponentDetailRequestToken {
+    const token = { componentId, componentVersion, generation: ++this.generation };
+    this.current = token;
+    return token;
+  }
+  invalidate(): void { this.generation += 1; this.current = null; }
+  isCurrent(token: ComponentDetailRequestToken): boolean { return this.current?.generation === token.generation && this.current.componentId === token.componentId && this.current.componentVersion === token.componentVersion; }
+}
 export type RunFilters = { status?: RunPage['items'][number]['status']; component?: string; model?: string; deployment?: string; from?: string; to?: string };
 export type ObservatorySnapshot = {
   overview: Overview | null;
@@ -175,6 +190,54 @@ export type ObservatorySnapshot = {
   partial: boolean;
   resourceErrors: ReadonlyArray<string>;
 };
+
+export type ComponentCatalogueSelection = {
+  readonly componentId: string;
+  readonly componentVersion: string;
+  readonly definition: ComponentDefinition | null;
+  readonly topology: ComponentDependencyTopology | null;
+  readonly state: 'idle' | 'loading' | 'ready' | 'partial' | 'error';
+  readonly error: string | null;
+};
+
+const MAX_DEFINITION_TEXT = 256;
+const MAX_DEFINITION_ITEMS = 128;
+const MAX_TOPOLOGY_NODES = 100;
+const MAX_TOPOLOGY_EDGES = 200;
+function record(value: unknown): Record<string, unknown> | null { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+function safeText(value: unknown): value is string { return typeof value === 'string' && value.length > 0 && value.length <= MAX_DEFINITION_TEXT && !Array.from(value).some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; }); }
+function boundedTextList(value: unknown): value is ReadonlyArray<string> { return Array.isArray(value) && value.length <= MAX_DEFINITION_ITEMS && value.every((item) => safeText(item)); }
+function boundedNullableText(value: unknown): value is string | null { return value === null || safeText(value); }
+function validHealth(value: unknown): value is ComponentHealth {
+  const item = record(value); const outcomes = record(item?.['outcomes']);
+  return Boolean(item && outcomes && Number.isSafeInteger(item['sampleCount']) && (item['sampleCount'] as number) >= 0 && (item['latencyP50Ms'] === null || (typeof item['latencyP50Ms'] === 'number' && Number.isFinite(item['latencyP50Ms']) && item['latencyP50Ms'] >= 0)) && (item['latencyP95Ms'] === null || (typeof item['latencyP95Ms'] === 'number' && Number.isFinite(item['latencyP95Ms']) && item['latencyP95Ms'] >= 0)) && (item['errorRate'] === null || (typeof item['errorRate'] === 'number' && Number.isFinite(item['errorRate']) && item['errorRate'] >= 0 && item['errorRate'] <= 1)) && ['succeeded', 'failed', 'cancelled', 'unknown'].every((key) => Number.isSafeInteger(outcomes[key]) && (outcomes[key] as number) >= 0));
+}
+/** Validate closed generated responses before metadata reaches the template. */
+export function parseComponentDefinition(value: unknown): ComponentDefinition | null {
+  const item = record(value); const dependencies = item?.['dependencies'];
+  if (!item || !safeText(item['componentId']) || !safeText(item['componentVersion']) || !safeText(item['owner']) || !safeText(item['category']) || !safeText(item['inputSchemaId']) || !safeText(item['outputSchemaId']) || !boundedTextList(item['measurements']) || !boundedTextList(item['evaluators']) || !Array.isArray(dependencies) || dependencies.length > MAX_DEFINITION_ITEMS) return null;
+  if (!dependencies.every((dependency) => { const edge = record(dependency); return Boolean(edge && safeText(edge['dependencyId']) && (edge['kind'] === 'component' || edge['kind'] === 'provider') && boundedNullableText(edge['requiredVersion'])); })) return null;
+  return item as unknown as ComponentDefinition;
+}
+export function parseComponentDependencyTopology(value: unknown): ComponentDependencyTopology | null {
+  const item = record(value); const nodes = item?.['nodes']; const edges = item?.['edges'];
+  if (!item || !safeText(item['rootComponentId']) || !safeText(item['rootComponentVersion']) || !Array.isArray(nodes) || nodes.length > MAX_TOPOLOGY_NODES || !Array.isArray(edges) || edges.length > MAX_TOPOLOGY_EDGES || !boundedTextList(item['directDependencyIds']) || !boundedTextList(item['reverseDependencyIds']) || typeof item['partial'] !== 'boolean' || !safeText(item['snapshotAt'])) return null;
+  if (!nodes.every((node) => { const entry = record(node); return Boolean(entry && safeText(entry['dependencyId']) && (entry['kind'] === 'component' || entry['kind'] === 'provider') && boundedNullableText(entry['componentVersion']) && (entry['definitionState'] === 'declared' || entry['definitionState'] === 'observed_only' || entry['definitionState'] === 'missing') && boundedTextList(entry['deployedVersions']) && (entry['availability'] === 'observed' || entry['availability'] === 'unobserved' || entry['availability'] === 'unavailable') && (entry['health'] === null || validHealth(entry['health'])) && typeof entry['partialHealth'] === 'boolean'); })) return null;
+  if (!edges.every((edge) => { const entry = record(edge); return Boolean(entry && safeText(entry['sourceId']) && safeText(entry['sourceVersion']) && safeText(entry['targetId']) && boundedNullableText(entry['targetVersion']) && (entry['targetKind'] === 'component' || entry['targetKind'] === 'provider') && (entry['resolution'] === 'resolved' || entry['resolution'] === 'missing_definition' || entry['resolution'] === 'version_unavailable')); })) return null;
+  return item as unknown as ComponentDependencyTopology;
+}
+export function componentAvailabilityLabel(availability: string): string {
+  switch (availability) {
+    case 'observed': return 'Observed';
+    case 'unobserved': return 'Unobserved';
+    case 'unavailable': return 'Unavailable';
+    default: return 'Unavailable';
+  }
+}
+export type DependencyNodeIdentity = { readonly dependencyId: string; readonly componentVersion: string | null };
+export function dependencyNodeForEdge<T extends DependencyNodeIdentity>(nodes: ReadonlyArray<T>, dependencyId: string, componentVersion: string | null): T | undefined {
+  return nodes.find((node) => node.dependencyId === dependencyId && node.componentVersion === componentVersion);
+}
 
 /**
  * The health history surface is deliberately separate from the observation
@@ -211,6 +274,15 @@ export function resourceStateFor(
   }
   return 'ready';
 }
+export type ComponentCatalogueView = 'loading' | 'error' | 'empty' | 'data';
+/** A stale catalogue keeps its last successful cards visible; without cards it falls back to empty recovery copy. */
+export function componentCatalogueViewFor(state: ObservatoryResourceState, itemCount: number): ComponentCatalogueView {
+  if (state === 'loading') return 'loading';
+  if (state === 'error') return 'error';
+  if (state === 'stale' && itemCount > 0) return 'data';
+  if (state === 'ready' && itemCount > 0) return 'data';
+  return 'empty';
+}
 export type RetentionRequest = CreateRetentionActionRequest & { confirmation: 'delete-before' | 'purge-all' };
 export type RetentionState = { action: RetentionAction | null; running: boolean; error: string | null };
 export type SelectedRun = { detail: RunDetail | null; trace: TraceDetail | null };
@@ -232,4 +304,4 @@ export function normalizeRunFilters(filters: RunFilters): RunFilters {
   const to = filters.to ? datetimeLocalToUtc(filters.to) : undefined;
   return { status: filters.status, component: filters.component, model: filters.model, deployment: filters.deployment, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
-export type { ComponentCollection, ComponentHealth, DeploymentCollection, HealthHistoryPage, LiveEvent, Overview, RetentionAction, RunDetail, RunPage, SelfMonitoringSnapshot, TraceDetail };
+export type { ComponentCollection, ComponentDefinition, ComponentDependencyTopology, ComponentHealth, DeploymentCollection, HealthHistoryPage, LiveEvent, Overview, RetentionAction, RunDetail, RunPage, SelfMonitoringSnapshot, TraceDetail };

@@ -1,0 +1,22 @@
+agent: architecture_guardian
+work_item: AURA-0086
+verdict: PASS
+checked:
+  - Re-read the active work item, current implementation handoffs, general-review PASS, architecture handover, module boundaries, technology stack, and applicable accepted ADRs.
+  - Verified the migration lifecycle preserves the deployed no-argument container contract and synchronizes packaged manifests after service-owned migrations.
+  - Verified migration 0006 uses a generated dependency-edge identity, nullable required_version, deterministic legacy deduplication, and a null-safe uniqueness constraint.
+  - Verified PostgreSQL owns component definitions and dependency edges while ClickHouse alone supplies production deployed-version presence, observed timestamps, and health measurements.
+  - Verified retention removes observations and derived health without deleting component definitions, edges, or catalogue metadata.
+  - Verified manifest parsing, validation, cycle detection, hashing, and synchronization orchestration live in the catalogue application module behind ComponentCataloguePort; persistence SQL remains in the PostgreSQL adapter and the CLI remains a thin invocation boundary.
+  - Verified PostgreSQL and ClickHouse failures become typed StorageUnavailableError responses while not-found remains distinct; no broad storage exception is converted into absence.
+  - Verified production catalogue reads apply the decoded component cursor and component-level limit-plus-one bounds at both PostgreSQL and ClickHouse source boundaries before materialization.
+  - Verified sparse definition_state pagination advances source fences independently in bounded batches, continues past empty overlap batches, returns deterministic cursors, and reaches later observed_only and declared matches without a hidden global cap.
+  - Verified topology traversal has deterministic visited and enqueued sets, node and edge caps, reverse bounds, exact depth, multi-version expansion, and edge-to-node referential integrity under max_nodes truncation.
+  - Verified Core and Observatory retain separate modules, databases, migrations, authentication boundaries, generated clients, deployment lifecycles, and frontend feature boundaries; no Core implementation import or Core table access was introduced.
+  - Verified the OpenAPI changes are additive and backward-compatible, and the generated Angular client remains transport-only and synchronized.
+  - Verified Observatory feature behavior remains in the Observatory library, authenticated catalogue data remains memory-only, and no Aura product feature implementation is imported.
+  - Ran work-item, changed-path, service-isolation, frontend-boundary, contract-change, generated-sync, and git diff checks successfully.
+  - Ran the focused AURA-0086 correction suite successfully with 17 tests passing, including source-backed unfiltered and sparse filtered pagination plus deterministic topology integrity.
+  - Independently re-ran max_nodes=1 and confirmed one returned node has exactly one matching edge with partial set, closing the former dangling-edge finding.
+  - No new service, provider, shared schema, cross-product dependency, data authority, or architectural exception was introduced; no ADR is required.
+findings: []

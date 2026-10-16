@@ -9,14 +9,17 @@ keep migration/recovery compatibility while their SQL remains service-owned.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
+import psycopg
 
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.ports import NullObservatoryHealthPort, ObservatoryHealthPort
@@ -25,6 +28,7 @@ from aura_observatory.query import (
     RetentionAction,
     RetentionStatus,
     RunFilters,
+    bounded_component_health_window,
     decode_cursor,
     decode_run_cursor,
     encode_cursor,
@@ -44,6 +48,22 @@ _CLICKHOUSE_ERROR_CLASSES = (
     ("database_error", re.compile(r"database .* does not exist|unknown database", re.I)),
 )
 _RETENTION_RETRY_DELAY_SECONDS = 5
+_COMPONENT_SCAN_BATCHES = 32
+
+
+class StorageUnavailableError(httpx.HTTPStatusError, RuntimeError):
+    """A dependency could not serve a bounded Observatory read."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request: httpx.Request | None = None,
+        response: httpx.Response | None = None,
+    ) -> None:
+        request = request or httpx.Request("GET", "http://observatory-storage.invalid")
+        response = response or httpx.Response(503, request=request)
+        super().__init__(message, request=request, response=response)
 
 
 def _raise_for_clickhouse(response: httpx.Response) -> None:
@@ -81,6 +101,19 @@ def _sql(value: str) -> str:
     """
 
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _encode_component_cursor(component_id: str, version: str) -> str:
+    raw = json.dumps(
+        {"componentId": component_id, "version": version}, separators=(",", ":")
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_component_cursor(value: str) -> str:
+    if not 16 <= len(value) <= 1024 or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
+        raise ValueError("invalid component cursor")
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode("utf-8")
 
 
 def _clickhouse_time(value: datetime) -> str:
@@ -280,7 +313,7 @@ class _RetentionPersistenceAdapter:
                 "count(*) FILTER (WHERE status = 'failed') AS failures "
                 "FROM observatory_retention_actions GROUP BY action_kind, status"
             )
-            rows = await result.fetchall()
+            rows = cast(list[Any], await result.fetchall())
         series: list[dict[str, object]] = []
         for row in rows:
             action = str(row[0])
@@ -349,7 +382,7 @@ class _RetentionPersistenceAdapter:
                 "ORDER BY requested_at",
                 (_RETENTION_RETRY_DELAY_SECONDS,),
             )
-            rows = await result.fetchall()
+            rows = cast(list[Any], await result.fetchall())
         return [retention_from_row(row, str(row[11] or "")) for row in rows]
 
     async def claim_retention(self, action_id: str, lease_seconds: int = 60) -> bool:
@@ -452,7 +485,7 @@ class _RetentionPersistenceAdapter:
                 "SELECT component_id, version, first_seen_at, last_seen_at "
                 "FROM observatory_components ORDER BY component_id, version"
             )
-            rows = await result.fetchall()
+            rows = cast(list[Any], await result.fetchall())
         return [
             {
                 "componentId": row[0],
@@ -462,6 +495,150 @@ class _RetentionPersistenceAdapter:
             }
             for row in rows
         ]
+
+    async def _component_definition_rows(self) -> list[dict[str, Any]]:
+        """Read the small PostgreSQL catalogue without touching Core state."""
+
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    """SELECT component_id, component_version, owner, category,
+                    input_schema_id, output_schema_id, measurements, evaluators,
+                    created_at
+                    FROM observatory_component_definitions
+                    ORDER BY component_id, component_version
+                    LIMIT 2001"""
+                )
+                rows = await result.fetchall()
+        except (psycopg.Error, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("PostgreSQL is unavailable") from exc
+        return [
+            {
+                "componentId": str(row[0]),
+                "componentVersion": str(row[1]),
+                "owner": str(row[2]),
+                "category": str(row[3]),
+                "inputSchemaId": str(row[4]),
+                "outputSchemaId": str(row[5]),
+                "measurements": sorted(
+                    str(item) for item in cast(list[Any], row[6] or [])
+                ),
+                "evaluators": sorted(
+                    str(item) for item in cast(list[Any], row[7] or [])
+                ),
+                "createdAt": iso(row[8]),
+            }
+            for row in rows
+        ]
+
+    async def _component_definition_page(
+        self, after_component_id: str, component_limit: int
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read complete definition groups for one bounded component page.
+
+        The inner query bounds component identifiers, rather than definition
+        rows.  A component may have several declared versions and none of
+        those versions may be silently discarded before the API page is
+        assembled.
+        """
+
+        bound = component_limit + 1
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    f"""WITH component_page AS (
+                    SELECT component_id
+                    FROM observatory_component_definitions
+                    WHERE component_id > %s
+                    GROUP BY component_id
+                    ORDER BY component_id
+                    LIMIT {bound}
+                    )
+                    SELECT definitions.component_id, definitions.component_version,
+                    definitions.owner, definitions.category, definitions.input_schema_id,
+                    definitions.output_schema_id, definitions.measurements,
+                    definitions.evaluators, definitions.created_at
+                    FROM component_page
+                    CROSS JOIN LATERAL (
+                      SELECT component_id, component_version, owner, category,
+                      input_schema_id, output_schema_id, measurements, evaluators,
+                      created_at
+                      FROM observatory_component_definitions
+                      WHERE component_id = component_page.component_id
+                      ORDER BY component_version
+                      LIMIT 64
+                    ) AS definitions
+                    ORDER BY definitions.component_id, definitions.component_version""",
+                    (after_component_id,),
+                )
+                rows = await result.fetchall()
+        except (psycopg.Error, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("PostgreSQL is unavailable") from exc
+        values = [
+            {
+                "componentId": str(row[0]),
+                "componentVersion": str(row[1]),
+                "owner": str(row[2]),
+                "category": str(row[3]),
+                "inputSchemaId": str(row[4]),
+                "outputSchemaId": str(row[5]),
+                "measurements": sorted(
+                    str(item) for item in cast(list[Any], row[6] or [])
+                ),
+                "evaluators": sorted(
+                    str(item) for item in cast(list[Any], row[7] or [])
+                ),
+                "createdAt": iso(row[8]),
+            }
+            for row in rows
+        ]
+        has_more = len({str(item["componentId"]) for item in values}) > component_limit
+        return values, has_more
+
+    async def _component_definition_row(
+        self, component_id: str, component_version: str
+    ) -> dict[str, Any] | None:
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    """SELECT component_id, component_version, owner, category,
+                    input_schema_id, output_schema_id, measurements, evaluators
+                    FROM observatory_component_definitions
+                    WHERE component_id = %s AND component_version = %s""",
+                    (component_id, component_version),
+                )
+                row = await result.fetchone()
+                if row is None:
+                    return None
+                dependency_result = await connection.execute(
+                    """SELECT dependency_id, dependency_kind, required_version
+                    FROM observatory_component_dependencies
+                    WHERE source_component_id = %s AND source_component_version = %s
+                    ORDER BY dependency_kind, dependency_id, required_version NULLS FIRST
+                    LIMIT 64""",
+                    (component_id, component_version),
+                )
+                dependencies = cast(list[Any], await dependency_result.fetchall())
+        except (psycopg.Error, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("PostgreSQL is unavailable") from exc
+        return {
+            "componentId": str(row[0]),
+            "componentVersion": str(row[1]),
+            "owner": str(row[2]),
+            "category": str(row[3]),
+            "inputSchemaId": str(row[4]),
+            "outputSchemaId": str(row[5]),
+            "measurements": sorted(str(item) for item in cast(list[Any], row[6] or [])),
+            "evaluators": sorted(str(item) for item in cast(list[Any], row[7] or [])),
+            "dependencies": [
+                {
+                    "dependencyId": str(item[0]),
+                    "kind": str(item[1]),
+                    "requiredVersion": str(item[2]) if item[2] is not None else None,
+                }
+                for item in dependencies
+            ],
+        }
 
     async def deployments(self) -> list[dict[str, Any]]:
         async with self._connection_factory() as connection:
@@ -942,14 +1119,21 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     _health_port: ObservatoryHealthPort = NullObservatoryHealthPort()
 
     async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                self._endpoint,
-                params={"database": self._database},
-                auth=(self._user, self._password),
-                content=statement + " FORMAT JSONEachRow",
-            )
-            _raise_for_clickhouse(response)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    self._endpoint,
+                    params={"database": self._database},
+                    auth=(self._user, self._password),
+                    content=statement + " FORMAT JSONEachRow",
+                )
+                _raise_for_clickhouse(response)
+        except httpx.HTTPStatusError as exc:
+            raise StorageUnavailableError(
+                "ClickHouse is unavailable", request=exc.request, response=exc.response
+            ) from exc
+        except (httpx.ConnectError, httpx.TimeoutException, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
         if not hasattr(response, "text"):
             # Small adapter doubles may omit the body.  Mark that bounded
             # compatibility mode explicitly; real ClickHouse responses always
@@ -963,25 +1147,93 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         ]
 
     async def components_query(self) -> list[dict[str, Any]]:
-        # PostgreSQL contains registered catalogue definitions, while
-        # ClickHouse is authoritative for what was actually observed.  An
-        # ingest-side catalogue write can be delayed or fail independently of
-        # the observation insert, so the query boundary must converge both
-        # bounded sources instead of hiding observed components.
-        definitions = await self.components()
-        observed_rows = await self._query_rows(
-            "SELECT component_id, component_version, min(observed_at) AS first_seen_at, "
-            "max(observed_at) AS last_seen_at FROM observations "
-            "WHERE component_id != '' AND component_version != '' "
-            "GROUP BY component_id, component_version "
-            "ORDER BY component_id, component_version"
-        )
-        merged: dict[tuple[str, str], dict[str, Any]] = {
-            (str(item["componentId"]), str(item["version"])): dict(item)
-            for item in definitions
-            if item.get("componentId") and item.get("version")
-        }
+        collection = await self.component_collection_query()
+        values = cast(list[dict[str, Any]], collection["items"])
+        # The legacy list port is version-shaped for existing callers; the
+        # collection port above remains component-shaped and page-complete.
+        flattened: list[dict[str, Any]] = []
+        for value in values:
+            versions = [str(item) for item in value.get("versions", [])]
+            if not versions:
+                flattened.append(value)
+                continue
+            for version in versions:
+                flattened.append(
+                    {
+                        **value,
+                        "version": version,
+                        "observed": True,
+                    }
+                )
+        return flattened
 
+    async def _observed_component_page(
+        self, after_component_id: str, component_limit: int
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read observed component groups with a bounded ClickHouse source page."""
+
+        bound = component_limit + 1
+        escaped_cursor = _sql(after_component_id)
+        statement = f"""SELECT component_id,
+        groupUniqArray(64)(component_version) AS versions,
+        min(observed_at) AS first_seen_at,
+        max(observed_at) AS last_seen_at
+        FROM observations
+        WHERE component_id != '' AND component_version != ''
+          AND component_id IN (
+            SELECT component_id
+            FROM (
+              SELECT component_id
+              FROM observations
+              WHERE component_id != '' AND component_version != ''
+                AND component_id > {escaped_cursor}
+              GROUP BY component_id
+              ORDER BY component_id
+              LIMIT {bound}
+            )
+          )
+        GROUP BY component_id
+        ORDER BY component_id"""
+        rows = await self._query_rows(statement)
+        values = rows
+        has_more = len({str(row.get("component_id") or "") for row in values}) > component_limit
+        return values, has_more
+
+    async def component_collection_query(
+        self,
+        *,
+        definition_state: str | None = None,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 200:
+            raise ValueError("component page size is out of bounds")
+        fence = ""
+        if cursor:
+            try:
+                decoded = json.loads(_decode_component_cursor(cursor))
+                fence = str(decoded["componentId"])
+                if not fence:
+                    raise ValueError("invalid component cursor")
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+                UnicodeDecodeError,
+                binascii.Error,
+                json.JSONDecodeError,
+            ):
+                raise ValueError("invalid component cursor") from None
+        # Definitions are PostgreSQL-owned.  Deployed presence and observed
+        # timestamps come only from ClickHouse; the legacy observation catalogue
+        # is deliberately not consulted for production reads.
+        compatibility_catalogue = (
+            type(self).components is not _RetentionPersistenceAdapter.components
+        )
+        compatibility_definitions = (
+            type(self)._component_definition_rows
+            is not ProductionObservatoryStore._component_definition_rows
+        )
         def merge_time(current: Any, observed: Any, *, earliest: bool) -> str | None:
             current_at = _parse_datetime(current)
             observed_at = _parse_datetime(observed)
@@ -992,28 +1244,397 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             selected = min(current_at, observed_at) if earliest else max(current_at, observed_at)
             return iso(selected)
 
-        for row in observed_rows:
-            component_id = str(row.get("component_id") or "")
-            version = str(row.get("component_version") or "")
-            if not component_id or not version:
+        def merge_definitions(
+            merged: dict[str, dict[str, Any]], definitions: list[dict[str, Any]]
+        ) -> None:
+            for definition in definitions:
+                if "version" in definition:
+                    component_id = str(definition["componentId"])
+                    item = merged.setdefault(component_id, dict(definition))
+                    item.setdefault("versions", [str(definition["version"])])
+                    continue
+                component_id = str(definition["componentId"])
+                item = merged.setdefault(
+                    component_id,
+                    {
+                        "componentId": component_id,
+                        "versions": [],
+                        "definitionVersions": [],
+                        "definitionState": "declared",
+                        "firstSeenAt": definition["createdAt"],
+                        "lastSeenAt": definition["createdAt"],
+                        "observed": False,
+                    },
+                )
+                item["definitionVersions"] = sorted(
+                    set(cast(list[str], item["definitionVersions"]))
+                    | {str(definition["componentVersion"])}
+                )[:64]
+
+        def merge_observations(
+            merged: dict[str, dict[str, Any]], rows: list[dict[str, Any]]
+        ) -> None:
+            for row in rows:
+                component_id = str(row.get("component_id") or "")
+                if not component_id:
+                    continue
+                item = merged.setdefault(
+                    component_id,
+                    {
+                        "componentId": component_id,
+                        "versions": [],
+                        "definitionVersions": [],
+                        "firstSeenAt": iso(_parse_datetime(row.get("first_seen_at"))),
+                        "lastSeenAt": iso(_parse_datetime(row.get("last_seen_at"))),
+                        "definitionState": "observed_only",
+                        "observed": True,
+                    },
+                )
+                item["observed"] = True
+                versions = set(cast(list[str], item["versions"]))
+                row_versions = row.get("versions")
+                if isinstance(row_versions, list):
+                    versions.update(
+                        str(version)
+                        for version in cast(list[Any], row_versions)
+                        if version
+                    )
+                else:
+                    version = str(row.get("component_version") or "")
+                    if version:
+                        versions.add(version)
+                item["versions"] = sorted(versions)[:64]
+                item["firstSeenAt"] = merge_time(
+                    item.get("firstSeenAt"), row.get("first_seen_at"), earliest=True
+                )
+                item["lastSeenAt"] = merge_time(
+                    item.get("lastSeenAt"), row.get("last_seen_at"), earliest=False
+                )
+
+        merged: dict[str, dict[str, Any]] = {}
+        definition_fence = fence
+        observed_fence = fence
+        definitions_exhausted = True
+        observations_exhausted = True
+        # Compatibility doubles intentionally retain their original one-shot
+        # reads. Production reads use independently advancing bounded source
+        # scans so sparse filters cannot terminate at an empty overlap batch.
+        if compatibility_catalogue or compatibility_definitions:
+            declared: list[dict[str, Any]] = []
+            if compatibility_catalogue:
+                for item in await self.components():
+                    component_id = str(item.get("componentId") or "")
+                    version = str(item.get("version") or "")
+                    if component_id and version:
+                        declared.append(
+                            {
+                                **item,
+                                "componentId": component_id,
+                                "version": version,
+                                "versions": [version],
+                                "definitionVersions": [],
+                                "definitionState": "observed_only",
+                                "observed": True,
+                            }
+                        )
+            else:
+                declared = await self._component_definition_rows()
+            observed_rows = await self._query_rows(
+                "SELECT component_id, component_version, min(observed_at) AS first_seen_at, "
+                "max(observed_at) AS last_seen_at FROM observations "
+                "WHERE component_id != '' AND component_version != '' "
+                "GROUP BY component_id, component_version "
+                "ORDER BY component_id, component_version LIMIT 1000"
+            )
+            merge_definitions(merged, declared)
+            merge_observations(merged, observed_rows)
+        else:
+            definitions_exhausted = False
+            observations_exhausted = False
+            for _ in range(_COMPONENT_SCAN_BATCHES):
+                definition_batch: list[dict[str, Any]] = []
+                observed_batch: list[dict[str, Any]] = []
+                definition_more = False
+                observed_more = False
+                if not definitions_exhausted:
+                    definition_batch, definition_more = await self._component_definition_page(
+                        definition_fence, limit
+                    )
+                if not observations_exhausted:
+                    observed_batch, observed_more = await self._observed_component_page(
+                        observed_fence, limit
+                    )
+                merge_definitions(merged, definition_batch)
+                merge_observations(merged, observed_batch)
+
+                next_definition_fence = max(
+                    (str(item["componentId"]) for item in definition_batch),
+                    default=definition_fence,
+                )
+                next_observed_fence = max(
+                    (str(item.get("component_id") or "") for item in observed_batch),
+                    default=observed_fence,
+                )
+                definitions_exhausted = definitions_exhausted or not definition_more
+                observations_exhausted = observations_exhausted or not observed_more
+                if not definition_batch:
+                    definitions_exhausted = True
+                if not observed_batch:
+                    observations_exhausted = True
+                if next_definition_fence == definition_fence and not definition_more:
+                    definitions_exhausted = True
+                if next_observed_fence == observed_fence and not observed_more:
+                    observations_exhausted = True
+                definition_fence = next_definition_fence
+                observed_fence = next_observed_fence
+
+                candidates = [merged[key] for key in sorted(merged)]
+                values = [
+                    value
+                    for value in candidates
+                    if definition_state is None
+                    or str(value.get("definitionState", "observed_only")) == definition_state
+                ]
+                if len(values) > limit or (definitions_exhausted and observations_exhausted):
+                    break
+
+        values = [merged[key] for key in sorted(merged)]
+        if definition_state is not None:
+            values = [
+                value
+                for value in values
+                if str(value.get("definitionState", "observed_only")) == definition_state
+            ]
+        if compatibility_catalogue or compatibility_definitions:
+            values = [value for value in values if str(value["componentId"]) > fence]
+        page = values[:limit]
+        next_cursor = None
+        if len(values) > limit:
+            next_cursor = _encode_component_cursor(str(page[-1]["componentId"]), "")
+        elif not (compatibility_catalogue or compatibility_definitions):
+            # If the bounded scan cap was reached before finding enough
+            # filtered values, resume from the earliest still-active source
+            # fence.  Re-reading the overlap is safe and prevents the single
+            # cursor from skipping components in the other source.
+            active_fences = [
+                current
+                for current, exhausted in (
+                    (definition_fence, definitions_exhausted),
+                    (observed_fence, observations_exhausted),
+                )
+                if not exhausted and current
+            ]
+            if active_fences:
+                next_cursor = _encode_component_cursor(min(active_fences), "")
+        return {"items": page, "nextCursor": next_cursor, "snapshotAt": iso(datetime.now(UTC))}
+
+    async def component_definition_query(
+        self, component_id: str, component_version: str
+    ) -> dict[str, Any] | None:
+        return await self._component_definition_row(component_id, component_version)
+
+    async def component_dependencies_query(
+        self,
+        component_id: str,
+        component_version: str,
+        *,
+        depth: int = 1,
+        max_nodes: int = 100,
+    ) -> dict[str, Any] | None:
+        root = await self._component_definition_row(component_id, component_version)
+        if root is None:
+            return None
+        health_from, health_to = bounded_component_health_window(None, None)
+        definitions = await self._component_definition_rows()
+        definitions_truncated = len(definitions) > 2000
+        by_key = {
+            (str(item["componentId"]), str(item["componentVersion"])): item
+            for item in definitions
+        }
+        observed = await self._query_rows(
+            "SELECT component_id, groupUniqArray(64)(component_version) AS versions "
+            "FROM observations WHERE component_id != '' GROUP BY component_id "
+            "ORDER BY component_id LIMIT 201"
+        )
+        observed_truncated = len(observed) > 200
+        observed_versions = {
+            str(row.get("component_id")): sorted(
+                {str(item) for item in cast(list[Any], row.get("versions") or [])}
+            )[:64]
+            for row in observed
+        }
+        nodes: dict[tuple[str, str | None, str], dict[str, Any]] = {}
+        edges: list[dict[str, Any]] = []
+        queue: list[tuple[str, str, int]] = [(component_id, component_version, 0)]
+        enqueued = {(component_id, component_version)}
+        expanded: set[tuple[str, str]] = set()
+        edge_keys: set[tuple[str, str, str, str | None, str, str]] = set()
+        partial = definitions_truncated or observed_truncated
+        by_key.setdefault((component_id, component_version), root)
+        while queue:
+            source_id, source_version, current_depth = queue.pop(0)
+            if (source_id, source_version) in expanded:
                 continue
-            key = (component_id, version)
-            if key not in merged:
-                merged[key] = {
-                    "componentId": component_id,
-                    "version": version,
-                    "firstSeenAt": iso(_parse_datetime(row.get("first_seen_at"))),
-                    "lastSeenAt": iso(_parse_datetime(row.get("last_seen_at"))),
+            expanded.add((source_id, source_version))
+            source = by_key.get((source_id, source_version))
+            if source is None:
+                continue
+            source_definition = (
+                root
+                if source_id == component_id and source_version == component_version
+                else await self._component_definition_row(source_id, source_version)
+            )
+            if source_definition is None:
+                continue
+            if current_depth >= depth:
+                continue
+            dependencies = cast(list[dict[str, Any]], source_definition.get("dependencies", []))
+            for dependency in dependencies:
+                target_id = str(dependency["dependencyId"])
+                kind = str(dependency["kind"])
+                required = dependency.get("requiredVersion")
+                required_version = str(required) if required is not None else None
+                candidates = sorted([
+                    key
+                    for key in by_key
+                    if key[0] == target_id
+                    and (required_version is None or key[1] == required_version)
+                ])
+                if kind != "component":
+                    candidates = []
+                if kind == "component" and required_version is not None and not candidates:
+                    available = target_id in {key[0] for key in by_key}
+                    resolution = "version_unavailable" if available else "missing_definition"
+                elif kind == "component" and candidates:
+                    resolution = "resolved"
+                elif target_id in observed_versions:
+                    resolution = "resolved"
+                else:
+                    resolution = "missing_definition"
+                target_candidates: list[tuple[str, str | None]] = (
+                    [(candidate[0], candidate[1]) for candidate in candidates]
+                    or [(target_id, required_version)]
+                )
+                for candidate_id, target_version in target_candidates:
+                    edge_key = (
+                        source_id,
+                        source_version,
+                        target_id,
+                        target_version,
+                        kind,
+                        resolution,
+                    )
+                    if edge_key in edge_keys:
+                        continue
+                    if len(edges) >= 1000:
+                        partial = True
+                        break
+                    key = (candidate_id, target_version, kind)
+                    if key not in nodes:
+                        if len(nodes) >= max_nodes:
+                            partial = True
+                            continue
+                        health = (
+                            await self.component_health_query(
+                                target_id,
+                                health_from,
+                                health_to,
+                                component_version=target_version,
+                            )
+                            if target_id in observed_versions else None
+                        )
+                        declared = any(item[0] == target_id for item in by_key)
+                        state = "declared" if declared else (
+                            "observed_only" if target_id in observed_versions else "missing"
+                        )
+                        nodes[key] = {
+                            "dependencyId": target_id,
+                            "kind": kind,
+                            "componentVersion": target_version,
+                            "definitionState": state,
+                            "deployedVersions": observed_versions.get(target_id, [])[:64],
+                            "availability": "observed" if health is not None else (
+                                "unobserved" if state == "declared" else "unavailable"
+                            ),
+                            "health": health.get("summary") if health else None,
+                            "partialHealth": health is None,
+                        }
+                    # Reserve the target node before publishing its edge.
+                    # A bounded response must never contain a relationship to
+                    # a node omitted by max_nodes.
+                    edge_keys.add(edge_key)
+                    edges.append(
+                        {
+                            "sourceId": source_id,
+                            "sourceVersion": source_version,
+                            "targetId": target_id,
+                            "targetVersion": target_version,
+                            "targetKind": kind,
+                            "resolution": resolution,
+                        }
+                    )
+                    if (
+                        current_depth < depth
+                        and kind == "component"
+                        and target_version is not None
+                        and (target_id, target_version) in by_key
+                    ):
+                        next_key = (target_id, target_version)
+                        if next_key not in enqueued:
+                            enqueued.add(next_key)
+                            queue.append((target_id, target_version, current_depth + 1))
+                if len(edges) >= 1000:
+                    break
+        reverse = await self._reverse_dependencies(component_id)
+        reverse_truncated = len(reverse) > 200
+        return {
+            "rootComponentId": component_id,
+            "rootComponentVersion": component_version,
+            "nodes": sorted(
+                nodes.values(),
+                key=lambda item: (
+                    str(item["kind"]),
+                    str(item["dependencyId"]),
+                    str(item["componentVersion"] or ""),
+                ),
+            ),
+            "edges": sorted(
+                edges,
+                key=lambda item: (
+                    str(item["sourceId"]),
+                    str(item["sourceVersion"]),
+                    str(item["targetId"]),
+                    str(item["targetVersion"] or ""),
+                ),
+            ),
+            "directDependencyIds": sorted(
+                {
+                    str(item["dependencyId"])
+                    for item in cast(list[dict[str, Any]], root.get("dependencies", []))
                 }
-                continue
-            item = merged[key]
-            item["firstSeenAt"] = merge_time(
-                item.get("firstSeenAt"), row.get("first_seen_at"), earliest=True
-            )
-            item["lastSeenAt"] = merge_time(
-                item.get("lastSeenAt"), row.get("last_seen_at"), earliest=False
-            )
-        return [merged[key] for key in sorted(merged)]
+            )[:64],
+            "reverseDependencyIds": sorted({item[0] for item in reverse})[:200],
+            "partial": partial
+            or reverse_truncated
+            or any(bool(item["partialHealth"]) for item in nodes.values()),
+            "snapshotAt": iso(datetime.now(UTC)),
+        }
+
+    async def _reverse_dependencies(self, component_id: str) -> list[tuple[str, str]]:
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    """SELECT source_component_id, source_component_version
+                    FROM observatory_component_dependencies
+                    WHERE dependency_id = %s AND dependency_kind = 'component'
+                    ORDER BY source_component_id, source_component_version
+                    LIMIT 201""",
+                    (component_id,),
+                )
+                rows = await result.fetchall()
+        except (psycopg.Error, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("PostgreSQL is unavailable") from exc
+        return sorted({(str(row[0]), str(row[1])) for row in rows})
 
     async def _bounded_compatibility_page(self) -> list[MetadataObservation]:
         """Read one bounded page for response-body-less adapter doubles."""
@@ -1328,9 +1949,20 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         }
 
     async def component_health_query(
-        self, component_id: str, from_time: datetime | None, to_time: datetime | None
+        self,
+        component_id: str,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        *,
+        component_version: str | None = None,
+        point_limit: int = 200,
     ) -> dict[str, Any] | None:
+        if not 1 <= point_limit <= 1000:
+            raise ValueError("component health point limit is out of bounds")
+        from_time, to_time = bounded_component_health_window(from_time, to_time)
         conditions = [f"component_id = {_sql(component_id)}"]
+        if component_version:
+            conditions.append("component_version = " + _sql(component_version))
         if from_time:
             conditions.append(
                 "observed_at >= toDateTime64(" + _clickhouse_time(from_time) + ", 3, 'UTC')"
@@ -1385,6 +2017,69 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         failed = int(row.get("failures", 0))
         succeeded = int(row.get("successes", 0))
         cancelled = int(row.get("cancelled", 0))
+        points_rows = []
+        if (
+            point_limit != 200
+            or type(self)._query_rows is ProductionObservatoryStore._query_rows
+        ):
+            points_rows = await self._query_rows(
+                "SELECT toStartOfInterval(execution_at, INTERVAL 5 MINUTE) AS start_at, "
+                "count() AS sample_count, "
+                "quantileIf(0.50)(duration_ms, duration_unit = 'milliseconds') AS p50, "
+                "quantileIf(0.95)(duration_ms, duration_unit = 'milliseconds') AS p95, "
+                "countIf(outcome = 'failed') AS failures, "
+                "countIf(outcome = 'succeeded') AS successes, "
+                "countIf(outcome = 'cancelled') AS cancelled "
+                "FROM (SELECT "
+                "argMax(observed_at, (observed_at, observation_id)) AS execution_at, "
+                "argMaxIf(measurement_value, (observed_at, observation_id), "
+                + duration_predicate
+                + ") AS duration_ms, "
+                "argMaxIf(measurement_unit, (observed_at, observation_id), "
+                + duration_predicate
+                + ") AS duration_unit, "
+                "argMaxIf("
+                + _RUN_STATUS_SQL
+                + ", (observed_at, observation_id), "
+                + _DIMENSION_STATUS_SQL
+                + " != '') AS outcome "
+                "FROM observations WHERE "
+                + " AND ".join(conditions)
+                + " AND (span_id != '' OR measurement_name = 'duration_ms') "
+                + "GROUP BY if(span_id = '', "
+                + "if(measurement_name = 'duration_ms', observation_id, ''), span_id)) "
+                + "WHERE isNotNull(execution_at) "
+                + "GROUP BY start_at ORDER BY start_at ASC LIMIT "
+                + str(point_limit)
+            )
+        points = [
+            {
+                "startAt": iso(start_at := _parse_datetime(point.get("start_at"))),
+                "endAt": iso(start_at + timedelta(minutes=5)) if start_at else None,
+                "summary": {
+                    "sampleCount": int(point.get("sample_count", 0) or 0),
+                    "latencyP50Ms": point.get("p50"),
+                    "latencyP95Ms": point.get("p95"),
+                    "errorRate": (
+                        int(point.get("failures", 0) or 0)
+                        / int(point.get("sample_count", 0) or 1)
+                    ),
+                    "outcomes": {
+                        "succeeded": int(point.get("successes", 0) or 0),
+                        "failed": int(point.get("failures", 0) or 0),
+                        "cancelled": int(point.get("cancelled", 0) or 0),
+                        "unknown": max(
+                            0,
+                            int(point.get("sample_count", 0) or 0)
+                            - int(point.get("failures", 0) or 0)
+                            - int(point.get("successes", 0) or 0)
+                            - int(point.get("cancelled", 0) or 0),
+                        ),
+                    },
+                },
+            }
+            for point in points_rows
+        ]
         return {
             "componentId": component_id,
             "summary": {
@@ -1399,7 +2094,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     "unknown": max(0, sample - failed - succeeded - cancelled),
                 },
             },
-            "points": [],
+            "points": points,
         }
 
     async def events_after_query(

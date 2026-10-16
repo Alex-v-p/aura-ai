@@ -145,10 +145,54 @@
       "get": {
         "operationId": "listComponents",
         "tags": ["Components"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/PageSize" },
+          { "name": "definition_state", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ComponentDefinitionState" } }
+        ],
         "responses": {
-          "200": { "description": "Component catalogue with latency, error, and outcome summaries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentCollection" } } } },
+          "200": { "description": "Bounded component catalogue ordered by componentId. Existing versions are deployed versions derived from observations; declared definition versions are reported separately.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentCollection" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/components/{component_id}/definitions/{component_version}": {
+      "get": {
+        "operationId": "getComponentDefinition",
+        "tags": ["Components"],
+        "parameters": [
+          { "$ref": "#/components/parameters/ComponentId" },
+          { "$ref": "#/components/parameters/ComponentVersion" }
+        ],
+        "responses": {
+          "200": { "description": "Repository-approved metadata definition for one exact component version.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentDefinition" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/components/{component_id}/definitions/{component_version}/dependencies": {
+      "get": {
+        "operationId": "getComponentDependencies",
+        "tags": ["Components"],
+        "description": "Return a deterministic, version-aware dependency topology. Nodes are ordered by kind, dependencyId, and version; edges are ordered by source then target. Missing definitions and partial observed health remain explicit.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ComponentId" },
+          { "$ref": "#/components/parameters/ComponentVersion" },
+          { "name": "depth", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 } },
+          { "name": "max_nodes", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded direct, reverse, and transitive dependency topology for one exact component definition.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentDependencyTopology" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
@@ -159,8 +203,10 @@
         "tags": ["Components"],
         "parameters": [
           { "$ref": "#/components/parameters/ComponentId" },
+          { "name": "component_version", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
           { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
-          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } }
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "point_limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 200 } }
         ],
         "responses": {
           "200": { "description": "Bounded component health trend", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComponentHealth" } } } },
@@ -250,6 +296,7 @@
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "TraceId": { "name": "trace_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/TraceId" } },
       "ComponentId": { "name": "component_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ComponentId" } },
+      "ComponentVersion": { "name": "component_version", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
       "RetentionActionId": { "name": "action_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "LastEventId": { "name": "Last-Event-ID", "in": "header", "required": false, "description": "Last persisted observation identifier received by the browser.", "schema": { "$ref": "#/components/schemas/Uuid" } },
       "CsrfToken": { "name": "X-Observatory-CSRF", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 256 } },
@@ -270,6 +317,7 @@
       "UtcInstant": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$" },
       "SafeLabel": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$" },
       "ComponentId": { "type": "string", "minLength": 6, "maxLength": 96, "pattern": "^aura\\.[a-z][a-z0-9_.-]{0,90}$" },
+      "DefinitionIdentifier": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_.-]{0,127}$" },
       "TraceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
       "SpanId": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
       "Cursor": { "type": "string", "minLength": 16, "maxLength": 1024, "pattern": "^[A-Za-z0-9_-]+$" },
@@ -414,12 +462,80 @@
         "required": ["sampleCount", "latencyP50Ms", "latencyP95Ms", "errorRate", "outcomes"],
         "properties": { "sampleCount": { "type": "integer", "minimum": 0 }, "latencyP50Ms": { "type": ["number", "null"], "minimum": 0 }, "latencyP95Ms": { "type": ["number", "null"], "minimum": 0 }, "errorRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "outcomes": { "type": "object", "additionalProperties": false, "required": ["succeeded", "failed", "cancelled", "unknown"], "properties": { "succeeded": { "type": "integer", "minimum": 0 }, "failed": { "type": "integer", "minimum": 0 }, "cancelled": { "type": "integer", "minimum": 0 }, "unknown": { "type": "integer", "minimum": 0 } } } }
       },
+      "ComponentDefinitionState": { "type": "string", "enum": ["declared", "observed_only", "missing"] },
+      "DependencyKind": { "type": "string", "enum": ["component", "provider"] },
+      "DependencyAvailability": { "type": "string", "enum": ["observed", "unobserved", "unavailable"] },
+      "DependencyResolution": { "type": "string", "enum": ["resolved", "missing_definition", "version_unavailable"] },
+      "ComponentDependencyDeclaration": {
+        "type": "object", "additionalProperties": false,
+        "required": ["dependencyId", "kind", "requiredVersion"],
+        "properties": {
+          "dependencyId": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "kind": { "$ref": "#/components/schemas/DependencyKind" },
+          "requiredVersion": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }], "description": "Exact required definition version when declared; null means that the manifest intentionally leaves the dependency version unconstrained." }
+        }
+      },
+      "ComponentDefinition": {
+        "type": "object", "additionalProperties": false,
+        "required": ["componentId", "componentVersion", "owner", "category", "inputSchemaId", "outputSchemaId", "measurements", "evaluators", "dependencies"],
+        "properties": {
+          "componentId": { "$ref": "#/components/schemas/ComponentId" },
+          "componentVersion": { "$ref": "#/components/schemas/SafeLabel" },
+          "owner": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "category": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "inputSchemaId": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "outputSchemaId": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "measurements": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DefinitionIdentifier" } },
+          "evaluators": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DefinitionIdentifier" } },
+          "dependencies": { "type": "array", "maxItems": 64, "items": { "$ref": "#/components/schemas/ComponentDependencyDeclaration" } }
+        }
+      },
       "ComponentSummary": {
         "type": "object", "additionalProperties": false,
         "required": ["componentId", "versions", "firstSeenAt", "lastSeenAt", "health"],
-        "properties": { "componentId": { "$ref": "#/components/schemas/ComponentId" }, "versions": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/SafeLabel" } }, "firstSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "lastSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "health": { "$ref": "#/components/schemas/HealthSummary" } }
+        "properties": { "componentId": { "$ref": "#/components/schemas/ComponentId" }, "versions": { "type": "array", "maxItems": 64, "uniqueItems": true, "description": "Deployed versions derived only from observations.", "items": { "$ref": "#/components/schemas/SafeLabel" } }, "firstSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "lastSeenAt": { "$ref": "#/components/schemas/UtcInstant" }, "health": { "$ref": "#/components/schemas/HealthSummary" }, "definitionState": { "$ref": "#/components/schemas/ComponentDefinitionState", "description": "Optional during rolling producer upgrades. missing is reserved for dependency topology nodes and is not emitted by the catalogue." }, "definitionVersions": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/SafeLabel" } } }
       },
-      "ComponentCollection": { "type": "object", "additionalProperties": false, "required": ["items", "snapshotAt"], "properties": { "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/ComponentSummary" } }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" } } },
+      "ComponentCollection": { "type": "object", "additionalProperties": false, "required": ["items", "snapshotAt"], "properties": { "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/ComponentSummary" } }, "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" }, "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }], "description": "Opaque continuation. Optional only for compatibility during a rolling producer upgrade." } } },
+      "DependencyNode": {
+        "type": "object", "additionalProperties": false,
+        "required": ["dependencyId", "kind", "componentVersion", "definitionState", "deployedVersions", "availability", "health", "partialHealth"],
+        "properties": {
+          "dependencyId": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "kind": { "$ref": "#/components/schemas/DependencyKind" },
+          "componentVersion": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }] },
+          "definitionState": { "$ref": "#/components/schemas/ComponentDefinitionState" },
+          "deployedVersions": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/SafeLabel" } },
+          "availability": { "$ref": "#/components/schemas/DependencyAvailability" },
+          "health": { "oneOf": [{ "$ref": "#/components/schemas/HealthSummary" }, { "type": "null" }] },
+          "partialHealth": { "type": "boolean" }
+        }
+      },
+      "DependencyEdge": {
+        "type": "object", "additionalProperties": false,
+        "required": ["sourceId", "sourceVersion", "targetId", "targetVersion", "targetKind", "resolution"],
+        "properties": {
+          "sourceId": { "$ref": "#/components/schemas/ComponentId" },
+          "sourceVersion": { "$ref": "#/components/schemas/SafeLabel" },
+          "targetId": { "$ref": "#/components/schemas/DefinitionIdentifier" },
+          "targetVersion": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }] },
+          "targetKind": { "$ref": "#/components/schemas/DependencyKind" },
+          "resolution": { "$ref": "#/components/schemas/DependencyResolution" }
+        }
+      },
+      "ComponentDependencyTopology": {
+        "type": "object", "additionalProperties": false,
+        "required": ["rootComponentId", "rootComponentVersion", "nodes", "edges", "directDependencyIds", "reverseDependencyIds", "partial", "snapshotAt"],
+        "properties": {
+          "rootComponentId": { "$ref": "#/components/schemas/ComponentId" },
+          "rootComponentVersion": { "$ref": "#/components/schemas/SafeLabel" },
+          "nodes": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/DependencyNode" } },
+          "edges": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/DependencyEdge" } },
+          "directDependencyIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DefinitionIdentifier" } },
+          "reverseDependencyIds": { "type": "array", "maxItems": 200, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ComponentId" } },
+          "partial": { "type": "boolean", "description": "True when max_nodes truncates the graph or any node has only partial observed health." },
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" }
+        }
+      },
       "HealthPoint": { "type": "object", "additionalProperties": false, "required": ["startAt", "endAt", "summary"], "properties": { "startAt": { "$ref": "#/components/schemas/UtcInstant" }, "endAt": { "$ref": "#/components/schemas/UtcInstant" }, "summary": { "$ref": "#/components/schemas/HealthSummary" } } },
       "ComponentHealth": { "type": "object", "additionalProperties": false, "required": ["componentId", "summary", "points"], "properties": { "componentId": { "$ref": "#/components/schemas/ComponentId" }, "summary": { "$ref": "#/components/schemas/HealthSummary" }, "points": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/HealthPoint" } } } },
       "Deployment": {

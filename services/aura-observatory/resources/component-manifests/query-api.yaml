@@ -8,6 +8,12 @@ input:
   replayable: true
 output:
   schema: observatory-v1
+dependencies:
+  - postgresql
+  - clickhouse
+  - oidc_provider
+  - login_state_store
+  - session_store
 metrics:
   - observatory_query_duration_ms
   - observatory_query_outcome
@@ -56,6 +62,9 @@ metric_definitions:
     correlation: request_id
     export: prometheus
 evaluators:
+  - component_manifest_completeness
+  - component_dependency_integrity
+  - observatory_self_monitoring
   - observatory_query_contract
   - observatory_web_accessibility
   - observatory_full_stack_trace

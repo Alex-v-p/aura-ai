@@ -1,0 +1,221 @@
+agent: test_evaluation_engineer
+work_item: AURA-0086
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-components
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0086_acceptance.py
+  - services/aura-observatory/tests/test_aura0086_backend.py
+  - services/aura-observatory/tests/test_aura0086_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0086_query_corrections.py
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - work-items/handoffs/AURA-0086-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      NX_CLOUD=false NX_DAEMON=false UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run
+      pytest services/aura-observatory/tests/test_aura0086_query_corrections.py
+      -q (25 passed, 1 warning), including source-backed PostgreSQL and
+      ClickHouse cursor pagination across 231 components with complete version
+      groups, bounded limit+1 source work, sparse observed-only/declared filter
+      continuation, deterministic max_nodes topology truncation integrity,
+      64-version caps, bounded UTC health windows, health SQL predicate
+      coverage, and resource metric cardinality checks.
+    - >-
+      NX_CLOUD=false NX_DAEMON=false UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run
+      pytest services/aura-observatory/tests -q (371 passed, 1 skipped, 2
+      warnings).
+    - >-
+      NX_CLOUD=false NX_DAEMON=false UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run
+      pytest services/aura-observatory/tests/test_aura0086_postgres_integration.py
+      -q (opt-in test skipped without AURA_AURA0086_POSTGRES_URL; test now uses
+      isolated generated schemas and covers fresh, upgrade, nullable, and
+      rerun lifecycles).
+    - >-
+      NX_CLOUD=false NX_DAEMON=false UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run
+      pytest services/aura-observatory/tests -q from the repository root (371
+      passed, 1 skipped, 2 warnings)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run ruff check
+      tests/test_aura0086_acceptance.py tests/test_aura0086_backend.py
+      tests/test_aura0086_contract.py tests/test_aura0086_query_corrections.py
+      tests/test_aura0086_postgres_integration.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0086-tests-uv uv run pyright
+      tests/test_aura0086_acceptance.py tests/test_aura0086_backend.py
+      tests/test_aura0086_contract.py tests/test_aura0086_query_corrections.py
+      tests/test_aura0086_postgres_integration.py (0 errors)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec eslint
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      libs/observatory/src/lib/observatory-store.spec.ts (passed; four existing
+      non-null assertion warnings)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec playwright test
+      --config apps/observatory-web-e2e/playwright.config.ts --list (123
+      desktop/tablet/mobile tests listed, including structural loading,
+      partial-detail recovery, malformed topology, stale/disconnected
+      catalogue, numeric dependency health, dark/axe, focus/ARIA, and 200%
+      zoom/reflow cases)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec eslint
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - >-
+      NODE_OPTIONS=--max-old-space-size=512 timeout --signal=KILL 45s pnpm exec
+      tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+      --moduleResolution NodeNext --types node --strict --skipLibCheck
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec playwright test --config
+      apps/observatory-web-e2e/full-stack.config.ts --list (4 full-stack tests
+      collected, including the Core-usability-after-Observatory-outage case)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec nx test observatory
+      --skip-nx-cache (passed; Observatory Vitest suite)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false pnpm exec nx build observatory-web
+      --skip-nx-cache (production build passed)
+    - >-
+      NX_CLOUD=false NX_DAEMON=false NX_ISOLATE_PLUGINS=false NX_SOCKET_DIR=/tmp/aura-nx
+      pnpm exec nx lint observatory --skip-nx-cache (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0086.yaml --role test_evaluation_engineer --path
+      services/aura-observatory/tests/test_aura0086_acceptance.py --path
+      frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts --path
+      frontend/libs/observatory/src/lib/observatory-store.spec.ts --path
+      frontend/apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - >-
+      git diff --check -- all seven owned test paths (passed)
+  failed: []
+  not_run:
+    - >-
+      Mocked browser execution could not start the configured Nx observatory-web
+      dev server in this restricted environment: the Nx serve target exited
+      before startup, and a fallback static server could not bind a local
+      socket. A focused run of the new browser cases failed at webServer
+      startup before test execution; collection/listing passed (123
+      desktop/tablet/mobile tests collected).
+    - >-
+      Full-stack Compose acceptance remains integration-owned and was not run
+      by this test worker.
+decisions:
+  - >-
+    Added only independent test/evaluation paths. No production code, OpenAPI
+    source, generated client, migration, dependency, threshold, golden result,
+    or Core path was changed.
+  - >-
+    Added a typed in-process query-port/API fixture to verify owner authorization,
+    page-size and topology bounds, deterministic declared and observed-only
+    catalogue states, explicit missing dependency and partial health states,
+    metadata-only responses, and retry-safe unauthenticated behavior.
+  - >-
+    Added manifest synchronization tests for idempotent upserts, replacement of
+    only the owning component's edges, unsupported fields, bounded measurements
+    and dependencies, duplicate/cycle rejection, and content-free SQL inputs.
+  - >-
+    Added mocked browser coverage for declared versus observed-only entries,
+    semantic topology tables, keyboard focus, partial/unavailable/empty states,
+    responsive narrow layout, axe checks, and browser-storage/URL privacy.
+  - >-
+      Kept tests deterministic and bounded with in-memory seams and no network
+      tools or credentials.
+  - >-
+      Added an opt-in PostgreSQL integration test that creates and drops
+      generated isolated schemas, avoiding shared Observatory state while
+      exercising fresh and legacy-upgrade migration paths.
+  - >-
+      Re-ran the correction assertions after the owning implementation fixes;
+      topology edges, typed storage failures, and manifest provider
+      dependencies now pass without weakening the tests.
+  - >-
+      Added subprocess-level no-argument/main versus explicit sync-manifests
+      dispatch checks, raw multi-measurement one-execution trend checks, and
+      concrete psycopg OperationalError/ClickHouse HTTPStatusError propagation
+      through the adapter and owner API.
+  - >-
+      Strengthened the raw trend double so the point-query branch independently
+      asserts the inner execution grouping, latest duration/outcome argMaxIf
+      selection, and spanless execution grouping in the generated ClickHouse
+      SQL; the summary query can no longer mask a trend SQL regression.
+  - >-
+      Added source-seam pagination regressions using 231 components: the
+      PostgreSQL definition path and ClickHouse observed path each advance by
+      a truthful component cursor, fetch only limit+1 source groups, preserve
+      every declared/observed version, and avoid the former 2,000/1,000-row
+      caps. Added deterministic max_nodes topology coverage requiring partial
+      truncation and no edge target outside the bounded node set.
+  - >-
+      Added sparse filtered source-seam regressions for overlapping PostgreSQL
+      and ClickHouse pages. Observed-only filtering now proves that an initial
+      declared-only overlap advances to later observed-only matches with a
+      deterministic replay cursor; declared filtering symmetrically returns all
+      later declared components. Both assert provider batches stay at the
+      limit-plus-one bound and never use the legacy ClickHouse cap.
+  - >-
+      Added security-bound regressions for 80-version component inputs, proving
+      deterministic 64-version definition/observed response caps and the
+      ClickHouse groupUniqArray(64) source contract. Added exact UTC default
+      24-hour health-window coverage, inclusive 31-day acceptance, oversized,
+      inverted, and naive timestamp rejection, plus direct, catalogue, and
+      topology SQL assertions for lower/upper observed_at predicates. Multiple
+      topology targets must reuse one identical bounded health window.
+  - >-
+      Added one-sample observability regressions for successful and failing
+      component collection, definition, and dependency resources, including
+      legacy compatibility execution. Added source-limit-plus-one topology
+      coverage for PostgreSQL definitions (>2000), ClickHouse observed groups
+      (>200), and reverse dependencies (>200), requiring partial propagation
+      while preserving resolved root/target semantics.
+  - >-
+      Re-ran the focused metrics/topology regressions and full Observatory suite
+      after the owning worker removed the nested legacy collection metrics call;
+      the one-sample compatibility regression now passes and all implementation
+      blockers are closed.
+  - >-
+      Added independent browser regressions for catalogue skeleton loading,
+      stale/disconnected catalogue recovery, successful-definition preservation
+      during partial dependency retry, malformed nested/scalar/enum/array/health
+      topology values, neutral no-outcome semantics, numeric dependency health,
+      exact detail focus return, and deterministic 200% long-identifier reflow.
+      Added parser matrices covering malformed definition and topology shapes;
+      no production behavior or contract was changed.
+  - >-
+      Corrected the full-stack outage acceptance test after the host run exposed
+      a readiness race: the prior case waited only for a visible composer while
+      the conversation remained unable to send until its model catalogue and
+      default agent finished loading. The case now reuses createCoreRun and
+      waitForCoreRun, which wait for Core conversation/model/agent readiness,
+      verify the configured selectable model, submit through the established
+      path, and prove a completed response after Observatory services stop.
+      This is test-only; no Core or Observatory product code changed.
+risks:
+  - >-
+    Real browser execution and full-stack acceptance must be rerun by the
+    integration maintainer in an environment where the configured Nx server
+    can start; test collection is verified but browser assertions are not.
+  - >-
+    Running the full Observatory suite from the service directory exposes a
+    pre-existing test assumption that compose.yaml is the current working
+    directory; the required repository-root invocation was used for the
+    correction pass.
+unresolved: []

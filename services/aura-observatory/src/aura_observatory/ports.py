@@ -176,6 +176,27 @@ class ObservatoryQueryPort(Protocol):
 
     async def components_query(self) -> list[dict[str, object]]: ...
 
+    async def component_collection_query(
+        self,
+        *,
+        definition_state: str | None = None,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, object]: ...
+
+    async def component_definition_query(
+        self, component_id: str, component_version: str
+    ) -> dict[str, object] | None: ...
+
+    async def component_dependencies_query(
+        self,
+        component_id: str,
+        component_version: str,
+        *,
+        depth: int = 1,
+        max_nodes: int = 100,
+    ) -> dict[str, object] | None: ...
+
     async def deployments_query(self) -> list[dict[str, object]]: ...
 
     async def run_query(
@@ -195,7 +216,13 @@ class ObservatoryQueryPort(Protocol):
     ) -> AsyncIterator[dict[str, object]]: ...
 
     async def component_health_query(
-        self, component_id: str, from_time: datetime | None, to_time: datetime | None
+        self,
+        component_id: str,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        *,
+        component_version: str | None = None,
+        point_limit: int = 200,
     ) -> dict[str, object] | None: ...
 
     async def health_snapshot_query(self) -> dict[str, object] | None: ...

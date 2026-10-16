@@ -28,6 +28,12 @@ from aura_observatory.ports import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_QUERY_METRIC_RESOURCE_ALIASES = {
+    # The bounded metric label vocabulary predates the versioned catalogue
+    # resources; retain their instrumentation without emitting arbitrary labels.
+    "component_definition": "components",
+    "component_dependencies": "components",
+}
 _RETENTION_EXCEPTION_CLASSES = frozenset(
     {
         "AttributeError",
@@ -46,6 +52,36 @@ _RETENTION_EXCEPTION_CLASSES = frozenset(
         "WriteTimeout",
     }
 )
+COMPONENT_HEALTH_DEFAULT_WINDOW = timedelta(hours=24)
+COMPONENT_HEALTH_MAX_WINDOW = timedelta(days=31)
+
+
+def bounded_component_health_window(
+    from_time: datetime | None,
+    to_time: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    """Return a finite UTC health window or reject an unsafe range."""
+
+    raw_upper = to_time or now or datetime.now(UTC)
+    if raw_upper.tzinfo is None or raw_upper.utcoffset() is None:
+        raise ValueError("component health timestamps must include a timezone")
+    upper = raw_upper.astimezone(UTC)
+    if from_time is not None and (
+        from_time.tzinfo is None or from_time.utcoffset() is None
+    ):
+        raise ValueError("component health timestamps must include a timezone")
+    lower = (
+        from_time.astimezone(UTC)
+        if from_time is not None
+        else upper - COMPONENT_HEALTH_DEFAULT_WINDOW
+    )
+    if lower >= upper:
+        raise ValueError("component health range must be increasing")
+    if upper - lower > COMPONENT_HEALTH_MAX_WINDOW:
+        raise ValueError("component health range is too wide")
+    return lower, upper
 
 
 def _retention_exception_class(error: BaseException) -> str:
@@ -252,6 +288,7 @@ def _query_resource(name: str) -> Any:
                 self._record_query_metrics(name, started, "failed")
                 await self._record_query_health_latency(started)
                 raise
+            self._record_query_metrics(name, started, "succeeded")
             await self._record_query_health_latency(started)
             return result
 
@@ -337,10 +374,8 @@ class ObservatoryQueryService:
 
     @_query_resource("overview")
     async def overview(self) -> dict[str, Any]:
-        started = monotonic()
         if self.query_port is not None:
             narrow = self.query_port
-            started = monotonic()
             result = await narrow.overview_query()
             health = result.get("health")
             self._record_health_metrics(
@@ -348,7 +383,6 @@ class ObservatoryQueryService:
                 if isinstance(health, dict)
                 else None
             )
-            self._record_query_metrics("overview", started, "succeeded")
             return result
         observations = await self.store.list_observations()
         memory = cast(ObservatoryReferencePort, self.store)
@@ -387,7 +421,6 @@ class ObservatoryQueryService:
                 ObservatoryReferencePort, self.store
             ).snapshot_sequence
         self._record_health_metrics(cast(dict[str, object] | None, result.get("health")))
-        self._record_query_metrics("overview", started, "succeeded")
         return result
 
     @_query_resource("health_history")
@@ -403,7 +436,6 @@ class ObservatoryQueryService:
             raise ValueError("limit must be between 1 and 200")
         if cursor is not None:
             decode_health_cursor(cursor)
-        started = monotonic()
         if self.query_port is not None:
             result = await self.query_port.health_history_query(
                 cursor=cursor, from_time=from_time, to_time=to_time, limit=limit
@@ -415,19 +447,15 @@ class ObservatoryQueryService:
                 to_time=to_time,
                 limit=limit,
             )
-        self._record_query_metrics("health_history", started, "succeeded")
         return result
 
     @_query_resource("runs")
     async def runs(
         self, filters: RunFilters, *, cursor: str | None, limit: int = 50
     ) -> dict[str, Any]:
-        started = monotonic()
         if self.query_port is not None:
             narrow = self.query_port
-            started = monotonic()
             result = await narrow.run_query(filters, cursor=cursor, limit=limit)
-            self._record_query_metrics("runs", started, "succeeded")
             return result
         if not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
@@ -522,18 +550,15 @@ class ObservatoryQueryService:
                 else None
             ),
         }
-        self._record_query_metrics("runs", started, "succeeded")
         return result
 
     @_query_resource("run_detail")
     async def run_detail(
         self, run_id: str, *, cursor: str | None = None, limit: int = 10000
     ) -> dict[str, Any] | None:
-        started = monotonic()
         if self.query_port is not None:
             narrow = self.query_port
             result = await narrow.run_detail_query(run_id, cursor=cursor, limit=limit)
-            self._record_query_metrics("run_detail", started, "succeeded")
             return result
         items = [
             item
@@ -566,20 +591,17 @@ class ObservatoryQueryService:
             if truncated and page
             else None
         )
-        self._record_query_metrics("run_detail", started, "succeeded")
         return _ReferenceRunDetail(result, page)
 
     @_query_resource("trace_detail")
     async def trace_detail(
         self, trace_id: str, *, cursor: str | None = None, limit: int = 10000
     ) -> dict[str, Any] | None:
-        started = monotonic()
         if self.query_port is not None:
             narrow = self.query_port
             result_value = await narrow.trace_detail_query(
                 trace_id, cursor=cursor, limit=limit
             )
-            self._record_query_metrics("trace_detail", started, "succeeded")
             return result_value
         items = [
             item
@@ -629,16 +651,20 @@ class ObservatoryQueryService:
                 else None
             ),
         }
-        self._record_query_metrics("trace_detail", started, "succeeded")
         return result
 
     async def components(self) -> list[dict[str, Any]]:
         started = monotonic()
         try:
-            result = (
+            result_value = (
                 await self.query_port.components_query()
                 if self.query_port is not None
                 else await self.store.components()
+            )
+            result = (
+                cast(dict[str, Any], result_value).get("items", [])
+                if isinstance(result_value, dict)
+                else cast(list[dict[str, Any]], result_value)
             )
         except Exception:
             self._record_query_metrics("components", started, "failed")
@@ -648,6 +674,61 @@ class ObservatoryQueryService:
         await self._record_query_health_latency(started)
         return result
 
+    @_query_resource("components")
+    async def component_collection(
+        self,
+        *,
+        definition_state: str | None = None,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        if self.query_port is not None:
+            result = await self.query_port.component_collection_query(
+                definition_state=definition_state, cursor=cursor, limit=limit
+            )
+            return cast(dict[str, Any], result)
+        # Keep this decorated use case independent from the legacy public
+        # components() use case, which owns its own metrics.  Calling it here
+        # would emit duplicate duration/outcome samples for one request.
+        values = await self.store.components()
+        return {"items": values[:limit], "nextCursor": None, "snapshotAt": iso(datetime.now(UTC))}
+
+    @_query_resource("component_definition")
+    async def component_definition(
+        self, component_id: str, component_version: str
+    ) -> dict[str, Any] | None:
+        if self.query_port is None:
+            return None
+        return cast(
+            dict[str, Any] | None,
+            await self.query_port.component_definition_query(component_id, component_version),
+        )
+
+    @_query_resource("component_dependencies")
+    async def component_dependencies(
+        self,
+        component_id: str,
+        component_version: str,
+        *,
+        depth: int = 1,
+        max_nodes: int = 100,
+    ) -> dict[str, Any] | None:
+        if not 1 <= depth <= 4 or not 1 <= max_nodes <= 200:
+            raise ValueError("dependency topology bounds are invalid")
+        if self.query_port is None:
+            return None
+        return cast(
+            dict[str, Any] | None,
+            await self.query_port.component_dependencies_query(
+                component_id,
+                component_version,
+                depth=depth,
+                max_nodes=max_nodes,
+            ),
+        )
+
     @_query_resource("component_health")
     async def component_health(
         self,
@@ -655,14 +736,19 @@ class ObservatoryQueryService:
         *,
         from_time: datetime | None = None,
         to_time: datetime | None = None,
+        component_version: str | None = None,
+        point_limit: int = 200,
     ) -> dict[str, Any] | None:
-        started = monotonic()
         if self.query_port is not None:
+            from_time, to_time = bounded_component_health_window(from_time, to_time)
             narrow = self.query_port
             result_value = await narrow.component_health_query(
-                component_id, from_time, to_time
+                component_id,
+                from_time,
+                to_time,
+                component_version=component_version,
+                point_limit=point_limit,
             )
-            self._record_query_metrics("component_health", started, "succeeded")
             return result_value
         items = [
             item
@@ -728,17 +814,18 @@ class ObservatoryQueryService:
             "outcomes": outcomes,
         }
         result: dict[str, Any] = {"componentId": component_id, "summary": summary, "points": []}
-        self._record_query_metrics("component_health", started, "succeeded")
         return result
 
     def _record_query_metrics(self, resource: str, started: float, outcome: str) -> None:
+        metric_resource = _QUERY_METRIC_RESOURCE_ALIASES.get(resource, resource)
         self.metrics.record(
             "observatory_query_duration_ms",
             (monotonic() - started) * 1000.0,
-            {"resource": resource},
+            {"resource": metric_resource},
         )
         self.metrics.record(
-            "observatory_query_outcome", labels={"resource": resource, "outcome": outcome}
+            "observatory_query_outcome",
+            labels={"resource": metric_resource, "outcome": outcome},
         )
 
     async def _record_query_health_latency(self, started: float) -> None:

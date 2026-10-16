@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: fcf696447c974204516ee92e651766f84db5e6f4b64b96da9d10bd6d6f160084
+// Contract SHA-256: 2576be9c11ec2fbf638184b57409acbc108f8ec875ff3b84a813d1bd1920bbb1
 
 export type Uuid = string;
 
@@ -8,6 +8,8 @@ export type UtcInstant = string;
 export type SafeLabel = string;
 
 export type ComponentId = string;
+
+export type DefinitionIdentifier = string;
 
 export type TraceId = string;
 
@@ -65,9 +67,27 @@ export type TraceDetail = { readonly "traceId": TraceId; readonly "runId": Uuid 
 
 export type HealthSummary = { readonly "sampleCount": number; readonly "latencyP50Ms": number | null; readonly "latencyP95Ms": number | null; readonly "errorRate": number | null; readonly "outcomes": { readonly "succeeded": number; readonly "failed": number; readonly "cancelled": number; readonly "unknown": number; }; };
 
-export type ComponentSummary = { readonly "componentId": ComponentId; readonly "versions": ReadonlyArray<SafeLabel>; readonly "firstSeenAt": UtcInstant; readonly "lastSeenAt": UtcInstant; readonly "health": HealthSummary; };
+export type ComponentDefinitionState = "declared" | "observed_only" | "missing";
 
-export type ComponentCollection = { readonly "items": ReadonlyArray<ComponentSummary>; readonly "snapshotAt": UtcInstant; };
+export type DependencyKind = "component" | "provider";
+
+export type DependencyAvailability = "observed" | "unobserved" | "unavailable";
+
+export type DependencyResolution = "resolved" | "missing_definition" | "version_unavailable";
+
+export type ComponentDependencyDeclaration = { readonly "dependencyId": DefinitionIdentifier; readonly "kind": DependencyKind; readonly "requiredVersion": SafeLabel | null; };
+
+export type ComponentDefinition = { readonly "componentId": ComponentId; readonly "componentVersion": SafeLabel; readonly "owner": DefinitionIdentifier; readonly "category": DefinitionIdentifier; readonly "inputSchemaId": DefinitionIdentifier; readonly "outputSchemaId": DefinitionIdentifier; readonly "measurements": ReadonlyArray<DefinitionIdentifier>; readonly "evaluators": ReadonlyArray<DefinitionIdentifier>; readonly "dependencies": ReadonlyArray<ComponentDependencyDeclaration>; };
+
+export type ComponentSummary = { readonly "componentId": ComponentId; readonly "versions": ReadonlyArray<SafeLabel>; readonly "firstSeenAt": UtcInstant; readonly "lastSeenAt": UtcInstant; readonly "health": HealthSummary; readonly "definitionState"?: ComponentDefinitionState; readonly "definitionVersions"?: ReadonlyArray<SafeLabel>; };
+
+export type ComponentCollection = { readonly "items": ReadonlyArray<ComponentSummary>; readonly "snapshotAt": UtcInstant; readonly "nextCursor"?: Cursor | null; };
+
+export type DependencyNode = { readonly "dependencyId": DefinitionIdentifier; readonly "kind": DependencyKind; readonly "componentVersion": SafeLabel | null; readonly "definitionState": ComponentDefinitionState; readonly "deployedVersions": ReadonlyArray<SafeLabel>; readonly "availability": DependencyAvailability; readonly "health": HealthSummary | null; readonly "partialHealth": boolean; };
+
+export type DependencyEdge = { readonly "sourceId": ComponentId; readonly "sourceVersion": SafeLabel; readonly "targetId": DefinitionIdentifier; readonly "targetVersion": SafeLabel | null; readonly "targetKind": DependencyKind; readonly "resolution": DependencyResolution; };
+
+export type ComponentDependencyTopology = { readonly "rootComponentId": ComponentId; readonly "rootComponentVersion": SafeLabel; readonly "nodes": ReadonlyArray<DependencyNode>; readonly "edges": ReadonlyArray<DependencyEdge>; readonly "directDependencyIds": ReadonlyArray<DefinitionIdentifier>; readonly "reverseDependencyIds": ReadonlyArray<ComponentId>; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; };
 
 export type HealthPoint = { readonly "startAt": UtcInstant; readonly "endAt": UtcInstant; readonly "summary": HealthSummary; };
 
@@ -102,8 +122,10 @@ export interface ObservatoryApiOperations {
   readonly listRuns: { readonly response: RunPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "status"?: RunStatus; readonly "component"?: ComponentId; readonly "model"?: SafeLabel; readonly "deployment"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getRun: { readonly response: RunDetail; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getTrace: { readonly response: TraceDetail; readonly body: never; readonly path: { readonly "trace_id": TraceId; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
-  readonly listComponents: { readonly response: ComponentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
-  readonly getComponentHealth: { readonly response: ComponentHealth; readonly body: never; readonly path: { readonly "component_id": ComponentId; }; readonly query: { readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly listComponents: { readonly response: ComponentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "definition_state"?: ComponentDefinitionState; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getComponentDefinition: { readonly response: ComponentDefinition; readonly body: never; readonly path: { readonly "component_id": ComponentId; readonly "component_version": SafeLabel; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly getComponentDependencies: { readonly response: ComponentDependencyTopology; readonly body: never; readonly path: { readonly "component_id": ComponentId; readonly "component_version": SafeLabel; }; readonly query: { readonly "depth"?: number; readonly "max_nodes"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getComponentHealth: { readonly response: ComponentHealth; readonly body: never; readonly path: { readonly "component_id": ComponentId; }; readonly query: { readonly "component_version"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listDeployments: { readonly response: DeploymentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly streamEvents: { readonly response: SsePayload; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly createRetentionAction: { readonly response: RetentionAction; readonly body: CreateRetentionActionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
@@ -136,6 +158,8 @@ export const OBSERVATORY_API_OPERATIONS = {
   getRun: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}', requestMode: 'none', responseMode: 'json' },
   getTrace: { method: 'GET', pathTemplate: '/api/v1/traces/{trace_id}', requestMode: 'none', responseMode: 'json' },
   listComponents: { method: 'GET', pathTemplate: '/api/v1/components', requestMode: 'none', responseMode: 'json' },
+  getComponentDefinition: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/definitions/{component_version}', requestMode: 'none', responseMode: 'json' },
+  getComponentDependencies: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/definitions/{component_version}/dependencies', requestMode: 'none', responseMode: 'json' },
   getComponentHealth: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/health', requestMode: 'none', responseMode: 'json' },
   listDeployments: { method: 'GET', pathTemplate: '/api/v1/deployments', requestMode: 'none', responseMode: 'json' },
   streamEvents: { method: 'GET', pathTemplate: '/api/v1/events', requestMode: 'none', responseMode: 'event-stream' },

@@ -113,6 +113,10 @@ type FixtureOptions = {
   healthChanged?: boolean;
   healthState?: FixtureHealthState;
   deferAfterLogout?: boolean;
+  deferCatalogue?: boolean;
+  componentStale?: boolean;
+  componentTopology?: 'declared' | 'multi-version' | 'partial' | 'unavailable' | 'empty';
+  detailFailure?: 'definition' | 'dependencies' | 'malformed' | 'malformed-topology';
 };
 
 type FixtureHandle = {
@@ -120,6 +124,7 @@ type FixtureHandle = {
   logoutRequests: Array<{ headers: Record<string, string> }>;
   deferredKinds: Set<string>;
   releaseDeferred: () => void;
+  failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
   expireSession: () => void;
 };
@@ -138,9 +143,11 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   let sessionTokenIndex = 0;
   let expireSessionRequested = false;
   let healthChanged = false;
+  let detailFailureAttempts = 0;
+  let componentRefreshFailure = false;
 
   const defer = async (kind: string): Promise<void> => {
-    if (!options.deferAfterLogout) return;
+    if (!options.deferAfterLogout && !(kind === 'catalogue' && options.deferCatalogue)) return;
     deferredKinds.add(kind);
     await new Promise<void>((resolve) => deferredResolvers.push(resolve));
   };
@@ -201,11 +208,104 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       return;
     }
     if (path.endsWith('/components') && request.method() === 'GET') {
+      if (options.componentStale && componentRefreshFailure) { await route.abort('failed'); return; }
       if (options.partial) { await route.abort('failed'); return; }
+      if (options.deferCatalogue) await defer('catalogue');
+      if (options.componentTopology === 'unavailable') {
+        await route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'component catalogue unavailable', retryable: true, traceId } });
+        return;
+      }
+      if (options.componentTopology === 'empty') {
+        await route.fulfill({ json: { snapshotAt: observedAt, items: [] } });
+        return;
+      }
+      if (options.componentTopology === 'declared' || options.componentTopology === 'multi-version' || options.componentTopology === 'partial') {
+        await route.fulfill({ json: { snapshotAt: observedAt, items: [
+          { componentId: 'aura.observatory.query_api', versions: ['1.0.0'], firstSeenAt: observedAt, lastSeenAt: observedAt, definitionState: 'declared', definitionVersions: ['1.0.0'], health: componentHealth },
+          { componentId: 'aura.core.scheduler', versions: ['9.9.9'], firstSeenAt: observedAt, lastSeenAt: observedAt, definitionVersions: [], health: { ...componentHealth, errorRate: null, outcomes: { succeeded: 0, failed: 0, cancelled: 0, unknown: 4 } } },
+          { componentId: `aura.observatory.observed_${'x'.repeat(70)}`, versions: ['9.9.9'], firstSeenAt: observedAt, lastSeenAt: observedAt, definitionVersions: [], health: { ...componentHealth, errorRate: null, outcomes: { succeeded: 0, failed: 0, cancelled: 0, unknown: 4 } } },
+        ] } });
+        return;
+      }
       await route.fulfill({ json: { snapshotAt: observedAt, items: [
         { componentId: 'aura.core.api', versions: ['1.2.0'], firstSeenAt: observedAt, lastSeenAt: observedAt, health: componentHealth },
         { componentId: 'aura.core.worker', versions: ['1.2.0'], firstSeenAt: observedAt, lastSeenAt: observedAt, health: { ...componentHealth, errorRate: 0 } },
       ] } });
+      return;
+    }
+    if (path.endsWith('/components/aura.observatory.query_api/definitions/1.0.0')) {
+      if (options.detailFailure === 'definition' && detailFailureAttempts++ === 0) {
+        await route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'definition unavailable', retryable: true, traceId } });
+        return;
+      }
+      if (options.detailFailure === 'malformed' && detailFailureAttempts++ === 0) {
+        await route.fulfill({ json: { componentId: 'aura.observatory.query_api', componentVersion: '1.0.0', owner: null } });
+        return;
+      }
+      await route.fulfill({ json: {
+        componentId: 'aura.observatory.query_api', componentVersion: '1.0.0', owner: 'observatory', category: 'api',
+        inputSchemaId: 'metadata-request-v1', outputSchemaId: 'metadata-response-v1', measurements: ['duration_ms'], evaluators: ['observatory_self_monitoring'],
+        dependencies: [
+          { dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', requiredVersion: '1.0.0' },
+          { dependencyId: 'missing.provider', kind: 'provider', requiredVersion: null },
+        ],
+      } });
+      return;
+    }
+    if (path.endsWith('/components/aura.observatory.query_api/definitions/1.0.0/dependencies')) {
+      if (options.detailFailure === 'dependencies' && detailFailureAttempts++ === 0) {
+        await route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'dependencies unavailable', retryable: true, traceId } });
+        return;
+      }
+      if (options.detailFailure === 'malformed-topology' && detailFailureAttempts++ === 0) {
+        await route.fulfill({ json: {
+          rootComponentId: 'aura.observatory.query_api', rootComponentVersion: '1.0.0', partial: false, snapshotAt: observedAt,
+          directDependencyIds: ['aura.observatory.telemetry_storage', 17], reverseDependencyIds: [],
+          nodes: [{ dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: ['1.0.0'], availability: 'observed', health: { sampleCount: 'four', latencyP50Ms: 10, latencyP95Ms: 20, errorRate: 0.25, outcomes: { succeeded: 3, failed: 1, cancelled: 0, unknown: 0 } }, partialHealth: false }],
+          edges: [{ sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'aura.observatory.telemetry_storage', targetVersion: '1.0.0', targetKind: 'component', resolution: 'resolved' }],
+        } });
+        return;
+      }
+      if (options.componentTopology === 'partial') {
+        await route.fulfill({ json: {
+          rootComponentId: 'aura.observatory.query_api', rootComponentVersion: '1.0.0', partial: true, snapshotAt: observedAt,
+          directDependencyIds: ['aura.observatory.telemetry_storage', 'missing.provider'], reverseDependencyIds: [],
+          nodes: [
+            { dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: [], availability: 'unobserved', health: null, partialHealth: true },
+            { dependencyId: 'missing.provider', kind: 'provider', componentVersion: null, definitionState: 'missing', deployedVersions: [], availability: 'unavailable', health: null, partialHealth: true },
+          ],
+          edges: [
+            { sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'aura.observatory.telemetry_storage', targetVersion: '1.0.0', targetKind: 'component', resolution: 'resolved' },
+            { sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'missing.provider', targetVersion: null, targetKind: 'provider', resolution: 'missing_definition' },
+          ],
+        } });
+        return;
+      }
+      if (options.componentTopology === 'multi-version') {
+        await route.fulfill({ json: {
+          rootComponentId: 'aura.observatory.query_api', rootComponentVersion: '1.0.0', partial: false, snapshotAt: observedAt,
+          directDependencyIds: ['aura.observatory.telemetry_storage'], reverseDependencyIds: [],
+          nodes: [
+            { dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: ['1.0.0'], availability: 'observed', health: componentHealth, partialHealth: false },
+            { dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', componentVersion: '2.0.0', definitionState: 'declared', deployedVersions: ['2.0.0'], availability: 'unavailable', health: { ...componentHealth, sampleCount: 9, latencyP50Ms: 40, latencyP95Ms: 88, errorRate: 0, outcomes: { succeeded: 9, failed: 0, cancelled: 0, unknown: 0 } }, partialHealth: false },
+          ],
+          edges: [
+            { sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'aura.observatory.telemetry_storage', targetVersion: '1.0.0', targetKind: 'component', resolution: 'resolved' },
+            { sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'aura.observatory.telemetry_storage', targetVersion: '2.0.0', targetKind: 'component', resolution: 'resolved' },
+          ],
+        } });
+        return;
+      }
+      await route.fulfill({ json: {
+        rootComponentId: 'aura.observatory.query_api', rootComponentVersion: '1.0.0', partial: false, snapshotAt: observedAt,
+        directDependencyIds: ['aura.observatory.telemetry_storage', 'missing.provider'], reverseDependencyIds: [],
+        nodes: [{ dependencyId: 'aura.observatory.telemetry_storage', kind: 'component', componentVersion: '1.0.0', definitionState: 'declared', deployedVersions: ['1.0.0'], availability: 'observed', health: componentHealth, partialHealth: false }, { dependencyId: 'missing.provider', kind: 'provider', componentVersion: null, definitionState: 'missing', deployedVersions: [], availability: 'unavailable', health: null, partialHealth: true }],
+        edges: [{ sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'aura.observatory.telemetry_storage', targetVersion: '1.0.0', targetKind: 'component', resolution: 'resolved' }, { sourceId: 'aura.observatory.query_api', sourceVersion: '1.0.0', targetId: 'missing.provider', targetVersion: null, targetKind: 'provider', resolution: 'missing_definition' }],
+      } });
+      return;
+    }
+    if (path.endsWith('/components/aura.observatory.query_api/health')) {
+      await route.fulfill({ json: { componentId: 'aura.observatory.query_api', summary: componentHealth, points: [{ startAt: oldObservedAt, endAt: observedAt, summary: componentHealth }] } });
       return;
     }
     if (path.endsWith('/components/aura.core.api/health')) {
@@ -250,6 +350,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     logoutRequests,
     deferredKinds,
     releaseDeferred: () => { while (deferredResolvers.length) deferredResolvers.shift()?.(); },
+    failCatalogueRefresh: () => { componentRefreshFailure = true; },
     restoreIdentity: () => { identityUnavailable = false; loggedOut = false; },
     expireSession: () => { expireSessionRequested = true; },
   };
@@ -461,10 +562,170 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(page.getByText('aura.core.api')).toBeVisible();
     await expect(page.locator('observatory-components').getByText(/p50|latency/i).first()).toBeVisible();
     await expect(page.locator('observatory-components').getByText(/errors?/i).first()).toBeVisible();
-    await expect(page.locator('observatory-components').getByRole('article').first().getByText('3', { exact: true })).toBeVisible();
+    const firstComponent = page.locator('observatory-components').getByRole('article').first();
+    await expect(firstComponent.locator('dt').filter({ hasText: 'Samples' }).locator('..').locator('dd')).toHaveText('4');
     const trendValues = page.locator('observatory-components [role="img"][aria-label]');
     await expect(trendValues.first()).toBeVisible({ timeout: 10_000 });
     expect(await trendValues.evaluateAll((items) => items.every((item) => /samples at/i.test(item.getAttribute('aria-label') ?? '')))).toBe(true);
+  });
+
+  test('keeps the component catalogue structural loading state while its request is pending', async ({ page }) => {
+    const fixture = await installFixture(page, { componentTopology: 'declared', deferCatalogue: true });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    const loading = page.getByRole('status', { name: 'Loading component catalogue' });
+    await expect(loading).toBeVisible();
+    expect(fixture.deferredKinds.has('catalogue')).toBe(true);
+    await fixture.releaseDeferred();
+    await expect(page.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
+    await expect(loading).toHaveCount(0);
+  });
+
+  test('renders declared and observed-only catalogue entries with an accessible topology table', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'declared' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    const components = page.locator('observatory-components');
+    await expect(components.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
+    const declared = components.getByRole('article', { name: 'aura.observatory.query_api' });
+    await expect(declared).toContainText('Declared definition');
+    await expect(components.getByText('aura.core.scheduler', { exact: true })).toBeVisible();
+    await expect(components.getByText(`aura.observatory.observed_${'x'.repeat(70)}`, { exact: true })).toBeVisible();
+    const observedOnly = components.getByRole('article').filter({ hasText: 'aura.core.scheduler' });
+    await expect(observedOnly).toContainText('Observed only');
+    await expect(observedOnly).toContainText('No approved definition is available for this observed component.');
+    await expect(observedOnly).toContainText('No outcome data');
+    await expect(observedOnly).not.toContainText(/Healthy|Degraded/);
+    const longObservedOnly = components.getByRole('article').filter({ hasText: `aura.observatory.observed_${'x'.repeat(70)}` });
+    await expect(longObservedOnly).toContainText('Observed only');
+
+    const open = components.getByRole('button', { name: 'View definition and topology' }).first();
+    await expect(open).toHaveAttribute('aria-expanded', 'false');
+    await expect(open).toHaveAttribute('aria-controls', 'component-details-panel');
+    await open.focus();
+    await expect(open).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#component-details-title')).toBeVisible();
+    await expect(open).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#component-details-title')).toBeFocused();
+    const table = page.getByRole('table', { name: /Complete dependency relationships/ });
+    await expect(table).toBeVisible();
+    await expect(table.getByText('Missing definition', { exact: true })).toBeVisible();
+    await expect(table.getByText('Unavailable', { exact: true })).toBeVisible();
+    await expect(table.getByText('4 samples · 25% errors · p95 44 ms · Degraded', { exact: true })).toBeVisible();
+    await expect(page.getByText('Direct dependencies', { exact: true })).toBeVisible();
+    await expect(page.getByText('Reverse dependencies', { exact: true })).toBeVisible();
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+    await expectNoA11yViolations(page);
+    await page.getByRole('button', { name: 'Close details', exact: true }).click();
+    await expect(open).toBeFocused();
+  });
+
+  test('exposes partial topology and preserves keyboard-safe responsive layout', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'partial' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    await expect(page.getByText('Partial health; some observations are unavailable.', { exact: true })).toBeVisible();
+    const table = page.getByRole('table', { name: /Complete dependency relationships/ });
+    await expect(table).toBeVisible();
+    const scrollRegion = page.getByRole('region', { name: 'Scrollable dependency relationship table' });
+    await page.setViewportSize({ width: 768, height: 900 });
+    const beforeScroll = await scrollRegion.evaluate((element) => ({ left: element.scrollLeft, overflow: element.scrollWidth > element.clientWidth }));
+    expect(beforeScroll.overflow).toBe(true);
+    await scrollRegion.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => scrollRegion.evaluate((element) => element.scrollLeft)).toBeGreaterThan(beforeScroll.left);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const layout = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    await expectNoA11yViolations(page);
+  });
+
+  test('matches topology availability and health to each target version', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'multi-version' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    const table = page.getByRole('table', { name: /Complete dependency relationships/ });
+    const versionOne = table.locator('tbody tr').filter({ hasText: '2.0.0' }).first();
+    const versionZero = table.locator('tbody tr').filter({ hasText: '1.0.0' }).first();
+    await expect(versionZero.locator('td').nth(4)).toHaveText('Observed');
+    await expect(versionZero.locator('td').nth(5)).toHaveText('4 samples · 25% errors · p95 44 ms · Degraded');
+    await expect(versionOne.locator('td').nth(4)).toHaveText('Unavailable');
+    await expect(versionOne.locator('td').nth(5)).toHaveText('9 samples · 0% errors · p95 88 ms · Healthy');
+  });
+
+  test('retries partial component details with Enter and announces the transition', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'declared', detailFailure: 'dependencies' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    await opener.press('Enter');
+    await expect(page.getByRole('status').filter({ hasText: 'partially loaded' })).toBeVisible();
+    const retry = page.getByRole('button', { name: 'Retry details', exact: true });
+    const details = page.locator('#component-details-panel');
+    await expect(details.getByText('observatory', { exact: true })).toBeVisible();
+    await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible();
+    await retry.focus();
+    await retry.press('Enter');
+    await expect(page.getByRole('table', { name: /Complete dependency relationships/ })).toBeVisible();
+    await expect(page.locator('#component-details-title')).toBeFocused();
+    await expect(details.getByText('observatory', { exact: true })).toBeVisible();
+    await expect(page.locator('.sr-only[role="status"]')).toContainText('loaded');
+    await expectNoA11yViolations(page);
+  });
+
+  test('keeps malformed definition data in a recoverable detail state', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await page.getByRole('button', { name: 'View definition and topology' }).first().press('Enter');
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('#component-details-title')).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Retry details', exact: true })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('treats malformed nested topology values as partial without crashing the detail view', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed-topology' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    await opener.click();
+    const details = page.locator('#component-details-panel');
+    await expect(details.locator('#component-details-title')).toBeFocused();
+    await expect(details.getByRole('alert')).toContainText('Partial component details');
+    await expect(details.getByText('observatory', { exact: true })).toBeVisible();
+    await details.getByRole('button', { name: 'Retry details', exact: true }).press('Enter');
+    await expect(details.getByRole('table', { name: /Complete dependency relationships/ })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('keeps catalogue empty state retryable without private persistence', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'empty' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await expect(page.getByText('No component definitions or observed components are available yet.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh catalogue', exact: true })).toBeVisible();
+
+    const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage), url: location.href }));
+    expect(storage.local).toEqual([]);
+    expect(storage.session).toEqual([]);
+    expect(storage.url).not.toMatch(/token|credential|secret|access_token/i);
+  });
+
+  test('shows an unavailable catalogue with a keyboard retry action', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'unavailable' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Component catalogue is unavailable');
+    await expect(page.getByRole('button', { name: 'Retry component catalogue', exact: true })).toBeVisible();
+  });
+
+  test('distinguishes stale catalogue data from a disconnected live stream', async ({ page }) => {
+    const fixture = await openFixture(page, { componentTopology: 'declared', componentStale: true, sseDisconnected: true });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    const components = page.locator('observatory-components');
+    await expect(components.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
+    fixture.failCatalogueRefresh();
+    await components.getByRole('button', { name: 'Refresh catalogue', exact: true }).click();
+    await expect(components.getByRole('status').filter({ hasText: /last known component catalogue/i })).toBeVisible();
+    await expect(page.locator('header').getByRole('status')).toHaveText(/Disconnected/i);
+    await expect(components.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
   });
 
   test('exposes partial-data state when one or more resource panels cannot refresh', async ({ page }) => {
@@ -496,6 +757,17 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
     expect(layout.headerRight).toBeLessThanOrEqual(layout.viewportWidth + 1);
     expect(layout.tabsTop).toBeGreaterThanOrEqual(layout.headerBottom - 1);
+  });
+
+  test('reflows long component identifiers at a deterministic 200 percent zoom', async ({ page }) => {
+    await openFixture(page, { componentTopology: 'declared' });
+    await page.getByRole('button', { name: 'Components', exact: true }).click();
+    await page.setViewportSize({ width: 640, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.zoom = '2'; });
+    const longIdentifier = page.getByText(`aura.observatory.observed_${'x'.repeat(70)}`, { exact: true });
+    await expect(longIdentifier).toBeVisible();
+    const layout = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
   });
 
   test('uses semantic dark-theme tokens and reduced-motion browser preferences', async ({ page }) => {

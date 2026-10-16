@@ -85,6 +85,9 @@ metric_definitions:
     correlation: ingest_sequence
     export: prometheus
 evaluators:
+  - component_manifest_completeness
+  - component_dependency_integrity
+  - observatory_self_monitoring
   - metadata_observation_contract_rejection
   - telemetry_ingestion_idempotency
   - observatory_service_isolation

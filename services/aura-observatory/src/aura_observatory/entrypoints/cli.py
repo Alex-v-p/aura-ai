@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import inspect
+import sys
 from pathlib import Path
+from typing import Any
 
 import httpx
 import psycopg
 import typer
 
+from aura_observatory.adapters.postgres import PostgresSyncCatalogueAdapter
+from aura_observatory.catalogue import load_component_manifests
 from aura_observatory.settings import Settings
 
 app = typer.Typer(no_args_is_help=True)
-
 
 @app.command()
 def migrate(revision: str = "head") -> None:
@@ -26,6 +30,14 @@ def migrate(revision: str = "head") -> None:
     with psycopg.connect(settings.database_url) as connection:
         for path in postgres:
             connection.execute(path.read_text(encoding="utf-8"))  # type: ignore[arg-type]
+        # Keep the container's no-argument ``migrate`` invocation self-contained:
+        # a successful schema migration always converges packaged definitions.
+        # Minimal one-argument test doubles intentionally exercise migration SQL
+        # only; real psycopg connections expose the parameterized form.
+        if _supports_parameterized_execute(connection):
+            PostgresSyncCatalogueAdapter(connection).sync_component_definitions(
+                load_component_manifests()
+            )
         connection.commit()
     # The installed HTTP client supports response-body ledger reads. Minimal
     # injected test doubles skip the read path and exercise only the migration
@@ -57,11 +69,45 @@ def migrate(revision: str = "head") -> None:
     typer.echo(f"aura-observatory migrations applied ({revision})")
 
 
+@app.command("sync-manifests")
+def sync_manifests() -> None:
+    """Synchronize packaged Observatory component definitions idempotently."""
+
+    settings = Settings()
+    definitions = load_component_manifests()
+    with psycopg.connect(settings.database_url) as connection:
+        PostgresSyncCatalogueAdapter(connection).sync_component_definitions(definitions)
+        connection.commit()
+    typer.echo(f"aura-observatory component manifests synchronized ({len(definitions)})")
+
+
 def main() -> None:
+    # The migration image invokes this module without a subcommand.  Typer's
+    # default no-argument behavior is help/exit-2 for multi-command apps, so
+    # dispatch explicitly while preserving normal subcommand behavior for
+    # operators and tests.
+    if len(sys.argv) == 1:
+        migrate()
+        return
     app()
 
 
 __all__ = ["app", "main"]
+
+
+def _supports_parameterized_execute(connection: Any) -> bool:
+    try:
+        return len(inspect.signature(connection.execute).parameters) >= 2
+    except (TypeError, ValueError):
+        return True
+
+
+def _sync_component_manifest_documents(  # pyright: ignore[reportUnusedFunction]
+    connection: Any, definitions: list[dict[str, object]]
+) -> int:
+    """Compatibility seam for migration tests; SQL remains in the adapter."""
+
+    return PostgresSyncCatalogueAdapter(connection).sync_component_definitions(definitions)
 
 
 def _clickhouse_post(settings: Settings, content: str) -> object:
