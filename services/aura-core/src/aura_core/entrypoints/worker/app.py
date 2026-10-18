@@ -1069,6 +1069,8 @@ def make_worker_telemetry(
             environment=config.environment,
             host_id=config.telemetry_host_id,
             service_role=config.role,
+            image_version=config.telemetry_image_version,
+            configuration_version=config.telemetry_configuration_version,
         )
     )
     return metrics, TelemetryLifecycle(metrics)

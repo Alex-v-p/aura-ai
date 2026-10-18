@@ -7,6 +7,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 const observedAt = new Date(Date.now() - 30_000).toISOString();
 const oldObservedAt = new Date(Date.now() - 10 * 60_000).toISOString();
 const runId = '6f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a01';
+const comparisonRunId = '7f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a02';
 const traceId = '0123456789abcdef0123456789abcdef';
 const actionId = 'fda9d3fb-79c7-472b-bf18-1c76a9ec4f25';
 const fixtureCsrfToken = 'fixture-observatory-csrf-token-0123456789abcdef';
@@ -61,6 +62,7 @@ const run = {
   componentIds: ['aura.core.api', 'aura.core.worker'],
   traceId,
 };
+const comparisonRun = { ...run, runId: comparisonRunId, status: 'failed', durationMs: 6200, model: 'fixture-chat-v2', deploymentId: 'dev-canary', traceId: '1123456789abcdef0123456789abcdef' };
 
 const componentHealth = {
   sampleCount: 4,
@@ -121,6 +123,13 @@ function traceDetail() {
   };
 }
 
+function comparisonDetail() {
+  const marker = (value: string | null, availability: 'available' | 'missing' | 'unavailable' = value ? 'available' : 'missing') => ({ availability, value });
+  const span = (side: 'left' | 'right') => ({ spanId: side === 'left' ? 'aaaaaaaaaaaaaaaa' : 'bbbbbbbbbbbbbbbb', parentSpanId: null, componentId: 'aura.core.api', componentVersion: side === 'left' ? '1.2.0' : '1.3.0', operation: 'request', startedAt: observedAt, durationMs: side === 'left' ? 100 : 120, outcome: side === 'left' ? 'succeeded' : 'failed', partial: false });
+  const side = (role: 'left' | 'right', id: string) => ({ role, runId: id, evidence: 'available', status: role === 'left' ? 'succeeded' : 'failed', outcome: role === 'left' ? 'succeeded' : 'failed', startedAt: observedAt, finishedAt: observedAt, durationMs: role === 'left' ? 5000 : 6200, traceId: role === 'left' ? traceId : '1123456789abcdef0123456789abcdef', modelId: marker(role === 'left' ? 'fixture-chat' : 'fixture-chat-v2'), modelVersion: marker('v1'), deploymentId: marker(role === 'left' ? 'dev-local' : 'dev-canary'), gitCommit: marker(role === 'left' ? 'abcdef1' : 'abcdef2'), imageVersion: marker(role === 'left' ? 'image-a' : 'image-b'), configurationVersion: marker('config-a'), agentRevision: marker('agent-a'), promptBundleRevision: marker('bundle-a'), policyRevision: marker('policy-a'), componentVersions: [{ componentId: 'aura.core.api', version: marker(role === 'left' ? '1.2.0' : '1.3.0') }], partial: false });
+  return { snapshotAt: observedAt, left: side('left', runId), right: side('right', comparisonRunId), markerCorrelations: [{ marker: 'deployment_id', state: 'changed', left: marker('dev-local'), right: marker('dev-canary') }, { marker: 'policy_revision', state: 'equal', left: marker('policy-a'), right: marker('policy-a') }], components: [{ componentId: 'aura.core.api', operation: 'request', alignment: 'matched', left: { componentVersion: marker('1.2.0'), durationMs: 100, outcome: 'succeeded', spanCount: 1, partial: false }, right: { componentVersion: marker('1.3.0'), durationMs: 120, outcome: 'failed', spanCount: 1, partial: false }, measurements: [{ name: 'duration_ms', unit: 'milliseconds', state: 'changed', left: { availability: 'available', value: 100 }, right: { availability: 'available', value: 120 }, absoluteDelta: 20 }] }], trace: { leftTraceId: traceId, rightTraceId: '1123456789abcdef0123456789abcdef', leftEvidence: 'available', rightEvidence: 'available', leftIntegrity: ['complete'], rightIntegrity: ['complete'], alignedSpans: [{ alignmentKey: 'aura.core.api:request:root', alignment: 'matched', left: span('left'), right: span('right'), leftIntegrity: ['complete'], rightIntegrity: ['complete'] }], partial: false }, freshness: { latestObservedAt: observedAt, lagMs: 50, state: 'fresh' }, partial: false, partialReasons: [], unavailableMarkerCount: 0, scan: { scannedRows: 2, scanLimit: 1000000, executionMs: 4, executionLimitMs: 5000 }, limits: { runCount: 2, maximumObservationsPerRun: 10000, maximumSpansPerRun: 5000, maximumMeasurements: 2000, maximumScannedRows: 1000000, executionTimeoutMs: 5000 }, capturePolicy: 'metadata_only' };
+}
+
 type FixtureOptions = {
   anonymous?: boolean;
   identityUnavailable?: boolean;
@@ -143,6 +152,9 @@ type FixtureOptions = {
   componentStale?: boolean;
   componentTopology?: 'declared' | 'multi-version' | 'partial' | 'unavailable' | 'empty';
   detailFailure?: 'definition' | 'dependencies' | 'malformed' | 'malformed-topology';
+  comparisonFailure?: 'malformed' | 'rejected' | 'unavailable' | 'partial' | 'freshness-unavailable' | 'unavailable-marker';
+  comparisonRecovers?: boolean;
+  runsEmpty?: boolean;
 };
 
 type FixtureHandle = {
@@ -150,6 +162,8 @@ type FixtureHandle = {
   logoutRequests: Array<{ headers: Record<string, string> }>;
   deferredKinds: Set<string>;
   analyticsQueryUrls: string[];
+  comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }>;
+  runsRequests: Array<void>;
   releaseDeferred: () => void;
   failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
@@ -161,6 +175,8 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const logoutRequests: Array<{ headers: Record<string, string> }> = [];
   const deferredKinds = new Set<string>();
   const analyticsQueryUrls: string[] = [];
+  const comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }> = [];
+  const runsRequests: Array<void> = [];
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
@@ -216,6 +232,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       return;
     }
     if (path.endsWith('/runs') && request.method() === 'GET') {
+      runsRequests.push(undefined);
       if (options.expireNextRuns && expireSessionRequested) {
         expireSessionRequested = false;
         loggedOut = true;
@@ -223,7 +240,24 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         return;
       }
       if (options.partial) { await route.abort('failed'); return; }
-      await route.fulfill({ json: { items: [run], nextCursor: null, snapshotAt: observedAt, latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22' } });
+      await route.fulfill({ json: { items: options.runsEmpty ? [] : options.comparisonFailure ? [run, comparisonRun] : [run], nextCursor: null, snapshotAt: observedAt, latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22' } });
+      return;
+    }
+    if (path.endsWith('/run-comparisons/query') && request.method() === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as { leftRunId?: string; rightRunId?: string };
+      comparisonRequests.push(body);
+      if (options.comparisonFailure === 'malformed') { await route.fulfill({ json: { snapshotAt: observedAt, capturePolicy: 'metadata_only', components: [] } }); return; }
+      if (options.comparisonFailure === 'rejected') { await route.fulfill({ status: 422, json: { code: 'comparison_rejected', message: 'selected run is not retained', retryable: false, traceId } }); return; }
+      if (options.comparisonFailure === 'unavailable' && !(options.comparisonRecovers && comparisonRequests.length > 1)) { await route.fulfill({ status: 503, json: { code: 'comparison_unavailable', message: 'comparison unavailable', retryable: true, traceId } }); return; }
+      const result = comparisonDetail();
+      if (options.comparisonFailure === 'partial') { result.partial = true; result.partialReasons = ['incomplete_run']; result.trace.partial = true; }
+      if (options.comparisonFailure === 'freshness-unavailable') {
+        result.freshness = { latestObservedAt: null, lagMs: null, state: 'unavailable' };
+        result.unavailableMarkerCount = 1;
+        result.markerCorrelations = [{ marker: 'policy_revision', state: 'unavailable', left: { availability: 'unavailable', value: null }, right: { availability: 'available', value: 'policy-a' } }];
+      }
+      if (options.comparisonFailure === 'unavailable-marker') { result.unavailableMarkerCount = 1; result.markerCorrelations = [{ marker: 'policy_revision', state: 'unavailable', left: { availability: 'unavailable', value: null }, right: { availability: 'available', value: 'policy-a' } }]; }
+      await route.fulfill({ json: result });
       return;
     }
     if (path.endsWith(`/runs/${runId}`)) {
@@ -404,6 +438,8 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     logoutRequests,
     deferredKinds,
     analyticsQueryUrls,
+    comparisonRequests,
+    runsRequests,
     releaseDeferred: () => { while (deferredResolvers.length) deferredResolvers.shift()?.(); },
     failCatalogueRefresh: () => { componentRefreshFailure = true; },
     restoreIdentity: () => { identityUnavailable = false; loggedOut = false; },
@@ -425,6 +461,266 @@ async function expectNoA11yViolations(page: Page): Promise<void> {
 }
 
 test.describe('Observatory Web mocked browser acceptance', () => {
+  test('keeps first use as plain selection guidance when runs exist', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'partial' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await expect(comparison.getByText('Choose two distinct runs to create a bounded comparison. Selections remain in memory only.', { exact: true })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toHaveCount(0);
+    await expect(comparison.getByText('No metadata runs are available to compare yet.', { exact: false })).toHaveCount(0);
+  });
+
+  test('gives a true empty run catalogue its own Retry runs action', async ({ page }) => {
+    const fixture = await openFixture(page, { runsEmpty: true });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await expect(comparison.getByText('No metadata runs are available to compare yet.', { exact: false })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Retry runs', exact: true })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toHaveCount(0);
+    const requestsBeforeRetry = fixture.runsRequests.length;
+    await comparison.getByRole('button', { name: 'Retry runs', exact: true }).press('Enter');
+    await expect.poll(() => fixture.runsRequests.length).toBe(requestsBeforeRetry + 1);
+  });
+
+  test('shows comparison retry only after a failed request and retries the same selection', async ({ page }) => {
+    const fixture = await openFixture(page, { comparisonFailure: 'unavailable', comparisonRecovers: true });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('alert')).toContainText(/service unavailable/i);
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toBeVisible();
+    await comparison.getByRole('button', { name: 'Retry comparison', exact: true }).press('Enter');
+    await expect(comparison.getByRole('heading', { name: /versus/ })).toBeVisible();
+    expect(fixture.comparisonRequests).toEqual([{ leftRunId: runId, rightRunId: comparisonRunId }, { leftRunId: runId, rightRunId: comparisonRunId }]);
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toHaveCount(0);
+  });
+
+  test('compares two runs with keyboard-safe selection, semantic differences, and memory-only requests', async ({ page }) => {
+    const fixture = await openFixture(page, { comparisonFailure: 'partial', healthChanged: true });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await expect(comparison.getByRole('heading', { name: 'Compare runs', exact: true })).toBeFocused();
+    const selectorGrid = await comparison.locator('.selectors').evaluate((element) => ({ tracks: getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length, viewport: window.innerWidth }));
+    expect(selectorGrid.tracks).toBe(selectorGrid.viewport <= 800 ? 1 : 4);
+    const left = comparison.getByRole('combobox', { name: 'Left run' });
+    const right = comparison.getByRole('combobox', { name: 'Right run' });
+    await left.selectOption(runId);
+    await right.selectOption(runId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('alert')).toContainText(/different runs/i);
+    await right.selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('heading', { name: /versus/ })).toBeFocused();
+    await expect(comparison.getByRole('table', { name: /Run metadata comparison/i })).toBeVisible();
+    await expect(comparison.getByRole('region', { name: 'Aligned trace comparison table' }).getByRole('table')).toContainText('Matched');
+    await expect(comparison.getByText('Left integrity:', { exact: false })).toBeVisible();
+    await expect(comparison.getByText('Right integrity:', { exact: false })).toBeVisible();
+    await expect(comparison.getByRole('status').filter({ hasText: /Bounded evidence: Partial reasons/i })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toHaveCount(0);
+    await left.selectOption(comparisonRunId);
+    await expect(comparison.getByText(/Selection changed/i)).toBeVisible();
+    await expect(comparison.getByText('Previous comparison', { exact: true })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Reset comparison', exact: true })).toBeEnabled();
+    await comparison.getByRole('button', { name: 'Swap left and right runs', exact: true }).click();
+    await expect(comparison.getByText(/Selection changed/i)).toBeVisible();
+    await comparison.getByRole('button', { name: 'Reset comparison', exact: true }).click();
+    await expect(comparison.getByRole('heading', { name: /versus/ })).toHaveCount(0);
+    await expect(comparison.getByRole('button', { name: 'Reset comparison', exact: true })).toBeDisabled();
+    expect(fixture.comparisonRequests).toEqual([{ leftRunId: runId, rightRunId: comparisonRunId }]);
+    const state = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage), url: location.href }));
+    expect(state.local).toEqual([]);
+    expect(state.session).toEqual([]);
+    expect(state.url).not.toMatch(/run-comparisons|leftRunId|rightRunId|comparisonRunId/);
+  });
+
+  test('uses Tab, Enter, and Space for compare, swap, reset, and focus return', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'partial' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).press('Enter');
+    const comparison = page.locator('observatory-comparison');
+    const left = comparison.getByRole('combobox', { name: 'Left run' });
+    const swap = comparison.getByRole('button', { name: 'Swap left and right runs', exact: true });
+    const right = comparison.getByRole('combobox', { name: 'Right run' });
+    const submit = comparison.getByRole('button', { name: 'Compare selected runs', exact: true });
+    await left.selectOption(runId);
+    await right.selectOption(comparisonRunId);
+    await left.focus();
+    await page.keyboard.press('Tab');
+    await expect(swap).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(right).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(submit).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(comparison.getByRole('heading', { name: /versus/ })).toBeFocused();
+    await swap.focus();
+    await page.keyboard.press('Space');
+    await expect(left).toBeFocused();
+    await expect(left).toHaveValue(comparisonRunId);
+    await expect(right).toHaveValue(runId);
+    const reset = comparison.getByRole('button', { name: 'Reset comparison', exact: true });
+    await reset.focus();
+    await page.keyboard.press('Space');
+    await expect(left).toBeFocused();
+    await expect(left).toHaveValue('');
+    await expect(right).toHaveValue('');
+    await expect(reset).toBeDisabled();
+    await expect(comparison.getByText('Choose two distinct runs to create a bounded comparison. Selections remain in memory only.', { exact: true })).toBeVisible();
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toHaveCount(0);
+  });
+
+  test('keeps malformed and service-down comparisons recoverable', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'malformed' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('alert')).toContainText(/malformed/i);
+    await expect(comparison.getByRole('button', { name: 'Retry comparison', exact: true })).toBeVisible();
+  });
+
+  test('maps rejected and unavailable comparison responses to actionable states', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'rejected' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('alert')).toContainText(/request was rejected/i);
+  });
+
+  test('shows service-down copy for a 503 comparison response', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'unavailable' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('alert')).toContainText(/service unavailable/i);
+  });
+
+  test('reports successful freshness-unavailable and unavailable markers plainly', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'freshness-unavailable' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('status').filter({ hasText: /Comparison evidence is unavailable/i })).toBeVisible();
+    await expect(comparison.getByRole('status').filter({ hasText: '1 marker unavailable.' })).toBeVisible();
+  });
+
+  test('renders unavailable marker evidence without treating it as equal', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'unavailable-marker' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('status').filter({ hasText: '1 marker unavailable.' })).toBeVisible();
+  });
+
+  test('keeps the selected comparison visible while live updates are disconnected', async ({ page }) => {
+    await openFixture(page, { comparisonFailure: 'partial', sseDisconnected: true });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByText(/Live updates are disconnected/i)).toBeVisible();
+    await expect(comparison.getByRole('heading', { name: /versus/ })).toBeVisible();
+  });
+
+  test('reflows the comparison table at narrow, zoomed, dark, and reduced-motion settings', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+    await openFixture(page, { comparisonFailure: 'partial' });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await expect(page.getByRole('button', { name: 'Compare', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(comparison).toBeVisible();
+    const panelDisplays = await page.locator('main > *').evaluateAll((elements) => elements.map((element) => ({ tag: element.tagName.toLowerCase(), display: getComputedStyle(element).display })));
+    const expectedPanelDisplays = {
+      'observatory-overview': 'none',
+      'observatory-runs': 'none',
+      'observatory-trace': 'none',
+      'observatory-comparison': 'block',
+      'observatory-components': 'none',
+      'observatory-analytics': 'none',
+      'observatory-retention': 'none',
+    } as const;
+    expect(panelDisplays).toHaveLength(Object.keys(expectedPanelDisplays).length);
+    for (const panel of panelDisplays) {
+      expect(panel.display, `Panel display diagnostics: ${JSON.stringify(panelDisplays)}`).toBe(expectedPanelDisplays[panel.tag as keyof typeof expectedPanelDisplays]);
+    }
+    await expect(comparison).toBeVisible();
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('region', { name: 'Component measurement differences table' }).getByRole('table')).toBeVisible();
+    const computedSurface = await comparison.locator('.surface-card').first().evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { color: style.color, background: style.backgroundColor };
+    });
+    const luminance = (color: string): number => {
+      const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+      if (channels.length !== 3) return 0;
+      const normalized = channels.map((channel) => channel / 255).map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+      return normalized[0] * 0.2126 + normalized[1] * 0.7152 + normalized[2] * 0.0722;
+    };
+    const surfaceLuminance = luminance(computedSurface.background);
+    const textLuminance = luminance(computedSurface.color);
+    expect(surfaceLuminance).toBeLessThan(0.2);
+    expect(textLuminance).toBeGreaterThan(0.5);
+    expect((textLuminance + 0.05) / (surfaceLuminance + 0.05)).toBeGreaterThan(4.5);
+    expect(computedSurface.background).not.toBe('rgba(0, 0, 0, 0)');
+    const reducedMotionTransitionSeconds = await comparison.getByRole('button').first().evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((value) => {
+      const duration = value.trim();
+      return duration.endsWith('ms') ? Number.parseFloat(duration) / 1000 : Number.parseFloat(duration);
+    }));
+    expect(reducedMotionTransitionSeconds.length).toBeGreaterThan(0);
+    expect(reducedMotionTransitionSeconds.every((duration) => Number.isFinite(duration) && duration <= 0.01)).toBe(true);
+    const reset = comparison.getByRole('button', { name: 'Reset comparison', exact: true });
+    await reset.focus();
+    const focusOutline = await reset.evaluate((element) => getComputedStyle(element).outlineWidth);
+    expect(focusOutline).not.toBe('0px');
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.evaluate(() => { document.documentElement.style.zoom = '1'; });
+    const narrowLayout = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: window.innerWidth, clientWidth: document.documentElement.clientWidth }));
+    expect(narrowLayout.width, `375px overflow at 100% zoom: ${JSON.stringify(narrowLayout)}`).toBeLessThanOrEqual(narrowLayout.viewport + 1);
+    // Chromium CSS zoom scales paint but does not change the layout viewport or media queries.
+    // Simulate a 1280px reference viewport at 200%/400% with deterministic 640px/320px widths.
+    for (const viewport of [640, 320]) {
+      await page.setViewportSize({ width: viewport, height: 900 });
+      await page.evaluate(() => { document.documentElement.style.zoom = '1'; });
+      await expect(comparison.getByRole('heading', { name: /versus/ })).toBeVisible();
+      const layout = await page.evaluate(() => {
+        const viewport = window.innerWidth;
+        const clientWidth = document.documentElement.clientWidth;
+        const selectorFor = (element: Element): string => {
+          const tag = element.tagName.toLowerCase();
+          const id = element.id ? `#${element.id}` : '';
+          const classes = typeof element.className === 'string' ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 3).map((name) => `.${name}`).join('') : '';
+          return `${tag}${id}${classes}`;
+        };
+        const offenders = Array.from(document.querySelectorAll<HTMLElement>('body *')).flatMap((element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          const extendsViewport = rect.left < -1 || rect.right > viewport + 1;
+          const oversizedLayout = element.scrollWidth > element.clientWidth + 1;
+          return visible && (extendsViewport || oversizedLayout) ? [{ selector: selectorFor(element), rect: { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) }, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, overflowX: style.overflowX }] : [];
+        });
+        return { width: document.documentElement.scrollWidth, viewport, clientWidth, offenders: offenders.slice(0, 40) };
+      });
+      const selectorTracks = await comparison.locator('.selectors').evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length);
+      expect(selectorTracks, `Expected one-column comparison controls at simulated ${viewport}px effective width (client width ${layout.clientWidth}px)`).toBe(1);
+      expect(layout.width, `Visible overflow diagnostics: ${JSON.stringify(layout.offenders)}`).toBeLessThanOrEqual(layout.viewport + 1);
+    }
+    await expectNoA11yViolations(page);
+  });
+
   test('renders bounded analytics with focus views and a semantic table beside the chart', async ({ page }) => {
     await openFixture(page);
     await page.getByRole('button', { name: 'Analytics', exact: true }).click();
@@ -737,7 +1033,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(page.locator('header').getByRole('status')).toHaveText(/Disconnected/i);
     await page.getByRole('button', { name: 'Runs', exact: true }).click();
     await expect(page.locator('observatory-runs').getByRole('status').filter({ hasText: /data may be stale|disconnected|reconnecting/i })).toBeVisible();
-    await expect(page.getByText(runId)).toBeVisible();
+    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
   });
 
   test('reconciles a named observation.changed SSE event beyond the initial REST snapshot', async ({ page }) => {

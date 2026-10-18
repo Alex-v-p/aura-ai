@@ -230,7 +230,10 @@ async def test_production_run_status_search_uses_latest_normalized_sql_row() -> 
         async def _overview_counts(self) -> dict[str, Any]:
             return {"latest_sequence": 2, "observed_at": BASE_TIME}
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             before_group, after_group = statement.split(" GROUP BY run_id", 1)
             where_clause = before_group.split(" FROM observations WHERE ", 1)[1]
@@ -338,7 +341,10 @@ async def test_production_run_status_equal_timestamp_uses_higher_observation_id(
         async def _overview_counts(self) -> dict[str, Any]:
             return {"latest_sequence": 2, "observed_at": BASE_TIME}
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             before_group, after_group = statement.split(" GROUP BY run_id", 1)
             where_clause = before_group.split(" FROM observations WHERE ", 1)[1]
@@ -449,7 +455,10 @@ async def test_production_run_query_uses_latest_nonempty_trace_with_stable_tie_b
         async def _overview_counts(self) -> dict[str, Any]:
             return {"latest_sequence": 2, "observed_at": BASE_TIME}
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             return [
                 {
@@ -535,7 +544,10 @@ async def test_production_run_detail_keeps_trace_when_newest_row_is_untraced() -
         }
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             return [row(span), row(terminal)]
 
     store = Store(
@@ -568,7 +580,10 @@ async def test_production_components_merge_observed_only_and_registered_definiti
                 }
             ]
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             if "quantileIf" in statement:
                 return [
@@ -2582,7 +2597,10 @@ async def test_production_component_health_deduplicates_spanless_secondary_metri
     calls: list[str] = []
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             calls.append(statement)
             return [
                 {
@@ -2718,6 +2736,79 @@ async def test_retention_target_pages_are_bounded_and_survive_interleaving_actio
     assert len(target_inserts) == 4002
     assert sum(row[0] == "action-a" for row in target_inserts) == 2001
     assert sum(row[0] == "action-b" for row in target_inserts) == 2001
+
+
+@pytest.mark.asyncio
+async def test_retention_count_comes_from_target_rows_when_clickhouse_aggregate_lags() -> None:
+    """A visible row must not be reported as a zero-count purge."""
+
+    updates: list[tuple[Any, ...]] = []
+
+    class Result:
+        async def fetchone(self) -> tuple[int]:
+            return (0,)
+
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            return []
+
+    class Connection:
+        async def execute(self, statement: str, params: tuple[Any, ...] = ()) -> Result:
+            if "UPDATE observatory_retention_actions SET target_observation_count" in statement:
+                updates.append(params)
+            if "count(DISTINCT run_id)" in statement:
+                return ResultWithRunCount()
+            return Result()
+
+        async def commit(self) -> None:
+            return None
+
+    class ResultWithRunCount(Result):
+        async def fetchone(self) -> tuple[int]:
+            return (1,)
+
+    @asynccontextmanager
+    async def connection() -> AsyncGenerator[Connection]:
+        yield Connection()
+
+    class Store(ProductionObservatoryStore):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._target_page_returned = False
+
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
+            if "SELECT observation_id, run_id, observed_at" not in query:
+                # Simulate the aggregate read lagging behind the ordered
+                # target read for a just-visible purge-all run.
+                return [{"observations": 0, "runs": 0}]
+            if "toDateTime64" in query:
+                return []
+            if self._target_page_returned:
+                return []
+            self._target_page_returned = True
+            return [
+                {
+                    "observation_id": "00000000-0000-4000-8000-000000000901",
+                    "run_id": "00000000-0000-4000-8000-000000000902",
+                    "observed_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+
+    store = Store(connection, "http://clickhouse.test", database="obs", user="u", password="p")
+    action = RetentionAction(
+        "00000000-0000-4000-8000-000000000903",
+        RetentionKind.PURGE_ALL,
+        None,
+        idempotency_key="aggregate-lag",
+    )
+
+    await store.prepare_retention(action)
+
+    assert action.target_observation_count == 1
+    assert action.target_run_count == 1
+    assert updates and updates[-1][0] == 1
 
 
 @pytest.mark.asyncio
@@ -3116,7 +3207,10 @@ async def test_cutoff_projection_mutation_targets_only_deleted_runs() -> None:
         async def list_observations(self, **_kwargs: Any) -> list[MetadataObservation]:
             return [old, survivor]
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             del statement
             return [{"observations": 1, "runs": 1}]
 
@@ -3206,7 +3300,10 @@ async def test_retention_source_projection_receipt_crashes_retry_with_exact_coun
         async def list_observations(self, **_kwargs: Any) -> list[MetadataObservation]:
             return [old]
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             del statement
             return [{"observations": 1, "runs": 1}]
 
@@ -3685,7 +3782,10 @@ async def test_component_health_sql_accepts_only_exact_spanless_duration_measure
     queries: list[str] = []
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             return [
                 {
@@ -3741,7 +3841,10 @@ async def test_production_component_health_keeps_earlier_duration_before_later_t
     ]
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             # Evaluate the generated argMaxIf predicate against provider-shaped
             # rows instead of returning a hard-coded aggregate.  The old broad
@@ -3823,7 +3926,10 @@ async def test_production_component_health_keeps_duration_and_uses_later_failure
     ]
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             predicate_start = statement.index("argMaxIf(measurement_value")
             predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
@@ -3898,7 +4004,10 @@ async def test_production_component_health_equal_timestamp_uses_higher_observati
     ]
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             predicate_start = statement.index("argMaxIf(measurement_value")
             predicate_end = statement.index(") AS selected_measurement_value", predicate_start)
             predicate = statement[predicate_start:predicate_end]
@@ -3985,7 +4094,10 @@ async def test_production_run_query_uses_outcome_only_map_values_for_status_filt
                 "latest_observation_id": "00000000-0000-4000-8000-000000000854",
             }
 
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             before_group, after_group = statement.split(" GROUP BY run_id", 1)
             where_clause = before_group.split(" FROM observations WHERE ", 1)[1]
@@ -4052,7 +4164,10 @@ async def test_production_component_health_uses_status_only_map_values_for_outco
     queries: list[str] = []
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             predicate_start = statement.index("argMaxIf(measurement_value")
             predicate_end = statement.index(") AS selected_measurement_value", predicate_start)

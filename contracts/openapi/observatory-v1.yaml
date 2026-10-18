@@ -17,6 +17,7 @@
     { "name": "Traces" },
     { "name": "Components" },
     { "name": "Analytics" },
+    { "name": "Comparisons" },
     { "name": "Deployments" },
     { "name": "Live" },
     { "name": "Retention" }
@@ -275,6 +276,23 @@
         }
       }
     },
+    "/api/v1/run-comparisons/query": {
+      "post": {
+        "operationId": "compareRuns",
+        "tags": ["Comparisons"],
+        "description": "Compare exactly two distinct owner-selected run identifiers using a fixed, parameterized ClickHouse query. Identifiers are carried in the request body rather than the URL. The result is metadata-only, bounded, non-persistent, and never published through SSE.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunComparisonRequest" } } } },
+        "responses": {
+          "200": { "description": "Bounded metadata-only comparison snapshot. Cache-Control is no-store because authenticated comparison data remains memory-only.", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunComparison" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/deployments": {
       "get": {
         "operationId": "listDeployments",
@@ -373,6 +391,8 @@
       "Uuid": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
       "UtcInstant": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$" },
       "SafeLabel": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$" },
+      "RevisionIdentifier": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?!(?:[Oo][Ww][Nn][Ee][Rr]|[Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Aa][Ss][Hh]|[Dd][Ii][Gg][Ee][Ss][Tt]|[Ee][Nn][Dd][Pp][Oo][Ii][Nn][Tt])(?:$|[._:+-]))(?!.*[._:+-](?:[Oo][Ww][Nn][Ee][Rr]|[Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Aa][Ss][Hh]|[Dd][Ii][Gg][Ee][Ss][Tt]|[Ee][Nn][Dd][Pp][Oo][Ii][Nn][Tt])(?:$|[._:+-]))[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$", "description": "An immutable identifier assigned by trusted configuration before telemetry capture. Case-insensitive owner, identity, credential, bearer, token, secret, password, private, content, hash, digest, and endpoint segments are prohibited when delimited by the identifier grammar. It must not be derived from prompt, response, owner, conversation, document, or other content." },
+      "ModelIdentifier": { "type": "string", "minLength": 1, "maxLength": 193, "pattern": "^(?!(?:https?|ftp|file|mailto|ssh|ws|wss):)(?!(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)(?:$|[._:+-]))(?!.*[._:+-](?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)(?:$|[._:+-]))[a-z0-9][a-z0-9._+-]{0,127}(?::(?=[a-z0-9._+-]{1,64}$)(?=[a-z0-9._+-]*[a-z])[a-z0-9._+-]+)?$", "description": "A bounded lowercase local model identifier with an optional letter-bearing provider tag, for example qwen3:8b or llama3.2:latest. URLs, paths, whitespace, email-like values, numeric-port impostors, and case-insensitive owner, identity, credential, bearer, token, secret, password, private, content, hash, digest, and endpoint segments are prohibited when delimited by the identifier grammar. Producers and consumers must also apply runtime private-shape validation because syntax alone cannot prove provenance." },
       "ComponentId": { "type": "string", "minLength": 6, "maxLength": 96, "pattern": "^aura\\.[a-z][a-z0-9_.-]{0,90}$" },
       "DefinitionIdentifier": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_.-]{0,127}$" },
       "TraceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
@@ -567,6 +587,211 @@
           "partialReasons": { "type": "array", "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsPartialReason" } },
           "unavailableSignals": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsUnavailableSignal" } },
           "scan": { "$ref": "#/components/schemas/AnalyticsScan" },
+          "capturePolicy": { "type": "string", "const": "metadata_only" }
+        }
+      },
+      "RunComparisonRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["leftRunId", "rightRunId"],
+        "properties": {
+          "leftRunId": { "$ref": "#/components/schemas/Uuid" },
+          "rightRunId": { "$ref": "#/components/schemas/Uuid" }
+        },
+        "description": "Exactly two run identifiers with stable left and right roles. The service rejects equal identifiers with 422."
+      },
+      "ComparisonAvailability": { "type": "string", "enum": ["available", "missing", "unavailable"] },
+      "ComparisonState": { "type": "string", "enum": ["equal", "changed", "missing", "unavailable"] },
+      "ComparisonAlignment": { "type": "string", "enum": ["matched", "left_only", "right_only", "incompatible"] },
+      "ComparisonMarkerName": { "type": "string", "enum": ["deployment_id", "git_commit", "image_version", "configuration_version", "model_id", "model_version", "agent_revision", "prompt_bundle_revision", "policy_revision"] },
+      "ComparisonMarker": {
+        "type": "object", "additionalProperties": false,
+        "required": ["availability", "value"],
+        "properties": {
+          "availability": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "value": { "oneOf": [{ "$ref": "#/components/schemas/RevisionIdentifier" }, { "type": "null" }], "description": "Present only when availability is available. Missing means this run lacks the marker; unavailable means its schema or retained evidence cannot provide it." }
+        }
+      },
+      "ModelComparisonMarker": {
+        "type": "object", "additionalProperties": false,
+        "required": ["availability", "value"],
+        "properties": {
+          "availability": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "value": { "oneOf": [{ "$ref": "#/components/schemas/ModelIdentifier" }, { "type": "null" }], "description": "Present only when availability is available. Runtime producers and consumers additionally reject private-shaped values." }
+        }
+      },
+      "MetadataComparisonMarkerName": { "type": "string", "enum": ["deployment_id", "git_commit", "image_version", "configuration_version", "model_version", "agent_revision", "prompt_bundle_revision", "policy_revision"] },
+      "MetadataMarkerComparison": {
+        "type": "object", "additionalProperties": false,
+        "required": ["marker", "state", "left", "right"],
+        "properties": {
+          "marker": { "$ref": "#/components/schemas/MetadataComparisonMarkerName" },
+          "state": { "$ref": "#/components/schemas/ComparisonState" },
+          "left": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "right": { "$ref": "#/components/schemas/ComparisonMarker" }
+        }
+      },
+      "ModelMarkerComparison": {
+        "type": "object", "additionalProperties": false,
+        "required": ["marker", "state", "left", "right"],
+        "properties": {
+          "marker": { "type": "string", "const": "model_id" },
+          "state": { "$ref": "#/components/schemas/ComparisonState" },
+          "left": { "$ref": "#/components/schemas/ModelComparisonMarker" },
+          "right": { "$ref": "#/components/schemas/ModelComparisonMarker" }
+        }
+      },
+      "MarkerComparison": { "oneOf": [{ "$ref": "#/components/schemas/MetadataMarkerComparison" }, { "$ref": "#/components/schemas/ModelMarkerComparison" }] },
+      "RunComparisonComponentVersion": {
+        "type": "object", "additionalProperties": false,
+        "required": ["componentId", "version"],
+        "properties": {
+          "componentId": { "$ref": "#/components/schemas/ComponentId" },
+          "version": { "$ref": "#/components/schemas/ComparisonMarker" }
+        }
+      },
+      "RunComparisonSide": {
+        "type": "object", "additionalProperties": false,
+        "required": ["role", "runId", "evidence", "status", "outcome", "startedAt", "finishedAt", "durationMs", "traceId", "modelId", "modelVersion", "deploymentId", "gitCommit", "imageVersion", "configurationVersion", "agentRevision", "promptBundleRevision", "policyRevision", "componentVersions", "partial"],
+        "properties": {
+          "role": { "type": "string", "enum": ["left", "right"] },
+          "runId": { "$ref": "#/components/schemas/Uuid" },
+          "evidence": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "status": { "$ref": "#/components/schemas/RunStatus" },
+          "outcome": { "$ref": "#/components/schemas/Outcome" },
+          "startedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "durationMs": { "type": ["number", "null"], "minimum": 0, "maximum": 604800000 },
+          "traceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] },
+          "modelId": { "$ref": "#/components/schemas/ModelComparisonMarker" },
+          "modelVersion": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "deploymentId": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "gitCommit": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "imageVersion": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "configurationVersion": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "agentRevision": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "promptBundleRevision": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "policyRevision": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "componentVersions": { "type": "array", "maxItems": 256, "items": { "$ref": "#/components/schemas/RunComparisonComponentVersion" } },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "ComparisonNumber": {
+        "type": "object", "additionalProperties": false,
+        "required": ["availability", "value"],
+        "properties": {
+          "availability": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "value": { "type": ["number", "null"], "minimum": -1000000000000000, "maximum": 1000000000000000 }
+        }
+      },
+      "ComponentMeasurementComparison": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "unit", "state", "left", "right", "absoluteDelta"],
+        "description": "One declared measurement and unit pair. Zero remains an available measured value. absoluteDelta is non-null only when both sides are finite and available.",
+        "properties": {
+          "name": { "$ref": "#/components/schemas/OperationName" },
+          "unit": { "$ref": "#/components/schemas/AnalyticsUnit" },
+          "state": { "$ref": "#/components/schemas/ComparisonState" },
+          "left": { "$ref": "#/components/schemas/ComparisonNumber" },
+          "right": { "$ref": "#/components/schemas/ComparisonNumber" },
+          "absoluteDelta": { "type": ["number", "null"], "minimum": 0, "maximum": 2000000000000000 }
+        }
+      },
+      "ComponentComparisonSide": {
+        "type": "object", "additionalProperties": false,
+        "required": ["componentVersion", "durationMs", "outcome", "spanCount", "partial"],
+        "properties": {
+          "componentVersion": { "$ref": "#/components/schemas/ComparisonMarker" },
+          "durationMs": { "type": ["number", "null"], "minimum": 0, "maximum": 604800000 },
+          "outcome": { "$ref": "#/components/schemas/Outcome" },
+          "spanCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "RunComponentComparison": {
+        "type": "object", "additionalProperties": false,
+        "required": ["componentId", "operation", "alignment", "left", "right", "measurements"],
+        "properties": {
+          "componentId": { "$ref": "#/components/schemas/ComponentId" },
+          "operation": { "$ref": "#/components/schemas/OperationName" },
+          "alignment": { "$ref": "#/components/schemas/ComparisonAlignment" },
+          "left": { "oneOf": [{ "$ref": "#/components/schemas/ComponentComparisonSide" }, { "type": "null" }] },
+          "right": { "oneOf": [{ "$ref": "#/components/schemas/ComponentComparisonSide" }, { "type": "null" }] },
+          "measurements": { "type": "array", "maxItems": 128, "items": { "$ref": "#/components/schemas/ComponentMeasurementComparison" } }
+        }
+      },
+      "TraceIntegrityState": { "type": "string", "enum": ["complete", "retained_partial", "truncated", "missing_parent", "cyclic", "duplicate"] },
+      "ComparableSpan": {
+        "type": "object", "additionalProperties": false,
+        "required": ["spanId", "parentSpanId", "componentId", "componentVersion", "operation", "startedAt", "durationMs", "outcome", "partial"],
+        "properties": {
+          "spanId": { "$ref": "#/components/schemas/SpanId" },
+          "parentSpanId": { "oneOf": [{ "$ref": "#/components/schemas/SpanId" }, { "type": "null" }] },
+          "componentId": { "$ref": "#/components/schemas/ComponentId" },
+          "componentVersion": { "$ref": "#/components/schemas/SafeLabel" },
+          "operation": { "$ref": "#/components/schemas/OperationName" },
+          "startedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "durationMs": { "type": "number", "minimum": 0, "maximum": 604800000 },
+          "outcome": { "$ref": "#/components/schemas/Outcome" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "AlignedSpan": {
+        "type": "object", "additionalProperties": false,
+        "required": ["alignmentKey", "alignment", "left", "right", "leftIntegrity", "rightIntegrity"],
+        "description": "Deterministic alignment by component, operation, and structural lineage. Missing, duplicate, cyclic, and incompatible evidence remains explicit and is never synthesized.",
+        "properties": {
+          "alignmentKey": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._:+-]+$" },
+          "alignment": { "$ref": "#/components/schemas/ComparisonAlignment" },
+          "left": { "oneOf": [{ "$ref": "#/components/schemas/ComparableSpan" }, { "type": "null" }] },
+          "right": { "oneOf": [{ "$ref": "#/components/schemas/ComparableSpan" }, { "type": "null" }] },
+          "leftIntegrity": { "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/TraceIntegrityState" } },
+          "rightIntegrity": { "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/TraceIntegrityState" } }
+        }
+      },
+      "TraceComparison": {
+        "type": "object", "additionalProperties": false,
+        "required": ["leftTraceId", "rightTraceId", "leftEvidence", "rightEvidence", "leftIntegrity", "rightIntegrity", "alignedSpans", "partial"],
+        "properties": {
+          "leftTraceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] },
+          "rightTraceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] },
+          "leftEvidence": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "rightEvidence": { "$ref": "#/components/schemas/ComparisonAvailability" },
+          "leftIntegrity": { "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/TraceIntegrityState" } },
+          "rightIntegrity": { "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/TraceIntegrityState" } },
+          "alignedSpans": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/components/schemas/AlignedSpan" } },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "RunComparisonPartialReason": { "type": "string", "enum": ["observation_limit", "span_limit", "measurement_limit", "scan_limit", "execution_limit", "late_data", "retention_boundary", "incomplete_run", "missing_parent", "cyclic", "duplicate_span"] },
+      "RunComparisonLimits": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runCount", "maximumObservationsPerRun", "maximumSpansPerRun", "maximumMeasurements", "maximumScannedRows", "executionTimeoutMs"],
+        "properties": {
+          "runCount": { "type": "integer", "const": 2 },
+          "maximumObservationsPerRun": { "type": "integer", "const": 10000 },
+          "maximumSpansPerRun": { "type": "integer", "const": 5000 },
+          "maximumMeasurements": { "type": "integer", "const": 2000 },
+          "maximumScannedRows": { "type": "integer", "const": 1000000 },
+          "executionTimeoutMs": { "type": "integer", "const": 5000 }
+        }
+      },
+      "RunComparison": {
+        "type": "object", "additionalProperties": false,
+        "description": "Ephemeral owner-only metadata comparison. The service computes this snapshot on demand and does not persist it, publish it through SSE, or place it in browser storage.",
+        "required": ["snapshotAt", "left", "right", "markerCorrelations", "components", "trace", "freshness", "partial", "partialReasons", "unavailableMarkerCount", "scan", "limits", "capturePolicy"],
+        "properties": {
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "left": { "$ref": "#/components/schemas/RunComparisonSide" },
+          "right": { "$ref": "#/components/schemas/RunComparisonSide" },
+          "markerCorrelations": { "type": "array", "maxItems": 9, "items": { "$ref": "#/components/schemas/MarkerComparison" } },
+          "components": { "type": "array", "maxItems": 512, "items": { "$ref": "#/components/schemas/RunComponentComparison" } },
+          "trace": { "$ref": "#/components/schemas/TraceComparison" },
+          "freshness": { "$ref": "#/components/schemas/AnalyticsFreshness" },
+          "partial": { "type": "boolean" },
+          "partialReasons": { "type": "array", "maxItems": 11, "uniqueItems": true, "items": { "$ref": "#/components/schemas/RunComparisonPartialReason" } },
+          "unavailableMarkerCount": { "type": "integer", "minimum": 0, "maximum": 18 },
+          "scan": { "$ref": "#/components/schemas/AnalyticsScan" },
+          "limits": { "$ref": "#/components/schemas/RunComparisonLimits" },
           "capturePolicy": { "type": "string", "const": "metadata_only" }
         }
       },

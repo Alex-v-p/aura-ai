@@ -516,6 +516,47 @@ test.describe('Observatory real Core-to-browser acceptance', () => {
     await expect(page.getByRole('table', { name: /data in milliseconds/i }).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('observatory-analytics')).not.toContainText(/prompt|response|credential|bearer token/i);
 
+    // Create a second real Core run before retention so the comparison path
+    // exercises the same production telemetry, ClickHouse query, generated
+    // client, and browser workspace as the first run.  Run identifiers must
+    // remain in the authenticated POST body, never in a URL or browser store.
+    const comparisonRun = await createCoreRun(corePage, core, `${prompt}_COMPARE`);
+    await waitForCoreRun(corePage, core, comparisonRun);
+    const comparisonRequests: string[] = [];
+    const recordComparisonRequest = (request: Awaited<ReturnType<Page['waitForRequest']>>): void => {
+      try {
+        if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/run-comparisons/query') {
+          comparisonRequests.push(request.url());
+        }
+      } catch {
+        // Ignore malformed diagnostic URLs without exposing request bodies.
+      }
+    };
+    page.on('request', recordComparisonRequest);
+    await page.getByRole('button', { name: 'Runs', exact: true }).click();
+    await expect(page.getByRole('button', { name: comparisonRun.runId, exact: true })).toBeVisible({ timeout: 60_000 });
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(accepted.runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRun.runId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect(comparison.getByRole('heading', { name: new RegExp(`${accepted.runId} versus ${comparisonRun.runId}`) })).toBeVisible({ timeout: 30_000 });
+    await expect(comparison.getByRole('region', { name: 'Run comparison summary table' }).getByRole('table')).toBeVisible();
+    await expect(comparison.getByRole('region', { name: 'Component measurement differences table' }).getByRole('table')).toBeVisible();
+    await expect(comparison.getByRole('region', { name: 'Aligned trace comparison table' }).getByRole('table')).toBeVisible();
+    expect(comparisonRequests).toHaveLength(1);
+    expect(comparisonRequests[0]).not.toContain(accepted.runId);
+    expect(comparisonRequests[0]).not.toContain(comparisonRun.runId);
+    const comparisonStorage = await page.evaluate(() => ({
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      url: location.href,
+    }));
+    expect(comparisonStorage.local).toEqual([]);
+    expect(comparisonStorage.session).toEqual([]);
+    expect(comparisonStorage.url).not.toMatch(/run-comparisons|leftRunId|rightRunId/);
+    page.off('request', recordComparisonRequest);
+
     await page.getByRole('button', { name: 'Retention', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Delete stored observations', exact: true })).toBeVisible();
     await page.getByRole('textbox', { name: 'Delete observations before (UTC)' }).fill('2099-01-01T00:00');

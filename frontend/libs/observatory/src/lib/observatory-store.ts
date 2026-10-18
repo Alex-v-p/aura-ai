@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -24,6 +24,7 @@ export class ObservatoryStore {
   readonly selectedComponent = signal<ComponentCatalogueSelection | null>(null);
   readonly analytics = signal<AnalyticsResource>({ catalogue: null, snapshot: null, state: 'loading', error: null });
   readonly analyticsFilters = signal<AnalyticsFilters>(DEFAULT_ANALYTICS_FILTERS);
+  readonly comparison = signal<ObservatoryComparison>({ leftRunId: null, rightRunId: null, result: null, state: 'idle', error: null, updatedAt: null });
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
@@ -36,6 +37,7 @@ export class ObservatoryStore {
   private readonly healthHistoryRefresh = new LiveRefreshCoordinator();
   private readonly catalogRefresh = new LiveRefreshCoordinator();
   private readonly analyticsRefresh = new LiveRefreshCoordinator();
+  private readonly comparisonRefresh = new LiveRefreshCoordinator();
   private catalogLoadSequence = 0;
   private analyticsLoadSequence = 0;
   /** Last successful catalogue pages survive a later refresh failure. */
@@ -43,6 +45,7 @@ export class ObservatoryStore {
   private lastKnownDeployments: ObservatorySnapshot['deployments'] = null;
   private readonly componentDetailRequests = new ComponentDetailRequestGate();
   private healthHistorySequence = 0;
+  private comparisonLoadSequence = 0;
 
   async start(initialRecoveryState: ObservatoryAuthState | null = null): Promise<void> {
     await this.runSessionLifecycle(initialRecoveryState);
@@ -139,6 +142,22 @@ export class ObservatoryStore {
       this.selectedRunState.set('ready');
     } catch (error) { if (sequence !== this.openRunSequence) return; if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; } this.selectedRun.set({ detail: null, trace: null }); this.selectedRunState.set('error'); this.selectedRunError.set(error instanceof Error ? error.message : 'Run detail is unavailable.'); this.snapshot.update((value) => ({ ...value, error: this.selectedRunError(), state: 'stale' })); }
   }
+  /** Compare exactly two in-memory selections; no route, storage, or URL state is used. */
+  async compareRuns(leftRunId: string, rightRunId: string): Promise<void> {
+    if (!leftRunId || !rightRunId || leftRunId === rightRunId) {
+      this.comparison.set({ leftRunId, rightRunId, result: null, state: 'rejected', error: 'Choose two different runs to compare.', updatedAt: null });
+      return;
+    }
+    const generation = ++this.comparisonLoadSequence;
+    this.comparisonRefresh.cancel();
+    this.comparison.set({ leftRunId, rightRunId, result: null, state: 'loading', error: null, updatedAt: null });
+    await this.loadComparison(generation);
+  }
+  resetComparison(): void {
+    this.comparisonLoadSequence += 1;
+    this.comparisonRefresh.cancel();
+    this.comparison.set({ leftRunId: null, rightRunId: null, result: null, state: 'idle', error: null, updatedAt: null });
+  }
   async componentHealth(componentId: string): Promise<ComponentHealth | null> {
     const existing = this.componentHealthById()[componentId];
     if (existing || this.componentHealthErrors()[componentId]) return existing ?? null;
@@ -214,12 +233,13 @@ export class ObservatoryStore {
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
-    this.queueLiveRefresh();
+    if (event.type !== 'heartbeat') this.queueLiveRefresh();
     if (event.type === 'health.changed') this.queueHealthHistory();
     if (this.analytics().catalogue || this.analytics().snapshot) this.queueAnalyticsRefresh();
+    if (isComparisonInvalidationEvent(event.type) && this.comparison().state !== 'loading' && this.comparison().leftRunId && this.comparison().rightRunId) this.queueComparisonRefresh();
   };
-  private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); if (this.analytics().state === 'disconnected') { this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null })); this.queueAnalyticsRefresh(); } };
-  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); this.queueLiveRefresh(); };
+  private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); if (this.analytics().state === 'disconnected') { this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null })); this.queueAnalyticsRefresh(); } if (this.comparison().state === 'disconnected') { this.comparison.update((value) => ({ ...value, state: value.result ? 'refreshing' : 'loading', error: null })); this.queueComparisonRefresh(); } };
+  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); if (this.comparison().result) this.comparison.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last comparison until refresh.' })); this.queueLiveRefresh(); };
 
   private queueLiveRefresh(): void {
     this.liveRefresh.request(() => this.loadLiveSnapshot(), () => this.authState() === 'authenticated' && !this.sessionRequired());
@@ -231,6 +251,34 @@ export class ObservatoryStore {
 
   private queueAnalyticsRefresh(): void {
     this.analyticsRefresh.request(() => this.loadAnalytics(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  private queueComparisonRefresh(): void {
+    this.comparisonRefresh.request(() => this.loadComparison(this.comparisonLoadSequence), () => this.authState() === 'authenticated' && !this.sessionRequired() && Boolean(this.comparison().leftRunId && this.comparison().rightRunId));
+  }
+
+  private async loadComparison(sequence: number): Promise<void> {
+    const selection = this.comparison();
+    if (!selection.leftRunId || !selection.rightRunId) return;
+    const generation = this.authGeneration;
+    const previous = selection.result;
+    if (!previous) this.comparison.update((value) => ({ ...value, state: 'loading', error: null }));
+    else this.comparison.update((value) => ({ ...value, state: 'refreshing', error: null }));
+    try {
+      await this.gateway.ensureSession();
+      const raw = await this.gateway.execute('compareRuns', { ...blankInput('compareRuns'), body: { leftRunId: selection.leftRunId, rightRunId: selection.rightRunId } });
+      if (sequence !== this.comparisonLoadSequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      const result = parseRunComparison(raw);
+      if (!result) { this.comparison.update((value) => ({ ...value, result: previous, state: previous ? 'stale' : 'malformed', error: 'The comparison response was malformed or contained unsupported metadata.', updatedAt: previous?.snapshotAt ?? null })); return; }
+      const state: ObservatoryComparisonState = this.liveDisconnected() ? 'disconnected' : result.freshness.state === 'unavailable' ? 'unavailable' : result.partial ? 'partial' : 'ready';
+      this.comparison.set({ leftRunId: selection.leftRunId, rightRunId: selection.rightRunId, result, state, error: null, updatedAt: result.snapshotAt });
+    } catch (error) {
+      if (sequence !== this.comparisonLoadSequence || generation !== this.authGeneration) return;
+      if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
+      const message = error instanceof Error ? error.message : 'Run comparison is unavailable.';
+      const status = /\(503\)|\(502\)|\(504\)/.test(message) ? 'service_down' : /\(400\)|\(409\)|\(422\)/.test(message) ? 'rejected' : previous ? 'stale' : 'error';
+      this.comparison.update((value) => ({ ...value, state: status, error: message }));
+    }
   }
 
   private async loadAnalytics(): Promise<void> {
@@ -443,6 +491,9 @@ export class ObservatoryStore {
     this.analyticsLoadSequence += 1;
     this.analytics.set({ catalogue: null, snapshot: null, state: 'error', error: null });
     this.analyticsFilters.set(DEFAULT_ANALYTICS_FILTERS);
+    this.comparisonLoadSequence += 1;
+    this.comparisonRefresh.cancel();
+    this.comparison.set({ leftRunId: null, rightRunId: null, result: null, state: 'error', error: null, updatedAt: null });
     this.retention.set({ action: null, running: false, error: null });
   }
 
@@ -463,6 +514,9 @@ export class ObservatoryStore {
     this.selectedComponent.set(null);
     this.analyticsLoadSequence += 1;
     this.analytics.set({ catalogue: this.analytics().catalogue, snapshot: null, state: 'loading', error: null });
+    this.comparisonLoadSequence += 1;
+    this.comparisonRefresh.cancel();
+    this.comparison.set({ leftRunId: null, rightRunId: null, result: null, state: 'idle', error: null, updatedAt: null });
     await this.load();
     this.queueAnalyticsRefresh();
   }

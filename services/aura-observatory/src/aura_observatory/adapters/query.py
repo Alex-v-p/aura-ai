@@ -36,6 +36,10 @@ from aura_observatory.query import (
     ANALYTICS_MAX_BREAKDOWNS,
     ANALYTICS_MAX_SCANNED_ROWS,
     ANALYTICS_PERCENTILE_METHOD,
+    COMPARISON_EXECUTION_TIMEOUT_MS,
+    COMPARISON_MAX_OBSERVATIONS,
+    COMPARISON_MAX_SCANNED_ROWS,
+    COMPARISON_QUERY_ROWS,
     DeletionResult,
     RetentionAction,
     RetentionStatus,
@@ -43,6 +47,8 @@ from aura_observatory.query import (
     analytics_freshness,
     analytics_unavailable,
     bounded_component_health_window,
+    build_run_comparison,
+    comparison_execution_limit_snapshot,
     decode_cursor,
     decode_run_cursor,
     encode_cursor,
@@ -129,14 +135,17 @@ def _decode_clickhouse_rows(response: httpx.Response) -> list[dict[str, Any]]:
 def _clickhouse_progress_read_rows(response: httpx.Response) -> int | None:
     """Read the provider's bounded physical-read count when available."""
 
-    header = response.headers.get("x-clickhouse-progress")
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    header = headers.get("x-clickhouse-progress")
     if not header:
         return None
     try:
         value = json.loads(header)
         rows = int(value["read_rows"])
         return rows if rows >= 0 else None
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except KeyError, TypeError, ValueError, json.JSONDecodeError:
         return None
 
 
@@ -147,10 +156,7 @@ def _is_clickhouse_execution_timeout(error: httpx.HTTPStatusError) -> bool:
     if response.status_code == 504:
         return True
     body = response.text[:2_048].casefold()
-    return any(
-        marker in body
-        for marker in ("max_execution_time", "too slow", "timeout")
-    )
+    return any(marker in body for marker in ("max_execution_time", "too slow", "timeout"))
 
 
 def _is_clickhouse_read_limit(error: httpx.HTTPStatusError) -> bool:
@@ -262,8 +268,7 @@ def _clickhouse_time(value: datetime) -> str:
 
 
 _DIMENSION_STATUS_SQL = (
-    "lowerUTF8(coalesce(nullIf(dimensions['outcome'], ''), "
-    "nullIf(dimensions['status'], '')))"
+    "lowerUTF8(coalesce(nullIf(dimensions['outcome'], ''), nullIf(dimensions['status'], '')))"
 )
 _RUN_STATUS_SQL = (
     "multiIf("
@@ -732,7 +737,9 @@ class _RetentionPersistenceAdapter:
             "component_version, operation, measurement_name, measurement_value, "
             "measurement_unit, dimensions, trace_id, span_id, parent_span_id, "
             "linked_span_ids, run_id, conversation_id, deployment_id, git_commit, "
-            "environment, host_id, service_role, capture_policy FROM observations"
+            "environment, host_id, service_role, capture_policy, image_version, "
+            "configuration_version, model_id, model_version, agent_revision, "
+            "prompt_bundle_revision, policy_revision FROM observations"
         )
         result: list[MetadataObservation] = []
         for row in rows:
@@ -775,9 +782,45 @@ class _RetentionPersistenceAdapter:
                             "gitCommit": row["git_commit"],
                             "environment": row["environment"],
                             "hostId": row["host_id"],
+                            **(
+                                {"imageVersion": row["image_version"]}
+                                if row.get("image_version")
+                                else {}
+                            ),
+                            **(
+                                {"configurationVersion": row["configuration_version"]}
+                                if row.get("configuration_version")
+                                else {}
+                            ),
                         },
                         "serviceRole": row["service_role"],
                         "capturePolicy": row["capture_policy"],
+                        **(
+                            {
+                                "execution": {
+                                    key: row[name]
+                                    for name, key in (
+                                        ("model_id", "modelId"),
+                                        ("model_version", "modelVersion"),
+                                        ("agent_revision", "agentRevision"),
+                                        ("prompt_bundle_revision", "promptBundleRevision"),
+                                        ("policy_revision", "policyRevision"),
+                                    )
+                                    if row.get(name)
+                                }
+                            }
+                            if any(
+                                row.get(name)
+                                for name in (
+                                    "model_id",
+                                    "model_version",
+                                    "agent_revision",
+                                    "prompt_bundle_revision",
+                                    "policy_revision",
+                                )
+                            )
+                            else {}
+                        ),
                     }
                 )
             )
@@ -1017,13 +1060,24 @@ class _RetentionPersistenceAdapter:
             # no longer needs to hold up telemetry.
             if self._retention_guard is None:
                 await connection.execute("SELECT pg_advisory_xact_lock(830078)")
-            rows = await self._rows(
+            await self._rows(
                 "SELECT count() AS observations, uniqExactIf(run_id, run_id != '') AS runs "
                 "FROM observations" + where + " LIMIT 1000"
             )
-            row = rows[0] if rows else {}
-            target_observation_count = int(row.get("observations", 0))
-            target_run_count = int(row.get("runs", 0))
+            # This bounded read preserves a storage visibility probe.  The
+            # aggregate is not used as a deletion count: ClickHouse can expose
+            # a newly committed row to the ordered target scan before the
+            # separate aggregate read catches up (and the reverse can also
+            # happen around a mutation).  The rows that are durably inserted
+            # into the target ledger are the deletion authority, so derive
+            # the observation count from that scan rather than reporting a
+            # stale aggregate count to the retention API.
+            target_observation_count = 0
+            # Run identity is also authoritative only after the target rows
+            # have been inserted.  Count it in PostgreSQL so a lagging
+            # ClickHouse uniqExactIf result cannot produce a false zero in
+            # deletion results or audit metrics.
+            target_run_count = 0
             # Persist the immutable target scope in bounded pages. This keeps
             # restart recovery storage-side and avoids deriving run ids after
             # the source mutation has removed them.
@@ -1057,6 +1111,8 @@ class _RetentionPersistenceAdapter:
                     )
                     previous_target_key = target_key
                 for target in target_rows:
+                    if target.get("observation_id") is None:
+                        continue
                     await connection.execute(
                         "INSERT INTO observatory_retention_targets("
                         "action_id, observation_id, run_id, phase) "
@@ -1068,10 +1124,18 @@ class _RetentionPersistenceAdapter:
                             target.get("run_id") or None,
                         ),
                     )
+                    target_observation_count += 1
                 if len(target_rows) < 1000:
                     break
                 last_at = str(target_rows[-1]["observed_at"])
                 last_id = str(target_rows[-1]["observation_id"])
+            run_count_result = await connection.execute(
+                "SELECT count(DISTINCT run_id) FROM observatory_retention_targets "
+                "WHERE action_id = %s AND run_id IS NOT NULL",
+                (action.action_id,),
+            )
+            run_count_row = await run_count_result.fetchone()
+            target_run_count = int(run_count_row[0]) if run_count_row else 0
             # Receipt scope is captured by immutable observation id, not by a
             # mutable timestamp predicate.  Include pre-migration NULL
             # timestamps and receipt-only rows while the serialization guard
@@ -1414,16 +1478,23 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
 
     _health_port: ObservatoryHealthPort = NullObservatoryHealthPort()
 
-    async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+    async def _query_rows(
+        self, statement: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
+                query_params: dict[str, str] = {"database": self._database}
+                for name, value in (params or {}).items():
+                    query_params[f"param_{name}"] = str(value)
                 response = await client.post(
                     self._endpoint,
-                    params={"database": self._database},
+                    params=query_params,
                     auth=(self._user, self._password),
                     content=statement + " FORMAT JSONEachRow",
                 )
                 _raise_for_clickhouse(response)
+                self._clickhouse_progress_available = True
+                self._clickhouse_progress_read_rows = _clickhouse_progress_read_rows(response)
         except httpx.HTTPStatusError as exc:
             raise StorageUnavailableError(
                 "ClickHouse is unavailable", request=exc.request, response=exc.response
@@ -1938,6 +2009,109 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     async def deployments_query(self) -> list[dict[str, Any]]:
         return await self.deployments()
 
+    async def run_comparison_query(
+        self, left_run_id: str, right_run_id: str
+    ) -> dict[str, object] | None:
+        """Fetch only the fixed comparison slice from ClickHouse."""
+
+        if left_run_id == right_run_id:
+            raise ValueError("comparison requires two distinct runs")
+        query = (
+            "WITH ranked AS (SELECT observation_id, observed_at, schema_version, kind, "
+            "component_id, "
+            "component_version, operation, measurement_name, measurement_value, measurement_unit, "
+            "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
+            "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
+            "capture_policy, image_version, configuration_version, model_id, model_version, "
+            "agent_revision, prompt_bundle_revision, policy_revision, "
+            "row_number() OVER (PARTITION BY run_id ORDER BY observed_at, "
+            "observation_id) AS run_row "
+            "FROM observations "
+            "WHERE run_id IN ({left_run_id:String}, {right_run_id:String}) "
+            ") SELECT observation_id, observed_at, schema_version, kind, component_id, "
+            "component_version, operation, measurement_name, measurement_value, measurement_unit, "
+            "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
+            "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
+            "capture_policy, image_version, configuration_version, model_id, model_version, "
+            "agent_revision, prompt_bundle_revision, policy_revision FROM ranked "
+            f"WHERE run_row <= {COMPARISON_MAX_OBSERVATIONS + 1} "
+            "ORDER BY run_id, observed_at, observation_id LIMIT "
+            f"{COMPARISON_QUERY_ROWS} "
+            "SETTINGS max_execution_time = 5, max_rows_to_read = 1000000, "
+            "read_overflow_mode = 'break', send_progress_in_http_headers = 1"
+        )
+        started = monotonic()
+        try:
+            rows = await self._query_rows(
+                query,
+                params={"left_run_id": left_run_id, "right_run_id": right_run_id},
+            )
+        except StorageUnavailableError as exc:
+            if _is_clickhouse_read_limit(exc):
+                return comparison_execution_limit_snapshot(
+                    left_run_id,
+                    right_run_id,
+                    [],
+                    [],
+                    [],
+                    reason="scan_limit",
+                    scanned_rows=COMPARISON_MAX_SCANNED_ROWS,
+                )
+            if _is_clickhouse_execution_timeout(exc):
+                return comparison_execution_limit_snapshot(
+                    left_run_id,
+                    right_run_id,
+                    [],
+                    [],
+                    [],
+                    reason="execution_limit",
+                )
+            raise
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
+        grouped_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            run_id = str(row.get("run_id") or "")
+            if run_id in {left_run_id, right_run_id}:
+                grouped_rows[run_id].append(row)
+        truncated_runs = {
+            run_id
+            for run_id, run_rows in grouped_rows.items()
+            if len(run_rows) > COMPARISON_MAX_OBSERVATIONS
+        }
+        selected_rows = [
+            row
+            for run_id in (left_run_id, right_run_id)
+            for row in grouped_rows.get(run_id, [])[:COMPARISON_MAX_OBSERVATIONS]
+        ]
+        observations = [_observation(row) for row in selected_rows]
+        result = build_run_comparison(
+            left_run_id,
+            right_run_id,
+            observations,
+            truncated_runs=truncated_runs,
+            deadline=started + COMPARISON_EXECUTION_TIMEOUT_MS / 1000.0,
+        )
+        if result is None:
+            return None
+        scan = cast(dict[str, object], result["scan"])
+        physical_rows = self._clickhouse_progress_read_rows
+        scan_rows = physical_rows if physical_rows is not None else len(rows)
+        scan["scannedRows"] = min(COMPARISON_MAX_SCANNED_ROWS, max(0, scan_rows))
+        scan["executionMs"] = min(
+            COMPARISON_EXECUTION_TIMEOUT_MS,
+            max(0.0, (monotonic() - started) * 1000.0),
+        )
+        if (
+            physical_rows is None
+            or physical_rows >= COMPARISON_MAX_SCANNED_ROWS
+        ):
+            result["partial"] = True
+            result["partialReasons"] = sorted(
+                set(cast(list[str], result["partialReasons"])) | {"scan_limit"}
+            )
+        return result
+
     async def list_observations(
         self, *, limit: int | None = 1000, cursor: int | None = None
     ) -> list[MetadataObservation]:
@@ -1953,7 +2127,8 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
             "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
             "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
-            "capture_policy FROM observations"
+            "capture_policy, image_version, configuration_version, model_id, model_version, "
+            "agent_revision, prompt_bundle_revision, policy_revision FROM observations"
             + where
             + " ORDER BY ingest_sequence LIMIT "
             + str(limit)
@@ -2130,9 +2305,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 where.append(f"{_ANALYTICS_OUTCOME_SQL} = {{filter_outcome:String}}")
                 params["filter_outcome"] = _analytics_outcome_filter(value)
             elif key in dimension_filters:
-                where.append(
-                    f"dimensions['{dimension_filters[key]}'] = {{filter_{key}:String}}"
-                )
+                where.append(f"dimensions['{dimension_filters[key]}'] = {{filter_{key}:String}}")
                 params[f"filter_{key}"] = value
         response_limit = request.series_limit * (request.point_limit + 1) + 1
         source_read_limit = ANALYTICS_MAX_SCANNED_ROWS + 1
@@ -2208,9 +2381,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             if _is_clickhouse_read_limit(exc):
                 return _analytics_scan_limit_snapshot(request, lower, upper, bucket_seconds)
             if _is_clickhouse_execution_timeout(exc):
-                return _analytics_execution_limit_snapshot(
-                    request, lower, upper, bucket_seconds
-                )
+                return _analytics_execution_limit_snapshot(request, lower, upper, bucket_seconds)
             raise StorageUnavailableError("ClickHouse is unavailable") from exc
         except (httpx.HTTPError, OSError, TimeoutError) as exc:
             raise StorageUnavailableError("ClickHouse is unavailable") from exc
@@ -2247,10 +2418,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             or response_truncated
         ):
             partial_reasons.append("point_limit")
-        if any(
-            bool(row.get("late_data")) or bool(row.get("source_late_data"))
-            for row in rows
-        ):
+        if any(bool(row.get("late_data")) or bool(row.get("source_late_data")) for row in rows):
             partial_reasons.append("late_data")
         if any(bool(row.get("retention_boundary")) for row in rows):
             partial_reasons.append("retention_boundary")
@@ -2486,7 +2654,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
             "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
             "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
-            "capture_policy FROM observations WHERE run_id = "
+            "capture_policy, image_version, configuration_version, model_id, model_version, "
+            "agent_revision, prompt_bundle_revision, policy_revision "
+            "FROM observations WHERE run_id = "
             + _sql(run_id)
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
@@ -2524,7 +2694,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
             "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
             "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
-            "capture_policy FROM observations WHERE trace_id = "
+            "capture_policy, image_version, configuration_version, model_id, model_version, "
+            "agent_revision, prompt_bundle_revision, policy_revision "
+            "FROM observations WHERE trace_id = "
             + _sql(trace_id)
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
@@ -3024,6 +3196,12 @@ def _observation(row: dict[str, Any]) -> MetadataObservation:
             "gitCommit": row["git_commit"],
             "environment": row["environment"],
             "hostId": row["host_id"],
+            **({"imageVersion": row["image_version"]} if row.get("image_version") else {}),
+            **(
+                {"configurationVersion": row["configuration_version"]}
+                if row.get("configuration_version")
+                else {}
+            ),
         },
         "serviceRole": row["service_role"],
         "capturePolicy": row["capture_policy"],
@@ -3048,6 +3226,19 @@ def _observation(row: dict[str, Any]) -> MetadataObservation:
         if row.get("conversation_id"):
             correlation["conversationId"] = row["conversation_id"]
         payload["correlation"] = correlation
+    execution = {
+        key: row[name]
+        for name, key in (
+            ("model_id", "modelId"),
+            ("model_version", "modelVersion"),
+            ("agent_revision", "agentRevision"),
+            ("prompt_bundle_revision", "promptBundleRevision"),
+            ("policy_revision", "policyRevision"),
+        )
+        if row.get(name)
+    }
+    if execution:
+        payload["execution"] = execution
     return MetadataObservation.from_payload(payload)
 
 

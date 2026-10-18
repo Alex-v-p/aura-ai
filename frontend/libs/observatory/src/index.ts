@@ -8,3 +8,4 @@ export * from './lib/features/traces/trace.component';
 export * from './lib/features/components/components.component';
 export * from './lib/features/retention/retention.component';
 export * from './lib/features/analytics/analytics.component';
+export * from './lib/features/comparison/comparison.component';

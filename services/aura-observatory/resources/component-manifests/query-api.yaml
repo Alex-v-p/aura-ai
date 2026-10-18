@@ -20,6 +20,10 @@ metrics:
   - observatory_auth_callback_duration_ms
   - observatory_auth_callback_outcome
   - observatory_query_freshness_lag_ms
+  - observatory_comparison_duration_ms
+  - observatory_comparison_outcome
+  - observatory_comparison_partial_count
+  - observatory_comparison_unavailable_marker_count
 metric_definitions:
   - name: observatory_query_duration_ms
     type: histogram
@@ -61,6 +65,38 @@ metric_definitions:
     trace: query_request
     correlation: request_id
     export: prometheus
+  - name: observatory_comparison_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_outcome
+    type: counter
+    unit: occurrences
+    labels: [outcome]
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_partial_count
+    type: counter
+    unit: occurrences
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_unavailable_marker_count
+    type: counter
+    unit: occurrences
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
 evaluators:
   - component_manifest_completeness
   - component_dependency_integrity
@@ -73,6 +109,11 @@ evaluators:
   - operational_analytics_bounds
   - operational_analytics_semantics
   - operational_analytics_accessibility
+  - metadata_v2_allowlist
+  - run_comparison_bounds
+  - trace_alignment_semantics
+  - correlation_marker_privacy
+  - run_comparison_accessibility
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

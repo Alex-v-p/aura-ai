@@ -1,0 +1,69 @@
+agent: core_worker
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0088_core
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-core.telemetry-export
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_telemetry.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  definitions:
+    - id: metadata-observation-v2-producer
+      version: 2
+      source: contracts/telemetry/v2/metadata-observation.schema.json
+      changes:
+        - Core OTLP resource signals identify the v2 schema with the contract schemaUrl.
+        - Optional deployment.image_version and deployment.configuration_version markers are emitted only when validated settings provide them.
+        - Per-observation execution markers are projected from the existing allowlisted model_id, agent_revision_id, prompt_bundle_revision_id, and policy revision trace fields.
+        - Existing structured container logs retain the v1 envelope and v1 contract source is unchanged.
+    - id: core-telemetry-settings
+      version: 1
+      source: services/aura-core/src/aura_core/platform/auth.py
+      changes:
+        - Added bounded optional telemetry_image_version and telemetry_configuration_version settings with empty-value omission and private-shape rejection.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.telemetry_export
+  metrics_added: []
+verification:
+  passed:
+    - cd services/aura-core && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check src tests
+    - cd services/aura-core && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright src/aura_core/platform/auth.py src/aura_core/platform/telemetry.py src/aura_core/entrypoints/api/state.py src/aura_core/entrypoints/worker/app.py src/aura_core/entrypoints/scheduler/app.py tests/test_settings.py tests/test_telemetry.py
+    - cd services/aura-core && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest tests/test_settings.py tests/test_telemetry.py -q (114 passed, 1 skipped; focused Core correction)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0088.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Aggregate AURA-0088 checks remain assigned to the Observatory, platform, frontend, review, and integration owners.
+    - The repository-wide pyright command was exercised but is not a valid Core-only gate in the shared worktree because it reports 33 unrelated Observatory source/test override/type errors; the targeted Core invocation passed.
+decisions:
+  - Kept the structured exporter on the established v1 wire envelope; only the independent asynchronous OTLP exporter identifies v2.
+  - Used resource-level deployment markers and explicit aura.execution.* OTLP attributes so revision values never become metric labels, logs, URLs, SSE data, or synchronous Core dependencies.
+  - Implemented the contract ModelIdentifier grammar for tagged local model identifiers, including qwen3:8b and llama3.2:latest; numeric-only tags, URLs, paths, email-like values, whitespace, and sensitive/content-shaped segments are omitted fail-closed.
+  - Applied the same bounded non-sensitive/private-shape validation to deployment image/configuration and execution revision markers; rejected values are never copied into OTLP, structured logs, or metrics.
+  - Aligned the producer's forbidden-segment matcher with the versioned contract exactly: only case-insensitive delimited owner, identity, credential, bearer, token, secret, password, private, content, hash, digest, and endpoint segments are rejected. Benign lookalikes such as sha256_abc, contention, privateer, ownerless, and digestive remain valid.
+  - Selected policy_revision_id, then tool_policy_revision_id, model_policy_revision_id, and memory_policy_revision_id in stable precedence because the v2 contract exposes one policyRevision field while Core retains multiple internal policy provenance fields.
+  - Retained bounded queueing, retry, drop accounting, and background network I/O; no request, startup, readiness, worker, or scheduler path waits for Collector availability.
+risks:
+  - Observatory OTLP normalization must allow the v2 resource schemaUrl, deployment.image_version, deployment.configuration_version, and aura.execution.* keys and map them to the closed v2 contract while continuing to accept v1 signals.
+  - The v2 ModelIdentifier grammar is intentionally stricter than Core's internal model-id field; only contract-valid provider-tagged local identifiers are projected, while unsupported values remain absent for Observatory to report as unavailable.
+unresolved: []

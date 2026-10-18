@@ -26,6 +26,7 @@ _CLICKHOUSE_ERROR_CLASSES = (
     ("database_error", re.compile(r"database .* does not exist|unknown database", re.I)),
 )
 
+
 class ClickHouseObservationStore:
     def __init__(
         self,
@@ -100,6 +101,7 @@ def clickhouse_row(payload: dict[str, Any], *, ingest_sequence: int = 0) -> dict
     trace = cast(dict[str, Any], payload.get("trace") or {})
     correlation = cast(dict[str, Any], payload.get("correlation") or {})
     deployment = cast(dict[str, Any], payload["deployment"])
+    execution = cast(dict[str, Any], payload.get("execution") or {})
     row = {
         "observation_id": payload["observationId"],
         "observed_at": _clickhouse_timestamp(payload["observedAt"]),
@@ -125,6 +127,18 @@ def clickhouse_row(payload: dict[str, Any], *, ingest_sequence: int = 0) -> dict
         "schema_version": payload["schemaVersion"],
         "capture_policy": payload["capturePolicy"],
     }
+    if int(payload.get("schemaVersion", 1)) == 2:
+        row.update(
+            {
+                "image_version": deployment.get("imageVersion"),
+                "configuration_version": deployment.get("configurationVersion"),
+                "model_id": execution.get("modelId"),
+                "model_version": execution.get("modelVersion"),
+                "agent_revision": execution.get("agentRevision"),
+                "prompt_bundle_revision": execution.get("promptBundleRevision"),
+                "policy_revision": execution.get("policyRevision"),
+            }
+        )
     if ingest_sequence:
         row["ingest_sequence"] = ingest_sequence
     return row

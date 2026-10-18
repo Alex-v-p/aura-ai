@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from aura_observatory.contract import is_model_identifier, is_revision_identifier
+
 
 class OtlpPayloadError(ValueError):
     """The payload is not the bounded OTLP metadata profile."""
@@ -26,10 +28,14 @@ _RESOURCE_KEYS = frozenset(
         "deployment.id",
         "deployment.environment",
         "deployment.git_commit",
+        "deployment.image_version",
+        "deployment.configuration_version",
         "host.id",
         "capture.policy",
     }
 )
+_V1_SCHEMA_URL = "https://aura.local/contracts/telemetry/v1/metadata-observation.schema.json"
+_V2_SCHEMA_URL = "https://aura.local/contracts/telemetry/v2/metadata-observation.schema.json"
 _OBSERVATION_KEYS = frozenset(
     {
         "aura.observation_id",
@@ -40,6 +46,11 @@ _OBSERVATION_KEYS = frozenset(
         "aura.capture_policy",
         "aura.run_id",
         "aura.conversation_id",
+        "aura.execution.model_id",
+        "aura.execution.model_version",
+        "aura.execution.agent_revision",
+        "aura.execution.prompt_bundle_revision",
+        "aura.execution.policy_revision",
     }
 )
 _DIMENSION_MAP = {
@@ -77,11 +88,13 @@ def metrics_to_observations(payload: object) -> list[dict[str, object]]:
     for resource_metric in resources:
         resource = _object(resource_metric, "resource metric")
         _only_keys(resource, {"resource", "scopeMetrics", "schemaUrl"}, "resource metric")
-        deployment = _deployment(resource.get("resource"))
+        schema_version = _signal_schema_version(resource, "resource metric")
+        deployment = _deployment(resource.get("resource"), schema_version)
         scopes = _list(resource.get("scopeMetrics"), "scopeMetrics")
         for scope in scopes:
             scope_object = _object(scope, "scope metric")
             _only_keys(scope_object, {"scope", "metrics", "schemaUrl"}, "scope metric")
+            _validate_optional_schema_url(scope_object.get("schemaUrl"), schema_version)
             _instrumentation_scope(scope_object.get("scope"))
             for metric in _list(scope_object.get("metrics"), "metrics"):
                 metric_object = _object(metric, "metric")
@@ -126,6 +139,7 @@ def metrics_to_observations(payload: object) -> list[dict[str, object]]:
                         _observation(
                             deployment,
                             attrs,
+                            schema_version=schema_version,
                             kind="metric",
                             value=_number(point_object),
                             observed_at=observed_at,
@@ -148,11 +162,13 @@ def traces_to_observations(payload: object) -> list[dict[str, object]]:
     for resource_span in resources:
         resource = _object(resource_span, "resource span")
         _only_keys(resource, {"resource", "scopeSpans", "schemaUrl"}, "resource span")
-        deployment = _deployment(resource.get("resource"))
+        schema_version = _signal_schema_version(resource, "resource span")
+        deployment = _deployment(resource.get("resource"), schema_version)
         scopes = _list(resource.get("scopeSpans"), "scopeSpans")
         for scope in scopes:
             scope_object = _object(scope, "scope span")
             _only_keys(scope_object, {"scope", "spans", "schemaUrl"}, "scope span")
+            _validate_optional_schema_url(scope_object.get("schemaUrl"), schema_version)
             _instrumentation_scope(scope_object.get("scope"))
             for span in _list(scope_object.get("spans"), "spans"):
                 span_object = _object(span, "span")
@@ -205,6 +221,7 @@ def traces_to_observations(payload: object) -> list[dict[str, object]]:
                     _observation(
                         deployment,
                         attrs,
+                        schema_version=schema_version,
                         kind="span",
                         value=duration,
                         observed_at=end,
@@ -226,6 +243,7 @@ def _observation(
     deployment: dict[str, str],
     attrs: dict[str, str],
     *,
+    schema_version: int,
     kind: str,
     value: float,
     observed_at: datetime,
@@ -252,11 +270,37 @@ def _observation(
     if "aura.run_id" in attrs:
         correlation["runId"] = _canonical_correlation_id(attrs["aura.run_id"])
     if "aura.conversation_id" in attrs:
-        correlation["conversationId"] = _canonical_correlation_id(
-            attrs["aura.conversation_id"]
-        )
+        correlation["conversationId"] = _canonical_correlation_id(attrs["aura.conversation_id"])
+    execution: dict[str, str] = {}
+    for key in (
+        "model_id",
+        "model_version",
+        "agent_revision",
+        "prompt_bundle_revision",
+        "policy_revision",
+    ):
+        marker_value = attrs.pop(f"aura.execution.{key}", None)
+        if marker_value is not None:
+            marker_label = f"aura.execution.{key}"
+            if key == "model_id":
+                _validate_model_identifier(marker_label, marker_value)
+            else:
+                _validate_marker(marker_label, marker_value)
+            execution_key = {
+                "model_id": "modelId",
+                "model_version": "modelVersion",
+                "agent_revision": "agentRevision",
+                "prompt_bundle_revision": "promptBundleRevision",
+                "policy_revision": "policyRevision",
+            }[key]
+            execution[execution_key] = marker_value
+    if schema_version == 1 and (
+        any(key in deployment for key in ("imageVersion", "configurationVersion"))
+        or execution
+    ):
+        raise OtlpPayloadError("v1 OTLP payload contains v2 marker attributes")
     result: dict[str, object] = {
-        "schemaVersion": 1,
+        "schemaVersion": schema_version,
         "observationId": attrs["aura.observation_id"],
         "observedAt": observed_at.isoformat().replace("+00:00", "Z"),
         "kind": kind,
@@ -273,6 +317,13 @@ def _observation(
             "gitCommit": deployment["gitCommit"],
             "environment": deployment["environment"],
             "hostId": deployment["hostId"],
+            **(
+                {
+                    key: deployment[key]
+                    for key in ("imageVersion", "configurationVersion")
+                    if key in deployment
+                }
+            ),
         },
         "serviceRole": deployment["serviceRole"],
         "capturePolicy": attrs["aura.capture_policy"],
@@ -281,6 +332,8 @@ def _observation(
         result["trace"] = trace
     if correlation:
         result["correlation"] = correlation
+    if execution:
+        result["execution"] = execution
     return result
 
 
@@ -293,7 +346,7 @@ def _canonical_correlation_id(value: str) -> str:
         raise OtlpPayloadError("correlation identifier is invalid") from exc
 
 
-def _deployment(value: object) -> dict[str, str]:
+def _deployment(value: object, schema_version: int) -> dict[str, str]:
     resource = _object(value, "resource")
     _only_keys(resource, {"attributes", "droppedAttributesCount", "schemaUrl"}, "resource")
     _zero_count(resource, "droppedAttributesCount", "resource dropped attributes")
@@ -310,7 +363,60 @@ def _deployment(value: object) -> dict[str, str]:
         raise OtlpPayloadError("deployment resource attributes are incomplete")
     if "service.name" in attrs and attrs["service.name"] != "aura-core":
         raise OtlpPayloadError("unexpected OTLP service name")
-    return {target: attrs[source] for source, target in required.items()}
+    result = {target: attrs[source] for source, target in required.items()}
+    for source, target in (
+        ("deployment.image_version", "imageVersion"),
+        ("deployment.configuration_version", "configurationVersion"),
+    ):
+        if source in attrs:
+            _validate_marker(source, attrs[source])
+            result[target] = attrs[source]
+    if schema_version == 1 and any(
+        key in attrs for key in ("deployment.image_version", "deployment.configuration_version")
+    ):
+        raise OtlpPayloadError("v1 OTLP payload contains v2 deployment markers")
+    return result
+
+
+def _signal_schema_version(value: Mapping[str, object], label: str) -> int:
+    urls = [
+        value.get("schemaUrl"),
+        _object(value.get("resource"), "resource").get("schemaUrl"),
+    ]
+    present = [url for url in urls if url is not None]
+    if not present:
+        return 1
+    if any(not isinstance(url, str) for url in present):
+        raise OtlpPayloadError(f"{label} schemaUrl is invalid")
+    if len(set(present)) != 1:
+        raise OtlpPayloadError(f"{label} schemaUrl values disagree")
+    url = present[0]
+    if url == _V1_SCHEMA_URL:
+        return 1
+    if url == _V2_SCHEMA_URL:
+        return 2
+    raise OtlpPayloadError(f"{label} schemaUrl is unsupported")
+
+
+def _validate_optional_schema_url(value: object, schema_version: int) -> None:
+    if value is None:
+        return
+    if value not in {_V1_SCHEMA_URL, _V2_SCHEMA_URL}:
+        raise OtlpPayloadError("instrumentation schemaUrl is unsupported")
+    if (value == _V1_SCHEMA_URL and schema_version != 1) or (
+        value == _V2_SCHEMA_URL and schema_version != 2
+    ):
+        raise OtlpPayloadError("instrumentation schemaUrl disagrees with resource schema")
+
+
+def _validate_marker(label: str, value: str) -> None:
+    if not is_revision_identifier(value):
+        raise OtlpPayloadError(f"{label} is not a bounded metadata marker")
+
+
+def _validate_model_identifier(label: str, value: str) -> None:
+    if not is_model_identifier(value):
+        raise OtlpPayloadError(f"{label} is not a bounded local model identifier")
 
 
 def _metric_unit(value: object) -> str | None:

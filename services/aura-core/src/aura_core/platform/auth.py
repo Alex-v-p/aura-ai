@@ -25,7 +25,33 @@ from aura_core.domains.governance.identity.models import (
 _TELEMETRY_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _TELEMETRY_ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _TELEMETRY_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
-_TELEMETRY_PRIVATE_SHAPES = ("password", "secret", "token", "credential", "bearer", "owner")
+_TELEMETRY_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_TELEMETRY_PRIVATE_SHAPES = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "bearer",
+    "owner",
+    "identity",
+    "subject",
+    "private",
+    "session",
+    "cookie",
+    "endpoint",
+    "api_key",
+    "api-key",
+    "prompt",
+    "response",
+    "memory",
+    "document",
+    "filename",
+    "argument",
+    "result",
+    "content",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +91,18 @@ class Settings(BaseSettings):
     telemetry_deployment_id: str = Field(default="local")
     telemetry_git_commit: str = Field(default="0000000")
     telemetry_host_id: str = Field(default_factory=lambda: os.environ.get("HOSTNAME", "local"))
+    telemetry_image_version: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AURA_TELEMETRY_IMAGE_VERSION", "AURA_OBSERVATORY_IMAGE_VERSION"
+        ),
+    )
+    telemetry_configuration_version: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AURA_TELEMETRY_CONFIGURATION_VERSION", "AURA_OBSERVATORY_CONFIGURATION_VERSION"
+        ),
+    )
     public_origin: str = "https://aura.localhost"
     ollama_url: str = Field(
         default="http://127.0.0.1:11434",
@@ -181,6 +219,28 @@ class Settings(BaseSettings):
     def validate_telemetry_commit(cls, value: str) -> str:
         if not _TELEMETRY_COMMIT.fullmatch(value):
             raise ValueError("telemetry git commit must be 7-64 lowercase hexadecimal characters")
+        return value
+
+    @field_validator("telemetry_image_version", "telemetry_configuration_version", mode="before")
+    @classmethod
+    def validate_telemetry_revision(cls, value: object) -> str | None:
+        # Compose commonly supplies an empty optional marker. Treat it as
+        # absent while failing closed for every non-empty value.
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            raise ValueError("telemetry revision must be a bounded identifier")
+        lowered = value.casefold()
+        if (
+            not _TELEMETRY_REVISION.fullmatch(value)
+            or any(character.isspace() for character in value)
+            or "://" in value
+            or "/" in value
+            or "\\" in value
+            or "@" in value
+            or any(shape in lowered for shape in _TELEMETRY_PRIVATE_SHAPES)
+        ):
+            raise ValueError("telemetry revision must be a bounded non-sensitive identifier")
         return value
 
     @property

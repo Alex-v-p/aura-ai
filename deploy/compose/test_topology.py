@@ -126,6 +126,53 @@ class ComposeTopologyTests(unittest.TestCase):
             api,
         )
 
+    def test_core_entrypoints_share_bounded_telemetry_revision_defaults(self) -> None:
+        api = service_block(self.compose, "aura-core-api", "aura-core-worker")
+        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        scheduler = service_block(self.compose, "aura-core-scheduler", "aura-core-migrate")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        settings = {
+            "AURA_TELEMETRY_IMAGE_VERSION": "local",
+            "AURA_TELEMETRY_CONFIGURATION_VERSION": "local",
+        }
+
+        for name, default in settings.items():
+            setting = f"{name}: ${{{name}:-{default}}}"
+            self.assertIn(setting, api)
+            self.assertIn(setting, worker)
+            self.assertIn(setting, scheduler)
+            self.assertIn(f"{name}={default}", environment)
+
+    def test_telemetry_manifests_declare_v2_and_dual_version_rollout(self) -> None:
+        import yaml
+
+        exporter = yaml.safe_load(
+            (ROOT / "services/aura-core/resources/component-manifests/telemetry-export.yaml")
+            .read_text(encoding="utf-8")
+        )
+        ingestion = yaml.safe_load(
+            (
+                ROOT
+                / "services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(exporter["output"]["schema"], "metadata-observation-v2")
+        self.assertEqual(exporter["output"]["legacy_schemas"], ["metadata-observation-v1"])
+        self.assertEqual(
+            exporter["output"]["transport_notes"],
+            {
+                "otlp": "metadata-observation-v2",
+                "structured_container_log": "metadata-observation-v1",
+            },
+        )
+        self.assertIn("metadata_v2_allowlist", exporter["evaluators"])
+        self.assertIn("correlation_marker_privacy", exporter["evaluators"])
+        self.assertEqual(ingestion["input"]["schema"], "metadata-observation-v1-or-v2")
+        self.assertNotIn("accepted_schemas", ingestion["input"])
+        self.assertIn("metadata_v2_allowlist", ingestion["evaluators"])
+        self.assertIn("correlation_marker_privacy", ingestion["evaluators"])
+
     def test_core_entrypoints_share_dimension_safe_document_embedding_defaults(self) -> None:
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")

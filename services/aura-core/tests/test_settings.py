@@ -78,6 +78,34 @@ def test_aura0079_core_telemetry_export_accepts_bounded_runtime_settings() -> No
     assert settings.role == "worker"
 
 
+def test_aura0088_core_telemetry_export_accepts_optional_v2_deployment_markers() -> None:
+    settings = Settings(
+        telemetry_image_version="aura-core-2026.10.18",
+        telemetry_configuration_version="config-42",
+    )
+
+    assert settings.telemetry_image_version == "aura-core-2026.10.18"
+    assert settings.telemetry_configuration_version == "config-42"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("telemetry_image_version", "telemetry_configuration_version"),
+)
+def test_aura0088_core_telemetry_rejects_untrusted_v2_deployment_markers(field: str) -> None:
+    for value in (
+        "https://private.example",
+        "/var/run/aura",
+        "owner-secret",
+        "identity-config",
+        "api-key-config",
+        "content-hash-abc",
+        "a value",
+    ):
+        with pytest.raises(ValueError):
+            Settings(**cast(Any, {field: value}))
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (

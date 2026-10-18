@@ -1080,6 +1080,46 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
 _OTLP_NO_TRACE_ID = "0" * 32
+_METADATA_OBSERVATION_V2_SCHEMA_URL = (
+    "https://aura.local/contracts/telemetry/v2/metadata-observation.schema.json"
+)
+_V2_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_V2_MODEL_IDENTIFIER = re.compile(
+    r"^(?!(?:https?|ftp|file|mailto|ssh|ws|wss):)"
+    r"(?!(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|"
+    r"digest|endpoint)(?:$|[._:+-]))"
+    r"(?!.*[._:+-](?:owner|identity|credential|bearer|token|secret|password|private|content|"
+    r"hash|digest|endpoint)(?:$|[._:+-]))"
+    r"[a-z0-9][a-z0-9._+-]{0,127}"
+    r"(?::(?=[a-z0-9._+-]{1,64}$)(?=[a-z0-9._+-]*[a-z])[a-z0-9._+-]+)?$"
+)
+_V2_PRIVATE_MARKER_SEGMENT = re.compile(
+    r"(?:^|[._:+-])(?:owner|identity|credential|bearer|token|secret|password|private|content|"
+    r"hash|digest|endpoint)(?=$|[._:+-])",
+    re.IGNORECASE,
+)
+
+
+def _valid_v2_revision(value: str) -> bool:
+    """Validate a closed v2 revision without allowing private/content shapes."""
+
+    return bool(
+        _V2_REVISION.fullmatch(value)
+        and not _V2_PRIVATE_MARKER_SEGMENT.search(value)
+        and not any(character.isspace() for character in value)
+        and "://" not in value
+        and "/" not in value
+        and "\\" not in value
+        and "@" not in value
+    )
+
+
+def _valid_v2_model_identifier(value: str) -> bool:
+    """Validate repository-supported local model IDs, including provider tags."""
+
+    return bool(_V2_MODEL_IDENTIFIER.fullmatch(value)) and not _V2_PRIVATE_MARKER_SEGMENT.search(
+        value
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1194,6 +1234,8 @@ class DeploymentMetadata:
     environment: str = "development"
     host_id: str = "local"
     service_role: str = "api"
+    image_version: str | None = None
+    configuration_version: str | None = None
 
     def __post_init__(self) -> None:
         validate_deployment_metadata(self)
@@ -1202,11 +1244,7 @@ class DeploymentMetadata:
 _DEPLOYMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
-_PRIVATE_SHAPES = ("password", "secret", "token", "credential", "bearer", "owner")
-
-
 def _valid_bounded_metadata(value: str, pattern: re.Pattern[str], label: str) -> None:
-    lowered = value.casefold()
     if (
         not pattern.fullmatch(value)
         or any(character.isspace() for character in value)
@@ -1214,7 +1252,7 @@ def _valid_bounded_metadata(value: str, pattern: re.Pattern[str], label: str) ->
         or "/" in value
         or "\\" in value
         or "@" in value
-        or any(shape in lowered for shape in _PRIVATE_SHAPES)
+        or _V2_PRIVATE_MARKER_SEGMENT.search(value)
     ):
         raise ValueError(
             f"{label} must be bounded metadata, not a URL, path, identity, or credential"
@@ -1232,6 +1270,13 @@ def validate_deployment_metadata(metadata: DeploymentMetadata) -> None:
         raise ValueError("git commit must be 7-64 lower-case hexadecimal characters")
     if metadata.service_role not in {"api", "worker", "scheduler", "cli"}:
         raise ValueError("service role must be api, worker, scheduler, or cli")
+    for label, value in (
+        ("image version", metadata.image_version),
+        ("configuration version", metadata.configuration_version),
+    ):
+        if value is not None:
+            if not _valid_v2_revision(value):
+                raise ValueError(f"{label} must be bounded non-sensitive metadata")
 
 
 _WIRE_DIMENSIONS = {
@@ -1543,7 +1588,7 @@ class OtlpHttpTelemetryExporter:
         return tuple(payloads)
 
     def _resource_attributes(self) -> list[dict[str, object]]:
-        return [
+        attributes: list[dict[str, object]] = [
             {"key": "service.name", "value": {"stringValue": "aura-core"}},
             {"key": "service.role", "value": {"stringValue": self.deployment.service_role}},
             {"key": "deployment.id", "value": {"stringValue": self.deployment.deployment_id}},
@@ -1555,6 +1600,21 @@ class OtlpHttpTelemetryExporter:
             {"key": "host.id", "value": {"stringValue": self.deployment.host_id}},
             {"key": "capture.policy", "value": {"stringValue": "metadata_only"}},
         ]
+        # These are resource-level markers because they describe the deployed
+        # Core process, not a metric dimension. Optional values are omitted so
+        # an unset marker remains unavailable to Observatory rather than being
+        # represented by a fabricated default.
+        if self.deployment.image_version is not None:
+            attributes.append(
+                self._string_attribute("deployment.image_version", self.deployment.image_version)
+            )
+        if self.deployment.configuration_version is not None:
+            attributes.append(
+                self._string_attribute(
+                    "deployment.configuration_version", self.deployment.configuration_version
+                )
+            )
+        return attributes
 
     @staticmethod
     def _string_attribute(key: str, value: str) -> dict[str, object]:
@@ -1575,7 +1635,43 @@ class OtlpHttpTelemetryExporter:
         for key in ("run_id", "conversation_id"):
             if key in attributes:
                 values.append(self._string_attribute(f"aura.{key}", attributes[key]))
+        # Only the closed v2 execution markers are projected. In particular,
+        # prompt_hash and every unlisted trace attribute stay out of OTLP even
+        # though they may exist in Core's internal trace context.
+        execution: list[tuple[str, str]] = []
+        model_id = attributes.get("model_id")
+        if model_id is not None and _valid_v2_model_identifier(model_id):
+            execution.append(("model_id", model_id))
+        for source, target in (
+            ("model_version", "model_version"),
+            ("agent_revision_id", "agent_revision"),
+            ("prompt_bundle_revision_id", "prompt_bundle_revision"),
+        ):
+            value = attributes.get(source)
+            if value is not None and _valid_v2_revision(value):
+                execution.append((target, value))
+        # Core can carry several policy provenance fields internally. The v2
+        # contract deliberately exposes one explicit marker, with a stable
+        # precedence that never infers a value from operation order.
+        for source in (
+            "policy_revision_id",
+            "tool_policy_revision_id",
+            "model_policy_revision_id",
+            "memory_policy_revision_id",
+        ):
+            value = attributes.get(source)
+            if value is not None and _valid_v2_revision(value):
+                execution.append(("policy_revision", value))
+                break
+        values.extend(
+            self._string_attribute(f"aura.execution.{key}", value)
+            for key, value in execution
+        )
         return values
+
+    @staticmethod
+    def _resource_schema_url() -> str:
+        return _METADATA_OBSERVATION_V2_SCHEMA_URL
 
     def _metrics_payload(self, measurements: Sequence[Measurement]) -> bytes:
         data_points = [
@@ -1590,6 +1686,7 @@ class OtlpHttpTelemetryExporter:
             "resourceMetrics": [
                 {
                     "resource": {"attributes": self._resource_attributes()},
+                    "schemaUrl": self._resource_schema_url(),
                     "scopeMetrics": [
                         {
                             "scope": {"name": "aura.core.telemetry", "version": "1.0.0"},
@@ -1648,6 +1745,7 @@ class OtlpHttpTelemetryExporter:
             "resourceSpans": [
                 {
                     "resource": {"attributes": self._resource_attributes()},
+                    "schemaUrl": self._resource_schema_url(),
                     "scopeSpans": [
                         {
                             "scope": {"name": "aura.core.telemetry", "version": "1.0.0"},
@@ -1735,6 +1833,8 @@ def make_telemetry_exporter(
     environment: str = "development",
     host_id: str = "local",
     service_role: str = "api",
+    image_version: str | None = None,
+    configuration_version: str | None = None,
 ) -> TelemetryExporter:
     """Compose Core's structured exporter and optional independent OTLP sink."""
 
@@ -1753,6 +1853,8 @@ def make_telemetry_exporter(
         environment=environment,
         host_id=host_id,
         service_role=role_map[service_role],
+        image_version=image_version,
+        configuration_version=configuration_version,
     )
     if not enabled:
         return StructuredContainerLogExporter(deployment=deployment)

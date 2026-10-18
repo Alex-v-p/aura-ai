@@ -19,6 +19,7 @@ import type {
   AnalyticsPercentileMethod,
   AnalyticsUnavailableSignal,
   AnalyticsUnit,
+  RunComparison,
   OperationalAnalyticsSnapshot,
   Overview,
   RetentionAction,
@@ -206,6 +207,11 @@ export class LiveRefreshCoordinator {
   cancel(): void { this.pending = false; }
 }
 
+/** Comparison data changes only; health and keepalive events cannot alter run evidence. */
+export function isComparisonInvalidationEvent(eventType: string): boolean {
+  return eventType === 'observation.changed' || eventType === 'retention.changed';
+}
+
 const MAX_RETURN_PATH_LENGTH = 2048;
 const SENSITIVE_RETURN_KEYS = new Set([
   'access', 'accesstoken', 'apikey', 'aud', 'authorization', 'authorisation',
@@ -379,6 +385,108 @@ export function dependencyNodeForEdge<T extends DependencyNodeIdentity>(nodes: R
   return nodes.find((node) => node.dependencyId === dependencyId && node.componentVersion === componentVersion);
 }
 
+const COMPARISON_MARKERS = ['deployment_id', 'git_commit', 'image_version', 'configuration_version', 'model_id', 'model_version', 'agent_revision', 'prompt_bundle_revision', 'policy_revision'] as const;
+const COMPARISON_STATES = ['equal', 'changed', 'missing', 'unavailable'] as const;
+const COMPARISON_AVAILABILITY = ['available', 'missing', 'unavailable'] as const;
+const COMPARISON_ALIGNMENT = ['matched', 'left_only', 'right_only', 'incompatible'] as const;
+const TRACE_INTEGRITY = ['complete', 'retained_partial', 'truncated', 'missing_parent', 'cyclic', 'duplicate'] as const;
+const COMPARISON_PARTIAL_REASONS = ['observation_limit', 'span_limit', 'measurement_limit', 'scan_limit', 'execution_limit', 'late_data', 'retention_boundary', 'incomplete_run', 'missing_parent', 'cyclic', 'duplicate_span'] as const;
+const COMPARISON_RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown'] as const;
+const COMPARISON_OUTCOMES = ['succeeded', 'failed', 'cancelled', 'unknown'] as const;
+const COMPARISON_SAFE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const COMPARISON_COMPONENT_ID = /^aura\.[a-z][a-z0-9_.-]{0,90}$/;
+const COMPARISON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const COMPARISON_TRACE_ID = /^[0-9a-f]{32}$/;
+const COMPARISON_SPAN_ID = /^[0-9a-f]{16}$/;
+const COMPARISON_ALIGNMENT_KEY = /^[A-Za-z0-9._:+-]{1,512}$/;
+const COMPARISON_PRIVATE_SEGMENT = '(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)';
+const COMPARISON_REVISION_IDENTIFIER = new RegExp(`^(?!${COMPARISON_PRIVATE_SEGMENT}(?:$|[._:+-]))(?!.*[._:+-]${COMPARISON_PRIVATE_SEGMENT}(?:$|[._:+-]))[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`, 'i');
+const COMPARISON_MODEL_IDENTIFIER = new RegExp(`^(?!(?:https?|ftp|file|mailto|ssh|ws|wss):)(?!${COMPARISON_PRIVATE_SEGMENT}(?:$|[._:+-]))(?!.*[._:+-]${COMPARISON_PRIVATE_SEGMENT}(?:$|[._:+-]))[a-z0-9][a-z0-9._+-]{0,127}(?::(?=[a-z0-9._+-]{1,64}$)(?=[a-z0-9._+-]*[a-z])[a-z0-9._+-]+)?$`);
+const COMPARISON_UNITS = ['count', 'milliseconds', 'bytes', 'ratio', 'score'] as const satisfies ReadonlyArray<AnalyticsUnit>;
+const COMPARISON_NUMERIC_LIMIT = 1_000_000_000_000_000;
+const COMPARISON_OPERATION = /^[a-z][a-z0-9_.-]{0,95}$/;
+function comparisonEnum<T extends string>(value: unknown, values: ReadonlyArray<T>): value is T { return typeof value === 'string' && values.includes(value as T); }
+function comparisonNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= COMPARISON_NUMERIC_LIMIT; }
+function comparisonNonNegativeNumber(value: unknown): value is number { return comparisonNumber(value) && value >= 0; }
+function comparisonAbsoluteDelta(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 2_000_000_000_000_000; }
+function comparisonNullableNumber(value: unknown): value is number | null { return value === null || comparisonNumber(value); }
+function comparisonNullableNonNegativeNumber(value: unknown): value is number | null { return value === null || comparisonNonNegativeNumber(value); }
+function comparisonUtc(value: unknown): value is string { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value) && Number.isFinite(Date.parse(value)); }
+function comparisonRecord(value: unknown): Record<string, unknown> | null { return record(value); }
+function comparisonKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean { return Object.keys(value).every((key) => keys.includes(key)); }
+function comparisonMarker(value: unknown, model = false): boolean { const marker = comparisonRecord(value); return Boolean(marker && comparisonKeys(marker, ['availability', 'value']) && comparisonEnum(marker['availability'], COMPARISON_AVAILABILITY) && (marker['value'] === null || (typeof marker['value'] === 'string' && (model ? COMPARISON_MODEL_IDENTIFIER.test(marker['value']) : COMPARISON_REVISION_IDENTIFIER.test(marker['value']))))); }
+function comparisonSide(value: unknown): boolean {
+  const side = comparisonRecord(value);
+  if (!side || !comparisonKeys(side, ['role', 'runId', 'evidence', 'status', 'outcome', 'startedAt', 'finishedAt', 'durationMs', 'traceId', 'modelId', 'modelVersion', 'deploymentId', 'gitCommit', 'imageVersion', 'configurationVersion', 'agentRevision', 'promptBundleRevision', 'policyRevision', 'componentVersions', 'partial'])) return false;
+  const versions = side['componentVersions'];
+  return comparisonEnum(side['role'], ['left', 'right']) && typeof side['runId'] === 'string' && COMPARISON_UUID.test(side['runId']) && comparisonEnum(side['evidence'], COMPARISON_AVAILABILITY) && comparisonEnum(side['status'], COMPARISON_RUN_STATUSES) && comparisonEnum(side['outcome'], COMPARISON_OUTCOMES) && (side['startedAt'] === null || comparisonUtc(side['startedAt'])) && (side['finishedAt'] === null || comparisonUtc(side['finishedAt'])) && comparisonNullableNonNegativeNumber(side['durationMs']) && (side['durationMs'] === null || side['durationMs'] <= 604800000) && (side['traceId'] === null || (typeof side['traceId'] === 'string' && COMPARISON_TRACE_ID.test(side['traceId']))) && comparisonMarker(side['modelId'], true) && ['modelVersion', 'deploymentId', 'gitCommit', 'imageVersion', 'configurationVersion', 'agentRevision', 'promptBundleRevision', 'policyRevision'].every((key) => comparisonMarker(side[key])) && Array.isArray(versions) && versions.length <= 256 && versions.every((entry) => { const item = comparisonRecord(entry); return Boolean(item && comparisonKeys(item, ['componentId', 'version']) && typeof item['componentId'] === 'string' && COMPARISON_COMPONENT_ID.test(item['componentId']) && comparisonMarker(item['version'])); }) && typeof side['partial'] === 'boolean';
+}
+function comparisonNumberPair(value: unknown): boolean { const item = comparisonRecord(value); return Boolean(item && comparisonKeys(item, ['availability', 'value']) && comparisonEnum(item['availability'], COMPARISON_AVAILABILITY) && comparisonNullableNumber(item['value'])); }
+function comparisonMeasurement(value: unknown): boolean { const item = comparisonRecord(value); return Boolean(item && comparisonKeys(item, ['name', 'unit', 'state', 'left', 'right', 'absoluteDelta']) && typeof item['name'] === 'string' && COMPARISON_OPERATION.test(item['name']) && comparisonEnum(item['unit'], COMPARISON_UNITS) && comparisonEnum(item['state'], COMPARISON_STATES) && comparisonNumberPair(item['left']) && comparisonNumberPair(item['right']) && (item['absoluteDelta'] === null || comparisonAbsoluteDelta(item['absoluteDelta']))); }
+function comparisonComponent(value: unknown): boolean {
+  const item = comparisonRecord(value);
+  const side = (candidate: unknown): boolean => { const current = comparisonRecord(candidate); return Boolean(current && comparisonKeys(current, ['componentVersion', 'durationMs', 'outcome', 'spanCount', 'partial']) && comparisonMarker(current['componentVersion']) && comparisonNullableNonNegativeNumber(current['durationMs']) && (current['durationMs'] === null || current['durationMs'] <= 604_800_000) && comparisonEnum(current['outcome'], COMPARISON_OUTCOMES) && Number.isSafeInteger(current['spanCount']) && (current['spanCount'] as number) >= 0 && (current['spanCount'] as number) <= 5_000 && typeof current['partial'] === 'boolean'); };
+  return Boolean(item && comparisonKeys(item, ['componentId', 'operation', 'alignment', 'left', 'right', 'measurements']) && typeof item['componentId'] === 'string' && COMPARISON_COMPONENT_ID.test(item['componentId']) && typeof item['operation'] === 'string' && COMPARISON_OPERATION.test(item['operation']) && comparisonEnum(item['alignment'], COMPARISON_ALIGNMENT) && (item['left'] === null || side(item['left'])) && (item['right'] === null || side(item['right'])) && Array.isArray(item['measurements']) && item['measurements'].length <= 128 && item['measurements'].every(comparisonMeasurement));
+}
+function comparisonSpan(value: unknown): boolean { const span = comparisonRecord(value); return Boolean(span && comparisonKeys(span, ['spanId', 'parentSpanId', 'componentId', 'componentVersion', 'operation', 'startedAt', 'durationMs', 'outcome', 'partial']) && typeof span['spanId'] === 'string' && COMPARISON_SPAN_ID.test(span['spanId']) && (span['parentSpanId'] === null || (typeof span['parentSpanId'] === 'string' && COMPARISON_SPAN_ID.test(span['parentSpanId']))) && typeof span['componentId'] === 'string' && COMPARISON_COMPONENT_ID.test(span['componentId']) && typeof span['componentVersion'] === 'string' && COMPARISON_SAFE_LABEL.test(span['componentVersion']) && typeof span['operation'] === 'string' && COMPARISON_OPERATION.test(span['operation']) && comparisonUtc(span['startedAt']) && comparisonNonNegativeNumber(span['durationMs']) && span['durationMs'] <= 604800000 && comparisonEnum(span['outcome'], COMPARISON_OUTCOMES) && typeof span['partial'] === 'boolean'); }
+function comparisonIntegrity(value: unknown): boolean { return Array.isArray(value) && value.length >= 1 && value.length <= 6 && value.every((entry) => comparisonEnum(entry, TRACE_INTEGRITY)) && new Set(value).size === value.length; }
+function comparisonAlignedSpan(value: unknown): boolean { const item = comparisonRecord(value); return Boolean(item && comparisonKeys(item, ['alignmentKey', 'alignment', 'left', 'right', 'leftIntegrity', 'rightIntegrity']) && typeof item['alignmentKey'] === 'string' && COMPARISON_ALIGNMENT_KEY.test(item['alignmentKey']) && comparisonEnum(item['alignment'], COMPARISON_ALIGNMENT) && (item['left'] === null || comparisonSpan(item['left'])) && (item['right'] === null || comparisonSpan(item['right'])) && comparisonIntegrity(item['leftIntegrity']) && comparisonIntegrity(item['rightIntegrity'])); }
+function comparisonTrace(value: unknown): boolean { const item = comparisonRecord(value); return Boolean(item && comparisonKeys(item, ['leftTraceId', 'rightTraceId', 'leftEvidence', 'rightEvidence', 'leftIntegrity', 'rightIntegrity', 'alignedSpans', 'partial']) && (item['leftTraceId'] === null || (typeof item['leftTraceId'] === 'string' && COMPARISON_TRACE_ID.test(item['leftTraceId']))) && (item['rightTraceId'] === null || (typeof item['rightTraceId'] === 'string' && COMPARISON_TRACE_ID.test(item['rightTraceId']))) && comparisonEnum(item['leftEvidence'], COMPARISON_AVAILABILITY) && comparisonEnum(item['rightEvidence'], COMPARISON_AVAILABILITY) && comparisonIntegrity(item['leftIntegrity']) && comparisonIntegrity(item['rightIntegrity']) && Array.isArray(item['alignedSpans']) && item['alignedSpans'].length <= 10000 && item['alignedSpans'].every(comparisonAlignedSpan) && typeof item['partial'] === 'boolean'); }
+/** Validate the closed comparison response before any marker or trace reaches a template. */
+export function parseRunComparison(value: unknown): RunComparison | null {
+  const item = comparisonRecord(value);
+  const freshness = comparisonRecord(item?.['freshness']);
+  const scan = comparisonRecord(item?.['scan']);
+  const limits = comparisonRecord(item?.['limits']);
+  const markers = item?.['markerCorrelations'];
+  const validMarkerComparison = (entry: unknown): boolean => {
+    const marker = comparisonRecord(entry);
+    if (!marker || !comparisonKeys(marker, ['marker', 'state', 'left', 'right']) || !comparisonEnum(marker['marker'], COMPARISON_MARKERS) || !comparisonEnum(marker['state'], COMPARISON_STATES)) return false;
+    const model = marker['marker'] === 'model_id';
+    return comparisonMarker(marker['left'], model) && comparisonMarker(marker['right'], model);
+  };
+  const validFreshness = Boolean(
+    freshness
+    && comparisonKeys(freshness, ['latestObservedAt', 'lagMs', 'state'])
+    && (freshness['latestObservedAt'] === null || comparisonUtc(freshness['latestObservedAt']))
+    && comparisonNullableNonNegativeNumber(freshness['lagMs'])
+    && (freshness['lagMs'] === null || freshness['lagMs'] <= 604_800_000)
+    && comparisonEnum(freshness['state'], ['fresh', 'stale', 'unavailable']),
+  );
+  const validScan = Boolean(
+    scan
+    && comparisonKeys(scan, ['scannedRows', 'scanLimit', 'executionMs', 'executionLimitMs'])
+    && Number.isSafeInteger(scan['scannedRows']) && (scan['scannedRows'] as number) >= 0 && (scan['scannedRows'] as number) <= 1_000_000
+    && scan['scanLimit'] === 1_000_000
+    && comparisonNonNegativeNumber(scan['executionMs']) && (scan['executionMs'] as number) <= 5_000
+    && scan['executionLimitMs'] === 5_000,
+  );
+  const validLimits = Boolean(
+    limits
+    && comparisonKeys(limits, ['runCount', 'maximumObservationsPerRun', 'maximumSpansPerRun', 'maximumMeasurements', 'maximumScannedRows', 'executionTimeoutMs'])
+    && limits['runCount'] === 2 && limits['maximumObservationsPerRun'] === 10_000 && limits['maximumSpansPerRun'] === 5_000
+    && limits['maximumMeasurements'] === 2_000 && limits['maximumScannedRows'] === 1_000_000 && limits['executionTimeoutMs'] === 5_000,
+  );
+  const partialReasons = item?.['partialReasons'];
+  const validPartialReasons = Array.isArray(partialReasons)
+    && partialReasons.length <= COMPARISON_PARTIAL_REASONS.length
+    && partialReasons.every((reason) => comparisonEnum(reason, COMPARISON_PARTIAL_REASONS))
+    && new Set(partialReasons).size === partialReasons.length;
+  const validUnavailableCount = Number.isSafeInteger(item?.['unavailableMarkerCount'])
+    && (item?.['unavailableMarkerCount'] as number) >= 0
+    && (item?.['unavailableMarkerCount'] as number) <= 18;
+  if (!item
+    || !comparisonKeys(item, ['snapshotAt', 'left', 'right', 'markerCorrelations', 'components', 'trace', 'freshness', 'partial', 'partialReasons', 'unavailableMarkerCount', 'scan', 'limits', 'capturePolicy'])
+    || !comparisonUtc(item['snapshotAt'])
+    || !comparisonSide(item['left']) || !comparisonSide(item['right'])
+    || !Array.isArray(markers) || markers.length > COMPARISON_MARKERS.length || !markers.every(validMarkerComparison)
+    || !Array.isArray(item['components']) || item['components'].length > 512 || !item['components'].every(comparisonComponent)
+    || !comparisonTrace(item['trace']) || !validFreshness || typeof item['partial'] !== 'boolean'
+    || !validPartialReasons || !validUnavailableCount || !validScan || !validLimits
+    || item['capturePolicy'] !== 'metadata_only') return null;
+  return item as unknown as RunComparison;
+}
+
 /**
  * The health history surface is deliberately separate from the observation
  * snapshot. It is bounded by the API page size and is never persisted by the
@@ -426,6 +534,15 @@ export function componentCatalogueViewFor(state: ObservatoryResourceState, itemC
 export type RetentionRequest = CreateRetentionActionRequest & { confirmation: 'delete-before' | 'purge-all' };
 export type RetentionState = { action: RetentionAction | null; running: boolean; error: string | null };
 export type SelectedRun = { detail: RunDetail | null; trace: TraceDetail | null };
+export type ObservatoryComparisonState = 'idle' | 'loading' | 'refreshing' | 'ready' | 'empty' | 'stale' | 'disconnected' | 'partial' | 'malformed' | 'rejected' | 'unavailable' | 'service_down' | 'error';
+export type ObservatoryComparison = {
+  readonly leftRunId: string | null;
+  readonly rightRunId: string | null;
+  readonly result: RunComparison | null;
+  readonly state: ObservatoryComparisonState;
+  readonly error: string | null;
+  readonly updatedAt: string | null;
+};
 export const OBSERVATORY_STALE_AFTER_MS = 5 * 60 * 1000;
 export function isOverviewStale(observedAt: string, now = Date.now()): boolean {
   const timestamp = Date.parse(observedAt);

@@ -1,0 +1,121 @@
+agent: test_evaluation_engineer
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-comparison
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0088_test_evaluation.py
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - work-items/handoffs/AURA-0088-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_ingestion
+    - aura.platform.telemetry_export
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      .venv/bin/ruff check services/aura-observatory/tests/test_aura0088_test_evaluation.py
+    - >-
+      .venv/bin/pyright services/aura-observatory/tests/test_aura0088_test_evaluation.py
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      Focused comparison and OTLP tests: 12 passed. Coverage confirms that
+      missing-parent and cyclic lineage remain distinct, duplicate spans remain
+      explicit, owner-only no-store access is enforced, zero versus missing
+      measurements are distinct, incompatible units do not produce deltas,
+      retention invalidates comparison evidence while preserving catalogues,
+      the two-run structural scan bound is exactly 20,002 rows, v1/v2 OTLP
+      mapping requires explicit schemaUrl provenance, and v1 marker absence is
+      unavailable while v2 marker omission is missing.
+    - >-
+      Full Observatory suite: 435 passed, 3 skipped. Existing
+      Authlib and httpx deprecation warnings were non-blocking.
+    - >-
+      Final bounded Compose full-stack acceptance passed with exit 0 after the
+      retention/SSE corrections: the main Core-to-Observatory browser scenario
+      passed (with its three lifecycle phase tests intentionally skipped in
+      that invocation), the preserved-session restart phase passed, the
+      reset-and-reauthentication phase passed, and Core remained usable while
+      Observatory services were stopped. The disposable project cleanup left
+      no retained project resources.
+    - >-
+      Focused retention regression suite: 11 passed, including strict cutoff,
+      purge-all counts, idempotency/retry, storage failure recovery, and
+      catalogue preservation for the reference retention path.
+    - >-
+      frontend pnpm exec eslint apps/observatory-web-e2e/src/full-stack.spec.ts
+    - >-
+      frontend pnpm exec playwright test --config
+      apps/observatory-web-e2e/full-stack.config.ts src/full-stack.spec.ts --list:
+      4 real full-stack acceptance tests discovered across authentication,
+      retention, restart/reset recovery, and Core-without-Observatory coverage.
+    - >-
+      Corrected the real full-stack comparison assertions after the bounded
+      Compose run showed that the comparison table accessible names belong to
+      their surrounding semantic regions. All three comparison tables now use
+      region-to-table locators (summary, component measurements, and aligned
+      trace), preserving strict visibility assertions without relying on
+      caption-derived table names.
+    - >-
+      The full-stack browser acceptance spec now creates a second real Core run,
+      compares both runs through the authenticated Observatory workspace,
+      checks metadata/component/trace tables, verifies run IDs do not appear in
+      the comparison URL, and verifies authenticated data remains out of
+      localStorage and sessionStorage.
+  failed: []
+  not_run:
+    - >-
+      The test/evaluation ownership slice did not independently start a
+      long-lived stack; the integration maintainer's final bounded Compose
+      phase executed the acceptance and passed all required lifecycle phases,
+      as recorded above.
+    - >-
+      Frontend production lint/test/build and Storybook checks remain owned by
+      the frontend/integration owners; the changed full-stack spec passed ESLint.
+    - >-
+      ClickHouse migration fresh/upgrade/rerun acceptance remains assigned to
+      the integration stack phase.
+decisions:
+  - >-
+    Added only deterministic test and browser-acceptance coverage; no product,
+    contract, migration, manifest, or deployment implementation was repaired.
+  - >-
+    Used a deliberately cyclic two-node trace and duplicate span identifiers to
+    ensure the comparison API cannot infer complete lineage from malformed or
+    repeated metadata.
+  - >-
+    Kept browser comparison assertions at the real Core-to-Collector-to-
+    Observatory boundary and checked only URL/storage metadata, never request
+    bodies or content-bearing values.
+  - >-
+    Kept the full-stack test deterministic and opt-in through the repository's
+    existing disposable Compose runner; no credentials, prompts, or external
+    network calls were introduced.
+  - >-
+    Kept the comparison browser assertions aligned with the component's
+    semantic structure: each named scroll region is queried first and its
+    descendant table is asserted as visible.
+  - >-
+    Updated fixtures to follow the reviewed signal-provenance contract: each
+    OTLP resource and scope identifies the v1 or v2 schemaUrl, and comparison
+    fixtures assert corrected unavailable-versus-missing marker semantics.
+risks:
+  - >-
+    The new full-stack comparison phase creates an additional real Core run,
+    so the integration runner must retain its existing bounded cleanup and
+    retention flow.
+unresolved: []

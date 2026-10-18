@@ -222,6 +222,8 @@ class AppState:
                     environment=self.settings.environment,
                     host_id=self.settings.telemetry_host_id,
                     service_role=self.settings.role,
+                    image_version=self.settings.telemetry_image_version,
+                    configuration_version=self.settings.telemetry_configuration_version,
                 )
             )
         )

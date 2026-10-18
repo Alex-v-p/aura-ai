@@ -1,0 +1,57 @@
+agent: platform_worker
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0088_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.observatory-metadata
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/test_topology.py
+  - services/aura-core/resources/component-manifests/telemetry-export.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_core_entrypoints_share_bounded_telemetry_revision_defaults deploy.compose.test_topology.ComposeTopologyTests.test_telemetry_manifests_declare_v2_and_dual_version_rollout
+    - python3 -m unittest deploy.compose.test_topology (44 tests)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache .venv/bin/pytest -q services/aura-observatory/tests/test_aura0085_adversarial.py services/aura-observatory/tests/test_aura0086_backend.py services/aura-observatory/tests/test_aura0086_acceptance.py services/aura-observatory/tests/test_aura0086_contract.py (43 passed)
+    - docker compose --profile observatory config --quiet
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - git diff --check
+  failed: []
+  not_run:
+    - Aggregate Core, Observatory, frontend, review, and full-stack checks remain assigned to their owners and integration maintainer.
+decisions:
+  - Wired the two bounded deployment markers into only the Core API, worker, and scheduler; local defaults are the non-secret SafeName identifier local.
+  - Kept image selection, networks, credentials, service topology, and asynchronous exporter isolation unchanged.
+  - Declared metadata-observation-v2 as the production exporter and metadata-observation-v1-or-v2 as the bounded dual-version ingestion schema identifier; v1 remains the structured-log/rollout compatibility path.
+  - Kept the Observatory manifest within the closed loader shape by removing unsupported input compatibility fields rather than widening the loader or service implementation.
+  - Added only fixed comparison/privacy evaluator declarations; existing metric names, labels, prohibited fields, metadata-only capture, and manual retention remain unchanged.
+risks:
+  - Deployment operators should replace local marker defaults with reviewed bounded identifiers when correlating production runs; the values must never be derived from prompts, responses, owner data, or other content.
+unresolved: []

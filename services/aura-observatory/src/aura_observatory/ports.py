@@ -89,7 +89,6 @@ class ObservatoryCatalog(Protocol):
     async def last_ingest_at(self) -> datetime | None: ...
 
 
-
 class ObservatoryHealthPort(Protocol):
     """Explicit narrow port for durable self-monitoring state and events."""
 
@@ -261,6 +260,10 @@ class ObservatoryQueryPort(Protocol):
 
     async def operational_analytics_query(self, request: AnalyticsRequest) -> dict[str, object]: ...
 
+    async def run_comparison_query(
+        self, left_run_id: str, right_run_id: str
+    ) -> dict[str, object] | None: ...
+
 
 class ObservatoryReferencePort(Protocol):
     """Small in-memory/reference seam used only by deterministic composition."""
@@ -277,7 +280,6 @@ class ObservatoryReferencePort(Protocol):
     async def ingest_overview(self) -> dict[str, object]: ...
     async def wait_for_event(self, timeout: float) -> None: ...
     async def delete_observations(self, cutoff: datetime | None) -> DeletionResult: ...
-
 
 
 class ObservatoryRetentionPort(Protocol):

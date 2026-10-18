@@ -337,6 +337,7 @@ class ObservatoryMetrics:
     HISTOGRAMS = frozenset(
         {
             "observatory_query_duration_ms",
+            "observatory_comparison_duration_ms",
             "observatory_auth_callback_duration_ms",
             "observatory_ingest_storage_duration_ms",
         }
@@ -352,7 +353,11 @@ class ObservatoryMetrics:
         "observatory_ingest_backlog_count",
         "observatory_query_freshness_lag_ms",
         "observatory_query_duration_ms",
+        "observatory_comparison_duration_ms",
         "observatory_query_outcome",
+        "observatory_comparison_outcome",
+        "observatory_comparison_partial_count",
+        "observatory_comparison_unavailable_marker_count",
         "observatory_sse_connection_count",
         "observatory_sse_active",
         "observatory_sse_replay_count",
@@ -373,6 +378,10 @@ class ObservatoryMetrics:
         "observatory_query_freshness_lag_ms": set(),
         "observatory_query_duration_ms": {"resource"},
         "observatory_query_outcome": {"resource", "outcome"},
+        "observatory_comparison_duration_ms": set(),
+        "observatory_comparison_outcome": {"outcome"},
+        "observatory_comparison_partial_count": set(),
+        "observatory_comparison_unavailable_marker_count": set(),
         "observatory_sse_connection_count": {"event_type"},
         "observatory_sse_active": {"event_type"},
         "observatory_sse_replay_count": {"event_type"},
@@ -395,6 +404,7 @@ class ObservatoryMetrics:
             "events",
             "health_history",
             "analytics",
+            "run_comparison",
         },
         "outcome": {
             "succeeded",
@@ -409,6 +419,10 @@ class ObservatoryMetrics:
             "code_missing",
             "exchange_failed",
             "rejected",
+            "partial",
+            "failure",
+            "not_found",
+            "execution_limit",
         },
         "event_type": {
             "stream",
@@ -468,9 +482,7 @@ class ObservatoryMetrics:
                 # shared sink is temporarily unavailable.
                 self._external_write_failed = True
 
-    def set(
-        self, name: str, value: float, labels: Mapping[str, str] | None = None
-    ) -> None:
+    def set(self, name: str, value: float, labels: Mapping[str, str] | None = None) -> None:
         """Set an authoritative gauge/current total without read inflation."""
 
         if name not in self.ALLOWED:
@@ -709,8 +721,7 @@ class ObservatoryMetrics:
                 continue
             try:
                 normalized_labels = {
-                    cast(str, key): cast(str, label)
-                    for key, label in label_mapping.items()
+                    cast(str, key): cast(str, label) for key, label in label_mapping.items()
                 }
                 if name in cls.HISTOGRAMS and (
                     isinstance(item.get("count"), (int, float))

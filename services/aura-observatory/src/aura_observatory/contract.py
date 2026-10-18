@@ -15,9 +15,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-_IDENTIFIER = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_IDENTIFIER = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
 _SPAN_ID = re.compile(r"^[0-9a-f]{16}$")
 _COMPONENT_ID = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
@@ -28,6 +26,23 @@ _DIMENSION_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+# Keep these two syntax expressions separate from the bounded, case-insensitive
+# privacy guard below.  The JSON Schema/OpenAPI grammar permits upper-case
+# revision values, but never private/content-like delimited segments.
+_REVISION_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_MODEL_IDENTIFIER = re.compile(
+    r"^(?!(?:https?|ftp|file|mailto|ssh|ws|wss):)"
+    r"(?!(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)(?:$|[._:+-]))"
+    r"(?!.*[._:+-](?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)(?:$|[._:+-]))"
+    r"[a-z0-9][a-z0-9._+-]{0,127}"
+    r"(?::(?=[a-z0-9._+-]{1,64}$)(?=[a-z0-9._+-]*[a-z])[a-z0-9._+-]+)?$"
+)
+_PRIVATE_MARKER_SEGMENT = re.compile(
+    r"(?:^|[._:+-])"
+    r"(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)"
+    r"(?:$|[._:+-])",
+    re.IGNORECASE,
+)
 _TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
@@ -169,6 +184,77 @@ class DeploymentMetadata(_ClosedModel):
         return value
 
 
+class RevisionIdentifier(_ClosedModel):
+    """Trusted, bounded revision marker carried only by metadata v2."""
+
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def valid_value(cls, value: str) -> str:
+        if not is_revision_identifier(value):
+            raise ValueError("revision identifier is not bounded")
+        return value
+
+
+class DeploymentMetadataV2(DeploymentMetadata):
+    """Deployment metadata plus the two approved process revision markers."""
+
+    image_version: str | None = Field(default=None, alias="imageVersion")
+    configuration_version: str | None = Field(default=None, alias="configurationVersion")
+
+    @field_validator("image_version", "configuration_version")
+    @classmethod
+    def valid_revision(cls, value: str | None) -> str | None:
+        if value is not None and not is_revision_identifier(value):
+            raise ValueError("deployment revision is not bounded")
+        return value
+
+
+class ExecutionMetadata(_ClosedModel):
+    """Closed execution provenance. Values are never prompt/content hashes."""
+
+    model_id: str | None = Field(default=None, alias="modelId")
+    model_version: str | None = Field(default=None, alias="modelVersion")
+    agent_revision: str | None = Field(default=None, alias="agentRevision")
+    prompt_bundle_revision: str | None = Field(default=None, alias="promptBundleRevision")
+    policy_revision: str | None = Field(default=None, alias="policyRevision")
+
+    @model_validator(mode="after")
+    def require_marker(self) -> ExecutionMetadata:
+        if not any(
+            value is not None
+            for value in (
+                self.model_id,
+                self.model_version,
+                self.agent_revision,
+                self.prompt_bundle_revision,
+                self.policy_revision,
+            )
+        ):
+            raise ValueError("execution metadata requires a marker")
+        return self
+
+    @field_validator(
+        "model_version",
+        "agent_revision",
+        "prompt_bundle_revision",
+        "policy_revision",
+    )
+    @classmethod
+    def valid_marker(cls, value: str | None) -> str | None:
+        if value is not None and not is_revision_identifier(value):
+            raise ValueError("execution marker is not bounded")
+        return value
+
+    @field_validator("model_id")
+    @classmethod
+    def valid_model_id(cls, value: str | None) -> str | None:
+        if value is not None and not is_model_identifier(value):
+            raise ValueError("model identifier is not a bounded local model identifier")
+        return value
+
+
 class MetadataObservation(_ClosedModel):
     """A single content-free operational measurement."""
 
@@ -282,7 +368,20 @@ class MetadataObservation(_ClosedModel):
                 if len(records) != 1:
                     raise ContractViolation("exactly one OTLP observation is required")
                 payload = records[0]
+        if (
+            isinstance(payload, Mapping)
+            and cast(Mapping[str, object], payload).get("schemaVersion") == 2
+        ):
+            return MetadataObservationV2.model_validate(payload)
         return cls.model_validate(payload)
+
+
+class MetadataObservationV2(MetadataObservation):
+    """Version two observation; v1 remains a separately closed model."""
+
+    schema_version: Literal[2] = Field(alias="schemaVersion")  # type: ignore[assignment]
+    deployment: DeploymentMetadataV2  # type: ignore[assignment]
+    execution: ExecutionMetadata | None = None
 
 
 def _reject_explicit_nulls(payload: Any) -> None:
@@ -314,8 +413,32 @@ __all__ = [
     "Correlation",
     "ContractViolation",
     "DeploymentMetadata",
+    "DeploymentMetadataV2",
+    "ExecutionMetadata",
     "Measurement",
     "MetadataObservation",
+    "MetadataObservationV2",
+    "RevisionIdentifier",
     "ServiceRole",
     "TraceLineage",
+    "is_revision_identifier",
+    "is_model_identifier",
 ]
+
+
+def is_revision_identifier(value: str) -> bool:
+    """Return whether a value matches the closed metadata revision grammar."""
+
+    return (
+        _REVISION_IDENTIFIER.fullmatch(value) is not None
+        and _PRIVATE_MARKER_SEGMENT.search(value) is None
+    )
+
+
+def is_model_identifier(value: str) -> bool:
+    """Return whether a value matches the closed metadata model-id grammar."""
+
+    return (
+        _MODEL_IDENTIFIER.fullmatch(value) is not None
+        and _PRIVATE_MARKER_SEGMENT.search(value) is None
+    )

@@ -7,7 +7,12 @@ input:
   schema: aura-core-metadata-measurement-v1
   replayable: false
 output:
-  schema: metadata-observation-v1
+  schema: metadata-observation-v2
+  legacy_schemas:
+    - metadata-observation-v1
+  transport_notes:
+    otlp: metadata-observation-v2
+    structured_container_log: metadata-observation-v1
   capture:
     content: none
     metadata: allowlisted
@@ -29,6 +34,8 @@ evaluators:
   - telemetry_export_metadata_only
   - telemetry_export_failure_isolation
   - observatory_deployment_isolation
+  - metadata_v2_allowlist
+  - correlation_marker_privacy
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [outcome, error_class, dependency]

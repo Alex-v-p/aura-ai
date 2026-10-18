@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
 import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, ownerLoginHref } from './observatory-models';
-import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor } from './observatory-models';
+import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
   it('starts analytics with a bounded metadata-only query shape', () => {
@@ -87,6 +87,14 @@ describe('observatory metadata boundaries', () => {
     expect(runCount).toBe(2);
     expect(coordinator.isRunning).toBe(false);
     expect(coordinator.hasPending).toBe(false);
+  });
+
+  it('invalidates comparisons only for metadata-bearing live events', () => {
+    expect(isComparisonInvalidationEvent('observation.changed')).toBe(true);
+    expect(isComparisonInvalidationEvent('retention.changed')).toBe(true);
+    expect(isComparisonInvalidationEvent('snapshot')).toBe(false);
+    expect(isComparisonInvalidationEvent('health.changed')).toBe(false);
+    expect(isComparisonInvalidationEvent('heartbeat')).toBe(false);
   });
 
   it('publishes live runs without waiting for an unresolved components health request', async () => {

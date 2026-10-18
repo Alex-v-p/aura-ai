@@ -71,6 +71,8 @@ services:
       AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
       AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
       AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
+      AURA_TELEMETRY_IMAGE_VERSION: ${AURA_TELEMETRY_IMAGE_VERSION:-local}
+      AURA_TELEMETRY_CONFIGURATION_VERSION: ${AURA_TELEMETRY_CONFIGURATION_VERSION:-local}
       AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be a stable non-localhost HTTPS issuer}
       AURA_OIDC_AUDIENCE: ${AURA_OIDC_AUDIENCE:-aura-web}
       AURA_OIDC_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:-aura-web}
@@ -149,6 +151,8 @@ services:
       AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
       AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
       AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
+      AURA_TELEMETRY_IMAGE_VERSION: ${AURA_TELEMETRY_IMAGE_VERSION:-local}
+      AURA_TELEMETRY_CONFIGURATION_VERSION: ${AURA_TELEMETRY_CONFIGURATION_VERSION:-local}
     secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # The worker invokes Ollama, but has no browser-facing network attachment.
     networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress, observatory-ingest]
@@ -184,6 +188,8 @@ services:
       AURA_TELEMETRY_DEPLOYMENT_ID: ${AURA_TELEMETRY_DEPLOYMENT_ID:-local}
       AURA_TELEMETRY_GIT_COMMIT: ${AURA_TELEMETRY_GIT_COMMIT:-0000000}
       AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
+      AURA_TELEMETRY_IMAGE_VERSION: ${AURA_TELEMETRY_IMAGE_VERSION:-local}
+      AURA_TELEMETRY_CONFIGURATION_VERSION: ${AURA_TELEMETRY_CONFIGURATION_VERSION:-local}
     secrets: [aura-core-database-password]
     # The scheduler has no service dependency on Observatory, but may emit
     # bounded telemetry when the optional Collector is present.

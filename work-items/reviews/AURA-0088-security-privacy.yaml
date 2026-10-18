@@ -1,0 +1,23 @@
+agent: security_privacy_reviewer
+work_item: AURA-0088
+verdict: PASS
+checked:
+  - >-
+    Re-verified the closed v1/v2 metadata allowlists and bounded revision/model
+    grammar, including case-varied delimiter rejection for owner, identity,
+    credential, bearer, token, secret, password, private, content, hash,
+    digest, and endpoint while retaining approved benign identifiers.
+  - >-
+    Verified v2 marker provenance validation at Core export, OTLP
+    normalization, and comparison aggregation; malformed or conflicting
+    values become unavailable and do not enter logs, labels, URLs, SSE, or
+    browser persistence.
+  - >-
+    Verified owner authorization, exactly-two distinct UUID selection,
+    POST-based no-store comparison access, bounded parameterized ClickHouse
+    work, memory-only frontend state, and retention invalidation semantics.
+  - >-
+    Verified no credentials, prompts, responses, memory, documents, filenames,
+    tool data, endpoints, or owner identity are introduced in changed paths or
+    test fixtures.
+findings: []

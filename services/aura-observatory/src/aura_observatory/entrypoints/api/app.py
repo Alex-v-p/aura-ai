@@ -223,6 +223,7 @@ def create_app(
                 or request.url.path.startswith("/api/v1/components")
                 or request.url.path.startswith("/api/v1/deployments")
                 or request.url.path.startswith("/api/v1/analytics")
+                or request.url.path == "/api/v1/run-comparisons/query"
                 or request.url.path == "/api/v1/events"
                 or request.url.path.startswith("/api/v1/retention")
             )
@@ -739,6 +740,36 @@ def create_app(
         if health is None:
             raise HTTPException(status_code=404, detail="component not found")
         return JSONResponse(health)
+
+    @app.post("/api/v1/run-comparisons/query")
+    async def compare_runs(request: Request) -> JSONResponse:
+        """Return an ephemeral, bounded owner-only comparison snapshot."""
+
+        await owner_session(request)
+        try:
+            body = await request.json()
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="invalid request")
+        comparison_body = cast(dict[str, object], body)
+        if set(comparison_body) != {"leftRunId", "rightRunId"}:
+            raise HTTPException(status_code=422, detail="invalid request")
+        left_run_id = comparison_body.get("leftRunId")
+        right_run_id = comparison_body.get("rightRunId")
+        if not isinstance(left_run_id, str) or not isinstance(right_run_id, str):
+            raise HTTPException(status_code=422, detail="invalid request")
+        try:
+            _validate_uuid(left_run_id, "left run identifier")
+            _validate_uuid(right_run_id, "right run identifier")
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        if left_run_id == right_run_id:
+            raise HTTPException(status_code=422, detail="invalid request")
+        result = await app.state.query.compare_runs(left_run_id, right_run_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/deployments")
     async def deployments(request: Request) -> JSONResponse:

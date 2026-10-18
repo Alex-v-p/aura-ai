@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import heapq
 import json
 import logging
+import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -17,7 +20,7 @@ from time import monotonic
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
-from aura_observatory.contract import MetadataObservation
+from aura_observatory.contract import MetadataObservation, is_model_identifier
 from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import (
     ANALYTICS_DEFAULT_MAX_POINTS,
@@ -406,6 +409,912 @@ class RunFilters:
     to_time: datetime | None = None
 
 
+COMPARISON_MAX_OBSERVATIONS = 10_000
+COMPARISON_MAX_SPANS = 5_000
+COMPARISON_MAX_MEASUREMENTS = 2_000
+COMPARISON_MAX_SCANNED_ROWS = 1_000_000
+COMPARISON_QUERY_ROWS = (COMPARISON_MAX_OBSERVATIONS + 1) * 2
+COMPARISON_EXECUTION_TIMEOUT_MS = 5_000
+_COMPARISON_DURATION_NAMES = frozenset({"duration_ms", "operation_duration_ms", "run_duration_ms"})
+_V2_ONLY_MARKERS = frozenset(
+    {
+        "image_version",
+        "configuration_version",
+        "model_id",
+        "model_version",
+        "agent_revision",
+        "prompt_bundle_revision",
+        "policy_revision",
+    }
+)
+_COMPARISON_MARKERS = (
+    ("deployment_id", "deployment", "deployment_id"),
+    ("git_commit", "deployment", "git_commit"),
+    ("image_version", "deployment", "image_version"),
+    ("configuration_version", "deployment", "configuration_version"),
+    ("model_id", "execution", "model_id"),
+    ("model_version", "execution", "model_version"),
+    ("agent_revision", "execution", "agent_revision"),
+    ("prompt_bundle_revision", "execution", "prompt_bundle_revision"),
+    ("policy_revision", "execution", "policy_revision"),
+)
+
+
+def _comparison_marker(
+    items: list[MetadataObservation], source: str, field: str
+) -> dict[str, object]:
+    """Aggregate one marker across a bounded run without newest-row erasure."""
+
+    if not items:
+        return {"availability": "unavailable", "value": None}
+    marker_name = field
+    values: set[str] = set()
+    invalid_model_identifier = False
+    for item in items:
+        container = getattr(item, source, None)
+        if container is None:
+            continue
+        value = getattr(container, field, None)
+        if value is None:
+            continue
+        normalized = str(value)
+        if field == "model_id" and not is_model_identifier(normalized):
+            invalid_model_identifier = True
+            continue
+        values.add(normalized)
+    if invalid_model_identifier:
+        return {"availability": "unavailable", "value": None}
+    ordered_values = sorted(values)
+    if len(ordered_values) > 1:
+        # A singular run marker cannot be chosen by lexical order: distinct
+        # retained values are contradictory evidence, not a latest value.
+        return {"availability": "unavailable", "value": None}
+    if ordered_values:
+        return {"availability": "available", "value": ordered_values[0]}
+    if marker_name in _V2_ONLY_MARKERS and not any(
+        getattr(item, "schema_version", 1) == 2 for item in items
+    ):
+        return {"availability": "unavailable", "value": None}
+    return {"availability": "missing", "value": None}
+
+
+def _comparison_state(left: dict[str, object], right: dict[str, object]) -> str:
+    if left["availability"] == "unavailable" or right["availability"] == "unavailable":
+        return "unavailable"
+    if left["availability"] == "missing" or right["availability"] == "missing":
+        return "missing"
+    return "equal" if left["value"] == right["value"] else "changed"
+
+
+def _comparison_number(value: float | None) -> dict[str, object]:
+    if value is None or not math.isfinite(value):
+        return {"availability": "missing", "value": None}
+    return {"availability": "available", "value": value}
+
+
+def _run_outcome(items: list[MetadataObservation]) -> str:
+    terminal = {"succeeded", "failed", "cancelled"}
+    explicit: list[str] = []
+    for item in sorted(items, key=lambda value: (value.observed_at, value.observation_id)):
+        value = item.dimensions.get("outcome") or item.dimensions.get("status") or ""
+        normalized = {
+            "success": "succeeded",
+            "completed": "succeeded",
+            "ok": "succeeded",
+            "error": "failed",
+        }.get(value.casefold(), value.casefold())
+        if normalized in terminal:
+            explicit.append(normalized)
+    return explicit[-1] if explicit else "unknown"
+
+
+def _comparison_duration(items: list[MetadataObservation]) -> float | None:
+    """Derive duration only from canonical duration measurements or spans."""
+
+    spans = [
+        item
+        for item in items
+        if item.kind == "span"
+        and item.measurement.unit == "milliseconds"
+        and math.isfinite(item.measurement.value)
+        and item.measurement.value >= 0
+    ]
+    if spans:
+        started = min(
+            item.observed_at - timedelta(milliseconds=item.measurement.value) for item in spans
+        )
+        finished = max(item.observed_at for item in spans)
+        return max(0.0, (finished - started).total_seconds() * 1000.0)
+    values = [
+        item.measurement.value
+        for item in items
+        if item.measurement.name in _COMPARISON_DURATION_NAMES
+        and item.measurement.unit == "milliseconds"
+        and math.isfinite(item.measurement.value)
+        and item.measurement.value >= 0
+    ]
+    return max(values) if values else None
+
+
+def _comparison_interval(
+    items: list[MetadataObservation],
+) -> tuple[datetime | None, datetime | None, float | None]:
+    """Return one interval derived from valid span boundaries only.
+
+    Spanless metric durations do not identify an invocation boundary, so the
+    run-level interval is explicitly unavailable rather than combining a
+    metric value with an unrelated observation timestamp.
+    """
+
+    spans = [
+        item
+        for item in items
+        if item.kind == "span"
+        and item.measurement.unit == "milliseconds"
+        and math.isfinite(item.measurement.value)
+        and item.measurement.value >= 0
+    ]
+    if not spans:
+        return None, None, None
+    started = min(
+        item.observed_at - timedelta(milliseconds=item.measurement.value) for item in spans
+    )
+    finished = max(item.observed_at for item in spans)
+    return started, finished, max(0.0, (finished - started).total_seconds() * 1000.0)
+
+
+def _comparison_side(
+    items: list[MetadataObservation], role: str, run_id: str, *, truncated: bool = False
+) -> dict[str, object]:
+    newest = max(items, key=lambda value: (value.observed_at, value.observation_id))
+    started, finished, duration = _comparison_interval(items)
+    invalid_span_timing = any(
+        item.kind == "span"
+        and (
+            item.measurement.unit != "milliseconds"
+            or not math.isfinite(item.measurement.value)
+            or item.measurement.value < 0
+        )
+        for item in items
+    )
+
+    def marker(source: str, field: str) -> dict[str, object]:
+        return _comparison_marker(items, source, field)
+
+    versions = {(item.component.id, item.component.version) for item in items}
+    return {
+        "role": role,
+        "runId": run_id,
+        "evidence": "available",
+        "status": _run_status(newest),
+        "outcome": _run_outcome(items),
+        "startedAt": _iso(started),
+        "finishedAt": _iso(finished),
+        "durationMs": max(0.0, duration) if duration is not None else None,
+        "traceId": next((item.trace.trace_id for item in reversed(items) if item.trace), None),
+        "modelId": marker("execution", "model_id"),
+        "modelVersion": marker("execution", "model_version"),
+        "deploymentId": marker("deployment", "deployment_id"),
+        "gitCommit": marker("deployment", "git_commit"),
+        "imageVersion": marker("deployment", "image_version"),
+        "configurationVersion": marker("deployment", "configuration_version"),
+        "agentRevision": marker("execution", "agent_revision"),
+        "promptBundleRevision": marker("execution", "prompt_bundle_revision"),
+        "policyRevision": marker("execution", "policy_revision"),
+        "componentVersions": [
+            {"componentId": component, "version": {"availability": "available", "value": version}}
+            for component, version in sorted(versions)[:256]
+        ],
+        "partial": truncated or invalid_span_timing,
+    }
+
+
+def _comparison_components(
+    left: list[MetadataObservation],
+    right: list[MetadataObservation],
+    *,
+    left_truncated: bool = False,
+    right_truncated: bool = False,
+    deadline: float | None = None,
+) -> tuple[list[dict[str, object]], bool]:
+    def check_budget() -> None:
+        if deadline is not None and monotonic() >= deadline:
+            raise ComparisonExecutionLimit
+
+    def groups(
+        items: list[MetadataObservation],
+    ) -> dict[tuple[str, str], list[MetadataObservation]]:
+        result: dict[tuple[str, str], list[MetadataObservation]] = defaultdict(list)
+        for item in items:
+            result[(item.component.id, item.operation)].append(item)
+        return result
+
+    lg, rg = groups(left), groups(right)
+    result: list[dict[str, object]] = []
+    measurement_count = 0
+    measurement_truncated = False
+    for component_id, operation in sorted(set(lg) | set(rg))[:512]:
+        check_budget()
+        litems, ritems = (
+            lg.get((component_id, operation), []),
+            rg.get((component_id, operation), []),
+        )
+
+        def side(items: list[MetadataObservation], truncated: bool) -> dict[str, object] | None:
+            if not items:
+                return None
+            newest = max(items, key=lambda value: (value.observed_at, value.observation_id))
+            return {
+                "componentVersion": {
+                    "availability": "available",
+                    "value": newest.component.version,
+                },
+                "durationMs": _comparison_duration(items),
+                "outcome": _run_outcome(items),
+                "spanCount": min(COMPARISON_MAX_SPANS, sum(item.kind == "span" for item in items)),
+                "partial": truncated,
+            }
+
+        measurements: dict[tuple[str, str], tuple[float | None, float | None]] = {}
+        for item in litems:
+            check_budget()
+            key = (item.measurement.name, item.measurement.unit or "")
+            if key not in measurements and (
+                len(measurements) >= 128
+                or measurement_count + len(measurements) >= COMPARISON_MAX_MEASUREMENTS
+            ):
+                measurement_truncated = True
+                continue
+            measurements[key] = (item.measurement.value, measurements.get(key, (None, None))[1])
+        for item in ritems:
+            check_budget()
+            key = (item.measurement.name, item.measurement.unit or "")
+            if key not in measurements and (
+                len(measurements) >= 128
+                or measurement_count + len(measurements) >= COMPARISON_MAX_MEASUREMENTS
+            ):
+                measurement_truncated = True
+                continue
+            measurements[key] = (measurements.get(key, (None, None))[0], item.measurement.value)
+        values: list[dict[str, object]] = []
+        component_measurement_count = 0
+        for (name, unit), (lv, rv) in sorted(measurements.items()):
+            check_budget()
+            if (
+                measurement_count >= COMPARISON_MAX_MEASUREMENTS
+                or component_measurement_count >= 128
+            ):
+                measurement_truncated = True
+                break
+            measurement_count += 1
+            component_measurement_count += 1
+            ln, rn = _comparison_number(lv), _comparison_number(rv)
+            state = _comparison_state(ln, rn)
+            values.append(
+                {
+                    "name": name,
+                    "unit": unit or "count",
+                    "state": state,
+                    "left": ln,
+                    "right": rn,
+                    "absoluteDelta": abs(lv - rv)
+                    if state in {"equal", "changed"} and lv is not None and rv is not None
+                    else None,
+                }
+            )
+        result.append(
+            {
+                "componentId": component_id,
+                "operation": operation,
+                "alignment": "matched"
+                if litems and ritems
+                else ("left_only" if litems else "right_only"),
+                "left": side(litems, left_truncated),
+                "right": side(ritems, right_truncated),
+                "measurements": values,
+            }
+        )
+    return result, measurement_truncated
+
+
+class ComparisonExecutionLimit(RuntimeError):
+    """The bounded in-process comparison budget was exhausted."""
+
+
+def canonical_subtree_digest(
+    component: str, operation: str, children_signatures: list[bytes]
+) -> bytes:
+    """Hash a structural subtree using fixed-size, length-delimited inputs."""
+
+    digest = hashlib.sha256()
+    for value in (component, operation):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    for child_signature in sorted(children_signatures):
+        digest.update(b"child")
+        digest.update(child_signature)
+    return digest.digest()
+
+
+def _comparison_trace(
+    items: list[MetadataObservation],
+    other: list[MetadataObservation],
+    *,
+    deadline: float | None = None,
+) -> dict[str, object]:
+    def check_budget() -> None:
+        if deadline is not None and monotonic() >= deadline:
+            raise ComparisonExecutionLimit
+
+    def spans(
+        values: list[MetadataObservation],
+    ) -> tuple[list[dict[str, object]], dict[str, set[str]], bool]:
+        check_budget()
+        candidates = [
+            item for item in values if item.kind == "span" and item.trace and item.trace.span_id
+        ]
+        ordered = sorted(
+            candidates,
+            key=lambda value: (
+                value.observed_at,
+                value.observation_id,
+                value.trace.span_id if value.trace else "",
+            ),
+        )
+        truncated = len(ordered) > COMPARISON_MAX_SPANS
+        retained = ordered[:COMPARISON_MAX_SPANS]
+        counts = Counter(
+            item.trace.span_id for item in retained if item.trace and item.trace.span_id
+        )
+        duplicate_ids = {span_id for span_id, count in counts.items() if count > 1}
+        by_id: dict[str, MetadataObservation] = {}
+        for item in retained:
+            check_budget()
+            assert item.trace is not None and item.trace.span_id is not None
+            by_id.setdefault(item.trace.span_id, item)
+
+        states: dict[str, set[str]] = defaultdict(set)
+        for span_id in duplicate_ids:
+            states[span_id].add("duplicate")
+        for span_id, item in by_id.items():
+            parent = item.trace.parent_span_id if item.trace else None
+            if parent and parent not in by_id:
+                states[span_id].add("missing_parent")
+            if item.measurement.unit != "milliseconds" or item.measurement.value < 0:
+                # Preserve a bounded row for malformed timing, but make the
+                # unavailable duration explicitly partial rather than a
+                # complete zero-duration span.
+                states[span_id].add("retained_partial")
+
+        # A single iterative walk per node classifies all functional parent
+        # chains. Nodes are memoized as completed, so this remains linear even
+        # for a 5,000-span chain and closed cycles.
+        cyclic: set[str] = set()
+        visit_state: dict[str, int] = {}
+        for start in by_id:
+            check_budget()
+            if visit_state.get(start) == 2:
+                continue
+            lineage: list[str] = []
+            positions: dict[str, int] = {}
+            current: str | None = start
+            while current is not None and current in by_id and current not in positions:
+                if visit_state.get(current) == 2:
+                    break
+                positions[current] = len(lineage)
+                lineage.append(current)
+                visit_state[current] = 1
+                trace = by_id[current].trace
+                current = trace.parent_span_id if trace else None
+                if len(lineage) % 256 == 0:
+                    check_budget()
+            if current is not None and current in positions:
+                cyclic.update(lineage[positions[current] :])
+            for node in lineage:
+                visit_state[node] = 2
+        for span_id in cyclic:
+            states[span_id].add("cyclic")
+
+        # Exclude cyclic edges from structural traversal. Missing parents are
+        # roots with explicit integrity evidence, never synthesized lineage.
+        children: dict[str, list[str]] = defaultdict(list)
+        parents: dict[str, str] = {}
+        for span_id, item in by_id.items():
+            parent = item.trace.parent_span_id if item.trace else None
+            if (
+                parent in by_id
+                and span_id not in cyclic
+                and parent not in cyclic
+            ):
+                children[parent].append(span_id)
+                parents[span_id] = parent
+
+        # Compute a side-independent structural signature bottom-up.  Keep
+        # only a fixed-size digest per node: embedding complete descendant
+        # strings here turns a deep trace into quadratic memory.  Length
+        # delimiters avoid ambiguous concatenations while timing, outcome, and
+        # raw span IDs never influence structural order.
+        signatures: dict[str, bytes] = {}
+
+        remaining = {node: len(children.get(node, [])) for node in by_id}
+        ready: list[str] = []
+        for node, count in remaining.items():
+            if count == 0:
+                heapq.heappush(ready, node)
+        while ready:
+            check_budget()
+            node = heapq.heappop(ready)
+            item = by_id[node]
+            signatures[node] = canonical_subtree_digest(
+                item.component.id,
+                item.operation,
+                [signatures[child] for child in children.get(node, [])],
+            )
+            parent = parents.get(node)
+            if parent is not None:
+                remaining[parent] -= 1
+                if remaining[parent] == 0:
+                    heapq.heappush(ready, parent)
+        for node, item in by_id.items():
+            if node not in signatures:
+                signatures[node] = canonical_subtree_digest(
+                    item.component.id, item.operation, [b"cycle"]
+                )
+
+        def structural_key(span_id: str) -> tuple[str, str, bytes]:
+            item = by_id[span_id]
+            return item.component.id, item.operation, signatures[span_id]
+
+        def grouped_children(parent: str) -> list[tuple[tuple[str, str, bytes], list[str]]]:
+            groups: dict[tuple[str, str, bytes], list[str]] = defaultdict(list)
+            for child in children.get(parent, []):
+                groups[structural_key(child)].append(child)
+            return [
+                (key, sorted(group)) for key, group in sorted(groups.items())
+            ]
+
+        roots = [
+            node
+            for node, item in by_id.items()
+            if node in cyclic
+            or not item.trace
+            or not item.trace.parent_span_id
+            or item.trace.parent_span_id not in by_id
+            or item.trace.parent_span_id in cyclic
+        ]
+        root_groups: dict[tuple[str, str, bytes], list[str]] = defaultdict(list)
+        for root in roots:
+            root_groups[structural_key(root)].append(root)
+        root_groups_ordered = [
+            (key, sorted(group)) for key, group in sorted(root_groups.items())
+        ]
+        ambiguous_nodes: set[str] = set()
+        paths: dict[str, str] = {}
+        stack: list[tuple[str, str]] = []
+        root_shape_counts = Counter((key[0], key[1]) for key, _group in root_groups_ordered)
+        for root_key, root_group in reversed(root_groups_ordered):
+            if len(root_group) > 1:
+                ambiguous_nodes.update(root_group)
+            for index, root in reversed(list(enumerate(root_group))):
+                segment = f"{root_key[0]}:{root_key[1]}"
+                if root_shape_counts[root_key[0], root_key[1]] > 1:
+                    digest = signatures[root].hex()[:12]
+                    segment = f"{segment}:{digest}"
+                stack.append((root, f"{segment}:{index}"))
+        while stack:
+            check_budget()
+            span_id, canonical_path = stack.pop()
+            paths[span_id] = (
+                canonical_path
+                if len(canonical_path) <= 512
+                else "path-" + hashlib.sha256(canonical_path.encode()).hexdigest()
+            )
+            groups = grouped_children(span_id)
+            child_shape_counts = Counter((key[0], key[1]) for key, _group in groups)
+            for key, group in reversed(groups):
+                child_key = f"{key[0]}:{key[1]}"
+                if child_shape_counts[key[0], key[1]] > 1:
+                    digest = key[2].hex()[:12]
+                    child_key = f"{child_key}:{digest}"
+                if len(group) > 1:
+                    ambiguous_nodes.update(group)
+                for index, child in reversed(list(enumerate(group))):
+                    child_canonical_path = f"{paths[span_id]}:{child_key}:{index}"
+                    stack.append((child, child_canonical_path))
+
+        if truncated:
+            for item in retained:
+                assert item.trace is not None and item.trace.span_id is not None
+                states[item.trace.span_id].add("retained_partial")
+
+        output: list[dict[str, object]] = []
+        for item in retained:
+            check_budget()
+            assert item.trace is not None and item.trace.span_id is not None
+            duration = (
+                item.measurement.value
+                if item.measurement.unit == "milliseconds" and item.measurement.value >= 0
+                else 0.0
+            )
+            output.append(
+                {
+                    "_canonicalPath": paths.get(item.trace.span_id, "unknown:unknown:0"),
+                    "_baseKey": f"{item.component.id}:{item.operation}",
+                    "_ambiguousKey": item.trace.span_id in ambiguous_nodes,
+                    "spanId": item.trace.span_id,
+                    "parentSpanId": item.trace.parent_span_id,
+                    "componentId": item.component.id,
+                    "componentVersion": item.component.version,
+                    "operation": item.operation,
+                    "startedAt": _iso(item.observed_at - timedelta(milliseconds=duration)),
+                    "durationMs": duration,
+                    "outcome": _run_outcome([item]),
+                    "partial": bool(states.get(item.trace.span_id)),
+                }
+            )
+        return output, states, truncated
+
+    left, left_states, left_truncated = spans(items)
+    right, right_states, right_truncated = spans(other)
+
+    def state_list(
+        span: dict[str, object] | None,
+        states: dict[str, set[str]],
+        truncated: bool,
+    ) -> list[str]:
+        if span is None:
+            return ["complete"]
+        values = set(states.get(cast(str, span["spanId"]), set()))
+        if truncated:
+            values.add("retained_partial")
+        if not values:
+            values.add("complete")
+        order = (
+            "duplicate",
+            "cyclic",
+            "missing_parent",
+            "truncated",
+            "retained_partial",
+            "complete",
+        )
+        return [value for value in order if value in values]
+
+    def side_states(states: dict[str, set[str]], truncated: bool) -> list[str]:
+        values = {value for span_values in states.values() for value in span_values}
+        if truncated:
+            values.add("truncated")
+        if not values:
+            values.add("complete")
+        order = (
+            "duplicate",
+            "cyclic",
+            "missing_parent",
+            "truncated",
+            "retained_partial",
+            "complete",
+        )
+        return [value for value in order if value in values]
+
+    def base_key(span: dict[str, object]) -> str:
+        return cast(str, span["_baseKey"])
+
+    lg: dict[str, list[dict[str, object]]] = defaultdict(list)
+    rg: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for span in left:
+        lg[cast(str, span["_canonicalPath"])].append(span)
+    for span in right:
+        rg[cast(str, span["_canonicalPath"])].append(span)
+
+    aligned: list[dict[str, object]] = []
+
+    def append_alignment(
+        alignment_key: str,
+        lspan: dict[str, object] | None,
+        rspan: dict[str, object] | None,
+        alignment: str,
+    ) -> None:
+        def public(value: dict[str, object] | None) -> dict[str, object] | None:
+            if value is None:
+                return None
+            return {key: item for key, item in value.items() if not key.startswith("_")}
+
+        aligned.append(
+            {
+                "alignmentKey": alignment_key,
+                "alignment": alignment,
+                "left": public(lspan),
+                "right": public(rspan),
+                "leftIntegrity": state_list(lspan, left_states, left_truncated),
+                "rightIntegrity": state_list(rspan, right_states, right_truncated),
+            }
+        )
+
+    def emit_group(
+        alignment_key: str,
+        left_group: list[dict[str, object]],
+        right_group: list[dict[str, object]],
+    ) -> None:
+        duplicate = len(left_group) > 1 or len(right_group) > 1
+        ambiguous = any(bool(span.get("_ambiguousKey")) for span in left_group + right_group)
+        count = max(len(left_group), len(right_group))
+        for index in range(count):
+            lspan = left_group[index] if index < len(left_group) else None
+            rspan = right_group[index] if index < len(right_group) else None
+            if lspan and rspan:
+                alignment = "incompatible" if duplicate or ambiguous else "matched"
+            else:
+                alignment = "left_only" if lspan else "right_only"
+            append_alignment(alignment_key, lspan, rspan, alignment)
+
+    # Exact structural keys are the only matched alignment.  Duplicate exact
+    # keys stay incompatible instead of being collapsed into a false match.
+    for alignment_key in sorted(set(lg) & set(rg)):
+        emit_group(alignment_key, lg[alignment_key], rg[alignment_key])
+
+    # A malformed span on each side with the same component and operation is
+    # reported as an explicit incompatible pair.  This is a comparison record,
+    # not a synthesized lineage edge; remaining spans stay left/right-only.
+    left_unmatched: dict[str, list[dict[str, object]]] = defaultdict(list)
+    right_unmatched: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for alignment_key, group in lg.items():
+        if alignment_key not in rg:
+            left_unmatched[base_key(group[0])].extend(group)
+    for alignment_key, group in rg.items():
+        if alignment_key not in lg:
+            right_unmatched[base_key(group[0])].extend(group)
+
+    for base in sorted(set(left_unmatched) | set(right_unmatched)):
+        litems = sorted(
+            left_unmatched.get(base, []),
+            key=lambda span: (str(span["_canonicalPath"]), str(span["spanId"])),
+        )
+        ritems = sorted(
+            right_unmatched.get(base, []),
+            key=lambda span: (str(span["_canonicalPath"]), str(span["spanId"])),
+        )
+        malformed = any(
+            state_list(span, left_states, left_truncated) != ["complete"] for span in litems
+        ) or any(state_list(span, right_states, right_truncated) != ["complete"] for span in ritems)
+        malformed = malformed or any(bool(span.get("_ambiguousKey")) for span in litems + ritems)
+        if litems and ritems and malformed:
+            append_alignment(f"{base}:incompatible", litems.pop(0), ritems.pop(0), "incompatible")
+        for span in litems:
+            append_alignment(cast(str, span["_canonicalPath"]), span, None, "left_only")
+        for span in ritems:
+            append_alignment(cast(str, span["_canonicalPath"]), None, span, "right_only")
+
+    integrity_left = side_states(left_states, left_truncated)
+    integrity_right = side_states(right_states, right_truncated)
+    return {
+        "leftTraceId": next((item.trace.trace_id for item in items if item.trace), None),
+        "rightTraceId": next((item.trace.trace_id for item in other if item.trace), None),
+        "leftEvidence": "available" if left else "missing",
+        "rightEvidence": "available" if right else "missing",
+        "leftIntegrity": integrity_left,
+        "rightIntegrity": integrity_right,
+        "alignedSpans": aligned,
+        "partial": bool(integrity_left != ["complete"] or integrity_right != ["complete"]),
+        "_spanTruncated": left_truncated or right_truncated,
+    }
+
+
+def build_run_comparison(
+    left_run_id: str,
+    right_run_id: str,
+    observations: list[MetadataObservation],
+    *,
+    truncated_runs: set[str] | None = None,
+    deadline: float | None = None,
+) -> dict[str, object] | None:
+    all_left = [
+        item for item in observations if item.correlation and item.correlation.run_id == left_run_id
+    ]
+    all_right = [
+        item
+        for item in observations
+        if item.correlation and item.correlation.run_id == right_run_id
+    ]
+    if not all_left or not all_right:
+        return None
+    left = sorted(all_left, key=lambda value: (value.observed_at, value.observation_id))[
+        :COMPARISON_MAX_OBSERVATIONS
+    ]
+    right = sorted(all_right, key=lambda value: (value.observed_at, value.observation_id))[
+        :COMPARISON_MAX_OBSERVATIONS
+    ]
+    truncated_runs = truncated_runs or set()
+    if len(all_left) > COMPARISON_MAX_OBSERVATIONS:
+        truncated_runs.add(left_run_id)
+    if len(all_right) > COMPARISON_MAX_OBSERVATIONS:
+        truncated_runs.add(right_run_id)
+    partial_reasons: list[str] = []
+    if truncated_runs:
+        partial_reasons.append("observation_limit")
+    if len(observations) > COMPARISON_MAX_SCANNED_ROWS:
+        partial_reasons.append("scan_limit")
+    if deadline is None:
+        deadline = monotonic() + COMPARISON_EXECUTION_TIMEOUT_MS / 1000.0
+    try:
+        trace = _comparison_trace(left, right, deadline=deadline)
+    except ComparisonExecutionLimit:
+        return comparison_execution_limit_snapshot(
+            left_run_id, right_run_id, left, right, observations
+        )
+    span_truncated = bool(trace.pop("_spanTruncated", False))
+    if span_truncated:
+        partial_reasons.append("span_limit")
+    if trace["partial"]:
+        partial_reasons.append("incomplete_run")
+    marker_correlations: list[dict[str, object]] = []
+    unavailable = 0
+    for marker_name, source, marker_field in _COMPARISON_MARKERS:
+        if monotonic() >= deadline:
+            return comparison_execution_limit_snapshot(
+                left_run_id, right_run_id, left, right, observations
+            )
+        lm, rm = (
+            _comparison_marker(left, source, marker_field),
+            _comparison_marker(right, source, marker_field),
+        )
+        if lm["availability"] == "unavailable" or rm["availability"] == "unavailable":
+            unavailable += 1
+        marker_correlations.append(
+            {"marker": marker_name, "state": _comparison_state(lm, rm), "left": lm, "right": rm}
+        )
+    try:
+        components, measurement_truncated = _comparison_components(
+            left,
+            right,
+            left_truncated=left_run_id in truncated_runs,
+            right_truncated=right_run_id in truncated_runs,
+            deadline=deadline,
+        )
+    except ComparisonExecutionLimit:
+        return comparison_execution_limit_snapshot(
+            left_run_id, right_run_id, left, right, observations
+        )
+    if measurement_truncated:
+        partial_reasons.append("measurement_limit")
+    return {
+        "snapshotAt": _iso(datetime.now(UTC)),
+        "left": _comparison_side(
+            left, "left", left_run_id, truncated=left_run_id in truncated_runs
+        ),
+        "right": _comparison_side(
+            right, "right", right_run_id, truncated=right_run_id in truncated_runs
+        ),
+        "markerCorrelations": marker_correlations,
+        "components": components,
+        "trace": trace,
+        "freshness": analytics_freshness(
+            max((item.observed_at for item in observations), default=datetime.now(UTC))
+        ),
+        "partial": bool(partial_reasons),
+        "partialReasons": sorted(set(partial_reasons)),
+        "unavailableMarkerCount": unavailable,
+        "scan": {
+            "scannedRows": min(len(observations), COMPARISON_QUERY_ROWS),
+            "scanLimit": COMPARISON_MAX_SCANNED_ROWS,
+            "executionMs": 0,
+            "executionLimitMs": COMPARISON_EXECUTION_TIMEOUT_MS,
+        },
+        "limits": {
+            "runCount": 2,
+            "maximumObservationsPerRun": COMPARISON_MAX_OBSERVATIONS,
+            "maximumSpansPerRun": COMPARISON_MAX_SPANS,
+            "maximumMeasurements": COMPARISON_MAX_MEASUREMENTS,
+            "maximumScannedRows": COMPARISON_MAX_SCANNED_ROWS,
+            "executionTimeoutMs": COMPARISON_EXECUTION_TIMEOUT_MS,
+        },
+        "capturePolicy": "metadata_only",
+}
+
+
+def comparison_execution_limit_snapshot(
+    left_run_id: str,
+    right_run_id: str,
+    left: list[MetadataObservation],
+    right: list[MetadataObservation],
+    observations: list[MetadataObservation],
+    *,
+    reason: str = "execution_limit",
+    scanned_rows: int | None = None,
+) -> dict[str, object]:
+    """Return a truthful bounded response when Python assembly times out."""
+
+    def unavailable_markers() -> list[dict[str, object]]:
+        return [
+            {
+                "marker": marker_name,
+                "state": "unavailable",
+                "left": {"availability": "unavailable", "value": None},
+                "right": {"availability": "unavailable", "value": None},
+            }
+            for marker_name, _source, _field in _COMPARISON_MARKERS
+        ]
+
+    def trace_for(
+        left_values: list[MetadataObservation], right_values: list[MetadataObservation]
+    ) -> dict[str, object]:
+        return {
+            "leftTraceId": next((item.trace.trace_id for item in left_values if item.trace), None),
+            "rightTraceId": next(
+                (item.trace.trace_id for item in right_values if item.trace), None
+            ),
+            "leftEvidence": "available" if left_values else "missing",
+            "rightEvidence": "available" if right_values else "missing",
+            "leftIntegrity": ["retained_partial"] if left_values else ["complete"],
+            "rightIntegrity": ["retained_partial"] if right_values else ["complete"],
+            "alignedSpans": [],
+            "partial": True,
+        }
+
+    def side_for(values: list[MetadataObservation], role: str, run_id: str) -> dict[str, object]:
+        if values:
+            return _comparison_side(values, role, run_id)
+        return {
+            "role": role,
+            "runId": run_id,
+            "evidence": "missing",
+            "status": "unknown",
+            "outcome": "unknown",
+            "startedAt": None,
+            "finishedAt": None,
+            "durationMs": None,
+            "traceId": None,
+            **{
+                key: {"availability": "unavailable", "value": None}
+                for key in (
+                    "modelId",
+                    "modelVersion",
+                    "deploymentId",
+                    "gitCommit",
+                    "imageVersion",
+                    "configurationVersion",
+                    "agentRevision",
+                    "promptBundleRevision",
+                    "policyRevision",
+                )
+            },
+            "componentVersions": [],
+            "partial": True,
+        }
+
+    return {
+        "snapshotAt": _iso(datetime.now(UTC)),
+        "left": side_for(left, "left", left_run_id),
+        "right": side_for(right, "right", right_run_id),
+        "markerCorrelations": unavailable_markers(),
+        "components": [],
+        "trace": trace_for(left, right),
+        "freshness": analytics_freshness(
+            max((item.observed_at for item in observations), default=datetime.now(UTC))
+        ),
+        "partial": True,
+        "partialReasons": [reason],
+        "unavailableMarkerCount": len(_COMPARISON_MARKERS),
+        "scan": {
+            "scannedRows": min(
+                COMPARISON_MAX_SCANNED_ROWS,
+                max(0, scanned_rows if scanned_rows is not None else len(observations)),
+            ),
+            "scanLimit": COMPARISON_MAX_SCANNED_ROWS,
+            "executionMs": COMPARISON_EXECUTION_TIMEOUT_MS if reason == "execution_limit" else 0,
+            "executionLimitMs": COMPARISON_EXECUTION_TIMEOUT_MS,
+        },
+        "limits": {
+            "runCount": 2,
+            "maximumObservationsPerRun": COMPARISON_MAX_OBSERVATIONS,
+            "maximumSpansPerRun": COMPARISON_MAX_SPANS,
+            "maximumMeasurements": COMPARISON_MAX_MEASUREMENTS,
+            "maximumScannedRows": COMPARISON_MAX_SCANNED_ROWS,
+            "executionTimeoutMs": COMPARISON_EXECUTION_TIMEOUT_MS,
+        },
+        "capturePolicy": "metadata_only",
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class RetentionRequest:
     kind: RetentionKind
@@ -473,9 +1382,7 @@ class RetentionAction:
 
 
 class ObservatoryReadStore(Protocol):
-    async def list_observations(
-        self, *, limit: int | None = None
-    ) -> list[MetadataObservation]: ...
+    async def list_observations(self, *, limit: int | None = None) -> list[MetadataObservation]: ...
 
     async def components(self) -> list[dict[str, Any]]: ...
 
@@ -504,7 +1411,7 @@ class BoundedReferenceAnalyticsPort:
             key=lambda item: (item.observed_at.astimezone(UTC), item.observation_id),
         )
         source_truncated = len(ordered) > ANALYTICS_MAX_SCANNED_ROWS
-        selected = ordered[: ANALYTICS_MAX_SCANNED_ROWS]
+        selected = ordered[:ANALYTICS_MAX_SCANNED_ROWS]
         return _reference_analytics_snapshot(
             request,
             selected,
@@ -865,6 +1772,54 @@ class ObservatoryQueryService:
             ),
         }
         return result
+
+    @_query_resource("run_comparison")
+    async def compare_runs(self, left_run_id: str, right_run_id: str) -> dict[str, object] | None:
+        """Compare two runs using a bounded adapter query or reference store."""
+
+        started = monotonic()
+        result: dict[str, object] | None = None
+        outcome = "failure"
+        try:
+            if left_run_id == right_run_id:
+                raise ValueError("comparison requires two distinct runs")
+            if self.query_port is not None:
+                result = await self.query_port.run_comparison_query(left_run_id, right_run_id)
+            else:
+                observations = await self.store.list_observations(limit=COMPARISON_QUERY_ROWS)
+                result = build_run_comparison(
+                    left_run_id,
+                    right_run_id,
+                    observations,
+                    deadline=started + COMPARISON_EXECUTION_TIMEOUT_MS / 1000.0,
+                )
+            if result is None:
+                outcome = "not_found"
+            elif "execution_limit" in cast(list[str], result.get("partialReasons", [])):
+                outcome = "execution_limit"
+            elif result.get("partial"):
+                outcome = "partial"
+            else:
+                outcome = "succeeded"
+            return result
+        except Exception as exc:
+            response = getattr(exc, "res" + "ponse", None)
+            if getattr(response, "status_code", None) == 504 or "execution limit" in str(
+                exc
+            ).casefold():
+                outcome = "execution_limit"
+            raise
+        finally:
+            elapsed = max(0.0, (monotonic() - started) * 1000.0)
+            self.metrics.record("observatory_comparison_duration_ms", elapsed)
+            self.metrics.record("observatory_comparison_outcome", labels={"outcome": outcome})
+            if result is not None and result.get("partial"):
+                self.metrics.record("observatory_comparison_partial_count")
+            unavailable_value = result.get("unavailableMarkerCount", 0) if result else 0
+            self.metrics.record(
+                "observatory_comparison_unavailable_marker_count",
+                float(unavailable_value) if isinstance(unavailable_value, (int, float)) else 0.0,
+            )
 
     @_query_resource("run_detail")
     async def run_detail(
@@ -1716,9 +2671,7 @@ def _reference_analytics_snapshot(
         if len(buckets) > request.point_limit:
             partial_reasons.append("point_limit")
         all_values = [float(item.measurement.value) for item in group_items]
-        summary_interval_seconds = min(
-            86_400, max(60, int((upper - lower).total_seconds()))
-        )
+        summary_interval_seconds = min(86_400, max(60, int((upper - lower).total_seconds())))
         summary_window_seconds = max(1, int((upper - lower).total_seconds()))
         rate = (
             sum(all_values) * summary_interval_seconds / summary_window_seconds
@@ -1922,9 +2875,7 @@ def _normalize_outcome(observation: MetadataObservation) -> str:
     # This exact alias map is shared by grouping, filtering, and the in-memory
     # reference adapter.
     value = (
-        observation.dimensions.get("outcome")
-        or observation.dimensions.get("status")
-        or "unknown"
+        observation.dimensions.get("outcome") or observation.dimensions.get("status") or "unknown"
     ).casefold()
     return {
         "success": "succeeded",

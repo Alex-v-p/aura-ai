@@ -52,6 +52,7 @@ from aura_core.platform.telemetry import (
     COMPONENT_VERSIONS,
     CompositeTelemetryExporter,
     DeploymentMetadata,
+    Measurement,
     MetadataMetrics,
     OtlpHttpTelemetryExporter,
     StructuredContainerLogExporter,
@@ -2249,6 +2250,9 @@ def test_aura0079_deployment_metadata_rejects_private_or_invalid_shapes() -> Non
         {"git_commit": "not-a-commit"},
         {"environment": "Owner"},
         {"service_role": "admin"},
+        {"image_version": "owner-image"},
+        {"configuration_version": "https://private.example/config"},
+        {"configuration_version": "content-hash-abc"},
     )
     for values in invalid:
         with pytest.raises(ValueError):
@@ -2258,6 +2262,8 @@ def test_aura0079_deployment_metadata_rejects_private_or_invalid_shapes() -> Non
                 environment=values.get("environment", "test"),
                 host_id=values.get("host_id", "host-a"),
                 service_role=values.get("service_role", "worker"),
+                image_version=values.get("image_version"),
+                configuration_version=values.get("configuration_version"),
             )
 
 
@@ -2424,6 +2430,8 @@ def test_aura0079_deployment_metadata_is_bounded_and_not_arbitrary_mapping() -> 
         "environment",
         "host_id",
         "service_role",
+        "image_version",
+        "configuration_version",
     }
 
 
@@ -2463,3 +2471,218 @@ def test_aura0079_manifest_retention_matches_runtime_queue_and_retry_bounds() ->
         Settings(telemetry_otlp_max_attempts=attempts["maximum"]).telemetry_otlp_max_attempts
         == 5
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", ("qwen3:8b", "llama3.2:latest"))
+async def test_aura0088_otlp_emits_v2_markers_without_content_or_metric_labels(
+    model_id: str,
+) -> None:
+    transport = _Aura0079FakeTransport()
+    deployment = DeploymentMetadata(
+        deployment_id="deploy-2026-10-18",
+        git_commit="0123456789abcdef",
+        environment="test",
+        host_id="host-a",
+        service_role="worker",
+        image_version="aura-core-2026.10.18",
+        configuration_version="config-42",
+    )
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid/v1/observations",
+        transport=transport,
+        deployment=deployment,
+    )
+    metrics = MetadataMetrics(exporter=exporter)
+    metrics.record_span(
+        "aura.runtime.model_routing",
+        "model.route",
+        2.0,
+        trace_id="0123456789abcdef0123456789abcdef",
+        span_id="0123456789abcdef",
+        parent_span_id=None,
+        dependency="model_provider",
+        outcome="ok",
+        run_id=str(uuid4()),
+        model_id=model_id,
+        agent_revision_id=str(uuid4()),
+        prompt_bundle_revision_id=str(uuid4()),
+        model_policy_revision_id=str(uuid4()),
+        prompt_hash="content-derived-value-must-not-export",
+    )
+
+    await exporter.start()
+    assert await metrics.flush()
+    await exporter.stop()
+
+    raw_payload = transport.requests[0][1]
+    payload = json.loads(raw_payload)
+    resource = payload["resourceSpans"][0]
+    assert resource["schemaUrl"].endswith("/telemetry/v2/metadata-observation.schema.json")
+    resource_attrs = {
+        entry["key"]: next(iter(entry["value"].values()))
+        for entry in resource["resource"]["attributes"]
+    }
+    assert resource_attrs["deployment.image_version"] == "aura-core-2026.10.18"
+    assert resource_attrs["deployment.configuration_version"] == "config-42"
+    span_attrs = {
+        entry["key"]: next(iter(entry["value"].values()))
+        for entry in resource["scopeSpans"][0]["spans"][0]["attributes"]
+    }
+    assert span_attrs["aura.execution.model_id"] == model_id
+    assert span_attrs["aura.execution.agent_revision"]
+    assert span_attrs["aura.execution.prompt_bundle_revision"]
+    assert span_attrs["aura.execution.policy_revision"]
+    assert "prompt_hash" not in raw_payload.decode()
+    assert "content-derived-value-must-not-export" not in raw_payload.decode()
+    assert not any(key.startswith("aura.execution.") for key in resource_attrs)
+
+
+def test_aura0088_v2_export_preserves_tagged_local_model_ids() -> None:
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid",
+        deployment=_aura0079_deployment(),
+    )
+    item = Measurement(
+        kind="span",
+        component_id="aura.runtime.model_routing",
+        component_version="1.2.0",
+        metric="model_routing_duration_ms",
+        value=1.0,
+        observed_at=datetime.now(UTC),
+        trace_attributes=(
+            ("model_id", "qwen3:8b"),
+            ("prompt_hash", "a" * 64),
+        ),
+    )
+
+    attributes = exporter._observation_attributes(item)  # pyright: ignore[reportPrivateUsage]
+    values: dict[str, str] = {}
+    for entry in attributes:
+        key = cast(str, entry["key"])
+        value = cast(dict[str, str], entry["value"])
+        values[key] = next(iter(value.values()))
+    assert values["aura.execution.model_id"] == "qwen3:8b"
+    assert "aura.execution.prompt_hash" not in values
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("model_id", "qwen3:123"),
+        ("model_id", "https://provider.invalid/model"),
+        ("model_id", "model/path"),
+        ("model_id", "model with spaces"),
+        ("model_id", "model@example"),
+        ("model_id", "model:password"),
+        ("model_id", "owner-model:latest"),
+        ("agent_revision_id", "owner-revision"),
+        ("prompt_bundle_revision_id", "prompt-hash-abc"),
+        ("policy_revision_id", "config-secret"),
+        ("policy_revision_id", "content-hash-abc"),
+    ),
+)
+def test_aura0088_v2_export_rejects_sensitive_or_malformed_execution_markers(
+    field: str, value: str
+) -> None:
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid",
+        deployment=_aura0079_deployment(),
+    )
+    item = Measurement(
+        kind="span",
+        component_id="aura.runtime.model_routing",
+        component_version="1.2.0",
+        metric="model_routing_duration_ms",
+        value=1.0,
+        observed_at=datetime.now(UTC),
+        trace_attributes=((field, value),),
+    )
+
+    attributes = exporter._observation_attributes(item)  # pyright: ignore[reportPrivateUsage]
+    keys: set[str] = {cast(str, entry["key"]) for entry in attributes}
+    assert not any(key.startswith("aura.execution.") for key in keys)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("sha256_abc", "contention", "privateer", "ownerless", "digestive"),
+)
+def test_aura0088_v2_revision_policy_accepts_benign_delimited_lookalikes(value: str) -> None:
+    """Core matches the contract grammar instead of substring filtering."""
+
+    deployment = DeploymentMetadata(
+        deployment_id="deploy-2026-10-18",
+        git_commit="0123456789abcdef",
+        environment="test",
+        host_id="host-a",
+        service_role="worker",
+        image_version=value,
+        configuration_version=value,
+    )
+    exporter = OtlpHttpTelemetryExporter("http://collector.invalid", deployment=deployment)
+    item = Measurement(
+        kind="span",
+        component_id="aura.runtime.model_routing",
+        component_version="1.2.0",
+        metric="model_routing_duration_ms",
+        value=1.0,
+        observed_at=datetime.now(UTC),
+        trace_attributes=(("model_id", value), ("model_version", value)),
+    )
+
+    attributes = exporter._observation_attributes(item)  # pyright: ignore[reportPrivateUsage]
+    values = {
+        cast(str, entry["key"]): next(iter(cast(dict[str, str], entry["value"]).values()))
+        for entry in attributes
+    }
+    assert values["aura.execution.model_id"] == value
+    assert values["aura.execution.model_version"] == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "OWNER",
+        "release.owner",
+        "release-IDENTITY-42",
+        "credential-42",
+        "release.BEARER",
+        "release-token-42",
+        "config.secret",
+        "release-password-42",
+        "private-value",
+        "content-hash-abc",
+        "release.digest.42",
+        "service.endpoint",
+    ),
+)
+def test_aura0088_v2_revision_policy_rejects_case_insensitive_delimited_segments(
+    value: str,
+) -> None:
+    with pytest.raises(ValueError):
+        DeploymentMetadata(
+            deployment_id="deploy-2026-10-18",
+            git_commit="0123456789abcdef",
+            environment="test",
+            host_id="host-a",
+            service_role="worker",
+            image_version=value,
+        )
+
+    exporter = OtlpHttpTelemetryExporter(
+        "http://collector.invalid", deployment=_aura0079_deployment()
+    )
+    item = Measurement(
+        kind="span",
+        component_id="aura.runtime.model_routing",
+        component_version="1.2.0",
+        metric="model_routing_duration_ms",
+        value=1.0,
+        observed_at=datetime.now(UTC),
+        trace_attributes=(("model_id", value), ("model_version", value)),
+    )
+    attributes = exporter._observation_attributes(item)  # pyright: ignore[reportPrivateUsage]
+    keys = {cast(str, entry["key"]) for entry in attributes}
+    assert "aura.execution.model_id" not in keys
+    assert "aura.execution.model_version" not in keys

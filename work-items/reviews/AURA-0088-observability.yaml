@@ -1,0 +1,40 @@
+agent: observability_steward
+work_item: AURA-0088
+verdict: PASS
+checked:
+  - >-
+    Re-verified the declared comparison duration, outcome, partial, and
+    unavailable-marker metrics use fixed low-cardinality labels and are
+    declared on the existing query-api manifest without marker values.
+  - >-
+    Verified comparison freshness, physical scan progress, bounded scan
+    limits, execution-limit outcomes, partial reasons, and unavailable-marker
+    counts remain consistent across memory and production query paths.
+  - >-
+    Verified comparison live refresh accepts only observation.changed and
+    retention.changed as evidence invalidations. Snapshot, health.changed, and
+    heartbeat events cannot enqueue a comparison request, and metadata events
+    arriving during the initial loading state are suppressed.
+  - >-
+    Verified the one-active/one-trailing refresh coordinator remains bounded,
+    comparison selections and results remain memory-only, and SSE carries only
+    metadata invalidation events rather than comparison values or run markers.
+  - >-
+    Verified target observation counts now derive from the ordered immutable
+    retention-target capture rather than the lagging ClickHouse aggregate; the
+    focused aggregate-lag regression passed.
+  - >-
+    Verified target run counts now derive from PostgreSQL count(DISTINCT
+    run_id) over the same immutable per-action target ledger. The ClickHouse
+    aggregate remains only a visibility probe and cannot feed terminal
+    deletion or audit totals.
+  - >-
+    Rechecked the updated Observatory and frontend handoffs, the reported
+    full-stack acceptance result, and the reported complete Observatory suite
+    result of 489 passed and 3 skipped.
+  - >-
+    Locally reran the focused aggregate-lag retention regression successfully,
+    reran immutable-target recovery and terminal-audit count regressions,
+    reran the complete Observatory frontend unit target successfully, and
+    reran observability validation successfully.
+findings: []

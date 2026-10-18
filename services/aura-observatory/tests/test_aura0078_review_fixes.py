@@ -358,7 +358,10 @@ async def test_component_health_query_uses_clickhouse_conditional_quantiles() ->
     queries: list[str] = []
 
     class Store(ProductionObservatoryStore):
-        async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+        async def _query_rows(
+            self, statement: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             queries.append(statement)
             return [
                 {
@@ -886,6 +889,10 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_auth_callback_duration_ms",
                 "observatory_auth_callback_outcome",
                 "observatory_query_freshness_lag_ms",
+                "observatory_comparison_duration_ms",
+                "observatory_comparison_outcome",
+                "observatory_comparison_partial_count",
+                "observatory_comparison_unavailable_marker_count",
             }
         elif manifest_id == "aura.observatory.live_updates":
             expected_metrics = {

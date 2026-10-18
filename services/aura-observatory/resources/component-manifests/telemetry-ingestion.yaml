@@ -4,7 +4,7 @@ component:
   owner: observatory.telemetry_ingestion
   category: observability
 input:
-  schema: metadata-observation-v1
+  schema: metadata-observation-v1-or-v2
   replayable: false
 output:
   schema: observatory-observation-v1
@@ -136,6 +136,8 @@ metric_definitions:
     export: prometheus
 evaluators:
   - metadata_observation_contract_rejection
+  - metadata_v2_allowlist
+  - correlation_marker_privacy
   - telemetry_ingestion_idempotency
   - observatory_service_isolation
   - observatory_ingest_quality

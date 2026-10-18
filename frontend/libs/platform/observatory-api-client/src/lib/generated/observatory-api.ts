@@ -1,11 +1,15 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 016c0ea70f4c9bea0496cebd8877287eb17d2cd796149d1326bc5dd7e30f496f
+// Contract SHA-256: b575aee7bfaf6bebe59ac83134a799ed6b686adb5887837813ac7d17ac248bf3
 
 export type Uuid = string;
 
 export type UtcInstant = string;
 
 export type SafeLabel = string;
+
+export type RevisionIdentifier = string;
+
+export type ModelIdentifier = string;
 
 export type ComponentId = string;
 
@@ -84,6 +88,54 @@ export type AnalyticsEffectiveQuery = { readonly "metric": AnalyticsMetricName; 
 export type AnalyticsScan = { readonly "scannedRows": number; readonly "scanLimit": 1000000; readonly "executionMs": number; readonly "executionLimitMs": 5000; };
 
 export type OperationalAnalyticsSnapshot = { readonly "snapshotAt": UtcInstant; readonly "query": AnalyticsEffectiveQuery; readonly "percentileMethod": AnalyticsPercentileMethod; readonly "series": ReadonlyArray<AnalyticsSeries>; readonly "breakdowns": ReadonlyArray<AnalyticsBreakdown>; readonly "freshness": AnalyticsFreshness; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<AnalyticsPartialReason>; readonly "unavailableSignals": ReadonlyArray<AnalyticsUnavailableSignal>; readonly "scan": AnalyticsScan; readonly "capturePolicy": "metadata_only"; };
+
+export type RunComparisonRequest = { readonly "leftRunId": Uuid; readonly "rightRunId": Uuid; };
+
+export type ComparisonAvailability = "available" | "missing" | "unavailable";
+
+export type ComparisonState = "equal" | "changed" | "missing" | "unavailable";
+
+export type ComparisonAlignment = "matched" | "left_only" | "right_only" | "incompatible";
+
+export type ComparisonMarkerName = "deployment_id" | "git_commit" | "image_version" | "configuration_version" | "model_id" | "model_version" | "agent_revision" | "prompt_bundle_revision" | "policy_revision";
+
+export type ComparisonMarker = { readonly "availability": ComparisonAvailability; readonly "value": RevisionIdentifier | null; };
+
+export type ModelComparisonMarker = { readonly "availability": ComparisonAvailability; readonly "value": ModelIdentifier | null; };
+
+export type MetadataComparisonMarkerName = "deployment_id" | "git_commit" | "image_version" | "configuration_version" | "model_version" | "agent_revision" | "prompt_bundle_revision" | "policy_revision";
+
+export type MetadataMarkerComparison = { readonly "marker": MetadataComparisonMarkerName; readonly "state": ComparisonState; readonly "left": ComparisonMarker; readonly "right": ComparisonMarker; };
+
+export type ModelMarkerComparison = { readonly "marker": "model_id"; readonly "state": ComparisonState; readonly "left": ModelComparisonMarker; readonly "right": ModelComparisonMarker; };
+
+export type MarkerComparison = MetadataMarkerComparison | ModelMarkerComparison;
+
+export type RunComparisonComponentVersion = { readonly "componentId": ComponentId; readonly "version": ComparisonMarker; };
+
+export type RunComparisonSide = { readonly "role": "left" | "right"; readonly "runId": Uuid; readonly "evidence": ComparisonAvailability; readonly "status": RunStatus; readonly "outcome": Outcome; readonly "startedAt": UtcInstant | null; readonly "finishedAt": UtcInstant | null; readonly "durationMs": number | null; readonly "traceId": TraceId | null; readonly "modelId": ModelComparisonMarker; readonly "modelVersion": ComparisonMarker; readonly "deploymentId": ComparisonMarker; readonly "gitCommit": ComparisonMarker; readonly "imageVersion": ComparisonMarker; readonly "configurationVersion": ComparisonMarker; readonly "agentRevision": ComparisonMarker; readonly "promptBundleRevision": ComparisonMarker; readonly "policyRevision": ComparisonMarker; readonly "componentVersions": ReadonlyArray<RunComparisonComponentVersion>; readonly "partial": boolean; };
+
+export type ComparisonNumber = { readonly "availability": ComparisonAvailability; readonly "value": number | null; };
+
+export type ComponentMeasurementComparison = { readonly "name": OperationName; readonly "unit": AnalyticsUnit; readonly "state": ComparisonState; readonly "left": ComparisonNumber; readonly "right": ComparisonNumber; readonly "absoluteDelta": number | null; };
+
+export type ComponentComparisonSide = { readonly "componentVersion": ComparisonMarker; readonly "durationMs": number | null; readonly "outcome": Outcome; readonly "spanCount": number; readonly "partial": boolean; };
+
+export type RunComponentComparison = { readonly "componentId": ComponentId; readonly "operation": OperationName; readonly "alignment": ComparisonAlignment; readonly "left": ComponentComparisonSide | null; readonly "right": ComponentComparisonSide | null; readonly "measurements": ReadonlyArray<ComponentMeasurementComparison>; };
+
+export type TraceIntegrityState = "complete" | "retained_partial" | "truncated" | "missing_parent" | "cyclic" | "duplicate";
+
+export type ComparableSpan = { readonly "spanId": SpanId; readonly "parentSpanId": SpanId | null; readonly "componentId": ComponentId; readonly "componentVersion": SafeLabel; readonly "operation": OperationName; readonly "startedAt": UtcInstant; readonly "durationMs": number; readonly "outcome": Outcome; readonly "partial": boolean; };
+
+export type AlignedSpan = { readonly "alignmentKey": string; readonly "alignment": ComparisonAlignment; readonly "left": ComparableSpan | null; readonly "right": ComparableSpan | null; readonly "leftIntegrity": ReadonlyArray<TraceIntegrityState>; readonly "rightIntegrity": ReadonlyArray<TraceIntegrityState>; };
+
+export type TraceComparison = { readonly "leftTraceId": TraceId | null; readonly "rightTraceId": TraceId | null; readonly "leftEvidence": ComparisonAvailability; readonly "rightEvidence": ComparisonAvailability; readonly "leftIntegrity": ReadonlyArray<TraceIntegrityState>; readonly "rightIntegrity": ReadonlyArray<TraceIntegrityState>; readonly "alignedSpans": ReadonlyArray<AlignedSpan>; readonly "partial": boolean; };
+
+export type RunComparisonPartialReason = "observation_limit" | "span_limit" | "measurement_limit" | "scan_limit" | "execution_limit" | "late_data" | "retention_boundary" | "incomplete_run" | "missing_parent" | "cyclic" | "duplicate_span";
+
+export type RunComparisonLimits = { readonly "runCount": 2; readonly "maximumObservationsPerRun": 10000; readonly "maximumSpansPerRun": 5000; readonly "maximumMeasurements": 2000; readonly "maximumScannedRows": 1000000; readonly "executionTimeoutMs": 5000; };
+
+export type RunComparison = { readonly "snapshotAt": UtcInstant; readonly "left": RunComparisonSide; readonly "right": RunComparisonSide; readonly "markerCorrelations": ReadonlyArray<MarkerComparison>; readonly "components": ReadonlyArray<RunComponentComparison>; readonly "trace": TraceComparison; readonly "freshness": AnalyticsFreshness; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<RunComparisonPartialReason>; readonly "unavailableMarkerCount": number; readonly "scan": AnalyticsScan; readonly "limits": RunComparisonLimits; readonly "capturePolicy": "metadata_only"; };
 
 export type OwnerSession = { readonly "csrfToken": string; };
 
@@ -180,6 +232,7 @@ export interface ObservatoryApiOperations {
   readonly getComponentHealth: { readonly response: ComponentHealth; readonly body: never; readonly path: { readonly "component_id": ComponentId; }; readonly query: { readonly "component_version"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listAnalyticsMetrics: { readonly response: AnalyticsMetricCatalogue; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "focus"?: AnalyticsFocus; }; readonly headers: Readonly<Record<string, never>>; };
   readonly queryOperationalAnalytics: { readonly response: OperationalAnalyticsSnapshot; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "aggregation"?: AnalyticsAggregation; readonly "focus"?: AnalyticsFocus; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "bucket"?: AnalyticsBucket; readonly "group_by"?: AnalyticsGroupBy; readonly "component"?: ComponentId; readonly "component_version"?: SafeLabel; readonly "operation"?: OperationName; readonly "deployment"?: SafeLabel; readonly "environment"?: EnvironmentName; readonly "host"?: SafeLabel; readonly "service_role"?: ServiceRole; readonly "provider"?: DimensionValue; readonly "outcome"?: Outcome; readonly "error_class"?: DimensionValue; readonly "status"?: DimensionValue; readonly "retrieval_stage"?: DimensionValue; readonly "series_limit"?: number; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly compareRuns: { readonly response: RunComparison; readonly body: RunComparisonRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listDeployments: { readonly response: DeploymentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly streamEvents: { readonly response: SsePayload; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly createRetentionAction: { readonly response: RetentionAction; readonly body: CreateRetentionActionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
@@ -217,6 +270,7 @@ export const OBSERVATORY_API_OPERATIONS = {
   getComponentHealth: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/health', requestMode: 'none', responseMode: 'json' },
   listAnalyticsMetrics: { method: 'GET', pathTemplate: '/api/v1/analytics/metrics', requestMode: 'none', responseMode: 'json' },
   queryOperationalAnalytics: { method: 'GET', pathTemplate: '/api/v1/analytics/query', requestMode: 'none', responseMode: 'json' },
+  compareRuns: { method: 'POST', pathTemplate: '/api/v1/run-comparisons/query', requestMode: 'json', responseMode: 'json' },
   listDeployments: { method: 'GET', pathTemplate: '/api/v1/deployments', requestMode: 'none', responseMode: 'json' },
   streamEvents: { method: 'GET', pathTemplate: '/api/v1/events', requestMode: 'none', responseMode: 'event-stream' },
   createRetentionAction: { method: 'POST', pathTemplate: '/api/v1/retention/actions', requestMode: 'json', responseMode: 'json' },

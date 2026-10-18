@@ -99,7 +99,10 @@ class FakeProductionStore(ProductionObservatoryStore):
         del component_id
         return list(self.reverse)
 
-    async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+    async def _query_rows(
+        self, statement: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
+        del params
         self.queries.append(statement)
         if "groupUniqArray(64)" in statement:
             versions: dict[str, set[str]] = {}
@@ -163,7 +166,10 @@ class RawTrendStore(ProductionObservatoryStore):
             },
         ]
 
-    async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+    async def _query_rows(
+        self, statement: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
+        del params
         self.statements.append(statement)
         if "GROUP BY start_at" in statement:
             # The trend must aggregate canonical executions first.  Checking
@@ -274,7 +280,10 @@ class SourceBackedCatalogueStore(ProductionObservatoryStore):
     def _connection(self) -> _SourcePageConnection:
         return _SourcePageConnection(self)
 
-    async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+    async def _query_rows(
+        self, statement: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
+        del params
         self.clickhouse_statements.append(statement)
         if "groupUniqArray(64)" not in statement:
             return []
@@ -407,7 +416,10 @@ class TopologySourceStore(ProductionObservatoryStore):
             return self.target
         return None
 
-    async def _query_rows(self, statement: str) -> list[dict[str, Any]]:
+    async def _query_rows(
+        self, statement: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
+        del params
         self.clickhouse_statements.append(statement)
         if "groupUniqArray(64)" in statement:
             return list(self.observed_rows)
