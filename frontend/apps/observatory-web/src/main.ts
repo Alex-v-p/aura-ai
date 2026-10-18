@@ -9,6 +9,7 @@ import {
   ObservatoryTraceComponent,
   ObservatoryComponentsComponent,
   ObservatoryRetentionComponent,
+  ObservatoryAnalyticsComponent,
   authCopyForState,
   consumeAuthRecoveryMarker,
   ownerLoginHref,
@@ -17,7 +18,7 @@ import {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent],
+  imports: [ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent, ObservatoryAnalyticsComponent],
   providers: [FetchObservatoryTransport, ObservatoryStore, { provide: OBSERVATORY_GATEWAY, useExisting: FetchObservatoryTransport }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -29,8 +30,8 @@ import {
     @if (store.authState() === 'checking') {
       <main id="observatory-main" tabindex="-1" class="signed-out" aria-busy="true"><h2>Checking your Observatory session</h2><p role="status">Your owner session is being checked.</p></main>
     } @else if (store.authState() === 'authenticated') {
-      <nav class="tabs" aria-label="Observatory sections"><button type="button" [class.active]="tab() === 'overview'" [attr.aria-current]="tab() === 'overview' ? 'page' : null" (click)="tab.set('overview')">Overview</button><button type="button" [class.active]="tab() === 'runs'" [attr.aria-current]="tab() === 'runs' ? 'page' : null" (click)="tab.set('runs')">Runs</button><button type="button" [class.active]="tab() === 'trace'" [attr.aria-current]="tab() === 'trace' ? 'page' : null" (click)="tab.set('trace')">Trace</button><button type="button" [class.active]="tab() === 'components'" [attr.aria-current]="tab() === 'components' ? 'page' : null" (click)="showComponents()">Components</button><button type="button" [class.active]="tab() === 'retention'" [attr.aria-current]="tab() === 'retention' ? 'page' : null" (click)="tab.set('retention')">Retention</button></nav>
-      <main id="observatory-main" tabindex="-1"><observatory-overview [hidden]="tab() !== 'overview'" /><observatory-runs [hidden]="tab() !== 'runs'" (runSelected)="showTrace()" /><observatory-trace [hidden]="tab() !== 'trace'" /><observatory-components [hidden]="tab() !== 'components'" /><observatory-retention [hidden]="tab() !== 'retention'" /></main>
+      <nav class="tabs" aria-label="Observatory sections"><button type="button" [class.active]="tab() === 'overview'" [attr.aria-current]="tab() === 'overview' ? 'page' : null" (click)="tab.set('overview')">Overview</button><button type="button" [class.active]="tab() === 'runs'" [attr.aria-current]="tab() === 'runs' ? 'page' : null" (click)="tab.set('runs')">Runs</button><button type="button" [class.active]="tab() === 'trace'" [attr.aria-current]="tab() === 'trace' ? 'page' : null" (click)="tab.set('trace')">Trace</button><button type="button" [class.active]="tab() === 'components'" [attr.aria-current]="tab() === 'components' ? 'page' : null" (click)="showComponents()">Components</button><button type="button" [class.active]="tab() === 'analytics'" [attr.aria-current]="tab() === 'analytics' ? 'page' : null" (click)="tab.set('analytics')">Analytics</button><button type="button" [class.active]="tab() === 'retention'" [attr.aria-current]="tab() === 'retention' ? 'page' : null" (click)="tab.set('retention')">Retention</button></nav>
+      <main id="observatory-main" tabindex="-1"><observatory-overview [hidden]="tab() !== 'overview'" /><observatory-runs [hidden]="tab() !== 'runs'" (runSelected)="showTrace()" /><observatory-trace [hidden]="tab() !== 'trace'" /><observatory-components [hidden]="tab() !== 'components'" /><observatory-analytics [hidden]="tab() !== 'analytics'" /><observatory-retention [hidden]="tab() !== 'retention'" /></main>
     } @else {
       <main id="observatory-main" tabindex="-1" class="signed-out" aria-labelledby="auth-recovery-title"><div class="sr-only" role="status" aria-live="polite">{{ authCopy().announcement }}</div><h2 #authHeading id="auth-recovery-title" tabindex="-1">{{ authCopy().title }}</h2><p>{{ authCopy().message }}</p><div class="recovery-actions">@if (authCopy().retryAction === 'logout') { <button class="primary-action" type="button" (click)="retryLogout()">{{ authCopy().action }}</button><a class="secondary-action" [href]="ownerLoginHref('', returnPath())">Sign in as owner</a> } @else if (authCopy().retryAction === 'session') { <button class="primary-action" type="button" (click)="retryAuthentication()">{{ authCopy().action }}</button><a class="secondary-action" [href]="ownerLoginHref('', returnPath())">Sign in as owner</a> } @else { <a class="primary-action" [href]="ownerLoginHref('', returnPath())">{{ authCopy().action }}</a> }</div></main>
     }
@@ -43,7 +44,7 @@ class AppComponent {
   readonly store = inject(ObservatoryStore);
   readonly authCopy = () => authCopyForState(this.store.authState());
   readonly ownerLoginHref = ownerLoginHref;
-  readonly tab = signal<'overview' | 'runs' | 'trace' | 'components' | 'retention'>('overview');
+  readonly tab = signal<'overview' | 'runs' | 'trace' | 'components' | 'analytics' | 'retention'>('overview');
   @ViewChild('authHeading') private authHeading?: ElementRef<HTMLHeadingElement>;
   private lastFocusedAuthState = 'checking';
   private focusAuthenticatedLandmark = false;

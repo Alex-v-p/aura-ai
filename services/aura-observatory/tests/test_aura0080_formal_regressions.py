@@ -58,7 +58,8 @@ SERVICE_ROOT = ROOT / "services" / "aura-observatory"
 OWNER = "owner-subject"
 ISSUER = "https://identity.example.invalid/application/o/aura-observatory/"
 _CLICKHOUSE_STATUS_FALLBACK = (
-    "coalesce(nullIf(dimensions['status'], ''), nullIf(dimensions['outcome'], ''))"
+    "lowerUTF8(coalesce(nullIf(dimensions['outcome'], ''), "
+    "nullIf(dimensions['status'], '')))"
 )
 
 
@@ -68,7 +69,7 @@ def _evaluate_clickhouse_status(
     """Evaluate the supported Map lookup shape against provider-like rows."""
 
     if _CLICKHOUSE_STATUS_FALLBACK in statement:
-        return dimensions.get("status", "") or dimensions.get("outcome", "")
+        return (dimensions.get("outcome", "") or dimensions.get("status", "")).casefold()
     # Missing ClickHouse Map keys behave as empty strings.  The legacy query
     # shape used one key directly; retaining that behavior makes the fake
     # reject the old query rather than hiding the regression in a fixture.
@@ -2279,7 +2280,8 @@ async def test_all_query_failures_publish_label_distinct_duration_and_outcome_se
     from aura_observatory.metrics import ObservatoryMetrics
 
     class FailingStore(MemoryObservatoryStore):
-        async def list_observations(self) -> list[Any]:
+        async def list_observations(self, *, limit: int | None = None) -> list[Any]:
+            del limit
             raise RuntimeError("store unavailable")
 
         async def components(self) -> list[dict[str, Any]]:
@@ -2657,7 +2659,10 @@ async def test_retention_target_pages_are_bounded_and_survive_interleaving_actio
             )
             self.page = 0
 
-        async def _rows(self, query: str) -> list[dict[str, Any]]:
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             if "SELECT observation_id, run_id, observed_at" not in query:
                 return [{"observations": 2001, "runs": 11}]
             target_queries.append(query)
@@ -2746,7 +2751,10 @@ async def test_retention_receipt_capture_casts_uuid_to_target_text() -> None:
         yield Connection()
 
     class Store(ProductionObservatoryStore):
-        async def _rows(self, query: str) -> list[dict[str, Any]]:
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             if "SELECT observation_id, run_id, observed_at" in query:
                 return []
             return [{"observations": 0, "runs": 0}]
@@ -2856,7 +2864,10 @@ async def test_production_retention_releases_session_lock_before_clickhouse_clea
             return None
 
     class Store(ProductionObservatoryStore):
-        async def _rows(self, query: str) -> list[dict[str, Any]]:
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             if "SELECT count() AS observations" in query:
                 return [{"observations": 1, "runs": 0}]
             return [
@@ -2982,7 +2993,10 @@ async def test_retention_target_capture_fails_fast_on_repeated_full_page() -> No
         yield Connection()
 
     class Store(ProductionObservatoryStore):
-        async def _rows(self, query: str) -> list[dict[str, Any]]:
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             nonlocal page_calls
             if "SELECT observation_id, run_id, observed_at" in query:
                 page_calls += 1
@@ -3031,7 +3045,10 @@ async def test_retention_receipt_capture_fails_fast_on_repeated_full_page() -> N
         yield Connection()
 
     class Store(ProductionObservatoryStore):
-        async def _rows(self, query: str) -> list[dict[str, Any]]:
+        async def _rows(
+            self, query: str, *, params: dict[str, object] | None = None
+        ) -> list[dict[str, Any]]:
+            del params
             if "SELECT observation_id, run_id, observed_at" in query:
                 return []
             return [{"observations": 0, "runs": 0}]

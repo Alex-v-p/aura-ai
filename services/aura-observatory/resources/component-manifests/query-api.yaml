@@ -70,6 +70,9 @@ evaluators:
   - observatory_full_stack_trace
   - observatory_outage_core_isolation
   - observatory_auth_recovery
+  - operational_analytics_bounds
+  - operational_analytics_semantics
+  - operational_analytics_accessibility
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

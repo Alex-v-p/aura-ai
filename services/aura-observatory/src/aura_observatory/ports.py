@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from aura_observatory.contract import MetadataObservation
+
+# These defaults are part of the bounded analytics request contract.  They
+# live beside the inward port so storage adapters can type the request without
+# importing the application query implementation.
+ANALYTICS_DEFAULT_MAX_POINTS = 200
+ANALYTICS_DEFAULT_MAX_SERIES = 12
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsRequest:
+    """Transport-neutral, bounded request passed through the analytics port."""
+
+    metric: str
+    unit: str
+    aggregation: str = "average"
+    focus: str = "all"
+    from_time: datetime | None = None
+    to_time: datetime | None = None
+    bucket: str = "auto"
+    group_by: str = "none"
+    filters: dict[str, str] = field(default_factory=lambda: cast(dict[str, str], {}))
+    series_limit: int = ANALYTICS_DEFAULT_MAX_SERIES
+    point_limit: int = ANALYTICS_DEFAULT_MAX_POINTS
 
 
 class InsertOutcome(StrEnum):
@@ -235,6 +258,8 @@ class ObservatoryQueryPort(Protocol):
         to_time: datetime | None,
         limit: int,
     ) -> dict[str, object]: ...
+
+    async def operational_analytics_query(self, request: AnalyticsRequest) -> dict[str, object]: ...
 
 
 class ObservatoryReferencePort(Protocol):

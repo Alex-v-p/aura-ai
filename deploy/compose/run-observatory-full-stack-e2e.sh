@@ -498,22 +498,31 @@ PY
 "${compose[@]}" exec -T observatory-api /app/.venv/bin/python - <<'PY'
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import httpx
 
 from aura_observatory.adapters.clickhouse import clickhouse_row
 from aura_observatory.adapters.query import ProductionObservatoryStore
 from aura_observatory.contract import MetadataObservation
-from aura_observatory.query import RunFilters
+from aura_observatory.query import AnalyticsRequest, RunFilters
 from aura_observatory.settings import Settings
 
 
 OBSERVATION_ID = "00000000-0000-4000-8000-000000000084"
 RUN_ID = "00000000-0000-4000-8000-000000000086"
+SCAN_BOUNDARY_COMPONENT = "aura.observatory.e2e.scan-boundary"
+QUANTILE_COMPONENT = "aura.observatory.e2e.quantile-parity"
 
 
 def bounded_error(value: object) -> str:
     return " ".join(str(value).split())[:512]
+
+
+def provider_status(error: BaseException) -> str:
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    return str(status) if isinstance(status, int) else "transport"
 
 
 settings = Settings()
@@ -549,6 +558,12 @@ cleanup_statements = (
     "ALTER TABLE observations DELETE WHERE observation_id = "
     + repr(OBSERVATION_ID)
     + " SETTINGS mutations_sync=1",
+    "ALTER TABLE observations DELETE WHERE component_id = "
+    + repr(SCAN_BOUNDARY_COMPONENT)
+    + " SETTINGS mutations_sync=1",
+    "ALTER TABLE observations DELETE WHERE component_id = "
+    + repr(QUANTILE_COMPONENT)
+    + " SETTINGS mutations_sync=1",
     "ALTER TABLE run_projections DELETE WHERE run_id = "
     + repr(RUN_ID)
     + " SETTINGS mutations_sync=1",
@@ -559,6 +574,12 @@ params = {
     "insert_deduplication_token": OBSERVATION_ID,
 }
 failure = None
+
+
+def unavailable_postgres() -> object:
+    raise RuntimeError("PostgreSQL is not part of this ClickHouse probe")
+
+
 try:
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -574,9 +595,6 @@ try:
         failure = "ClickHouse preflight failed: transport error"
     if failure is None:
         async def query_probe() -> None:
-            def unavailable_postgres() -> object:
-                raise RuntimeError("PostgreSQL is not part of this ClickHouse probe")
-
             store = ProductionObservatoryStore(
                 unavailable_postgres,
                 settings.clickhouse_url,
@@ -592,8 +610,210 @@ try:
             await store.run_query(RunFilters(), cursor=None, limit=50)
 
         try:
-            asyncio.run(query_probe())
-            print("Observatory ClickHouse overview/run query preflight passed")
+            with httpx.Client(timeout=30.0) as client:
+                version_response = client.post(
+                    settings.clickhouse_url,
+                    params={"database": settings.clickhouse_database},
+                    auth=(settings.clickhouse_user, settings.clickhouse_password),
+                    content=(
+                        "SELECT version() AS provider_version, "
+                        "quantileExact(0.50)(value) AS p50, "
+                        "quantileExact(0.90)(value) AS p90, "
+                        "quantileExact(0.95)(value) AS p95, "
+                        "quantileExact(0.99)(value) AS p99 "
+                        "FROM (SELECT arrayJoin([toFloat64(1), toFloat64(2), "
+                        "toFloat64(3), toFloat64(100)]) AS value) "
+                        "FORMAT JSONEachRow"
+                    ),
+                )
+            if not version_response.is_success:
+                failure = "ClickHouse quantileExact preflight failed"
+            else:
+                quantile_row = json.loads(
+                    next(line for line in version_response.text.splitlines() if line.strip())
+                )
+                provider_version = str(quantile_row["provider_version"])
+                if tuple(provider_version.split(".")[:2]) != ("25", "8"):
+                    failure = "ClickHouse provider is not pinned to 25.8"
+                expected_quantiles = {"p50": 3.0, "p90": 100.0, "p95": 100.0, "p99": 100.0}
+                actual_quantiles = {
+                    key: float(quantile_row[key]) for key in expected_quantiles
+                }
+                if actual_quantiles != expected_quantiles:
+                    failure = (
+                        "ClickHouse quantileExact parity preflight failed: actual="
+                        + json.dumps(actual_quantiles, sort_keys=True)
+                    )
+                else:
+                    print(
+                        "ClickHouse 25.8 quantileExact parity passed: "
+                        + json.dumps(actual_quantiles, sort_keys=True)
+                    )
+        except (KeyError, StopIteration, TypeError, ValueError, httpx.HTTPError):
+            failure = "ClickHouse quantileExact preflight failed"
+
+        if failure is None:
+            quantile_rows = []
+            for index, value in enumerate((1.0, 2.0, 3.0, 100.0), 1):
+                quantile_row = dict(row)
+                quantile_row.update(
+                    {
+                        "observation_id": f"aura-0087-quantile-{index}",
+                        "ingest_sequence": 2_000_000 + index,
+                        "component_id": QUANTILE_COMPONENT,
+                        "measurement_name": "duration_ms",
+                        "measurement_value": value,
+                    }
+                )
+                quantile_rows.append(json.dumps(quantile_row, separators=(",", ":")))
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    quantile_insert_response = client.post(
+                        settings.clickhouse_url,
+                        params={"database": settings.clickhouse_database},
+                        auth=(settings.clickhouse_user, settings.clickhouse_password),
+                        content="INSERT INTO observations FORMAT JSONEachRow\n"
+                        + "\n".join(quantile_rows),
+                    )
+                if not quantile_insert_response.is_success:
+                    failure = "ClickHouse quantile parity fixture insert failed"
+            except httpx.HTTPError:
+                failure = "ClickHouse quantile parity fixture insert failed"
+
+        try:
+            if failure is None:
+                class ScanBoundaryStore(ProductionObservatoryStore):
+                    async def _analytics_retention_boundary(  # pyright: ignore[reportPrivateUsage]
+                        self, lower: object, upper: object
+                    ) -> bool:
+                        del lower, upper
+                        return False
+
+                store = ScanBoundaryStore(
+                    unavailable_postgres,
+                    settings.clickhouse_url,
+                    database=settings.clickhouse_database,
+                    user=settings.clickhouse_user,
+                    password=settings.clickhouse_password,
+                )
+                try:
+                    quantile_analytics = asyncio.run(store.operational_analytics_query(
+                        AnalyticsRequest(
+                            metric="operation_duration_ms",
+                            unit="milliseconds",
+                            from_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                            to_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                            bucket="one_day",
+                            group_by="component",
+                            filters={"component": QUANTILE_COMPONENT},
+                        )
+                    ))
+                except httpx.HTTPError as exc:
+                    failure = (
+                        "ClickHouse quantile adapter preflight failed status="
+                        + provider_status(exc)
+                    )
+                    quantile_analytics = {"series": []}
+                quantile_series = quantile_analytics.get("series", [])
+                if failure is None and (
+                    not isinstance(quantile_series, list) or not quantile_series
+                ):
+                    partial_reasons = quantile_analytics.get("partialReasons", [])
+                    unavailable_signals = quantile_analytics.get("unavailableSignals", [])
+                    safe_partial_reasons = (
+                        [str(value) for value in partial_reasons[:8]]
+                        if isinstance(partial_reasons, list)
+                        else []
+                    )
+                    safe_unavailable_signals = (
+                        [str(value) for value in unavailable_signals[:8]]
+                        if isinstance(unavailable_signals, list)
+                        else []
+                    )
+                    series_count = len(quantile_series) if isinstance(quantile_series, list) else 0
+                    failure = (
+                        "ProductionObservatoryStore quantile parity query returned no series "
+                        f"count={series_count} partialReasons="
+                        + json.dumps(safe_partial_reasons, sort_keys=True)
+                        + " unavailableSignals="
+                        + json.dumps(safe_unavailable_signals, sort_keys=True)
+                    )
+                elif failure is None:
+                    quantile_summary = quantile_series[0].get("summary", {})
+                    adapter_quantiles = {
+                        key: float(quantile_summary[key]) for key in expected_quantiles
+                    }
+                    if adapter_quantiles != expected_quantiles:
+                        failure = (
+                            "ProductionObservatoryStore quantileExact parity failed: actual="
+                            + json.dumps(adapter_quantiles, sort_keys=True)
+                        )
+                    else:
+                        print(
+                            "ProductionObservatoryStore quantileExact parity passed: "
+                            + json.dumps(adapter_quantiles, sort_keys=True)
+                        )
+                if failure is None:
+                    boundary_insert = (
+                        "INSERT INTO observations (observation_id, ingest_sequence, observed_at, "
+                        "schema_version, kind, component_id, component_version, operation, "
+                        "measurement_name, measurement_value, measurement_unit, dimensions, "
+                        "trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
+                        "conversation_id, deployment_id, git_commit, environment, host_id, "
+                        "service_role, capture_policy) SELECT "
+                        "concat('aura-0087-scan-', toString(number)), number + 2, "
+                        "toDateTime64('2026-01-01 00:00:00', 3, 'UTC'), 1, 'metric', "
+                        + repr(SCAN_BOUNDARY_COMPONENT)
+                        + ", 'e2e', 'scan', 'duration_ms', toFloat64(1), 'milliseconds', "
+                        "map('outcome', 'success'), '', '', '', emptyArrayString(), '', '', "
+                        "'e2e', '0000000', 'test', 'e2e', 'api', 'metadata_only' "
+                        "FROM numbers(1000001) SETTINGS max_threads = 1"
+                    )
+                    try:
+                        with httpx.Client(timeout=60.0) as client:
+                            boundary_response = client.post(
+                                settings.clickhouse_url,
+                                params={"database": settings.clickhouse_database},
+                                auth=(settings.clickhouse_user, settings.clickhouse_password),
+                                content=boundary_insert,
+                            )
+                        if not boundary_response.is_success:
+                            failure = "ClickHouse scan-boundary fixture insert failed"
+                    except httpx.HTTPError:
+                        failure = "ClickHouse scan-boundary fixture insert failed"
+
+                if failure is None:
+                    try:
+                        analytics = asyncio.run(store.operational_analytics_query(
+                            AnalyticsRequest(
+                                metric="operation_duration_ms",
+                                unit="milliseconds",
+                                from_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                                to_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                                bucket="one_hour",
+                                group_by="component",
+                                filters={"component": SCAN_BOUNDARY_COMPONENT},
+                            )
+                        ))
+                    except httpx.HTTPError as exc:
+                        failure = (
+                            "ClickHouse scan-boundary adapter preflight failed status="
+                            + provider_status(exc)
+                        )
+                        analytics = {"partialReasons": []}
+                    if failure is None and "scan_limit" not in analytics.get("partialReasons", []):
+                        failure = "ClickHouse scan-boundary query was not partial"
+                    elif failure is None:
+                        print("ProductionObservatoryStore scan-boundary query passed")
+            if failure is None:
+                try:
+                    asyncio.run(query_probe())
+                    print("Observatory ClickHouse overview/run query preflight passed")
+                except httpx.HTTPError as exc:
+                    failure = (
+                        "ClickHouse overview/run adapter preflight failed status="
+                        + provider_status(exc)
+                    )
         except httpx.HTTPStatusError as exc:
             response = exc.response
             failure = (
@@ -602,7 +822,7 @@ try:
             )
         except httpx.HTTPError:
             failure = "ClickHouse query preflight failed: transport error"
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OSError):
             failure = "ClickHouse query preflight failed: response shape error"
 finally:
     cleanup_failure = None

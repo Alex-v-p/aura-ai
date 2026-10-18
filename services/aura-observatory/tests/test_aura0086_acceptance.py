@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -292,7 +292,9 @@ async def test_catalogue_api_is_owner_scoped_bounded_and_explicit_about_partial_
     session_id, _ = await auth.create_session(Principal(ISSUER, OWNER, "Owner"))
     app = create_app(settings, auth=auth, query_store=MemoryObservatoryStore(), testing=True)
     port = CatalogueQueryPort()
-    app.state.query = ObservatoryQueryService(MemoryObservatoryStore(), query_port=port)
+    app.state.query = ObservatoryQueryService(
+        MemoryObservatoryStore(), query_port=cast(Any, port)
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

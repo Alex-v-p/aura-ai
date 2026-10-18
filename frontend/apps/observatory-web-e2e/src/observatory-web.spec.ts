@@ -70,6 +70,31 @@ const componentHealth = {
   outcomes: { succeeded: 3, failed: 1, cancelled: 0, unknown: 0 },
 };
 
+const analyticsCatalogue = {
+  snapshotAt: observedAt,
+  capturePolicy: 'metadata_only',
+  limits: { defaultWindowHours: 24, maximumWindowDays: 31, maximumPointsPerSeries: 200, maximumSeries: 12, maximumBreakdowns: 50, maximumScannedRows: 1000000, executionTimeoutMs: 5000 },
+  items: [
+    { metric: 'operation_duration_ms', unit: 'milliseconds', focusAreas: ['all'], supportedAggregations: ['average', 'p50', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] },
+    { metric: 'inference_duration_ms', unit: 'milliseconds', focusAreas: ['model'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: ['model_identity'] },
+    { metric: 'queue_wait_ms', unit: 'milliseconds', focusAreas: ['queue'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'no_data', unavailableSignals: ['measurement'] },
+    { metric: 'document_retrieval_duration_ms', unit: 'milliseconds', focusAreas: ['retrieval'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] },
+    { metric: 'tool_execution_duration_ms', unit: 'milliseconds', focusAreas: ['tool'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] },
+    { metric: 'memory_operation_duration_ms', unit: 'milliseconds', focusAreas: ['memory'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] },
+    { metric: 'reminder_scheduler_scan_duration_ms', unit: 'milliseconds', focusAreas: ['automation'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] },
+  ],
+};
+
+const analyticsSnapshot = {
+  snapshotAt: observedAt,
+  percentileMethod: 'clickhouse_quantile_exact',
+  capturePolicy: 'metadata_only',
+  query: { metric: 'operation_duration_ms', unit: 'milliseconds', aggregation: 'p95', focus: 'all', from: '2026-10-14T00:00:00.000Z', to: observedAt, bucket: 'one_hour', bucketSeconds: 3600, groupBy: 'component', filters: {}, seriesLimit: 12, pointLimit: 200 },
+  series: [{ seriesKey: 'operation-api', facets: { component: 'aura.core.api' }, availability: 'available', partial: false, summary: { sampleCount: 4, minimum: 10, maximum: 60, average: 30, p50: 25, p90: 52, p95: 58, p99: 60, ratePerInterval: null, rateIntervalSeconds: null }, points: [{ startAt: observedAt, endAt: observedAt, value: 58, sampleCount: 4, availability: 'available', partial: false }] }],
+  breakdowns: [{ groupBy: 'outcome', value: 'succeeded', count: 4, partial: false }],
+  freshness: { latestObservedAt: observedAt, lagMs: 120, state: 'fresh' }, partial: false, partialReasons: [], unavailableSignals: [], scan: { scannedRows: 4, scanLimit: 1000000, executionMs: 12, executionLimitMs: 5000 },
+};
+
 function runDetail() {
   return {
     ...run,
@@ -105,6 +130,7 @@ type FixtureOptions = {
   expireNextRuns?: boolean;
   stale?: boolean;
   unavailable?: boolean;
+  analyticsFailure?: 'malformed' | 'private-marker' | 'rejected' | 'partial' | 'sparse' | 'stale' | 'multi-series' | 'many-points';
   sseDisconnected?: boolean;
   retentionFailure?: boolean;
   partial?: boolean;
@@ -123,6 +149,7 @@ type FixtureHandle = {
   retentionRequests: Array<{ action: string; body: Record<string, unknown>; headers: Record<string, string> }>;
   logoutRequests: Array<{ headers: Record<string, string> }>;
   deferredKinds: Set<string>;
+  analyticsQueryUrls: string[];
   releaseDeferred: () => void;
   failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
@@ -133,6 +160,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const retentionRequests: Array<{ action: string; body: Record<string, unknown>; headers: Record<string, string> }> = [];
   const logoutRequests: Array<{ headers: Record<string, string> }> = [];
   const deferredKinds = new Set<string>();
+  const analyticsQueryUrls: string[] = [];
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
@@ -231,6 +259,32 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         { componentId: 'aura.core.api', versions: ['1.2.0'], firstSeenAt: observedAt, lastSeenAt: observedAt, health: componentHealth },
         { componentId: 'aura.core.worker', versions: ['1.2.0'], firstSeenAt: observedAt, lastSeenAt: observedAt, health: { ...componentHealth, errorRate: 0 } },
       ] } });
+      return;
+    }
+    if (path.endsWith('/analytics/metrics')) {
+      if (options.analyticsFailure === 'rejected') { await route.fulfill({ status: 422, json: { code: 'unsupported_metric', message: 'unsupported analytics combination', retryable: false, traceId } }); return; }
+      await route.fulfill(options.unavailable ? { status: 503, json: { code: 'service_unavailable', message: 'analytics unavailable', retryable: true, traceId } } : { json: analyticsCatalogue });
+      return;
+    }
+    if (path.endsWith('/analytics/query')) {
+      analyticsQueryUrls.push(request.url());
+      if (options.analyticsFailure === 'malformed') { await route.fulfill({ json: { snapshotAt: observedAt, capturePolicy: 'metadata_only', series: [{ seriesKey: 'malformed', points: 'not-an-array' }] } }); return; }
+      if (options.analyticsFailure === 'private-marker') { await route.fulfill({ json: { ...analyticsSnapshot, series: [{ ...analyticsSnapshot.series[0], facets: { provider: 'PRIVATE CONTENT VALUE' } }] } }); return; }
+      if (options.analyticsFailure === 'rejected') { await route.fulfill({ status: 422, json: { code: 'unsupported_metric', message: 'unsupported analytics combination', retryable: false, traceId } }); return; }
+      if (options.unavailable) { await route.fulfill({ status: 503, json: { code: 'service_unavailable', message: 'analytics unavailable', retryable: true, traceId } }); return; }
+      if (options.analyticsFailure === 'sparse') { await route.fulfill({ json: { ...analyticsSnapshot, series: [], breakdowns: [], partial: false, freshness: { ...analyticsSnapshot.freshness, state: 'unavailable', latestObservedAt: null, lagMs: null }, unavailableSignals: ['measurement'] } }); return; }
+      if (options.analyticsFailure === 'stale') { await route.fulfill({ json: { ...analyticsSnapshot, freshness: { ...analyticsSnapshot.freshness, state: 'stale', lagMs: 604800000 } } }); return; }
+      if (options.analyticsFailure === 'partial') { await route.fulfill({ json: { ...analyticsSnapshot, partial: true, partialReasons: ['scan_limit'], series: analyticsSnapshot.series.map((series) => ({ ...series, partial: true, points: series.points.map((point) => ({ ...point, partial: true })) })), breakdowns: analyticsSnapshot.breakdowns.map((item) => ({ ...item, partial: true })) } }); return; }
+      if (options.analyticsFailure === 'multi-series') {
+        await route.fulfill({ json: { ...analyticsSnapshot, series: [analyticsSnapshot.series[0], { ...analyticsSnapshot.series[0], seriesKey: `operation-${'x'.repeat(72)}`, facets: { component: `aura.observatory.long_${'y'.repeat(64)}` }, points: [{ ...analyticsSnapshot.series[0].points[0], value: 37, sampleCount: 2 }, { ...analyticsSnapshot.series[0].points[0], startAt: new Date(Date.parse(observedAt) - 3600000).toISOString(), endAt: new Date(Date.parse(observedAt) - 3600000).toISOString(), value: 41, sampleCount: 3 }] }] } });
+        return;
+      }
+      if (options.analyticsFailure === 'many-points') {
+        const points = Array.from({ length: 200 }, (_, index) => ({ startAt: new Date(Date.parse(observedAt) - (199 - index) * 3600000).toISOString(), endAt: new Date(Date.parse(observedAt) - (199 - index) * 3600000).toISOString(), value: index + 1, sampleCount: 1, availability: 'available', partial: false }));
+        await route.fulfill({ json: { ...analyticsSnapshot, series: [{ ...analyticsSnapshot.series[0], points, summary: { ...analyticsSnapshot.series[0].summary, sampleCount: 200, minimum: 1, maximum: 200, average: 100.5, p50: 100, p90: 180, p95: 190, p99: 198 } }] } });
+        return;
+      }
+      await route.fulfill({ json: analyticsSnapshot });
       return;
     }
     if (path.endsWith('/components/aura.observatory.query_api/definitions/1.0.0')) {
@@ -349,6 +403,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     retentionRequests,
     logoutRequests,
     deferredKinds,
+    analyticsQueryUrls,
     releaseDeferred: () => { while (deferredResolvers.length) deferredResolvers.shift()?.(); },
     failCatalogueRefresh: () => { componentRefreshFailure = true; },
     restoreIdentity: () => { identityUnavailable = false; loggedOut = false; },
@@ -370,6 +425,161 @@ async function expectNoA11yViolations(page: Page): Promise<void> {
 }
 
 test.describe('Observatory Web mocked browser acceptance', () => {
+  test('renders bounded analytics with focus views and a semantic table beside the chart', async ({ page }) => {
+    await openFixture(page);
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Metric explorer', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Model', exact: true })).toBeVisible();
+    const chart = page.locator('observatory-analytics .chart').first();
+    await expect(chart).toHaveAttribute('aria-hidden', 'true');
+    await expect(chart.getByRole('button')).toHaveCount(0);
+    await expect(page.getByText(/Decorative trend preview/i).first()).toBeVisible();
+    await expect(page.getByRole('table', { name: /data in milliseconds/i })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'P90', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('option', { name: 'P95', exact: true })).toHaveCount(1);
+    await expect(chart.locator('button')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Model', exact: true }).click();
+    await expect(page.getByText(/Inference and routing timing/i)).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Aggregation' }).locator('option')).toHaveCount(2);
+    await expect(page.locator('main')).not.toContainText(/prompt|response|credential|tool argument/i);
+  });
+
+  test('renders all declared focus views and resets controls to catalogue-supported options', async ({ page }) => {
+    await openFixture(page);
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    for (const focus of ['All operations', 'Model', 'Queue', 'Retrieval', 'Tool', 'Memory', 'Automation']) {
+      await page.getByRole('button', { name: focus, exact: true }).click();
+      await expect(page.getByRole('combobox', { name: 'Aggregation' }).locator('option')).not.toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Group series by' }).locator('option')).not.toHaveCount(0);
+    }
+    await expect(page.getByRole('button', { name: 'Automation', exact: true })).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('keeps multi-series charts bounded and associates exact values with each semantic table', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'multi-series' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    const analytics = page.locator('observatory-analytics');
+    await expect(analytics.locator('.series-grid .series-card')).toHaveCount(2);
+    await expect(analytics.locator('.series-grid .chart')).toHaveCount(2);
+    await expect(analytics.locator('.series-grid .chart button')).toHaveCount(0);
+    await expect(analytics.locator('.series-grid .chart-detail')).toHaveCount(2);
+    await expect(analytics.locator('.series-grid .chart-detail[aria-live]')).toHaveCount(0);
+    await expect(analytics.locator('.series-grid table')).toHaveCount(2);
+    await expect(analytics.locator('.series-grid table caption')).toHaveCount(2);
+    await expect(analytics.getByText(`operation-${'x'.repeat(72)}`, { exact: true })).toBeVisible();
+    await expect(analytics.getByText(`aura.observatory.long_${'y'.repeat(64)}`, { exact: true })).toBeVisible();
+  });
+
+  test('keeps a 200-point chart out of the keyboard tab sequence', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'many-points' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    const chart = page.locator('observatory-analytics .chart').first();
+    await expect(chart).toHaveAttribute('aria-hidden', 'true');
+    await expect(chart.locator('.bar')).toHaveCount(200);
+    await expect(chart.getByRole('button')).toHaveCount(0);
+    await expect(page.locator('observatory-analytics .series-grid table tbody tr')).toHaveCount(200);
+  });
+
+  test('keeps analytics readable and accessible at 200 and 400 percent with dark reduced motion', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+    await openFixture(page, { analyticsFailure: 'multi-series' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    for (const zoom of [2, 4]) {
+      await page.evaluate((value) => { document.documentElement.style.zoom = String(value); }, zoom);
+      await expect(page.getByRole('heading', { name: 'Metric explorer', exact: true })).toBeVisible();
+      const layout = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
+      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    }
+    await expect(page.locator('observatory-analytics .series-grid table')).toHaveCount(2);
+    await expectNoA11yViolations(page);
+  });
+
+  test('keeps malformed, rejected, sparse, partial, and stale analytics recoverable', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'malformed' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('malformed');
+    await expect(page.getByRole('button', { name: 'Retry metrics', exact: true })).toBeVisible();
+  });
+
+  test('rejects private analytics markers without rendering them', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'private-marker' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('malformed');
+    await expect(page.locator('main')).not.toContainText('PRIVATE CONTENT VALUE');
+  });
+
+  test('validates UTC ordering and maximum window and clears old bounds', async ({ page }) => {
+    const fixture = await openFixture(page);
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    const analytics = page.locator('observatory-analytics');
+    await analytics.getByLabel('From (UTC)').fill('2026-10-01T00:00');
+    await analytics.getByLabel('To (UTC)').fill('2026-11-02T00:00');
+    await analytics.getByRole('button', { name: 'Apply bounded query', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('cannot be longer than 31 days');
+    await expect(analytics.getByLabel('From (UTC)')).toHaveAttribute('aria-invalid', 'true');
+    await analytics.getByLabel('From (UTC)').fill('2026-10-01T00:00');
+    await analytics.getByLabel('To (UTC)').fill('2026-11-01T00:00');
+    await analytics.getByRole('button', { name: 'Apply bounded query', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(fixture.analyticsQueryUrls.at(-1)).toMatch(/from=2026-10-01T00%3A00%3A00.000Z/);
+    await analytics.getByLabel('From (UTC)').fill('');
+    await analytics.getByLabel('To (UTC)').fill('');
+    await analytics.getByRole('button', { name: 'Apply bounded query', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(fixture.analyticsQueryUrls.at(-1)).not.toMatch(/[?&](from|to)=/);
+  });
+
+  test('announces sparse, partial, stale, and disconnected analytics without dropping cached data', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'partial' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: /Partial reasons/i })).toBeVisible();
+    await expect(page.getByRole('table', { name: /data in milliseconds/i })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.locator('observatory-analytics .chart').first()).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  test('renders sparse analytics as unavailable and rejected combinations as retryable', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'sparse' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: /No measurements match/i })).toBeVisible();
+    await expect(page.getByText(/Freshness is unavailable/i)).toBeVisible();
+  });
+
+  test('renders stale analytics with explicit UTC freshness copy', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'stale' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByText('Metric data is stale', { exact: true })).toBeVisible();
+    await expect(page.getByText(/UTC · lag/i)).toBeVisible();
+  });
+
+  test('renders a rejected analytics request with a bounded recovery action', async ({ page }) => {
+    await openFixture(page, { analyticsFailure: 'rejected' });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText(/unavailable|422/);
+    await expect(page.getByRole('button', { name: 'Retry metrics', exact: true })).toBeVisible();
+  });
+
+  test('marks cached analytics disconnected when the metadata stream fails', async ({ page }) => {
+    await openFixture(page, { sseDisconnected: true });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByText('Live analytics updates are disconnected.', { exact: true })).toBeVisible();
+    await expect(page.locator('observatory-analytics .chart').first()).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  test('keeps metric snapshots memory-only and exposes recovery when analytics is unavailable', async ({ page }) => {
+    await openFixture(page, { unavailable: true });
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Operational analytics are unavailable');
+    await expect(page.getByRole('button', { name: 'Retry metrics', exact: true })).toBeVisible();
+    const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage), url: location.href }));
+    expect(storage.local).toEqual([]);
+    expect(storage.session).toEqual([]);
+    expect(storage.url).not.toMatch(/metric|series|deployment|component/);
+  });
+
   test('has no axe violations in the healthy shell', async ({ page }) => {
     await openFixture(page);
     await expectNoA11yViolations(page);
@@ -559,10 +769,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   test('shows component health summaries and a bounded trend', async ({ page }) => {
     await openFixture(page);
     await page.getByRole('button', { name: 'Components', exact: true }).click();
-    await expect(page.getByText('aura.core.api')).toBeVisible();
-    await expect(page.locator('observatory-components').getByText(/p50|latency/i).first()).toBeVisible();
-    await expect(page.locator('observatory-components').getByText(/errors?/i).first()).toBeVisible();
-    const firstComponent = page.locator('observatory-components').getByRole('article').first();
+    const components = page.locator('observatory-components');
+    await expect(components.getByText('aura.core.api', { exact: true })).toBeVisible();
+    await expect(components.getByText(/p50|latency/i).first()).toBeVisible();
+    await expect(components.getByText(/errors?/i).first()).toBeVisible();
+    const firstComponent = components.getByRole('article').first();
     await expect(firstComponent.locator('dt').filter({ hasText: 'Samples' }).locator('..').locator('dd')).toHaveText('4');
     const trendValues = page.locator('observatory-components [role="img"][aria-label]');
     await expect(trendValues.first()).toBeVisible({ timeout: 10_000 });
@@ -583,6 +794,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   });
 
   test('renders declared and observed-only catalogue entries with an accessible topology table', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
     await openFixture(page, { componentTopology: 'declared' });
     await page.getByRole('button', { name: 'Components', exact: true }).click();
     const components = page.locator('observatory-components');
@@ -615,7 +827,6 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(table.getByText('4 samples · 25% errors · p95 44 ms · Degraded', { exact: true })).toBeVisible();
     await expect(page.getByText('Direct dependencies', { exact: true })).toBeVisible();
     await expect(page.getByText('Reverse dependencies', { exact: true })).toBeVisible();
-    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
     await expectNoA11yViolations(page);
     await page.getByRole('button', { name: 'Close details', exact: true }).click();
     await expect(open).toBeFocused();

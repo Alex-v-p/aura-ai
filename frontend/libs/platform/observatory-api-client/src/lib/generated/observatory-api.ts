@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 2576be9c11ec2fbf638184b57409acbc108f8ec875ff3b84a813d1bd1920bbb1
+// Contract SHA-256: 016c0ea70f4c9bea0496cebd8877287eb17d2cd796149d1326bc5dd7e30f496f
 
 export type Uuid = string;
 
@@ -32,6 +32,58 @@ export type NonNegativeCount = number;
 export type BoundedLatencyMs = number;
 
 export type BoundedLagMs = number;
+
+export type OperationName = string;
+
+export type EnvironmentName = string;
+
+export type DimensionValue = string;
+
+export type ServiceRole = "api" | "worker" | "scheduler" | "cli";
+
+export type AnalyticsFocus = "all" | "model" | "queue" | "retrieval" | "tool" | "memory" | "automation";
+
+export type AnalyticsUnit = "count" | "milliseconds" | "bytes" | "ratio" | "score";
+
+export type AnalyticsMetricName = "operation_duration_ms" | "run_duration_ms" | "queue_wait_ms" | "errors" | "retries" | "backlog" | "backlog_depth" | "inference_duration_ms" | "time_to_first_token_ms" | "output_tokens" | "provider_errors" | "model_routing_duration_ms" | "structured_inference_duration_ms" | "tool_selection_duration_ms" | "tool_selection_outcome" | "tool_policy_evaluation_duration_ms" | "tool_policy_decision" | "tool_argument_validation_outcome" | "tool_execution_duration_ms" | "tool_execution_outcome" | "tool_timeout_count" | "memory_extraction_duration_ms" | "memory_candidate_decision" | "memory_reviewable_candidate_count" | "memory_operation_duration_ms" | "memory_operation_outcome" | "memory_retrieval_duration_ms" | "memory_lexical_search_duration_ms" | "memory_vector_search_duration_ms" | "memory_rerank_duration_ms" | "memory_processing_errors" | "memory_retry_count" | "memory_reindex_backlog" | "document_retrieval_duration_ms" | "document_retrieval_outcome" | "document_retrieval_candidate_count" | "reminder_scheduler_scan_duration_ms" | "reminder_due_lag_ms" | "reminder_series_due_lag_ms" | "reminder_fired_count" | "reminder_failure_count" | "notification_failure_count" | "notification_acknowledgement_outcome";
+
+export type AnalyticsAggregation = "average" | "sum" | "minimum" | "maximum" | "p50" | "p90" | "p95" | "p99" | "rate" | "count";
+
+export type AnalyticsBucket = "auto" | "one_minute" | "five_minutes" | "fifteen_minutes" | "one_hour" | "six_hours" | "one_day";
+
+export type AnalyticsGroupBy = "none" | "component" | "component_version" | "operation" | "deployment" | "environment" | "host" | "service_role" | "provider" | "outcome" | "error_class" | "status" | "retrieval_stage";
+
+export type AnalyticsAvailability = "available" | "no_data" | "unavailable";
+
+export type AnalyticsPartialReason = "scan_limit" | "execution_limit" | "series_limit" | "point_limit" | "late_data" | "retention_boundary";
+
+export type AnalyticsUnavailableSignal = "model_identity" | "retryability" | "input_cohort" | "gpu" | "selected_evidence" | "side_effect_detail" | "quality" | "saturation" | "measurement" | "unit" | "dimension";
+
+export type AnalyticsPercentileMethod = "clickhouse_quantile_exact";
+
+export type AnalyticsMetricDefinition = { readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "focusAreas": ReadonlyArray<AnalyticsFocus>; readonly "supportedAggregations": ReadonlyArray<AnalyticsAggregation>; readonly "supportedGroupings": ReadonlyArray<AnalyticsGroupBy>; readonly "availability": AnalyticsAvailability; readonly "unavailableSignals": ReadonlyArray<AnalyticsUnavailableSignal>; };
+
+export type AnalyticsLimits = { readonly "defaultWindowHours": 24; readonly "maximumWindowDays": 31; readonly "maximumPointsPerSeries": 200; readonly "maximumSeries": 12; readonly "maximumBreakdowns": 50; readonly "maximumScannedRows": 1000000; readonly "executionTimeoutMs": 5000; };
+
+export type AnalyticsMetricCatalogue = { readonly "snapshotAt": UtcInstant; readonly "items": ReadonlyArray<AnalyticsMetricDefinition>; readonly "limits": AnalyticsLimits; readonly "capturePolicy": "metadata_only"; };
+
+export type AnalyticsSeriesFacets = { readonly "component"?: ComponentId; readonly "componentVersion"?: SafeLabel; readonly "operation"?: OperationName; readonly "deployment"?: SafeLabel; readonly "environment"?: EnvironmentName; readonly "host"?: SafeLabel; readonly "serviceRole"?: ServiceRole; readonly "provider"?: DimensionValue; readonly "outcome"?: Outcome; readonly "errorClass"?: DimensionValue; readonly "status"?: DimensionValue; readonly "retrievalStage"?: DimensionValue; };
+
+export type AnalyticsPoint = { readonly "startAt": UtcInstant; readonly "endAt": UtcInstant; readonly "value": number | null; readonly "sampleCount": NonNegativeCount; readonly "availability": AnalyticsAvailability; readonly "partial": boolean; };
+
+export type AnalyticsSeriesSummary = { readonly "sampleCount": NonNegativeCount; readonly "minimum": number | null; readonly "maximum": number | null; readonly "average": number | null; readonly "p50": number | null; readonly "p90": number | null; readonly "p95": number | null; readonly "p99": number | null; readonly "ratePerInterval": number | null; readonly "rateIntervalSeconds": number | null; };
+
+export type AnalyticsSeries = { readonly "seriesKey": string; readonly "facets": AnalyticsSeriesFacets; readonly "summary": AnalyticsSeriesSummary; readonly "points": ReadonlyArray<AnalyticsPoint>; readonly "availability": AnalyticsAvailability; readonly "partial": boolean; };
+
+export type AnalyticsBreakdown = { readonly "groupBy": AnalyticsGroupBy; readonly "value": DimensionValue; readonly "count": NonNegativeCount; readonly "partial": boolean; };
+
+export type AnalyticsFreshness = { readonly "latestObservedAt": UtcInstant | null; readonly "lagMs": BoundedLagMs | null; readonly "state": "fresh" | "stale" | "unavailable"; };
+
+export type AnalyticsEffectiveQuery = { readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "aggregation": AnalyticsAggregation; readonly "focus": AnalyticsFocus; readonly "from": UtcInstant; readonly "to": UtcInstant; readonly "bucket": AnalyticsBucket; readonly "bucketSeconds": number; readonly "groupBy": AnalyticsGroupBy; readonly "filters": AnalyticsSeriesFacets; readonly "seriesLimit": number; readonly "pointLimit": number; };
+
+export type AnalyticsScan = { readonly "scannedRows": number; readonly "scanLimit": 1000000; readonly "executionMs": number; readonly "executionLimitMs": 5000; };
+
+export type OperationalAnalyticsSnapshot = { readonly "snapshotAt": UtcInstant; readonly "query": AnalyticsEffectiveQuery; readonly "percentileMethod": AnalyticsPercentileMethod; readonly "series": ReadonlyArray<AnalyticsSeries>; readonly "breakdowns": ReadonlyArray<AnalyticsBreakdown>; readonly "freshness": AnalyticsFreshness; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<AnalyticsPartialReason>; readonly "unavailableSignals": ReadonlyArray<AnalyticsUnavailableSignal>; readonly "scan": AnalyticsScan; readonly "capturePolicy": "metadata_only"; };
 
 export type OwnerSession = { readonly "csrfToken": string; };
 
@@ -126,6 +178,8 @@ export interface ObservatoryApiOperations {
   readonly getComponentDefinition: { readonly response: ComponentDefinition; readonly body: never; readonly path: { readonly "component_id": ComponentId; readonly "component_version": SafeLabel; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getComponentDependencies: { readonly response: ComponentDependencyTopology; readonly body: never; readonly path: { readonly "component_id": ComponentId; readonly "component_version": SafeLabel; }; readonly query: { readonly "depth"?: number; readonly "max_nodes"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getComponentHealth: { readonly response: ComponentHealth; readonly body: never; readonly path: { readonly "component_id": ComponentId; }; readonly query: { readonly "component_version"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly listAnalyticsMetrics: { readonly response: AnalyticsMetricCatalogue; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "focus"?: AnalyticsFocus; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly queryOperationalAnalytics: { readonly response: OperationalAnalyticsSnapshot; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "aggregation"?: AnalyticsAggregation; readonly "focus"?: AnalyticsFocus; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "bucket"?: AnalyticsBucket; readonly "group_by"?: AnalyticsGroupBy; readonly "component"?: ComponentId; readonly "component_version"?: SafeLabel; readonly "operation"?: OperationName; readonly "deployment"?: SafeLabel; readonly "environment"?: EnvironmentName; readonly "host"?: SafeLabel; readonly "service_role"?: ServiceRole; readonly "provider"?: DimensionValue; readonly "outcome"?: Outcome; readonly "error_class"?: DimensionValue; readonly "status"?: DimensionValue; readonly "retrieval_stage"?: DimensionValue; readonly "series_limit"?: number; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listDeployments: { readonly response: DeploymentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly streamEvents: { readonly response: SsePayload; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly createRetentionAction: { readonly response: RetentionAction; readonly body: CreateRetentionActionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
@@ -161,6 +215,8 @@ export const OBSERVATORY_API_OPERATIONS = {
   getComponentDefinition: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/definitions/{component_version}', requestMode: 'none', responseMode: 'json' },
   getComponentDependencies: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/definitions/{component_version}/dependencies', requestMode: 'none', responseMode: 'json' },
   getComponentHealth: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/health', requestMode: 'none', responseMode: 'json' },
+  listAnalyticsMetrics: { method: 'GET', pathTemplate: '/api/v1/analytics/metrics', requestMode: 'none', responseMode: 'json' },
+  queryOperationalAnalytics: { method: 'GET', pathTemplate: '/api/v1/analytics/query', requestMode: 'none', responseMode: 'json' },
   listDeployments: { method: 'GET', pathTemplate: '/api/v1/deployments', requestMode: 'none', responseMode: 'json' },
   streamEvents: { method: 'GET', pathTemplate: '/api/v1/events', requestMode: 'none', responseMode: 'event-stream' },
   createRetentionAction: { method: 'POST', pathTemplate: '/api/v1/retention/actions', requestMode: 'json', responseMode: 'json' },

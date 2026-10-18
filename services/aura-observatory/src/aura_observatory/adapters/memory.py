@@ -18,7 +18,11 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _normalize_outcome(observation: MetadataObservation) -> str:
-    value = observation.dimensions.get("outcome", observation.dimensions.get("status", "unknown"))
+    value = (
+        observation.dimensions.get("outcome")
+        or observation.dimensions.get("status")
+        or "unknown"
+    ).casefold()
     return {
         "success": "succeeded",
         "completed": "succeeded",
@@ -403,9 +407,15 @@ class MemoryObservatoryStore:
             return None
         return max(item.observed_at for item in self.events)
 
-    async def list_observations(self) -> list[MetadataObservation]:
+    async def list_observations(
+        self, *, limit: int | None = None
+    ) -> list[MetadataObservation]:
         async with self._lock:
-            return list(self.observations.values())
+            ordered = sorted(
+                self.observations.values(),
+                key=lambda item: (item.observed_at.astimezone(UTC), item.observation_id),
+            )
+            return ordered if limit is None else ordered[:limit]
 
     async def components(self) -> list[dict[str, Any]]:
         observations = await self.list_observations()

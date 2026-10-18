@@ -16,6 +16,7 @@
     { "name": "Runs" },
     { "name": "Traces" },
     { "name": "Components" },
+    { "name": "Analytics" },
     { "name": "Deployments" },
     { "name": "Live" },
     { "name": "Retention" }
@@ -218,6 +219,62 @@
         }
       }
     },
+    "/api/v1/analytics/metrics": {
+      "get": {
+        "operationId": "listAnalyticsMetrics",
+        "tags": ["Analytics"],
+        "description": "Return the finite metadata-only metric catalogue. Catalogue entries declare the only measurement and unit pairs accepted by the bounded analytics query resource; unavailable entries remain visible so clients never synthesize missing signals.",
+        "parameters": [
+          { "name": "focus", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsFocus" } }
+        ],
+        "responses": {
+          "200": { "description": "Current allowlisted operational metric catalogue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AnalyticsMetricCatalogue" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/analytics/query": {
+      "get": {
+        "operationId": "queryOperationalAnalytics",
+        "tags": ["Analytics"],
+        "description": "Return one bounded, owner-authorized analytical snapshot from ClickHouse. Omitted from/to select the 24 hours ending at snapshot time; an explicit window may not exceed 31 days. The service validates the metric/unit/aggregation combination against the metric catalogue, selects a deterministic bucket when bucket=auto, caps each series at 200 points and the response at 12 series, and rejects unsupported combinations rather than inferring a value from another signal.",
+        "parameters": [
+          { "name": "metric", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/AnalyticsMetricName" } },
+          { "name": "unit", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/AnalyticsUnit" } },
+          { "name": "aggregation", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsAggregation" } },
+          { "name": "focus", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsFocus" } },
+          { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "bucket", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsBucket" } },
+          { "name": "group_by", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsGroupBy" } },
+          { "name": "component", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ComponentId" } },
+          { "name": "component_version", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
+          { "name": "operation", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/OperationName" } },
+          { "name": "deployment", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
+          { "name": "environment", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/EnvironmentName" } },
+          { "name": "host", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
+          { "name": "service_role", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/ServiceRole" } },
+          { "name": "provider", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DimensionValue" } },
+          { "name": "outcome", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Outcome" } },
+          { "name": "error_class", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DimensionValue" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DimensionValue" } },
+          { "name": "retrieval_stage", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/DimensionValue" } },
+          { "name": "series_limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 12, "default": 12 } },
+          { "name": "point_limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded operational analytics snapshot. Cache-Control is no-store because authenticated chart data is memory-only.", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OperationalAnalyticsSnapshot" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/deployments": {
       "get": {
         "operationId": "listDeployments",
@@ -329,6 +386,190 @@
       "NonNegativeCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
       "BoundedLatencyMs": { "type": "number", "minimum": 0, "maximum": 600000, "description": "Finite duration clamped to ten minutes." },
       "BoundedLagMs": { "type": "number", "minimum": 0, "maximum": 604800000, "description": "Finite non-negative lag clamped to seven days. Intake lag is derived only from successfully validated observation time, and future-skewed timestamps clamp to zero." },
+      "OperationName": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]{0,95}$" },
+      "EnvironmentName": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_.-]{0,31}$" },
+      "DimensionValue": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$", "description": "Bounded metadata label from the closed metadata-observation v1 dimension allowlist; whitespace, URLs, paths, email-like values, and free-form text are prohibited." },
+      "ServiceRole": { "type": "string", "enum": ["api", "worker", "scheduler", "cli"] },
+      "AnalyticsFocus": { "type": "string", "enum": ["all", "model", "queue", "retrieval", "tool", "memory", "automation"], "default": "all" },
+      "AnalyticsUnit": { "type": "string", "enum": ["count", "milliseconds", "bytes", "ratio", "score"] },
+      "AnalyticsMetricName": {
+        "type": "string",
+        "enum": [
+          "operation_duration_ms", "run_duration_ms", "queue_wait_ms", "errors", "retries", "backlog", "backlog_depth",
+          "inference_duration_ms", "time_to_first_token_ms", "output_tokens", "provider_errors", "model_routing_duration_ms", "structured_inference_duration_ms",
+          "tool_selection_duration_ms", "tool_selection_outcome", "tool_policy_evaluation_duration_ms", "tool_policy_decision", "tool_argument_validation_outcome", "tool_execution_duration_ms", "tool_execution_outcome", "tool_timeout_count",
+          "memory_extraction_duration_ms", "memory_candidate_decision", "memory_reviewable_candidate_count", "memory_operation_duration_ms", "memory_operation_outcome", "memory_retrieval_duration_ms", "memory_lexical_search_duration_ms", "memory_vector_search_duration_ms", "memory_rerank_duration_ms", "memory_processing_errors", "memory_retry_count", "memory_reindex_backlog",
+          "document_retrieval_duration_ms", "document_retrieval_outcome", "document_retrieval_candidate_count",
+          "reminder_scheduler_scan_duration_ms", "reminder_due_lag_ms", "reminder_series_due_lag_ms", "reminder_fired_count", "reminder_failure_count", "notification_failure_count", "notification_acknowledgement_outcome"
+        ],
+        "description": "Finite operational analytics allowlist. It is intentionally narrower than the telemetry contract's syntactic measurement-name pattern."
+      },
+      "AnalyticsAggregation": { "type": "string", "enum": ["average", "sum", "minimum", "maximum", "p50", "p90", "p95", "p99", "rate", "count"], "default": "average" },
+      "AnalyticsBucket": { "type": "string", "enum": ["auto", "one_minute", "five_minutes", "fifteen_minutes", "one_hour", "six_hours", "one_day"], "default": "auto", "description": "auto deterministically chooses the smallest bucket producing no more than 200 points for the effective UTC window." },
+      "AnalyticsGroupBy": { "type": "string", "enum": ["none", "component", "component_version", "operation", "deployment", "environment", "host", "service_role", "provider", "outcome", "error_class", "status", "retrieval_stage"], "default": "none" },
+      "AnalyticsAvailability": { "type": "string", "enum": ["available", "no_data", "unavailable"] },
+      "AnalyticsPartialReason": { "type": "string", "enum": ["scan_limit", "execution_limit", "series_limit", "point_limit", "late_data", "retention_boundary"] },
+      "AnalyticsUnavailableSignal": { "type": "string", "enum": ["model_identity", "retryability", "input_cohort", "gpu", "selected_evidence", "side_effect_detail", "quality", "saturation", "measurement", "unit", "dimension"] },
+      "AnalyticsPercentileMethod": { "type": "string", "const": "clickhouse_quantile_exact", "description": "Stable ClickHouse quantileExact method applied only to samples sharing the declared measurement and unit." },
+      "AnalyticsMetricDefinition": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "unit", "focusAreas", "supportedAggregations", "supportedGroupings", "availability", "unavailableSignals"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/AnalyticsMetricName" },
+          "unit": { "$ref": "#/components/schemas/AnalyticsUnit" },
+          "focusAreas": { "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsFocus" } },
+          "supportedAggregations": { "type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsAggregation" } },
+          "supportedGroupings": { "type": "array", "minItems": 1, "maxItems": 13, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsGroupBy" } },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "unavailableSignals": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsUnavailableSignal" } }
+        }
+      },
+      "AnalyticsLimits": {
+        "type": "object", "additionalProperties": false,
+        "required": ["defaultWindowHours", "maximumWindowDays", "maximumPointsPerSeries", "maximumSeries", "maximumBreakdowns", "maximumScannedRows", "executionTimeoutMs"],
+        "properties": {
+          "defaultWindowHours": { "type": "integer", "const": 24 },
+          "maximumWindowDays": { "type": "integer", "const": 31 },
+          "maximumPointsPerSeries": { "type": "integer", "const": 200 },
+          "maximumSeries": { "type": "integer", "const": 12 },
+          "maximumBreakdowns": { "type": "integer", "const": 50 },
+          "maximumScannedRows": { "type": "integer", "const": 1000000 },
+          "executionTimeoutMs": { "type": "integer", "const": 5000 }
+        }
+      },
+      "AnalyticsMetricCatalogue": {
+        "type": "object", "additionalProperties": false,
+        "required": ["snapshotAt", "items", "limits", "capturePolicy"],
+        "properties": {
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "items": { "type": "array", "maxItems": 128, "items": { "$ref": "#/components/schemas/AnalyticsMetricDefinition" } },
+          "limits": { "$ref": "#/components/schemas/AnalyticsLimits" },
+          "capturePolicy": { "type": "string", "const": "metadata_only" }
+        }
+      },
+      "AnalyticsSeriesFacets": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "component": { "$ref": "#/components/schemas/ComponentId" },
+          "componentVersion": { "$ref": "#/components/schemas/SafeLabel" },
+          "operation": { "$ref": "#/components/schemas/OperationName" },
+          "deployment": { "$ref": "#/components/schemas/SafeLabel" },
+          "environment": { "$ref": "#/components/schemas/EnvironmentName" },
+          "host": { "$ref": "#/components/schemas/SafeLabel" },
+          "serviceRole": { "$ref": "#/components/schemas/ServiceRole" },
+          "provider": { "$ref": "#/components/schemas/DimensionValue" },
+          "outcome": { "$ref": "#/components/schemas/Outcome" },
+          "errorClass": { "$ref": "#/components/schemas/DimensionValue" },
+          "status": { "$ref": "#/components/schemas/DimensionValue" },
+          "retrievalStage": { "$ref": "#/components/schemas/DimensionValue" }
+        }
+      },
+      "AnalyticsPoint": {
+        "type": "object", "additionalProperties": false,
+        "required": ["startAt", "endAt", "value", "sampleCount", "availability", "partial"],
+        "properties": {
+          "startAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "endAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "value": { "type": ["number", "null"], "minimum": -1000000000000000, "maximum": 1000000000000000 },
+          "sampleCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "AnalyticsSeriesSummary": {
+        "type": "object", "additionalProperties": false,
+        "description": "Null statistics are unavailable for this measurement; zero is a measured zero and remains distinct. Percentiles use the declared stable method and rates use rateIntervalSeconds.",
+        "required": ["sampleCount", "minimum", "maximum", "average", "p50", "p90", "p95", "p99", "ratePerInterval", "rateIntervalSeconds"],
+        "properties": {
+          "sampleCount": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "minimum": { "type": ["number", "null"] },
+          "maximum": { "type": ["number", "null"] },
+          "average": { "type": ["number", "null"] },
+          "p50": { "type": ["number", "null"] },
+          "p90": { "type": ["number", "null"] },
+          "p95": { "type": ["number", "null"] },
+          "p99": { "type": ["number", "null"] },
+          "ratePerInterval": { "type": ["number", "null"], "minimum": 0 },
+          "rateIntervalSeconds": { "type": ["integer", "null"], "minimum": 60, "maximum": 86400 }
+        }
+      },
+      "AnalyticsSeries": {
+        "type": "object", "additionalProperties": false,
+        "required": ["seriesKey", "facets", "summary", "points", "availability", "partial"],
+        "properties": {
+          "seriesKey": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9._:+-]+$", "description": "Deterministic content-free key derived from the selected grouping, not an observation identifier." },
+          "facets": { "$ref": "#/components/schemas/AnalyticsSeriesFacets" },
+          "summary": { "$ref": "#/components/schemas/AnalyticsSeriesSummary" },
+          "points": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/AnalyticsPoint" } },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "AnalyticsBreakdown": {
+        "type": "object", "additionalProperties": false,
+        "required": ["groupBy", "value", "count", "partial"],
+        "properties": {
+          "groupBy": { "$ref": "#/components/schemas/AnalyticsGroupBy" },
+          "value": { "$ref": "#/components/schemas/DimensionValue" },
+          "count": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "AnalyticsFreshness": {
+        "type": "object", "additionalProperties": false,
+        "required": ["latestObservedAt", "lagMs", "state"],
+        "properties": {
+          "latestObservedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "lagMs": { "oneOf": [{ "$ref": "#/components/schemas/BoundedLagMs" }, { "type": "null" }] },
+          "state": { "type": "string", "enum": ["fresh", "stale", "unavailable"] }
+        }
+      },
+      "AnalyticsEffectiveQuery": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "unit", "aggregation", "focus", "from", "to", "bucket", "bucketSeconds", "groupBy", "filters", "seriesLimit", "pointLimit"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/AnalyticsMetricName" },
+          "unit": { "$ref": "#/components/schemas/AnalyticsUnit" },
+          "aggregation": { "$ref": "#/components/schemas/AnalyticsAggregation" },
+          "focus": { "$ref": "#/components/schemas/AnalyticsFocus" },
+          "from": { "$ref": "#/components/schemas/UtcInstant" },
+          "to": { "$ref": "#/components/schemas/UtcInstant" },
+          "bucket": { "$ref": "#/components/schemas/AnalyticsBucket" },
+          "bucketSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+          "groupBy": { "$ref": "#/components/schemas/AnalyticsGroupBy" },
+          "filters": { "$ref": "#/components/schemas/AnalyticsSeriesFacets", "description": "Normalized echo of only the applied metadata filters; absent facets were not filtered." },
+          "seriesLimit": { "type": "integer", "minimum": 1, "maximum": 12 },
+          "pointLimit": { "type": "integer", "minimum": 1, "maximum": 200 }
+        }
+      },
+      "AnalyticsScan": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scannedRows", "scanLimit", "executionMs", "executionLimitMs"],
+        "properties": {
+          "scannedRows": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "scanLimit": { "type": "integer", "const": 1000000 },
+          "executionMs": { "type": "number", "minimum": 0, "maximum": 5000 },
+          "executionLimitMs": { "type": "integer", "const": 5000 }
+        }
+      },
+      "OperationalAnalyticsSnapshot": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only aggregate snapshot. It never contains observation, run, trace, conversation, owner, prompt, response, memory, document, filename, tool argument/result, credential, endpoint, token, exception-message, stack-trace, payload, or arbitrary-attribute data.",
+        "required": ["snapshotAt", "query", "percentileMethod", "series", "breakdowns", "freshness", "partial", "partialReasons", "unavailableSignals", "scan", "capturePolicy"],
+        "properties": {
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "query": { "$ref": "#/components/schemas/AnalyticsEffectiveQuery" },
+          "percentileMethod": { "$ref": "#/components/schemas/AnalyticsPercentileMethod" },
+          "series": { "type": "array", "maxItems": 12, "items": { "$ref": "#/components/schemas/AnalyticsSeries" } },
+          "breakdowns": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/AnalyticsBreakdown" } },
+          "freshness": { "$ref": "#/components/schemas/AnalyticsFreshness" },
+          "partial": { "type": "boolean" },
+          "partialReasons": { "type": "array", "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsPartialReason" } },
+          "unavailableSignals": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsUnavailableSignal" } },
+          "scan": { "$ref": "#/components/schemas/AnalyticsScan" },
+          "capturePolicy": { "type": "string", "const": "metadata_only" }
+        }
+      },
       "OwnerSession": {
         "type": "object", "additionalProperties": false,
         "required": ["csrfToken"],

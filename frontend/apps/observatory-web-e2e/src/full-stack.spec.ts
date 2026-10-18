@@ -506,6 +506,16 @@ test.describe('Observatory real Core-to-browser acceptance', () => {
     await expect(componentCard).toHaveCount(1, { timeout: 30_000 });
     await expect(componentCard.getByText(/latency|errors?/i).first()).toBeVisible();
 
+    // The run above must be visible through the real bounded analytics query,
+    // not only through the run/trace projections.  Keep this assertion at the
+    // browser boundary so the acceptance path covers the generated client,
+    // ClickHouse aggregation, and the semantic table paired with the chart.
+    await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Metric explorer', exact: true })).toBeVisible();
+    await expect(page.getByText(/rows scanned/i)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('table', { name: /data in milliseconds/i }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('observatory-analytics')).not.toContainText(/prompt|response|credential|bearer token/i);
+
     await page.getByRole('button', { name: 'Retention', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Delete stored observations', exact: true })).toBeVisible();
     await page.getByRole('textbox', { name: 'Delete observations before (UTC)' }).fill('2099-01-01T00:00');

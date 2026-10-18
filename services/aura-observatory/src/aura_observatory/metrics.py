@@ -394,6 +394,7 @@ class ObservatoryMetrics:
             "deployments",
             "events",
             "health_history",
+            "analytics",
         },
         "outcome": {
             "succeeded",

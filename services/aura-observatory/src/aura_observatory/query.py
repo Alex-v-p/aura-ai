@@ -9,7 +9,7 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from functools import wraps
@@ -20,6 +20,9 @@ from uuid import UUID, uuid4
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import (
+    ANALYTICS_DEFAULT_MAX_POINTS,
+    ANALYTICS_DEFAULT_MAX_SERIES,
+    AnalyticsRequest,
     DeletionResult,
     ObservatoryHealthPort,
     ObservatoryQueryPort,
@@ -55,6 +58,292 @@ _RETENTION_EXCEPTION_CLASSES = frozenset(
 COMPONENT_HEALTH_DEFAULT_WINDOW = timedelta(hours=24)
 COMPONENT_HEALTH_MAX_WINDOW = timedelta(days=31)
 
+# Operational analytics is deliberately a finite catalogue.  Keep this list
+# local to Observatory: it is an allowlist, not a second telemetry contract.
+ANALYTICS_METRICS = (
+    "operation_duration_ms",
+    "run_duration_ms",
+    "queue_wait_ms",
+    "errors",
+    "retries",
+    "backlog",
+    "backlog_depth",
+    "inference_duration_ms",
+    "time_to_first_token_ms",
+    "output_tokens",
+    "provider_errors",
+    "model_routing_duration_ms",
+    "structured_inference_duration_ms",
+    "tool_selection_duration_ms",
+    "tool_selection_outcome",
+    "tool_policy_evaluation_duration_ms",
+    "tool_policy_decision",
+    "tool_argument_validation_outcome",
+    "tool_execution_duration_ms",
+    "tool_execution_outcome",
+    "tool_timeout_count",
+    "memory_extraction_duration_ms",
+    "memory_candidate_decision",
+    "memory_reviewable_candidate_count",
+    "memory_operation_duration_ms",
+    "memory_operation_outcome",
+    "memory_retrieval_duration_ms",
+    "memory_lexical_search_duration_ms",
+    "memory_vector_search_duration_ms",
+    "memory_rerank_duration_ms",
+    "memory_processing_errors",
+    "memory_retry_count",
+    "memory_reindex_backlog",
+    "document_retrieval_duration_ms",
+    "document_retrieval_outcome",
+    "document_retrieval_candidate_count",
+    "reminder_scheduler_scan_duration_ms",
+    "reminder_due_lag_ms",
+    "reminder_series_due_lag_ms",
+    "reminder_fired_count",
+    "reminder_failure_count",
+    "notification_failure_count",
+    "notification_acknowledgement_outcome",
+)
+ANALYTICS_UNITS = frozenset({"count", "milliseconds", "bytes", "ratio", "score"})
+ANALYTICS_FOCUSES = ("all", "model", "queue", "retrieval", "tool", "memory", "automation")
+ANALYTICS_AGGREGATIONS = (
+    "average",
+    "sum",
+    "minimum",
+    "maximum",
+    "p50",
+    "p90",
+    "p95",
+    "p99",
+    "rate",
+    "count",
+)
+ANALYTICS_BUCKETS = {
+    "one_minute": 60,
+    "five_minutes": 300,
+    "fifteen_minutes": 900,
+    "one_hour": 3600,
+    "six_hours": 21600,
+    "one_day": 86400,
+}
+ANALYTICS_GROUPINGS = (
+    "none",
+    "component",
+    "component_version",
+    "operation",
+    "deployment",
+    "environment",
+    "host",
+    "service_role",
+    "provider",
+    "outcome",
+    "error_class",
+    "status",
+    "retrieval_stage",
+)
+ANALYTICS_FILTER_KEYS = frozenset(
+    {
+        "component",
+        "component_version",
+        "operation",
+        "deployment",
+        "environment",
+        "host",
+        "service_role",
+        "provider",
+        "outcome",
+        "error_class",
+        "status",
+        "retrieval_stage",
+    }
+)
+ANALYTICS_MAX_WINDOW = timedelta(days=31)
+ANALYTICS_MAX_POINTS = ANALYTICS_DEFAULT_MAX_POINTS
+ANALYTICS_MAX_SERIES = ANALYTICS_DEFAULT_MAX_SERIES
+ANALYTICS_MAX_BREAKDOWNS = 50
+ANALYTICS_MAX_SCANNED_ROWS = 1_000_000
+ANALYTICS_EXECUTION_LIMIT_MS = 5_000
+ANALYTICS_PERCENTILE_METHOD = "clickhouse_quantile_exact"
+ANALYTICS_MAX_LAG_MS = 604_800_000
+ANALYTICS_STALE_AFTER_MS = 300_000
+_ANALYTICS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_ANALYTICS_COMPONENT_RE = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
+_ANALYTICS_OPERATION_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,95}$")
+_ANALYTICS_ENVIRONMENT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+
+
+def _analytics_unit(metric: str) -> str:
+    return "milliseconds" if metric.endswith("_ms") else "count"
+
+
+def _analytics_focus(metric: str) -> tuple[str, ...]:
+    if metric.startswith(
+        ("inference_", "model_", "structured_", "provider_", "output_", "time_to_")
+    ):
+        return ("model", "all")
+    if metric.startswith(("queue_", "backlog")):
+        return ("queue", "all")
+    if metric.startswith(("tool_",)):
+        return ("tool", "all")
+    if metric.startswith(("memory_",)):
+        return ("memory", "all")
+    if metric.startswith(("document_",)):
+        return ("retrieval", "all")
+    if metric.startswith(("reminder_", "notification_")):
+        return ("automation", "all")
+    return ("all",)
+
+
+def analytics_unavailable(metric: str) -> list[str]:
+    unavailable: list[str] = []
+    if not metric.startswith(("model_", "inference_", "provider_", "output_", "time_to_")):
+        unavailable.append("model_identity")
+    if "retry" not in metric:
+        unavailable.append("retryability")
+    if not metric.startswith(("backlog", "queue_")):
+        unavailable.append("saturation")
+    return unavailable[:10]
+
+
+def analytics_metric_catalogue(
+    *, focus: str | None = None, now: datetime | None = None
+) -> dict[str, object]:
+    """Return the closed catalogue and all execution limits."""
+
+    selected = focus or "all"
+    if selected not in ANALYTICS_FOCUSES:
+        raise ValueError("invalid analytics focus")
+    items: list[dict[str, object]] = []
+    for metric in ANALYTICS_METRICS:
+        focus_areas = _analytics_focus(metric)
+        if selected != "all" and selected not in focus_areas:
+            continue
+        unit = _analytics_unit(metric)
+        aggregations = (
+            ("average", "minimum", "maximum", "p50", "p90", "p95", "p99", "count")
+            if unit == "milliseconds"
+            else ("sum", "rate", "count", "average", "minimum", "maximum")
+        )
+        items.append(
+            {
+                "metric": metric,
+                "unit": unit,
+                "focusAreas": list(focus_areas),
+                "supportedAggregations": list(aggregations),
+                "supportedGroupings": list(ANALYTICS_GROUPINGS),
+                "availability": "available",
+                "unavailableSignals": analytics_unavailable(metric),
+            }
+        )
+    return {
+        "snapshotAt": _iso(now or datetime.now(UTC)),
+        "items": items,
+        "limits": {
+            "defaultWindowHours": 24,
+            "maximumWindowDays": 31,
+            "maximumPointsPerSeries": ANALYTICS_MAX_POINTS,
+            "maximumSeries": ANALYTICS_MAX_SERIES,
+            "maximumBreakdowns": ANALYTICS_MAX_BREAKDOWNS,
+            "maximumScannedRows": ANALYTICS_MAX_SCANNED_ROWS,
+            "executionTimeoutMs": ANALYTICS_EXECUTION_LIMIT_MS,
+        },
+        "capturePolicy": "metadata_only",
+    }
+
+
+def _analytics_definition(metric: str) -> dict[str, object] | None:
+    """Return the exact public catalogue definition for one metric."""
+
+    if metric not in ANALYTICS_METRICS:
+        return None
+    unit = _analytics_unit(metric)
+    aggregations = (
+        ("average", "minimum", "maximum", "p50", "p90", "p95", "p99", "count")
+        if unit == "milliseconds"
+        else ("sum", "rate", "count", "average", "minimum", "maximum")
+    )
+    return {
+        "metric": metric,
+        "unit": unit,
+        "focusAreas": _analytics_focus(metric),
+        "supportedAggregations": aggregations,
+        "supportedGroupings": ANALYTICS_GROUPINGS,
+    }
+
+
+def bounded_analytics_lag_ms(
+    latest: datetime | None, *, now: datetime | None = None
+) -> float | None:
+    if latest is None:
+        return None
+    reference = (now or datetime.now(UTC)).astimezone(UTC)
+    observed = latest.astimezone(UTC)
+    return min(
+        float(ANALYTICS_MAX_LAG_MS),
+        max(0.0, (reference - observed).total_seconds() * 1000.0),
+    )
+
+
+def analytics_freshness(
+    latest: datetime | None, *, now: datetime | None = None
+) -> dict[str, object]:
+    lag = bounded_analytics_lag_ms(latest, now=now)
+    return {
+        "latestObservedAt": _iso(latest),
+        "lagMs": lag,
+        "state": (
+            "unavailable"
+            if latest is None
+            else "stale"
+            if (lag or 0.0) > ANALYTICS_STALE_AFTER_MS
+            else "fresh"
+        ),
+    }
+
+
+def bounded_analytics_window(
+    from_time: datetime | None,
+    to_time: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    upper = to_time or now or datetime.now(UTC)
+    if upper.tzinfo is None or upper.utcoffset() is None:
+        raise ValueError("analytics timestamps must include a timezone")
+    upper = upper.astimezone(UTC)
+    if from_time is None:
+        lower = upper - timedelta(hours=24)
+    else:
+        if from_time.tzinfo is None or from_time.utcoffset() is None:
+            raise ValueError("analytics timestamps must include a timezone")
+        lower = from_time.astimezone(UTC)
+    if lower >= upper or upper - lower > ANALYTICS_MAX_WINDOW:
+        raise ValueError("analytics window is invalid or too wide")
+    return lower, upper
+
+
+def choose_analytics_bucket(bucket: str, lower: datetime, upper: datetime) -> tuple[str, int]:
+    seconds = (upper - lower).total_seconds()
+    if bucket == "auto":
+        chosen = next(
+            (
+                value
+                for value in ANALYTICS_BUCKETS.items()
+                if seconds / value[1] <= ANALYTICS_MAX_POINTS
+            ),
+            None,
+        )
+        if chosen is None:
+            chosen = ("one_day", ANALYTICS_BUCKETS["one_day"])
+        return chosen
+    if bucket not in ANALYTICS_BUCKETS:
+        raise ValueError("invalid analytics bucket")
+    chosen_seconds = ANALYTICS_BUCKETS[bucket]
+    if seconds / chosen_seconds > ANALYTICS_MAX_POINTS:
+        raise ValueError("analytics bucket would exceed point limit")
+    return bucket, chosen_seconds
+
 
 def bounded_component_health_window(
     from_time: datetime | None,
@@ -68,9 +357,7 @@ def bounded_component_health_window(
     if raw_upper.tzinfo is None or raw_upper.utcoffset() is None:
         raise ValueError("component health timestamps must include a timezone")
     upper = raw_upper.astimezone(UTC)
-    if from_time is not None and (
-        from_time.tzinfo is None or from_time.utcoffset() is None
-    ):
+    if from_time is not None and (from_time.tzinfo is None or from_time.utcoffset() is None):
         raise ValueError("component health timestamps must include a timezone")
     lower = (
         from_time.astimezone(UTC)
@@ -88,10 +375,9 @@ def _retention_exception_class(error: BaseException) -> str:
     name = type(error).__name__
     return name if name in _RETENTION_EXCEPTION_CLASSES else "other"
 
+
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9_-]{16,1024}$")
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 class RetentionKind(StrEnum):
@@ -187,7 +473,9 @@ class RetentionAction:
 
 
 class ObservatoryReadStore(Protocol):
-    async def list_observations(self) -> list[MetadataObservation]: ...
+    async def list_observations(
+        self, *, limit: int | None = None
+    ) -> list[MetadataObservation]: ...
 
     async def components(self) -> list[dict[str, Any]]: ...
 
@@ -196,6 +484,33 @@ class ObservatoryReadStore(Protocol):
     async def ingest_overview(self) -> dict[str, Any]: ...
 
     async def delete_observations(self, cutoff: datetime | None) -> DeletionResult: ...
+
+
+class BoundedReferenceAnalyticsPort:
+    """Explicit bounded reference adapter for deterministic local compositions.
+
+    Production composition injects ``ObservatoryQueryPort`` and never creates
+    this adapter.  The adapter exists for memory/reference fixtures only; its
+    output is still deterministically capped and reports the scan boundary.
+    """
+
+    def __init__(self, store: ObservatoryReadStore) -> None:
+        self._store = store
+
+    async def operational_analytics_query(self, request: AnalyticsRequest) -> dict[str, object]:
+        observations = await self._store.list_observations(limit=ANALYTICS_MAX_SCANNED_ROWS + 1)
+        ordered = sorted(
+            observations,
+            key=lambda item: (item.observed_at.astimezone(UTC), item.observation_id),
+        )
+        source_truncated = len(ordered) > ANALYTICS_MAX_SCANNED_ROWS
+        selected = ordered[: ANALYTICS_MAX_SCANNED_ROWS]
+        return _reference_analytics_snapshot(
+            request,
+            selected,
+            ANALYTICS_BUCKETS[request.bucket],
+            source_truncated=source_truncated,
+        )
 
 
 def encode_cursor(observed_at: datetime, observation_id: str, snapshot: int | None = None) -> str:
@@ -368,6 +683,7 @@ class ObservatoryQueryService:
         # construction remains available for deterministic tests, but the
         # production composition always supplies both narrow ports.
         self.query_port = query_port
+        self._reference_analytics_port = BoundedReferenceAnalyticsPort(store)
         self.retention_port = retention_port or cast(ObservatoryRetentionPort, store)
         self.health_port = health_port or cast(ObservatoryHealthPort, store)
         self._durable_retention = retention_port is not None
@@ -379,9 +695,7 @@ class ObservatoryQueryService:
             result = await narrow.overview_query()
             health = result.get("health")
             self._record_health_metrics(
-                cast(dict[str, object] | None, health)
-                if isinstance(health, dict)
-                else None
+                cast(dict[str, object] | None, health) if isinstance(health, dict) else None
             )
             return result
         observations = await self.store.list_observations()
@@ -572,8 +886,7 @@ class ObservatoryQueryService:
             items = [
                 item
                 for item in items
-                if (item.observed_at.astimezone(UTC), item.observation_id)
-                > (cursor_at, cursor_id)
+                if (item.observed_at.astimezone(UTC), item.observation_id) > (cursor_at, cursor_id)
             ]
             if not items:
                 return None
@@ -599,9 +912,7 @@ class ObservatoryQueryService:
     ) -> dict[str, Any] | None:
         if self.query_port is not None:
             narrow = self.query_port
-            result_value = await narrow.trace_detail_query(
-                trace_id, cursor=cursor, limit=limit
-            )
+            result_value = await narrow.trace_detail_query(trace_id, cursor=cursor, limit=limit)
             return result_value
         items = [
             item
@@ -615,8 +926,7 @@ class ObservatoryQueryService:
             items = [
                 item
                 for item in items
-                if (item.observed_at.astimezone(UTC), item.observation_id)
-                > (cursor_at, cursor_id)
+                if (item.observed_at.astimezone(UTC), item.observation_id) > (cursor_at, cursor_id)
             ]
             if not items:
                 return None
@@ -796,9 +1106,7 @@ class ObservatoryQueryService:
             )
             canonical.append((duration, outcome))
         values = sorted(
-            duration.measurement.value
-            for duration, _outcome in canonical
-            if duration is not None
+            duration.measurement.value for duration, _outcome in canonical if duration is not None
         )
         failures = sum(
             1 for _duration, outcome in canonical if _normalize_outcome(outcome) == "failed"
@@ -815,6 +1123,28 @@ class ObservatoryQueryService:
         }
         result: dict[str, Any] = {"componentId": component_id, "summary": summary, "points": []}
         return result
+
+    @_query_resource("analytics")
+    async def analytics(self, request: AnalyticsRequest) -> dict[str, object]:
+        """Run one finite operational analytics snapshot.
+
+        Production composition supplies a ClickHouse query port.  The
+        reference path is intentionally limited to deterministic tests and
+        local compositions; it is never selected by the production factory.
+        """
+
+        _validate_analytics_request(request)
+        lower, upper = bounded_analytics_window(request.from_time, request.to_time)
+        bucket, _bucket_seconds = choose_analytics_bucket(request.bucket, lower, upper)
+        normalized = replace(
+            request,
+            from_time=lower,
+            to_time=upper,
+            bucket=bucket,
+        )
+        if self.query_port is not None:
+            return await self.query_port.operational_analytics_query(normalized)
+        return await self._reference_analytics_port.operational_analytics_query(normalized)
 
     def _record_query_metrics(self, resource: str, started: float, outcome: str) -> None:
         metric_resource = _QUERY_METRIC_RESOURCE_ALIASES.get(resource, resource)
@@ -916,9 +1246,7 @@ class ObservatoryQueryService:
                     "observatory_query_outcome",
                     labels={"resource": "events", "outcome": "succeeded"},
                 )
-            self.metrics.record(
-                "observatory_sse_active", -1.0, {"event_type": "stream"}
-            )
+            self.metrics.record("observatory_sse_active", -1.0, {"event_type": "stream"})
 
     async def _events_after(
         self, last_event_id: str | None, snapshot_sequence: int | None = None
@@ -944,9 +1272,7 @@ class ObservatoryQueryService:
                     )
                 yield event
             return
-        self.metrics.record(
-            "observatory_sse_connection_count", labels={"event_type": "connection"}
-        )
+        self.metrics.record("observatory_sse_connection_count", labels={"event_type": "connection"})
         cursor = last_event_id
         snapshot_anchor = snapshot_sequence
         for _ in range(3):
@@ -1069,9 +1395,7 @@ class ObservatoryQueryService:
             )
             if existing is not None:
                 if existing.fingerprint != request.fingerprint:
-                    raise RetentionConflictError(
-                        "idempotency key conflicts with retention command"
-                    )
+                    raise RetentionConflictError("idempotency key conflicts with retention command")
                 return existing
         await retention_store.enqueue_retention(action)
         if not self._durable_retention:
@@ -1236,6 +1560,259 @@ def _retention_from_row(row: Any, idempotency_key: str) -> RetentionAction:
     )
 
 
+def _validate_analytics_request(request: AnalyticsRequest) -> None:
+    definition = _analytics_definition(request.metric)
+    if definition is None or request.unit not in ANALYTICS_UNITS:
+        raise ValueError("unsupported analytics metric or unit")
+    if request.unit != definition["unit"]:
+        raise ValueError("analytics metric and unit do not match")
+    supported_aggregations = cast(tuple[str, ...], definition["supportedAggregations"])
+    if request.aggregation not in supported_aggregations:
+        raise ValueError("unsupported analytics aggregation")
+    if request.focus not in ANALYTICS_FOCUSES or request.group_by not in ANALYTICS_GROUPINGS:
+        raise ValueError("unsupported analytics focus or grouping")
+    supported_focuses = cast(tuple[str, ...], definition["focusAreas"])
+    if request.focus not in supported_focuses:
+        raise ValueError("analytics focus is not supported for this metric")
+    supported_groupings = cast(tuple[str, ...], definition["supportedGroupings"])
+    if request.group_by not in supported_groupings:
+        raise ValueError("analytics grouping is not supported for this metric")
+    if not 1 <= request.series_limit <= ANALYTICS_MAX_SERIES:
+        raise ValueError("analytics series limit is outside the allowed bound")
+    if not 1 <= request.point_limit <= ANALYTICS_MAX_POINTS:
+        raise ValueError("analytics point limit is outside the allowed bound")
+    if set(request.filters) - ANALYTICS_FILTER_KEYS:
+        raise ValueError("unsupported analytics filter")
+    for key, value in request.filters.items():
+        if key == "component" and _ANALYTICS_COMPONENT_RE.fullmatch(value) is None:
+            raise ValueError("invalid analytics component filter")
+        if key == "operation" and _ANALYTICS_OPERATION_RE.fullmatch(value) is None:
+            raise ValueError("invalid analytics operation filter")
+        if key == "environment" and _ANALYTICS_ENVIRONMENT_RE.fullmatch(value) is None:
+            raise ValueError("invalid analytics environment filter")
+        if (
+            key != "component"
+            and key not in {"operation", "environment"}
+            and _ANALYTICS_VALUE_RE.fullmatch(value) is None
+        ):
+            raise ValueError("invalid analytics filter value")
+
+
+def _analytics_dimension(item: MetadataObservation, name: str) -> str:
+    if name == "component":
+        return item.component.id
+    if name == "component_version":
+        return item.component.version
+    if name == "operation":
+        return item.operation
+    if name == "deployment":
+        return item.deployment.deployment_id
+    if name == "environment":
+        return item.deployment.environment
+    if name == "host":
+        return item.deployment.host_id
+    if name == "service_role":
+        return item.service_role
+    if name == "provider":
+        return item.dimensions.get("provider", "unknown")
+    if name == "outcome":
+        return _normalize_outcome(item)
+    if name == "error_class":
+        return item.dimensions.get("errorClass", "unknown")
+    if name == "status":
+        return item.dimensions.get("status", "unknown")
+    if name == "retrieval_stage":
+        return item.dimensions.get("retrievalStage", "unknown")
+    return "all"
+
+
+def _analytics_metric_matches(item: MetadataObservation, metric: str) -> bool:
+    aliases = {
+        "operation_duration_ms": {"duration_ms", "operation_duration_ms"},
+        "run_duration_ms": {"run_duration_ms"},
+    }
+    return item.measurement.name in aliases.get(metric, {metric})
+
+
+def _analytics_percentile(values: list[float], rank: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    # ClickHouse quantileExact selects the discrete sample at ``rank * n``;
+    # it does not interpolate between adjacent observations.  Keep the index
+    # formula identical to the pinned provider's nearest-rank aggregate for
+    # reference parity, clamping the upper endpoint for rank 1.0.
+    index = int(len(ordered) * rank)
+    return ordered[min(len(ordered) - 1, max(0, index))]
+
+
+def _analytics_aggregate(
+    values: list[float], aggregation: str, interval_seconds: int
+) -> float | None:
+    if not values:
+        return None
+    if aggregation in {"count", "sum"}:
+        return float(len(values) if aggregation == "count" else sum(values))
+    if aggregation == "average":
+        return sum(values) / len(values)
+    if aggregation == "minimum":
+        return min(values)
+    if aggregation == "maximum":
+        return max(values)
+    if aggregation == "rate":
+        return sum(values) / max(60, min(86_400, interval_seconds))
+    percentile = {"p50": 0.50, "p90": 0.90, "p95": 0.95, "p99": 0.99}.get(aggregation)
+    return _analytics_percentile(values, percentile) if percentile is not None else None
+
+
+def _reference_analytics_snapshot(
+    request: AnalyticsRequest,
+    observations: list[MetadataObservation],
+    bucket_seconds: int,
+    *,
+    source_truncated: bool = False,
+) -> dict[str, object]:
+    lower = cast(datetime, request.from_time).astimezone(UTC)
+    upper = cast(datetime, request.to_time).astimezone(UTC)
+    selected = [
+        item
+        for item in observations
+        if lower <= item.observed_at.astimezone(UTC) < upper
+        and _analytics_metric_matches(item, request.metric)
+        and item.measurement.unit == request.unit
+        and all(_analytics_dimension(item, key) == value for key, value in request.filters.items())
+    ]
+    latest = max((item.observed_at.astimezone(UTC) for item in selected), default=None)
+    groups: dict[str, list[MetadataObservation]] = defaultdict(list)
+    for item in selected:
+        group = _analytics_dimension(item, request.group_by)
+        groups[group].append(item)
+    ordered_groups = sorted(groups.items(), key=lambda pair: pair[0])
+    partial_reasons: list[str] = ["scan_limit"] if source_truncated else []
+    if len(ordered_groups) > request.series_limit:
+        ordered_groups = ordered_groups[: request.series_limit]
+        partial_reasons.append("series_limit")
+    series: list[dict[str, object]] = []
+    for group, group_items in ordered_groups:
+        buckets: dict[datetime, list[float]] = defaultdict(list)
+        for item in group_items:
+            delta = int((item.observed_at.astimezone(UTC) - lower).total_seconds())
+            start = lower + timedelta(seconds=(delta // bucket_seconds) * bucket_seconds)
+            buckets[start].append(float(item.measurement.value))
+        points: list[dict[str, object]] = []
+        point_limited = len(buckets) > request.point_limit
+        for start in sorted(buckets)[: request.point_limit]:
+            values = buckets[start]
+            points.append(
+                {
+                    "startAt": _iso(start),
+                    "endAt": _iso(min(start + timedelta(seconds=bucket_seconds), upper)),
+                    "value": _analytics_aggregate(values, request.aggregation, bucket_seconds),
+                    "sampleCount": len(values),
+                    "availability": "available" if values else "no_data",
+                    "partial": bool(source_truncated or point_limited),
+                }
+            )
+        if len(buckets) > request.point_limit:
+            partial_reasons.append("point_limit")
+        all_values = [float(item.measurement.value) for item in group_items]
+        summary_interval_seconds = min(
+            86_400, max(60, int((upper - lower).total_seconds()))
+        )
+        summary_window_seconds = max(1, int((upper - lower).total_seconds()))
+        rate = (
+            sum(all_values) * summary_interval_seconds / summary_window_seconds
+            if all_values
+            else None
+        )
+        summary = {
+            "sampleCount": len(all_values),
+            "minimum": min(all_values) if all_values else None,
+            "maximum": max(all_values) if all_values else None,
+            "average": sum(all_values) / len(all_values) if all_values else None,
+            "p50": _analytics_percentile(all_values, 0.50),
+            "p90": _analytics_percentile(all_values, 0.90),
+            "p95": _analytics_percentile(all_values, 0.95),
+            "p99": _analytics_percentile(all_values, 0.99),
+            "ratePerInterval": rate if all_values else None,
+            "rateIntervalSeconds": summary_interval_seconds if all_values else None,
+        }
+        facets: dict[str, str] = {}
+        if request.group_by != "none":
+            facets[_camel_analytics_group(request.group_by)] = group
+        series.append(
+            {
+                "seriesKey": f"{request.metric}:{request.unit}:{group}",
+                "facets": facets,
+                "summary": summary,
+                "points": points,
+                "availability": "available" if all_values else "no_data",
+                "partial": bool(partial_reasons or point_limited),
+            }
+        )
+    breakdowns = [
+        {"groupBy": request.group_by, "value": group, "count": len(items), "partial": False}
+        for group, items in sorted(groups.items(), key=lambda pair: pair[0])[
+            :ANALYTICS_MAX_BREAKDOWNS
+        ]
+        if request.group_by != "none"
+    ]
+    if len(groups) > ANALYTICS_MAX_BREAKDOWNS:
+        partial_reasons.append("series_limit")
+    source_partial = "scan_limit" in partial_reasons
+    for item in series:
+        if source_partial:
+            item["partial"] = True
+        for point in cast(list[dict[str, object]], item["points"]):
+            if source_partial:
+                point["partial"] = True
+    lag_freshness = analytics_freshness(latest)
+    for breakdown in breakdowns:
+        breakdown["partial"] = source_partial
+    return {
+        "snapshotAt": _iso(datetime.now(UTC)),
+        "query": {
+            "metric": request.metric,
+            "unit": request.unit,
+            "aggregation": request.aggregation,
+            "focus": request.focus,
+            "from": _iso(lower),
+            "to": _iso(upper),
+            "bucket": request.bucket,
+            "bucketSeconds": bucket_seconds,
+            "groupBy": request.group_by,
+            "filters": {
+                _camel_analytics_group(key): value for key, value in request.filters.items()
+            },
+            "seriesLimit": request.series_limit,
+            "pointLimit": request.point_limit,
+        },
+        "percentileMethod": ANALYTICS_PERCENTILE_METHOD,
+        "series": series,
+        "breakdowns": breakdowns,
+        "freshness": lag_freshness,
+        "partial": bool(partial_reasons),
+        "partialReasons": sorted(set(partial_reasons)),
+        "unavailableSignals": analytics_unavailable(request.metric),
+        "scan": {
+            "scannedRows": min(len(observations), ANALYTICS_MAX_SCANNED_ROWS),
+            "scanLimit": ANALYTICS_MAX_SCANNED_ROWS,
+            "executionMs": 0.0,
+            "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+        },
+        "capturePolicy": "metadata_only",
+    }
+
+
+def _camel_analytics_group(value: str) -> str:
+    return {
+        "component_version": "componentVersion",
+        "service_role": "serviceRole",
+        "error_class": "errorClass",
+        "retrieval_stage": "retrievalStage",
+    }.get(value, value)
+
+
 def _matches(
     item: MetadataObservation, filters: RunFilters, *, include_status: bool = True
 ) -> bool:
@@ -1267,9 +1844,7 @@ def _run_dict(
     # non-empty lineage independently from the newest status/deployment/model
     # observation, using the same stable timestamp/observation ordering as
     # the run grouping and cursor semantics.
-    trace_items = [
-        item for item in items if item.trace is not None and item.trace.trace_id
-    ]
+    trace_items = [item for item in items if item.trace is not None and item.trace.trace_id]
     latest_trace = (
         max(trace_items, key=lambda item: (item.observed_at, item.observation_id))
         if trace_items
@@ -1343,7 +1918,14 @@ def _run_status(observation: MetadataObservation) -> str:
 
 
 def _normalize_outcome(observation: MetadataObservation) -> str:
-    value = observation.dimensions.get("outcome", observation.dimensions.get("status", "unknown"))
+    # Prefer the explicit outcome dimension and fall back to legacy status.
+    # This exact alias map is shared by grouping, filtering, and the in-memory
+    # reference adapter.
+    value = (
+        observation.dimensions.get("outcome")
+        or observation.dimensions.get("status")
+        or "unknown"
+    ).casefold()
     return {
         "success": "succeeded",
         "completed": "succeeded",

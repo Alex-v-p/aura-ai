@@ -13,21 +13,35 @@ import base64
 import binascii
 import json
 import logging
+import math
 import re
+from collections import defaultdict
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Any, cast
 
 import httpx
 import psycopg
 
 from aura_observatory.contract import MetadataObservation
-from aura_observatory.ports import NullObservatoryHealthPort, ObservatoryHealthPort
+from aura_observatory.ports import (
+    AnalyticsRequest,
+    NullObservatoryHealthPort,
+    ObservatoryHealthPort,
+)
 from aura_observatory.query import (
+    ANALYTICS_BUCKETS,
+    ANALYTICS_EXECUTION_LIMIT_MS,
+    ANALYTICS_MAX_BREAKDOWNS,
+    ANALYTICS_MAX_SCANNED_ROWS,
+    ANALYTICS_PERCENTILE_METHOD,
     DeletionResult,
     RetentionAction,
     RetentionStatus,
     RunFilters,
+    analytics_freshness,
+    analytics_unavailable,
     bounded_component_health_window,
     decode_cursor,
     decode_run_cursor,
@@ -91,6 +105,128 @@ def _raise_for_clickhouse(response: httpx.Response) -> None:
         raise
 
 
+def _decode_clickhouse_rows(response: httpx.Response) -> list[dict[str, Any]]:
+    """Decode JSONEachRow without allowing provider details to escape."""
+
+    try:
+        rows: list[dict[str, Any]] = []
+        for line in response.text.splitlines():
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError("ClickHouse row is not an object")
+            rows.append(cast(dict[str, Any], value))
+        return rows
+    except (UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StorageUnavailableError(
+            "ClickHouse returned an invalid response",
+            request=response.request,
+            response=response,
+        ) from exc
+
+
+def _clickhouse_progress_read_rows(response: httpx.Response) -> int | None:
+    """Read the provider's bounded physical-read count when available."""
+
+    header = response.headers.get("x-clickhouse-progress")
+    if not header:
+        return None
+    try:
+        value = json.loads(header)
+        rows = int(value["read_rows"])
+        return rows if rows >= 0 else None
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _is_clickhouse_execution_timeout(error: httpx.HTTPStatusError) -> bool:
+    """Recognize ClickHouse bounded execution failures without exposing SQL."""
+
+    response = error.response
+    if response.status_code == 504:
+        return True
+    body = response.text[:2_048].casefold()
+    return any(
+        marker in body
+        for marker in ("max_execution_time", "too slow", "timeout")
+    )
+
+
+def _is_clickhouse_read_limit(error: httpx.HTTPStatusError) -> bool:
+    """Recognize ClickHouse's bounded physical-read overflow response.
+
+    This helper is called only from the analytics query, whose statement sets
+    ``max_rows_to_read`` and ``read_overflow_mode = 'break'``.  ClickHouse
+    25.8 identifies that bounded overflow by the stable HTTP/code tuple even
+    when its free-form response wording changes.
+    """
+
+    response = error.response
+    if response.status_code != 408:
+        return False
+    body = response.text[:2_048]
+    return bool(re.search(r"\bcode:\s*159\b", body, re.IGNORECASE))
+
+
+def _analytics_execution_limit_snapshot(
+    request: AnalyticsRequest,
+    lower: datetime,
+    upper: datetime,
+    bucket_seconds: int,
+) -> dict[str, object]:
+    return {
+        "snapshotAt": iso(datetime.now(UTC)),
+        "query": {
+            "metric": request.metric,
+            "unit": request.unit,
+            "aggregation": request.aggregation,
+            "focus": request.focus,
+            "from": iso(lower),
+            "to": iso(upper),
+            "bucket": request.bucket,
+            "bucketSeconds": bucket_seconds,
+            "groupBy": request.group_by,
+            "filters": {
+                _camel_analytics_group(key): value for key, value in request.filters.items()
+            },
+            "seriesLimit": request.series_limit,
+            "pointLimit": request.point_limit,
+        },
+        "percentileMethod": ANALYTICS_PERCENTILE_METHOD,
+        "series": [],
+        "breakdowns": [],
+        "freshness": analytics_freshness(None),
+        "partial": True,
+        "partialReasons": ["execution_limit"],
+        "unavailableSignals": analytics_unavailable(request.metric),
+        "scan": {
+            "scannedRows": 0,
+            "scanLimit": ANALYTICS_MAX_SCANNED_ROWS,
+            "executionMs": ANALYTICS_EXECUTION_LIMIT_MS,
+            "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+        },
+        "capturePolicy": "metadata_only",
+    }
+
+
+def _analytics_scan_limit_snapshot(
+    request: AnalyticsRequest,
+    lower: datetime,
+    upper: datetime,
+    bucket_seconds: int,
+) -> dict[str, object]:
+    snapshot = _analytics_execution_limit_snapshot(request, lower, upper, bucket_seconds)
+    snapshot["partialReasons"] = ["scan_limit"]
+    snapshot["scan"] = {
+        "scannedRows": ANALYTICS_MAX_SCANNED_ROWS,
+        "scanLimit": ANALYTICS_MAX_SCANNED_ROWS,
+        "executionMs": 0,
+        "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+    }
+    return snapshot
+
+
 def _sql(value: str) -> str:
     """Encode a value as a ClickHouse string literal.
 
@@ -126,7 +262,8 @@ def _clickhouse_time(value: datetime) -> str:
 
 
 _DIMENSION_STATUS_SQL = (
-    "coalesce(nullIf(dimensions['status'], ''), nullIf(dimensions['outcome'], ''))"
+    "lowerUTF8(coalesce(nullIf(dimensions['outcome'], ''), "
+    "nullIf(dimensions['status'], '')))"
 )
 _RUN_STATUS_SQL = (
     "multiIf("
@@ -137,6 +274,168 @@ _RUN_STATUS_SQL = (
     + _DIMENSION_STATUS_SQL
     + " = 'cancelled', 'cancelled', 'unknown')"
 )
+_ANALYTICS_OUTCOME_SQL = (
+    "multiIf("
+    + _DIMENSION_STATUS_SQL
+    + " IN ('success', 'succeeded', 'completed', 'ok'), 'succeeded', "
+    + _DIMENSION_STATUS_SQL
+    + " IN ('error', 'failed'), 'failed', "
+    + _DIMENSION_STATUS_SQL
+    + " = 'cancelled', 'cancelled', 'unknown')"
+)
+
+
+def _analytics_outcome_filter(value: str) -> str:
+    normalized = value.casefold()
+    return {
+        "success": "succeeded",
+        "succeeded": "succeeded",
+        "completed": "succeeded",
+        "ok": "succeeded",
+        "error": "failed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }.get(normalized, "unknown")
+
+
+def _camel_analytics_group(value: str) -> str:
+    return {
+        "component_version": "componentVersion",
+        "service_role": "serviceRole",
+        "error_class": "errorClass",
+        "retrieval_stage": "retrievalStage",
+    }.get(value, value)
+
+
+def _analytics_row_value(
+    row: dict[str, Any], aggregation: str, bucket_seconds: int
+) -> float | None:
+    if not int(row.get("sample_count") or 0):
+        return None
+    if aggregation == "count":
+        return float(row.get("sample_count") or 0)
+    if aggregation == "sum":
+        return float(row.get("total") or 0.0)
+    if aggregation == "rate":
+        return float(row.get("total") or 0.0) / max(60, min(86_400, bucket_seconds))
+    return {
+        "average": row.get("average"),
+        "minimum": row.get("minimum"),
+        "maximum": row.get("maximum"),
+        "p50": row.get("p50"),
+        "p90": row.get("p90"),
+        "p95": row.get("p95"),
+        "p99": row.get("p99"),
+    }.get(aggregation)
+
+
+def _row_float(row: dict[str, Any], key: str) -> float | None:
+    value = row.get(key)
+    return float(value) if value is not None else None
+
+
+def _row_preferred_float(row: dict[str, Any], summary_key: str, fallback_key: str) -> float | None:
+    summary = _row_float(row, summary_key)
+    return summary if summary is not None else _row_float(row, fallback_key)
+
+
+def _analytics_summary_rows(
+    rows: list[dict[str, Any]], sample_count: int, window: timedelta
+) -> dict[str, object]:
+    interval_seconds = min(86_400, max(60, int(window.total_seconds())))
+    window_seconds = max(1, int(window.total_seconds()))
+    if not rows or not sample_count:
+        return {
+            "sampleCount": 0,
+            "minimum": None,
+            "maximum": None,
+            "average": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+            "ratePerInterval": None,
+            "rateIntervalSeconds": interval_seconds,
+        }
+    # ClickHouse provides exact whole-window values in the summary CTE. The
+    # fallback keeps adapter doubles and older ClickHouse rows compatible.
+    first = rows[0]
+    summary_count = int(first.get("summary_sample_count") or sample_count)
+    minimum = _row_float(first, "summary_minimum")
+    maximum = _row_float(first, "summary_maximum")
+    average = _row_float(first, "summary_average")
+    if minimum is None:
+        minimum = min(_row_float(row, "minimum") or 0.0 for row in rows)
+    if maximum is None:
+        maximum = max(_row_float(row, "maximum") or 0.0 for row in rows)
+    if average is None:
+        average = (
+            sum(
+                (_row_float(row, "average") or 0.0) * int(row.get("sample_count") or 0)
+                for row in rows
+            )
+            / sample_count
+        )
+    return {
+        "sampleCount": summary_count,
+        "minimum": minimum,
+        "maximum": maximum,
+        "average": average,
+        "p50": _row_preferred_float(first, "summary_p50", "p50"),
+        "p90": _row_preferred_float(first, "summary_p90", "p90"),
+        "p95": _row_preferred_float(first, "summary_p95", "p95"),
+        "p99": _row_preferred_float(first, "summary_p99", "p99"),
+        "ratePerInterval": (
+            (_row_float(first, "summary_total") or 0.0) * interval_seconds / window_seconds
+        ),
+        "rateIntervalSeconds": interval_seconds,
+    }
+
+
+def _validate_analytics_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate provider aggregate rows before any coercion or projection."""
+
+    integer_fields = ("sample_count", "summary_sample_count", "scan_rows_read", "scanned_rows")
+    numeric_fields = (
+        "minimum",
+        "maximum",
+        "average",
+        "total",
+        "p50",
+        "p90",
+        "p95",
+        "p99",
+        "summary_minimum",
+        "summary_maximum",
+        "summary_average",
+        "summary_p50",
+        "summary_p90",
+        "summary_p95",
+        "summary_p99",
+        "summary_total",
+    )
+    for row in rows:
+        if not isinstance(row.get("group_value"), str):
+            raise ValueError("missing analytics group")
+        if "sample_count" not in row:
+            raise ValueError("missing analytics sample count")
+        for key in integer_fields:
+            if key in row and row[key] is not None:
+                value = int(row[key])
+                if value < 0:
+                    raise ValueError("negative analytics count")
+        for key in numeric_fields:
+            if key in row and row[key] is not None:
+                value = float(row[key])
+                if not math.isfinite(value):
+                    raise ValueError("non-finite analytics value")
+        for key in ("bucket_start", "latest_observed_at"):
+            if key in row and row[key] is not None:
+                _parse_datetime(row[key])
+        for key in ("late_data", "retention_boundary"):
+            if key in row and row[key] not in (0, 1, False, True):
+                raise ValueError("invalid analytics flag")
+    return rows
 
 
 class _RetentionPersistenceAdapter:
@@ -170,6 +469,8 @@ class _RetentionPersistenceAdapter:
         self._active_retention_action_id: str | None = None
         self._retention_guard: tuple[Any, Any] | None = None
         self._response_body_unavailable = False
+        self._clickhouse_progress_available = False
+        self._clickhouse_progress_read_rows: int | None = None
         self._retention_phase = "target_capture"
 
     async def find_retention_by_key(self, key: str) -> RetentionAction | None:
@@ -405,22 +706,25 @@ class _RetentionPersistenceAdapter:
             return None
         return await self.get_retention(action_id)
 
-    async def _rows(self, query: str) -> list[dict[str, Any]]:
+    async def _rows(
+        self, query: str, *, params: dict[str, object] | None = None
+    ) -> list[dict[str, Any]]:
+        query_params: dict[str, str] = {"database": self._database}
+        for name, value in (params or {}).items():
+            # Values are sent as typed HTTP parameters.  They never become
+            # SQL source text, including metacharacters and timestamps.
+            query_params[f"param_{name}"] = str(value)
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 self._endpoint,
-                params={"database": self._database},
+                params=query_params,
                 auth=(self._user, self._password),
                 content=query + " FORMAT JSONEachRow",
             )
             _raise_for_clickhouse(response)
-        rows: list[dict[str, Any]] = []
-        for line in response.text.splitlines():
-            if line.strip():
-                value = json.loads(line)
-                if isinstance(value, dict):
-                    rows.append(cast(dict[str, Any], value))
-        return rows
+        self._clickhouse_progress_available = True
+        self._clickhouse_progress_read_rows = _clickhouse_progress_read_rows(response)
+        return _decode_clickhouse_rows(response)
 
     async def list_observations(self) -> list[MetadataObservation]:
         rows = await self._rows(
@@ -520,12 +824,8 @@ class _RetentionPersistenceAdapter:
                 "category": str(row[3]),
                 "inputSchemaId": str(row[4]),
                 "outputSchemaId": str(row[5]),
-                "measurements": sorted(
-                    str(item) for item in cast(list[Any], row[6] or [])
-                ),
-                "evaluators": sorted(
-                    str(item) for item in cast(list[Any], row[7] or [])
-                ),
+                "measurements": sorted(str(item) for item in cast(list[Any], row[6] or [])),
+                "evaluators": sorted(str(item) for item in cast(list[Any], row[7] or [])),
                 "createdAt": iso(row[8]),
             }
             for row in rows
@@ -582,12 +882,8 @@ class _RetentionPersistenceAdapter:
                 "category": str(row[3]),
                 "inputSchemaId": str(row[4]),
                 "outputSchemaId": str(row[5]),
-                "measurements": sorted(
-                    str(item) for item in cast(list[Any], row[6] or [])
-                ),
-                "evaluators": sorted(
-                    str(item) for item in cast(list[Any], row[7] or [])
-                ),
+                "measurements": sorted(str(item) for item in cast(list[Any], row[6] or [])),
+                "evaluators": sorted(str(item) for item in cast(list[Any], row[7] or [])),
                 "createdAt": iso(row[8]),
             }
             for row in rows
@@ -1140,11 +1436,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             # provide text and use the SQL-only production path below.
             self._response_body_unavailable = True
             return []
-        return [
-            cast(dict[str, Any], json.loads(line))
-            for line in response.text.splitlines()
-            if line.strip()
-        ]
+        return _decode_clickhouse_rows(response)
 
     async def components_query(self) -> list[dict[str, Any]]:
         collection = await self.component_collection_query()
@@ -1234,6 +1526,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             type(self)._component_definition_rows
             is not ProductionObservatoryStore._component_definition_rows
         )
+
         def merge_time(current: Any, observed: Any, *, earliest: bool) -> str | None:
             current_at = _parse_datetime(current)
             observed_at = _parse_datetime(observed)
@@ -1295,9 +1588,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 row_versions = row.get("versions")
                 if isinstance(row_versions, list):
                     versions.update(
-                        str(version)
-                        for version in cast(list[Any], row_versions)
-                        if version
+                        str(version) for version in cast(list[Any], row_versions) if version
                     )
                 else:
                     version = str(row.get("component_version") or "")
@@ -1448,8 +1739,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         definitions = await self._component_definition_rows()
         definitions_truncated = len(definitions) > 2000
         by_key = {
-            (str(item["componentId"]), str(item["componentVersion"])): item
-            for item in definitions
+            (str(item["componentId"]), str(item["componentVersion"])): item for item in definitions
         }
         observed = await self._query_rows(
             "SELECT component_id, groupUniqArray(64)(component_version) AS versions "
@@ -1494,12 +1784,14 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 kind = str(dependency["kind"])
                 required = dependency.get("requiredVersion")
                 required_version = str(required) if required is not None else None
-                candidates = sorted([
-                    key
-                    for key in by_key
-                    if key[0] == target_id
-                    and (required_version is None or key[1] == required_version)
-                ])
+                candidates = sorted(
+                    [
+                        key
+                        for key in by_key
+                        if key[0] == target_id
+                        and (required_version is None or key[1] == required_version)
+                    ]
+                )
                 if kind != "component":
                     candidates = []
                 if kind == "component" and required_version is not None and not candidates:
@@ -1511,10 +1803,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     resolution = "resolved"
                 else:
                     resolution = "missing_definition"
-                target_candidates: list[tuple[str, str | None]] = (
-                    [(candidate[0], candidate[1]) for candidate in candidates]
-                    or [(target_id, required_version)]
-                )
+                target_candidates: list[tuple[str, str | None]] = [
+                    (candidate[0], candidate[1]) for candidate in candidates
+                ] or [(target_id, required_version)]
                 for candidate_id, target_version in target_candidates:
                     edge_key = (
                         source_id,
@@ -1541,11 +1832,14 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                                 health_to,
                                 component_version=target_version,
                             )
-                            if target_id in observed_versions else None
+                            if target_id in observed_versions
+                            else None
                         )
                         declared = any(item[0] == target_id for item in by_key)
-                        state = "declared" if declared else (
-                            "observed_only" if target_id in observed_versions else "missing"
+                        state = (
+                            "declared"
+                            if declared
+                            else ("observed_only" if target_id in observed_versions else "missing")
                         )
                         nodes[key] = {
                             "dependencyId": target_id,
@@ -1553,9 +1847,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                             "componentVersion": target_version,
                             "definitionState": state,
                             "deployedVersions": observed_versions.get(target_id, [])[:64],
-                            "availability": "observed" if health is not None else (
-                                "unobserved" if state == "declared" else "unavailable"
-                            ),
+                            "availability": "observed"
+                            if health is not None
+                            else ("unobserved" if state == "declared" else "unavailable"),
                             "health": health.get("summary") if health else None,
                             "partialHealth": health is None,
                         }
@@ -1645,10 +1939,12 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         return await self.deployments()
 
     async def list_observations(
-        self, *, limit: int = 1000, cursor: int | None = None
+        self, *, limit: int | None = 1000, cursor: int | None = None
     ) -> list[MetadataObservation]:
         """Compatibility port with a mandatory bounded source query."""
 
+        if limit is None:
+            limit = 1000
         if not 1 <= limit <= 10000:
             raise ValueError("limit must be between 1 and 10000")
         where = f" WHERE ingest_sequence > {cursor}" if cursor is not None else ""
@@ -1736,6 +2032,320 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             # until then bounded reads remain available without the fence.
             return None
         return int(row[0]) if row else None
+
+    async def _analytics_retention_boundary(self, lower: datetime, upper: datetime) -> bool:
+        """Detect whether a completed deletion overlaps the observed-time window.
+
+        Retention actions describe a deleted observation-time domain, not a
+        maintenance timestamp.  A cutoff removes every observation before its
+        cutoff, so it overlaps ``[lower, upper)`` exactly when the cutoff is
+        after the window start.  Purge-all removes the complete time domain;
+        its completion time is intentionally irrelevant to overlap detection.
+        """
+
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    "SELECT EXISTS (SELECT 1 FROM observatory_retention_actions "
+                    "WHERE status = 'succeeded' AND ("
+                    "action_kind = 'purge_all' "
+                    "OR (action_kind = 'delete_before' AND requested_cutoff > %s))",
+                    (lower,),
+                )
+                row = await result.fetchone()
+        except Exception:
+            # Retention evidence is diagnostic. Legacy/empty installations
+            # remain queryable without claiming an unproven boundary.
+            return False
+        return bool(row and row[0])
+
+    async def operational_analytics_query(self, request: AnalyticsRequest) -> dict[str, object]:
+        """Execute one allowlisted, bounded ClickHouse analytics query.
+
+        The query returns aggregate rows only.  It never selects observation
+        identifiers, dimensions as a whole, traces, or content-bearing
+        fields.  The source CTE and ClickHouse settings provide hard scan and
+        execution bounds before aggregation begins.
+        """
+
+        lower = request.from_time
+        upper = request.to_time
+        if lower is None or upper is None:
+            raise ValueError("analytics request must have a normalized window")
+        bucket_seconds = ANALYTICS_BUCKETS[request.bucket]
+        source_names = {
+            "operation_duration_ms": ("duration_ms", "operation_duration_ms"),
+            "run_duration_ms": ("run_duration_ms",),
+        }.get(request.metric, (request.metric,))
+        name_placeholders = ", ".join(
+            "{" + f"metric_{index}:String" + "}" for index, _name in enumerate(source_names)
+        )
+        group_expr = {
+            "none": "'all'",
+            "component": "component_id",
+            "component_version": "component_version",
+            "operation": "operation",
+            "deployment": "deployment_id",
+            "environment": "environment",
+            "host": "host_id",
+            "service_role": "service_role",
+            "provider": "coalesce(nullIf(dimensions['provider'], ''), 'unknown')",
+            "outcome": _ANALYTICS_OUTCOME_SQL,
+            "error_class": "coalesce(nullIf(dimensions['errorClass'], ''), 'unknown')",
+            "status": "coalesce(nullIf(dimensions['status'], ''), 'unknown')",
+            "retrieval_stage": "coalesce(nullIf(dimensions['retrievalStage'], ''), 'unknown')",
+        }[request.group_by]
+        where = [
+            "observed_at >= {from_time:DateTime64(3, 'UTC')}",
+            "observed_at < {to_time:DateTime64(3, 'UTC')}",
+            f"measurement_name IN ({name_placeholders})",
+            "measurement_unit = {measurement_unit:String}",
+        ]
+        column_filters = {
+            "component": "component_id",
+            "component_version": "component_version",
+            "operation": "operation",
+            "deployment": "deployment_id",
+            "environment": "environment",
+            "host": "host_id",
+            "service_role": "service_role",
+        }
+        dimension_filters = {
+            "provider": "provider",
+            "error_class": "errorClass",
+            "status": "status",
+            "retrieval_stage": "retrievalStage",
+        }
+        params: dict[str, object] = {
+            "from_time": lower.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "to_time": upper.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "measurement_unit": request.unit,
+        }
+        params.update({f"metric_{index}": name for index, name in enumerate(source_names)})
+        for key, value in request.filters.items():
+            if key in column_filters:
+                where.append(f"{column_filters[key]} = {{filter_{key}:String}}")
+                params[f"filter_{key}"] = value
+            elif key == "outcome":
+                where.append(f"{_ANALYTICS_OUTCOME_SQL} = {{filter_outcome:String}}")
+                params["filter_outcome"] = _analytics_outcome_filter(value)
+            elif key in dimension_filters:
+                where.append(
+                    f"dimensions['{dimension_filters[key]}'] = {{filter_{key}:String}}"
+                )
+                params[f"filter_{key}"] = value
+        response_limit = request.series_limit * (request.point_limit + 1) + 1
+        source_read_limit = ANALYTICS_MAX_SCANNED_ROWS + 1
+        retention_boundary = await self._analytics_retention_boundary(lower, upper)
+        query = (
+            "WITH raw_source_limited AS (SELECT observed_at, measurement_value, "
+            "observation_id, ingest_sequence, "
+            f"{group_expr} AS group_value FROM observations WHERE {' AND '.join(where)} "
+            f"ORDER BY ingest_sequence, observation_id LIMIT {source_read_limit}), "
+            "raw_source_ordered AS (SELECT observed_at, measurement_value, observation_id, "
+            "ingest_sequence, group_value, max(observed_at) OVER "
+            "(ORDER BY ingest_sequence, observation_id "
+            "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) "
+            "AS prior_ingest_observed_at, row_number() OVER "
+            "(ORDER BY ingest_sequence, observation_id) AS scan_rank "
+            "FROM raw_source_limited), "
+            "raw_source AS (SELECT raw_source_ordered.*, count() OVER () AS scan_rows_read, "
+            "max(if(prior_ingest_observed_at IS NOT NULL AND "
+            "observed_at < prior_ingest_observed_at, 1, 0)) OVER () AS source_late_data "
+            "FROM raw_source_ordered), "
+            "source AS (SELECT raw_source.*, "
+            "count() OVER (PARTITION BY group_value) AS summary_sample_count, "
+            "min(measurement_value) OVER (PARTITION BY group_value) AS summary_minimum, "
+            "max(measurement_value) OVER (PARTITION BY group_value) AS summary_maximum, "
+            "avg(measurement_value) OVER (PARTITION BY group_value) AS summary_average, "
+            "quantileExact(0.50)(measurement_value) OVER (PARTITION BY group_value) "
+            "AS summary_p50, "
+            "quantileExact(0.90)(measurement_value) OVER (PARTITION BY group_value) "
+            "AS summary_p90, "
+            "quantileExact(0.95)(measurement_value) OVER (PARTITION BY group_value) "
+            "AS summary_p95, "
+            "quantileExact(0.99)(measurement_value) OVER (PARTITION BY group_value) "
+            "AS summary_p99, "
+            "sum(measurement_value) OVER (PARTITION BY group_value) AS summary_total "
+            "FROM raw_source WHERE scan_rank <= "
+            f"{ANALYTICS_MAX_SCANNED_ROWS}) "
+            "SELECT toStartOfInterval(source.observed_at, INTERVAL "
+            f"{bucket_seconds} SECOND) AS bucket_start, source.group_value, "
+            "count() AS sample_count, "
+            "min(source.measurement_value) AS minimum, max(source.measurement_value) AS maximum, "
+            "avg(source.measurement_value) AS average, sum(source.measurement_value) AS total, "
+            "quantileExact(0.50)(source.measurement_value) AS p50, "
+            "quantileExact(0.90)(source.measurement_value) AS p90, "
+            "quantileExact(0.95)(source.measurement_value) AS p95, "
+            "quantileExact(0.99)(source.measurement_value) AS p99, "
+            "max(source.scan_rows_read) AS scan_rows_read, "
+            "max(source.observed_at) AS latest_observed_at, "
+            "max(source.source_late_data) AS source_late_data, "
+            "max(if(source.prior_ingest_observed_at IS NOT NULL AND "
+            "source.observed_at < source.prior_ingest_observed_at, 1, 0)) AS late_data, "
+            "max(source.summary_sample_count) AS summary_sample_count, "
+            "max(source.summary_minimum) AS summary_minimum, "
+            "max(source.summary_maximum) AS summary_maximum, "
+            "max(source.summary_average) AS summary_average, "
+            "max(source.summary_p50) AS summary_p50, "
+            "max(source.summary_p90) AS summary_p90, "
+            "max(source.summary_p95) AS summary_p95, "
+            "max(source.summary_p99) AS summary_p99, "
+            "max(source.summary_total) AS summary_total FROM source "
+            "GROUP BY bucket_start, source.group_value ORDER BY source.group_value, bucket_start "
+            f"LIMIT {response_limit} "
+            f"SETTINGS max_execution_time = {ANALYTICS_EXECUTION_LIMIT_MS // 1000}, "
+            f"max_rows_to_read = {source_read_limit}, "
+            "send_progress_in_http_headers = 1, "
+            "read_overflow_mode = 'break'"
+        )
+        started = monotonic()
+        try:
+            rows = await self._rows(query, params=params)
+        except StorageUnavailableError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            if _is_clickhouse_read_limit(exc):
+                return _analytics_scan_limit_snapshot(request, lower, upper, bucket_seconds)
+            if _is_clickhouse_execution_timeout(exc):
+                return _analytics_execution_limit_snapshot(
+                    request, lower, upper, bucket_seconds
+                )
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
+        try:
+            rows = _validate_analytics_rows(rows)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise StorageUnavailableError("ClickHouse returned an invalid response") from exc
+        execution_ms = min(ANALYTICS_EXECUTION_LIMIT_MS, max(0.0, (monotonic() - started) * 1000.0))
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("group_value", "unknown"))].append(row)
+        scan_rows_read = max(
+            (int(row.get("scan_rows_read") or row.get("scanned_rows") or 0) for row in rows),
+            default=0,
+        )
+        physical_rows = self._clickhouse_progress_read_rows
+        if physical_rows is not None:
+            scan_rows_read = max(scan_rows_read, physical_rows)
+        scan_limit_hit = scan_rows_read >= ANALYTICS_MAX_SCANNED_ROWS
+        # A selective WHERE can exhaust ClickHouse's physical read budget
+        # before the matching-row lookahead is reached.  If the provider did
+        # not return progress, a non-empty production response cannot prove
+        # completeness, so conservatively expose scan_limit partial state.
+        if self._clickhouse_progress_available and physical_rows is None:
+            scan_limit_hit = True
+        response_truncated = len(rows) >= response_limit
+        partial_reasons: list[str] = []
+        if scan_limit_hit:
+            partial_reasons.append("scan_limit")
+        if len(grouped) > request.series_limit or response_truncated:
+            partial_reasons.append("series_limit")
+        if (
+            any(len(group_rows) > request.point_limit for group_rows in grouped.values())
+            or response_truncated
+        ):
+            partial_reasons.append("point_limit")
+        if any(
+            bool(row.get("late_data")) or bool(row.get("source_late_data"))
+            for row in rows
+        ):
+            partial_reasons.append("late_data")
+        if any(bool(row.get("retention_boundary")) for row in rows):
+            partial_reasons.append("retention_boundary")
+        if retention_boundary:
+            partial_reasons.append("retention_boundary")
+        if len(grouped) > ANALYTICS_MAX_BREAKDOWNS:
+            partial_reasons.append("series_limit")
+        source_partial = any(
+            reason in partial_reasons
+            for reason in ("scan_limit", "execution_limit", "late_data", "retention_boundary")
+        )
+        series: list[dict[str, object]] = []
+        latest: datetime | None = None
+        for group, group_rows in list(sorted(grouped.items()))[: request.series_limit]:
+            points: list[dict[str, object]] = []
+            point_partial = (
+                source_partial or len(group_rows) > request.point_limit or response_truncated
+            )
+            for row in group_rows[: request.point_limit]:
+                count = int(row.get("sample_count") or 0)
+                start = _parse_datetime(row.get("bucket_start")) or lower
+                observed = _parse_datetime(row.get("latest_observed_at"))
+                if observed is not None:
+                    latest = max(latest or observed, observed)
+                points.append(
+                    {
+                        "startAt": iso(start),
+                        "endAt": iso(min(start + timedelta(seconds=bucket_seconds), upper)),
+                        "value": _analytics_row_value(row, request.aggregation, bucket_seconds),
+                        "sampleCount": count,
+                        "availability": "available" if count else "no_data",
+                        "partial": point_partial,
+                    }
+                )
+            sample_count = sum(int(row.get("sample_count") or 0) for row in group_rows)
+            facet_name = _camel_analytics_group(request.group_by)
+            series.append(
+                {
+                    "seriesKey": f"{request.metric}:{request.unit}:{group}",
+                    "facets": {facet_name: group} if request.group_by != "none" else {},
+                    "summary": _analytics_summary_rows(group_rows, sample_count, upper - lower),
+                    "points": points,
+                    "availability": "available" if sample_count else "no_data",
+                    "partial": point_partial,
+                }
+            )
+        observed_values = [
+            value
+            for value in (_parse_datetime(row.get("latest_observed_at")) for row in rows)
+            if value is not None
+        ]
+        latest = max(observed_values, default=latest)
+        breakdowns = [
+            {
+                "groupBy": request.group_by,
+                "value": group,
+                "count": sum(int(row.get("sample_count") or 0) for row in group_rows),
+                "partial": source_partial or response_truncated,
+            }
+            for group, group_rows in list(sorted(grouped.items()))[:ANALYTICS_MAX_BREAKDOWNS]
+            if request.group_by != "none"
+        ]
+        return {
+            "snapshotAt": iso(datetime.now(UTC)),
+            "query": {
+                "metric": request.metric,
+                "unit": request.unit,
+                "aggregation": request.aggregation,
+                "focus": request.focus,
+                "from": iso(lower),
+                "to": iso(upper),
+                "bucket": request.bucket,
+                "bucketSeconds": bucket_seconds,
+                "groupBy": request.group_by,
+                "filters": {
+                    _camel_analytics_group(key): value for key, value in request.filters.items()
+                },
+                "seriesLimit": request.series_limit,
+                "pointLimit": request.point_limit,
+            },
+            "percentileMethod": ANALYTICS_PERCENTILE_METHOD,
+            "series": series,
+            "breakdowns": breakdowns,
+            "freshness": analytics_freshness(latest),
+            "partial": bool(partial_reasons),
+            "partialReasons": sorted(set(partial_reasons)),
+            "unavailableSignals": analytics_unavailable(request.metric),
+            "scan": {
+                "scannedRows": min(scan_rows_read, ANALYTICS_MAX_SCANNED_ROWS),
+                "scanLimit": ANALYTICS_MAX_SCANNED_ROWS,
+                "executionMs": execution_ms,
+                "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+            },
+            "capturePolicy": "metadata_only",
+        }
 
     async def overview_query(self) -> dict[str, Any]:
         counts = await self._overview_counts()
@@ -2018,10 +2628,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         succeeded = int(row.get("successes", 0))
         cancelled = int(row.get("cancelled", 0))
         points_rows = []
-        if (
-            point_limit != 200
-            or type(self)._query_rows is ProductionObservatoryStore._query_rows
-        ):
+        if point_limit != 200 or type(self)._query_rows is ProductionObservatoryStore._query_rows:
             points_rows = await self._query_rows(
                 "SELECT toStartOfInterval(execution_at, INTERVAL 5 MINUTE) AS start_at, "
                 "count() AS sample_count, "
@@ -2061,8 +2668,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     "latencyP50Ms": point.get("p50"),
                     "latencyP95Ms": point.get("p95"),
                     "errorRate": (
-                        int(point.get("failures", 0) or 0)
-                        / int(point.get("sample_count", 0) or 1)
+                        int(point.get("failures", 0) or 0) / int(point.get("sample_count", 0) or 1)
                     ),
                     "outcomes": {
                         "succeeded": int(point.get("successes", 0) or 0),
@@ -2113,9 +2719,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         upper = max(upper, health_upper)
         replay_upper = upper
         anchor = (
-            await self._health_port.health_event_sequence(last_event_id)
-            if last_event_id
-            else None
+            await self._health_port.health_event_sequence(last_event_id) if last_event_id else None
         )
         if anchor is None and last_event_id:
             rows = await self._query_rows(

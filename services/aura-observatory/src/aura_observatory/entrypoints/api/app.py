@@ -26,12 +26,20 @@ from aura_observatory.composition import build_auth, build_health_projector, bui
 from aura_observatory.ingest import IngestPayloadError, InvalidCredential, TelemetryIngestService
 from aura_observatory.otlp import OtlpPayloadError, metrics_to_observations, traces_to_observations
 from aura_observatory.query import (
+    ANALYTICS_AGGREGATIONS,
+    ANALYTICS_BUCKETS,
+    ANALYTICS_FOCUSES,
+    ANALYTICS_GROUPINGS,
+    ANALYTICS_METRICS,
+    ANALYTICS_UNITS,
+    AnalyticsRequest,
     ObservatoryHealthProjector,
     ObservatoryQueryService,
     RetentionConflictError,
     RetentionKind,
     RetentionRequest,
     RunFilters,
+    analytics_metric_catalogue,
     decode_health_cursor,
 )
 from aura_observatory.settings import Settings
@@ -122,6 +130,7 @@ def create_app(
     else:
         service = build_ingest_service(resolved)
     auth_service = auth or build_auth(resolved, testing=testing)
+
     @asynccontextmanager
     async def lifespan(live_app: FastAPI) -> AsyncGenerator[None]:
         if live_app.state.background_tasks_enabled:
@@ -140,7 +149,7 @@ def create_app(
                 stop.set()
                 try:
                     await asyncio.wait_for(task, timeout=5.0)
-                except (TimeoutError, asyncio.CancelledError):
+                except TimeoutError, asyncio.CancelledError:
                     task.cancel()
                     try:
                         await task
@@ -213,6 +222,7 @@ def create_app(
                 or request.url.path.startswith("/api/v1/traces")
                 or request.url.path.startswith("/api/v1/components")
                 or request.url.path.startswith("/api/v1/deployments")
+                or request.url.path.startswith("/api/v1/analytics")
                 or request.url.path == "/api/v1/events"
                 or request.url.path.startswith("/api/v1/retention")
             )
@@ -435,6 +445,104 @@ def create_app(
     async def overview(request: Request) -> JSONResponse:
         await owner_session(request)
         return JSONResponse(_overview_payload(await app.state.query.overview()))
+
+    @app.get("/api/v1/analytics/metrics")
+    async def analytics_metrics(
+        request: Request, focus: str | None = Query(default=None)
+    ) -> JSONResponse:
+        await owner_session(request)
+        if focus is not None and focus not in ANALYTICS_FOCUSES:
+            raise HTTPException(status_code=400, detail="invalid request")
+        return JSONResponse(analytics_metric_catalogue(focus=focus))
+
+    @app.get("/api/v1/analytics/query")
+    async def analytics_query(
+        request: Request,
+        metric: str,
+        unit: str,
+        aggregation: str = "average",
+        focus: str = "all",
+        from_time: str | None = Query(default=None, alias="from"),
+        to_time: str | None = Query(default=None, alias="to"),
+        bucket: str = "auto",
+        group_by: str = Query(default="none", alias="group_by"),
+        component: str | None = None,
+        component_version: str | None = None,
+        operation: str | None = None,
+        deployment: str | None = None,
+        environment: str | None = None,
+        host: str | None = None,
+        service_role: str | None = Query(default=None, alias="service_role"),
+        provider: str | None = None,
+        outcome: str | None = None,
+        error_class: str | None = Query(default=None, alias="error_class"),
+        status: str | None = None,
+        retrieval_stage: str | None = Query(default=None, alias="retrieval_stage"),
+        series_limit: str | None = Query(default=None, alias="series_limit"),
+        point_limit: str | None = Query(default=None, alias="point_limit"),
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            _validate_analytics_inputs(
+                metric,
+                unit,
+                aggregation,
+                focus,
+                bucket,
+                group_by,
+                component,
+                component_version,
+                operation,
+                deployment,
+                environment,
+                host,
+                service_role,
+                provider,
+                outcome,
+                error_class,
+                status,
+                retrieval_stage,
+            )
+            filters = {
+                key: value
+                for key, value in {
+                    "component": component,
+                    "component_version": component_version,
+                    "operation": operation,
+                    "deployment": deployment,
+                    "environment": environment,
+                    "host": host,
+                    "service_role": service_role,
+                    "provider": provider,
+                    "outcome": outcome,
+                    "error_class": error_class,
+                    "status": status,
+                    "retrieval_stage": retrieval_stage,
+                }.items()
+                if value is not None
+            }
+            result = await app.state.query.analytics(
+                AnalyticsRequest(
+                    metric=metric,
+                    unit=unit,
+                    aggregation=aggregation,
+                    focus=focus,
+                    from_time=_parse_utc_z(from_time),
+                    to_time=_parse_utc_z(to_time),
+                    bucket=bucket,
+                    group_by=group_by,
+                    filters=filters,
+                    series_limit=_parse_bounded_int(
+                        series_limit, default=12, minimum=1, maximum=12
+                    ),
+                    point_limit=_parse_bounded_int(
+                        point_limit, default=200, minimum=1, maximum=200
+                    ),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid analytics query") from exc
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/health/history")
     async def health_history(
@@ -997,9 +1105,9 @@ def _component_collection_payload(
             items.append(
                 {
                     "componentId": component_id,
-                    "versions": sorted(
-                        {str(version) for version in value.get("versions", [])}
-                    )[:64],
+                    "versions": sorted({str(version) for version in value.get("versions", [])})[
+                        :64
+                    ],
                     "firstSeenAt": str(value.get("firstSeenAt") or _now_iso()),
                     "lastSeenAt": str(
                         value.get("lastSeenAt") or value.get("firstSeenAt") or _now_iso()
@@ -1128,6 +1236,56 @@ def _validate_run_filter_inputs(
     _validate_safe_label(deployment, "deployment")
 
 
+def _validate_analytics_inputs(
+    metric: str,
+    unit: str,
+    aggregation: str,
+    focus: str,
+    bucket: str,
+    group_by: str,
+    component: str | None,
+    component_version: str | None,
+    operation: str | None,
+    deployment: str | None,
+    environment: str | None,
+    host: str | None,
+    service_role: str | None,
+    provider: str | None,
+    outcome: str | None,
+    error_class: str | None,
+    status: str | None,
+    retrieval_stage: str | None,
+) -> None:
+    if metric not in ANALYTICS_METRICS or unit not in ANALYTICS_UNITS:
+        raise ValueError("invalid analytics metric or unit")
+    if aggregation not in ANALYTICS_AGGREGATIONS or focus not in ANALYTICS_FOCUSES:
+        raise ValueError("invalid analytics aggregation or focus")
+    if bucket != "auto" and bucket not in ANALYTICS_BUCKETS:
+        raise ValueError("invalid analytics bucket")
+    if group_by not in ANALYTICS_GROUPINGS:
+        raise ValueError("invalid analytics grouping")
+    if component is not None:
+        _validate_component_id(component)
+    for value, label in (
+        (component_version, "component version"),
+        (deployment, "deployment"),
+        (host, "host"),
+        (provider, "provider"),
+        (error_class, "error class"),
+        (status, "status"),
+        (retrieval_stage, "retrieval stage"),
+    ):
+        _validate_safe_label(value, label)
+    if operation is not None and re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", operation) is None:
+        raise ValueError("invalid operation")
+    if environment is not None and re.fullmatch(r"[a-z][a-z0-9_.-]{0,31}", environment) is None:
+        raise ValueError("invalid environment")
+    if service_role is not None and service_role not in {"api", "worker", "scheduler", "cli"}:
+        raise ValueError("invalid service role")
+    if outcome is not None and outcome not in {"succeeded", "failed", "cancelled", "unknown"}:
+        raise ValueError("invalid outcome")
+
+
 def _validate_cursor(value: str | None) -> None:
     if value is not None and _CURSOR_RE.fullmatch(value) is None:
         raise ValueError("invalid cursor")
@@ -1167,9 +1325,7 @@ def _parse_limit(value: str | None) -> int:
     return parsed
 
 
-def _parse_bounded_int(
-    value: str | None, *, default: int, minimum: int, maximum: int
-) -> int:
+def _parse_bounded_int(value: str | None, *, default: int, minimum: int, maximum: int) -> int:
     if value is None:
         return default
     try:

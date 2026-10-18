@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { ComponentDetailRequestGate, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseComponentDefinition, parseComponentDependencyTopology, RequestGenerationGate, resourceStateFor, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -22,6 +22,8 @@ export class ObservatoryStore {
   readonly componentHealthErrors = signal<Record<string, string>>({});
   readonly componentHealthLoading = signal<Record<string, boolean>>({});
   readonly selectedComponent = signal<ComponentCatalogueSelection | null>(null);
+  readonly analytics = signal<AnalyticsResource>({ catalogue: null, snapshot: null, state: 'loading', error: null });
+  readonly analyticsFilters = signal<AnalyticsFilters>(DEFAULT_ANALYTICS_FILTERS);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
@@ -33,7 +35,9 @@ export class ObservatoryStore {
   private readonly liveRefresh = new LiveRefreshCoordinator();
   private readonly healthHistoryRefresh = new LiveRefreshCoordinator();
   private readonly catalogRefresh = new LiveRefreshCoordinator();
+  private readonly analyticsRefresh = new LiveRefreshCoordinator();
   private catalogLoadSequence = 0;
+  private analyticsLoadSequence = 0;
   /** Last successful catalogue pages survive a later refresh failure. */
   private lastKnownComponents: ObservatorySnapshot['components'] = null;
   private lastKnownDeployments: ObservatorySnapshot['deployments'] = null;
@@ -52,6 +56,7 @@ export class ObservatoryStore {
       await this.loadHealthHistory();
       this.connectLive();
       this.queueCatalogRefresh();
+      this.queueAnalyticsRefresh();
     }
   }
 
@@ -200,15 +205,21 @@ export class ObservatoryStore {
   retryAuthentication(): void { void this.runSessionLifecycle(); }
   refreshCatalog(): void { this.queueCatalogRefresh(); }
   refreshHealthHistory(): void { this.queueHealthHistory(); }
+  setAnalyticsFilters(filters: AnalyticsFilters): void {
+    this.analyticsFilters.set(filters);
+    this.queueAnalyticsRefresh();
+  }
+  refreshAnalytics(): void { this.queueAnalyticsRefresh(); }
 
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
     this.queueLiveRefresh();
     if (event.type === 'health.changed') this.queueHealthHistory();
+    if (this.analytics().catalogue || this.analytics().snapshot) this.queueAnalyticsRefresh();
   };
-  private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); };
-  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); this.queueLiveRefresh(); };
+  private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); if (this.analytics().state === 'disconnected') { this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null })); this.queueAnalyticsRefresh(); } };
+  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); this.queueLiveRefresh(); };
 
   private queueLiveRefresh(): void {
     this.liveRefresh.request(() => this.loadLiveSnapshot(), () => this.authState() === 'authenticated' && !this.sessionRequired());
@@ -216,6 +227,56 @@ export class ObservatoryStore {
 
   private queueHealthHistory(): void {
     this.healthHistoryRefresh.request(() => this.loadHealthHistory(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  private queueAnalyticsRefresh(): void {
+    this.analyticsRefresh.request(() => this.loadAnalytics(), () => this.authState() === 'authenticated' && !this.sessionRequired());
+  }
+
+  private async loadAnalytics(): Promise<void> {
+    const sequence = ++this.analyticsLoadSequence;
+    const generation = this.authGeneration;
+    const previous = this.analytics();
+    this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null }));
+    try {
+      await this.gateway.ensureSession();
+      if (sequence !== this.analyticsLoadSequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      const rawCatalogue = previous.catalogue ?? await this.gateway.execute('listAnalyticsMetrics', { ...blankInput('listAnalyticsMetrics'), query: { focus: this.analyticsFilters().focus } });
+      const catalogue = parseAnalyticsMetricCatalogue(rawCatalogue);
+      if (!catalogue) throw new Error('Operational analytics catalogue is malformed.');
+      const requestedFilters = this.analyticsFilters();
+      const definition = catalogue.items.find((item) => item.metric === requestedFilters.metric && (requestedFilters.focus === 'all' || item.focusAreas.includes(requestedFilters.focus)));
+      const filters = definition && (definition.metric !== requestedFilters.metric || definition.unit !== requestedFilters.unit)
+        ? { ...requestedFilters, metric: definition.metric, unit: definition.unit }
+        : requestedFilters;
+      if (filters !== requestedFilters) this.analyticsFilters.set(filters);
+      const rawSnapshot = await this.gateway.execute('queryOperationalAnalytics', {
+        ...blankInput('queryOperationalAnalytics'),
+        query: {
+          metric: filters.metric,
+          unit: filters.unit,
+          aggregation: filters.aggregation,
+          focus: filters.focus,
+          bucket: filters.bucket,
+          group_by: filters.groupBy,
+          ...(filters.from ? { from: filters.from } : {}),
+          ...(filters.to ? { to: filters.to } : {}),
+          ...(filters.component ? { component: filters.component } : {}),
+          ...(filters.deployment ? { deployment: filters.deployment } : {}),
+        },
+      });
+      const snapshot = parseOperationalAnalyticsSnapshot(rawSnapshot);
+      if (!snapshot) throw new Error('Operational analytics response is malformed.');
+      if (sequence !== this.analyticsLoadSequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      this.analytics.set({ catalogue, snapshot, state: snapshot.series.length ? 'ready' : 'empty', error: null });
+    } catch (error) {
+      if (sequence !== this.analyticsLoadSequence || generation !== this.authGeneration || this.sessionRequired()) return;
+      if (error instanceof ObservatorySessionRequiredError) {
+        this.markSignedOut('Owner Observatory session required.');
+        return;
+      }
+      this.analytics.set({ catalogue: previous.catalogue, snapshot: previous.snapshot, state: previous.snapshot ? 'stale' : 'error', error: error instanceof Error ? error.message : 'Operational analytics are unavailable.' });
+    }
   }
 
   /** Load only the bounded, content-free operational history page. */
@@ -352,6 +413,7 @@ export class ObservatoryStore {
     this.disconnectLive();
     this.liveRefresh.cancel();
     this.catalogRefresh.cancel();
+    this.analyticsRefresh.cancel();
     this.healthHistoryRefresh.cancel();
     this.catalogLoadSequence += 1;
     this.healthHistorySequence += 1;
@@ -378,6 +440,9 @@ export class ObservatoryStore {
     this.lastKnownComponents = null;
     this.lastKnownDeployments = null;
     this.selectedComponent.set(null);
+    this.analyticsLoadSequence += 1;
+    this.analytics.set({ catalogue: null, snapshot: null, state: 'error', error: null });
+    this.analyticsFilters.set(DEFAULT_ANALYTICS_FILTERS);
     this.retention.set({ action: null, running: false, error: null });
   }
 
@@ -396,7 +461,10 @@ export class ObservatoryStore {
     this.lastKnownComponents = null;
     this.lastKnownDeployments = null;
     this.selectedComponent.set(null);
+    this.analyticsLoadSequence += 1;
+    this.analytics.set({ catalogue: this.analytics().catalogue, snapshot: null, state: 'loading', error: null });
     await this.load();
+    this.queueAnalyticsRefresh();
   }
   private pollRetention(actionId: string, generation: number): void {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);

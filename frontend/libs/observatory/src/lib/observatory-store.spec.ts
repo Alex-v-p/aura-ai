@@ -1,10 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
-import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, ownerLoginHref } from './observatory-models';
-import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseComponentDefinition, parseComponentDependencyTopology, RequestGenerationGate, resourceStateFor } from './observatory-models';
+import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, ownerLoginHref } from './observatory-models';
+import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
+  it('starts analytics with a bounded metadata-only query shape', () => {
+    expect(DEFAULT_ANALYTICS_FILTERS).toMatchObject({ focus: 'all', metric: 'operation_duration_ms', unit: 'milliseconds', aggregation: 'p95', bucket: 'auto', groupBy: 'component' });
+    expect(DEFAULT_ANALYTICS_FILTERS).not.toHaveProperty('prompt');
+    expect(DEFAULT_ANALYTICS_FILTERS).not.toHaveProperty('response');
+  });
+
+  it('rejects malformed analytics snapshots before template access', () => {
+    expect(parseOperationalAnalyticsSnapshot({ snapshotAt: '2026-10-17T00:00:00Z', capturePolicy: 'metadata_only', series: [{ seriesKey: 'broken', points: 'not-an-array' }] })).toBeNull();
+    expect(parseOperationalAnalyticsSnapshot({ snapshotAt: '2026-10-17T00:00:00Z', capturePolicy: 'metadata_only', series: [], breakdowns: [], query: {}, freshness: {}, partial: false, partialReasons: [], unavailableSignals: [], scan: {} })).toBeNull();
+  });
+
+  it('accepts only closed analytics enums and rejects private render-bound markers', () => {
+    const snapshot = {
+      snapshotAt: '2026-10-17T00:00:00.000Z', percentileMethod: 'clickhouse_quantile_exact', capturePolicy: 'metadata_only',
+      query: { metric: 'operation_duration_ms', unit: 'milliseconds', aggregation: 'p95', focus: 'all', from: '2026-10-16T00:00:00.000Z', to: '2026-10-17T00:00:00.000Z', bucket: 'one_hour', bucketSeconds: 3600, groupBy: 'component', filters: {}, seriesLimit: 12, pointLimit: 200 },
+      series: [{ seriesKey: 'operation-api', facets: { component: 'aura.core.api' }, summary: { sampleCount: 1, minimum: 1, maximum: 1, average: 1, p50: 1, p90: 1, p95: 1, p99: 1, ratePerInterval: null, rateIntervalSeconds: null }, points: [{ startAt: '2026-10-16T00:00:00.000Z', endAt: '2026-10-16T01:00:00.000Z', value: 1, sampleCount: 1, availability: 'available', partial: false }], availability: 'available', partial: false }],
+      breakdowns: [], freshness: { latestObservedAt: '2026-10-16T01:00:00.000Z', lagMs: 10, state: 'fresh' }, partial: false, partialReasons: [], unavailableSignals: [], scan: { scannedRows: 1, scanLimit: 1000000, executionMs: 1.5, executionLimitMs: 5000 },
+    };
+    expect(parseOperationalAnalyticsSnapshot(snapshot)).not.toBeNull();
+    expect(parseOperationalAnalyticsSnapshot({ ...snapshot, query: { ...snapshot.query, metric: 'arbitrary_metric' } })).toBeNull();
+    expect(parseOperationalAnalyticsSnapshot({ ...snapshot, series: [{ ...snapshot.series[0], facets: { provider: 'PRIVATE CONTENT VALUE' } }] })).toBeNull();
+  });
+
+  it('validates the bounded metric catalogue before creating controls', () => {
+    const catalogue = { snapshotAt: '2026-10-17T00:00:00.000Z', capturePolicy: 'metadata_only', limits: { defaultWindowHours: 24, maximumWindowDays: 31, maximumPointsPerSeries: 200, maximumSeries: 12, maximumBreakdowns: 50, maximumScannedRows: 1000000, executionTimeoutMs: 5000 }, items: [{ metric: 'operation_duration_ms', unit: 'milliseconds', focusAreas: ['all'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] }] };
+    expect(parseAnalyticsMetricCatalogue(catalogue)).not.toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], metric: 'document_retrieval_duration_ms' }] })).not.toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: Array.from({ length: 128 }, () => catalogue.items[0]) })).not.toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: Array.from({ length: 129 }, () => catalogue.items[0]) })).toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], supportedAggregations: ['arbitrary'] }] })).toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], metric: 'PRIVATE_PROMPT_MARKER' }] })).toBeNull();
+  });
   it('promotes a 401 rejection from any parallel resource before partial assembly', () => {
     const parallelResources = ['overview', 'runs', 'components', 'deployments'];
     for (const resource of parallelResources) {

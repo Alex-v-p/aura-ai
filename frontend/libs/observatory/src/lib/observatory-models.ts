@@ -7,6 +7,19 @@ import type {
   DeploymentCollection,
   HealthHistoryPage,
   LiveEvent,
+  AnalyticsAggregation,
+  AnalyticsAvailability,
+  AnalyticsBucket,
+  AnalyticsFocus,
+  AnalyticsGroupBy,
+  AnalyticsMetricCatalogue,
+  AnalyticsMetricDefinition,
+  AnalyticsMetricName,
+  AnalyticsPartialReason,
+  AnalyticsPercentileMethod,
+  AnalyticsUnavailableSignal,
+  AnalyticsUnit,
+  OperationalAnalyticsSnapshot,
   Overview,
   RetentionAction,
   RunDetail,
@@ -19,6 +32,133 @@ import { OBSERVATORY_API_OPERATIONS } from '@aura/observatory-api-client';
 export type ObservatoryViewState = 'loading' | 'ready' | 'empty' | 'stale' | 'disconnected' | 'error';
 export type ObservatoryResource = 'overview' | 'runs' | 'components' | 'deployments';
 export type ObservatoryResourceState = 'loading' | 'ready' | 'empty' | 'stale' | 'error';
+
+/** Bounded, memory-only controls for the operational analytics explorer. */
+export type AnalyticsFilters = {
+  readonly focus: AnalyticsFocus;
+  readonly metric: AnalyticsMetricName;
+  readonly unit: AnalyticsUnit;
+  readonly aggregation: AnalyticsAggregation;
+  readonly bucket: AnalyticsBucket;
+  readonly groupBy: AnalyticsGroupBy;
+  readonly from?: string;
+  readonly to?: string;
+  readonly component?: string;
+  readonly deployment?: string;
+};
+
+export type AnalyticsViewState = 'loading' | 'ready' | 'empty' | 'stale' | 'disconnected' | 'error';
+export type AnalyticsResource = {
+  readonly catalogue: AnalyticsMetricCatalogue | null;
+  readonly snapshot: OperationalAnalyticsSnapshot | null;
+  readonly state: AnalyticsViewState;
+  readonly error: string | null;
+};
+
+export const DEFAULT_ANALYTICS_FILTERS: AnalyticsFilters = {
+  focus: 'all',
+  metric: 'operation_duration_ms',
+  unit: 'milliseconds',
+  aggregation: 'p95',
+  bucket: 'auto',
+  groupBy: 'component',
+};
+
+const ANALYTICS_FOCUSES = ['all', 'model', 'queue', 'retrieval', 'tool', 'memory', 'automation'] as const satisfies ReadonlyArray<AnalyticsFocus>;
+const ANALYTICS_UNITS = ['count', 'milliseconds', 'bytes', 'ratio', 'score'] as const satisfies ReadonlyArray<AnalyticsUnit>;
+const ANALYTICS_AGGREGATIONS = ['average', 'sum', 'minimum', 'maximum', 'p50', 'p90', 'p95', 'p99', 'rate', 'count'] as const satisfies ReadonlyArray<AnalyticsAggregation>;
+const ANALYTICS_BUCKETS = ['auto', 'one_minute', 'five_minutes', 'fifteen_minutes', 'one_hour', 'six_hours', 'one_day'] as const satisfies ReadonlyArray<AnalyticsBucket>;
+const ANALYTICS_GROUPINGS = ['none', 'component', 'component_version', 'operation', 'deployment', 'environment', 'host', 'service_role', 'provider', 'outcome', 'error_class', 'status', 'retrieval_stage'] as const satisfies ReadonlyArray<AnalyticsGroupBy>;
+const ANALYTICS_METRICS = ['operation_duration_ms', 'run_duration_ms', 'queue_wait_ms', 'errors', 'retries', 'backlog', 'backlog_depth', 'inference_duration_ms', 'time_to_first_token_ms', 'output_tokens', 'provider_errors', 'model_routing_duration_ms', 'structured_inference_duration_ms', 'tool_selection_duration_ms', 'tool_selection_outcome', 'tool_policy_evaluation_duration_ms', 'tool_policy_decision', 'tool_argument_validation_outcome', 'tool_execution_duration_ms', 'tool_execution_outcome', 'tool_timeout_count', 'memory_extraction_duration_ms', 'memory_candidate_decision', 'memory_reviewable_candidate_count', 'memory_operation_duration_ms', 'memory_operation_outcome', 'memory_retrieval_duration_ms', 'memory_lexical_search_duration_ms', 'memory_vector_search_duration_ms', 'memory_rerank_duration_ms', 'memory_processing_errors', 'memory_retry_count', 'memory_reindex_backlog', 'document_retrieval_duration_ms', 'document_retrieval_outcome', 'document_retrieval_candidate_count', 'reminder_scheduler_scan_duration_ms', 'reminder_due_lag_ms', 'reminder_series_due_lag_ms', 'reminder_fired_count', 'reminder_failure_count', 'notification_failure_count', 'notification_acknowledgement_outcome'] as const satisfies ReadonlyArray<AnalyticsMetricName>;
+const ANALYTICS_AVAILABILITIES = ['available', 'no_data', 'unavailable'] as const satisfies ReadonlyArray<AnalyticsAvailability>;
+const ANALYTICS_PARTIAL_REASONS = ['scan_limit', 'execution_limit', 'series_limit', 'point_limit', 'late_data', 'retention_boundary'] as const satisfies ReadonlyArray<AnalyticsPartialReason>;
+const ANALYTICS_UNAVAILABLE_SIGNALS = ['model_identity', 'retryability', 'input_cohort', 'gpu', 'selected_evidence', 'side_effect_detail', 'quality', 'saturation', 'measurement', 'unit', 'dimension'] as const satisfies ReadonlyArray<AnalyticsUnavailableSignal>;
+const ANALYTICS_PERCENTILE_METHODS = ['clickhouse_quantile_exact'] as const satisfies ReadonlyArray<AnalyticsPercentileMethod>;
+const ANALYTICS_FACET_KEYS = ['component', 'componentVersion', 'operation', 'deployment', 'environment', 'host', 'serviceRole', 'provider', 'outcome', 'errorClass', 'status', 'retrievalStage'] as const;
+const ANALYTICS_MAX_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
+const ANALYTICS_LIMITS = { defaultWindowHours: 24, maximumWindowDays: 31, maximumPointsPerSeries: 200, maximumSeries: 12, maximumBreakdowns: 50, maximumScannedRows: 1_000_000, executionTimeoutMs: 5_000 } as const;
+function enumValue<T extends string>(values: ReadonlyArray<T>, value: unknown): value is T { return typeof value === 'string' && values.includes(value as T); }
+function onlyKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean { return Object.keys(value).every((key) => keys.includes(key)); }
+function analyticsUtc(value: unknown): value is string { return safeText(value) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value) && Number.isFinite(Date.parse(value)); }
+/** Reject known content/private markers before any analytics value reaches a template. */
+const COMPONENT_ID_PATTERN = /^aura\.[a-z][a-z0-9_.-]{0,90}$/;
+const SAFE_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const OPERATION_PATTERN = /^[a-z][a-z0-9_.-]{0,95}$/;
+const ENVIRONMENT_PATTERN = /^[a-z][a-z0-9_.-]{0,31}$/;
+const DIMENSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const SERIES_KEY_PATTERN = /^[A-Za-z0-9._:+-]{1,256}$/;
+function analyticsPattern(value: unknown, pattern: RegExp): value is string { return typeof value === 'string' && pattern.test(value); }
+function analyticsFacetValue(key: string, value: unknown): boolean {
+  switch (key) {
+    case 'component': return analyticsPattern(value, COMPONENT_ID_PATTERN);
+    case 'componentVersion':
+    case 'deployment':
+    case 'host': return analyticsPattern(value, SAFE_LABEL_PATTERN);
+    case 'operation': return analyticsPattern(value, OPERATION_PATTERN);
+    case 'environment': return analyticsPattern(value, ENVIRONMENT_PATTERN);
+    case 'serviceRole': return enumValue(['api', 'worker', 'scheduler', 'cli'], value);
+    case 'outcome': return enumValue(['succeeded', 'failed', 'cancelled', 'unknown'], value);
+    case 'provider':
+    case 'errorClass':
+    case 'status':
+    case 'retrievalStage': return analyticsPattern(value, DIMENSION_PATTERN);
+    default: return false;
+  }
+}
+function analyticsFacets(value: unknown): boolean {
+  const facets = record(value);
+  return Boolean(facets && Object.keys(facets).length <= ANALYTICS_FACET_KEYS.length && onlyKeys(facets, ANALYTICS_FACET_KEYS) && Object.keys(facets).every((key) => ANALYTICS_FACET_KEYS.includes(key as typeof ANALYTICS_FACET_KEYS[number]) && analyticsFacetValue(key, facets[key])));
+}
+function analyticsWindow(from: unknown, to: unknown): boolean {
+  if (!analyticsUtc(from) || !analyticsUtc(to)) return false;
+  const duration = Date.parse(to) - Date.parse(from);
+  return duration > 0 && duration <= ANALYTICS_MAX_WINDOW_MS;
+}
+function analyticsMetricDefinition(value: unknown): value is AnalyticsMetricDefinition {
+  const item = record(value);
+  const focusAreas = item?.['focusAreas']; const aggregations = item?.['supportedAggregations']; const groupings = item?.['supportedGroupings']; const unavailable = item?.['unavailableSignals'];
+  return Boolean(item && onlyKeys(item, ['metric', 'unit', 'focusAreas', 'supportedAggregations', 'supportedGroupings', 'availability', 'unavailableSignals']) && enumValue(ANALYTICS_METRICS, item['metric']) && enumValue(ANALYTICS_UNITS, item['unit']) && Array.isArray(focusAreas) && focusAreas.length > 0 && focusAreas.length <= ANALYTICS_FOCUSES.length && focusAreas.every((entry) => enumValue(ANALYTICS_FOCUSES, entry)) && Array.isArray(aggregations) && aggregations.length > 0 && aggregations.length <= ANALYTICS_AGGREGATIONS.length && aggregations.every((entry) => enumValue(ANALYTICS_AGGREGATIONS, entry)) && Array.isArray(groupings) && groupings.length > 0 && groupings.length <= ANALYTICS_GROUPINGS.length && groupings.every((entry) => enumValue(ANALYTICS_GROUPINGS, entry)) && enumValue(ANALYTICS_AVAILABILITIES, item['availability']) && Array.isArray(unavailable) && unavailable.length <= ANALYTICS_UNAVAILABLE_SIGNALS.length && unavailable.every((entry) => enumValue(ANALYTICS_UNAVAILABLE_SIGNALS, entry)));
+}
+/** Validate the closed metric catalogue before it reaches filter controls. */
+export function parseAnalyticsMetricCatalogue(value: unknown): AnalyticsMetricCatalogue | null {
+  const item = record(value); const limits = record(item?.['limits']); const entries = item?.['items'];
+  if (!item || !onlyKeys(item, ['snapshotAt', 'items', 'limits', 'capturePolicy']) || !analyticsUtc(item['snapshotAt']) || item['capturePolicy'] !== 'metadata_only' || !Array.isArray(entries) || entries.length > 128 || !entries.every(analyticsMetricDefinition) || !limits || !onlyKeys(limits, Object.keys(ANALYTICS_LIMITS))) return null;
+  if (!Object.entries(ANALYTICS_LIMITS).every(([key, expected]) => limits[key] === expected)) return null;
+  return item as unknown as AnalyticsMetricCatalogue;
+}
+
+/** Validate bounded analytics JSON before it reaches the template. */
+export function parseOperationalAnalyticsSnapshot(value: unknown): OperationalAnalyticsSnapshot | null {
+  const item = record(value);
+  const query = record(item?.['query']);
+  const freshness = record(item?.['freshness']);
+  const scan = record(item?.['scan']);
+  const series = item?.['series'];
+  const breakdowns = item?.['breakdowns'];
+  const boundedNumber = (candidate: unknown): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate);
+  const boundedNullableNumber = (candidate: unknown): candidate is number | null => candidate === null || boundedNumber(candidate);
+  const availability = (candidate: unknown): boolean => candidate === 'available' || candidate === 'no_data' || candidate === 'unavailable';
+  const validBreakdown = (candidate: unknown): boolean => { const breakdown = record(candidate); return Boolean(breakdown && onlyKeys(breakdown, ['groupBy', 'value', 'count', 'partial']) && enumValue(ANALYTICS_GROUPINGS, breakdown['groupBy']) && analyticsPattern(breakdown['value'], DIMENSION_PATTERN) && Number.isSafeInteger(breakdown['count']) && (breakdown['count'] as number) >= 0 && typeof breakdown['partial'] === 'boolean'); };
+  const validPoint = (candidate: unknown): boolean => {
+    const point = record(candidate);
+    return Boolean(point && onlyKeys(point, ['startAt', 'endAt', 'value', 'sampleCount', 'availability', 'partial']) && analyticsUtc(point['startAt']) && analyticsUtc(point['endAt']) && boundedNullableNumber(point['value']) && Number.isSafeInteger(point['sampleCount']) && (point['sampleCount'] as number) >= 0 && availability(point['availability']) && typeof point['partial'] === 'boolean');
+  };
+  const validSeries = (candidate: unknown): boolean => {
+    const current = record(candidate);
+    const summary = record(current?.['summary']);
+    const points = current?.['points'];
+    return Boolean(current && onlyKeys(current, ['seriesKey', 'facets', 'summary', 'points', 'availability', 'partial']) && analyticsPattern(current['seriesKey'], SERIES_KEY_PATTERN) && analyticsFacets(current['facets']) && summary && onlyKeys(summary, ['sampleCount', 'minimum', 'maximum', 'average', 'p50', 'p90', 'p95', 'p99', 'ratePerInterval', 'rateIntervalSeconds']) && Array.isArray(points) && points.length <= 200 && points.every(validPoint) && availability(current['availability']) && typeof current['partial'] === 'boolean' && Number.isSafeInteger(summary['sampleCount']) && (summary['sampleCount'] as number) >= 0 && ['minimum', 'maximum', 'average', 'p50', 'p90', 'p95', 'p99', 'ratePerInterval'].every((key) => boundedNullableNumber(summary[key])) && (summary['rateIntervalSeconds'] === null || (Number.isSafeInteger(summary['rateIntervalSeconds']) && (summary['rateIntervalSeconds'] as number) >= 0)));
+  };
+  const groupingFacet: Record<string, string> = { component: 'component', component_version: 'componentVersion', operation: 'operation', deployment: 'deployment', environment: 'environment', host: 'host', service_role: 'serviceRole', provider: 'provider', outcome: 'outcome', error_class: 'errorClass', status: 'status', retrieval_stage: 'retrievalStage' };
+  const groupingIsConsistent = (candidate: unknown): boolean => {
+    const facets = record(record(candidate)?.['facets']);
+    if (!facets || query?.['groupBy'] === 'none') return Boolean(facets && Object.keys(facets).length === 0);
+    const key = groupingFacet[String(query?.['groupBy'])];
+    return Boolean(key && Object.prototype.hasOwnProperty.call(facets, key));
+  };
+  if (!item || !onlyKeys(item, ['snapshotAt', 'query', 'percentileMethod', 'series', 'breakdowns', 'freshness', 'partial', 'partialReasons', 'unavailableSignals', 'scan', 'capturePolicy']) || !query || !onlyKeys(query, ['metric', 'unit', 'aggregation', 'focus', 'from', 'to', 'bucket', 'bucketSeconds', 'groupBy', 'filters', 'seriesLimit', 'pointLimit']) || !freshness || !onlyKeys(freshness, ['latestObservedAt', 'lagMs', 'state']) || !scan || !onlyKeys(scan, ['scannedRows', 'scanLimit', 'executionMs', 'executionLimitMs']) || !Array.isArray(series) || series.length > ANALYTICS_LIMITS.maximumSeries || !series.every(validSeries) || !series.every(groupingIsConsistent) || !Array.isArray(breakdowns) || breakdowns.length > ANALYTICS_LIMITS.maximumBreakdowns || !breakdowns.every(validBreakdown) || !analyticsUtc(item['snapshotAt']) || item['capturePolicy'] !== 'metadata_only' || !enumValue(ANALYTICS_PERCENTILE_METHODS, item['percentileMethod']) || !enumValue(ANALYTICS_METRICS, query['metric']) || !enumValue(ANALYTICS_UNITS, query['unit']) || !enumValue(ANALYTICS_AGGREGATIONS, query['aggregation']) || !enumValue(ANALYTICS_FOCUSES, query['focus']) || !analyticsWindow(query['from'], query['to']) || !enumValue(ANALYTICS_BUCKETS, query['bucket']) || !Number.isSafeInteger(query['bucketSeconds']) || (query['bucketSeconds'] as number) < 60 || (query['bucketSeconds'] as number) > 86400 || !enumValue(ANALYTICS_GROUPINGS, query['groupBy']) || !analyticsFacets(query['filters']) || !Number.isSafeInteger(query['seriesLimit']) || (query['seriesLimit'] as number) < 1 || (query['seriesLimit'] as number) > ANALYTICS_LIMITS.maximumSeries || !Number.isSafeInteger(query['pointLimit']) || (query['pointLimit'] as number) < 1 || (query['pointLimit'] as number) > ANALYTICS_LIMITS.maximumPointsPerSeries || !['fresh', 'stale', 'unavailable'].includes(freshness['state'] as string) || (freshness['latestObservedAt'] !== null && !analyticsUtc(freshness['latestObservedAt'])) || (freshness['lagMs'] !== null && (!boundedNumber(freshness['lagMs']) || freshness['lagMs'] < 0)) || typeof item['partial'] !== 'boolean' || !Array.isArray(item['partialReasons']) || item['partialReasons'].length > 6 || !item['partialReasons'].every((entry) => enumValue(ANALYTICS_PARTIAL_REASONS, entry)) || !Array.isArray(item['unavailableSignals']) || item['unavailableSignals'].length > 10 || !item['unavailableSignals'].every((entry) => enumValue(ANALYTICS_UNAVAILABLE_SIGNALS, entry)) || !Number.isSafeInteger(scan['scannedRows']) || (scan['scannedRows'] as number) < 0 || (scan['scannedRows'] as number) > ANALYTICS_LIMITS.maximumScannedRows || scan['scanLimit'] !== ANALYTICS_LIMITS.maximumScannedRows || !boundedNumber(scan['executionMs']) || scan['executionMs'] < 0 || scan['executionMs'] > ANALYTICS_LIMITS.executionTimeoutMs || scan['executionLimitMs'] !== ANALYTICS_LIMITS.executionTimeoutMs) return null;
+  return item as unknown as OperationalAnalyticsSnapshot;
+}
 export type ObservatoryAuthState = 'checking' | 'authenticated' | 'initial' | 'expired' | 'explicit_logout' | 'logout_unconfirmed' | 'callback_failed' | 'callback_denied' | 'identity_unavailable';
 export type ObservatoryAuthRecoveryMarker = 'state_missing' | 'state_invalid' | 'code_missing' | 'provider_denied' | 'callback_failed';
 
