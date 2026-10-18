@@ -2224,7 +2224,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                     "SELECT EXISTS (SELECT 1 FROM observatory_retention_actions "
                     "WHERE status = 'succeeded' AND ("
                     "action_kind = 'purge_all' "
-                    "OR (action_kind = 'delete_before' AND requested_cutoff > %s))",
+                    "OR (action_kind = 'delete_before' AND requested_cutoff > %s)))",
                     (lower,),
                 )
                 row = await result.fetchone()

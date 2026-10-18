@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import math
 import os
 import tempfile
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -15,6 +17,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 from uuid import uuid4
+
+_LOGGER = logging.getLogger(__name__)
 
 MAX_LAG_MS = 604_800_000.0
 MAX_LATENCY_MS = 600_000.0
@@ -340,6 +344,8 @@ class ObservatoryMetrics:
             "observatory_comparison_duration_ms",
             "observatory_auth_callback_duration_ms",
             "observatory_ingest_storage_duration_ms",
+            "observatory_evaluation_artifact_operation_duration_ms",
+            "observatory_evaluation_deletion_duration_ms",
         }
     )
 
@@ -366,6 +372,12 @@ class ObservatoryMetrics:
         "observatory_retention_failure_count",
         "observatory_auth_callback_duration_ms",
         "observatory_auth_callback_outcome",
+        "observatory_evaluation_artifact_operation_count",
+        "observatory_evaluation_artifact_operation_duration_ms",
+        "observatory_evaluation_deletion_action_count",
+        "observatory_evaluation_deletion_deleted_count",
+        "observatory_evaluation_deletion_failure_count",
+        "observatory_evaluation_deletion_duration_ms",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -390,6 +402,12 @@ class ObservatoryMetrics:
         "observatory_retention_failure_count": {"action", "failure_code"},
         "observatory_auth_callback_duration_ms": {"stage", "outcome"},
         "observatory_auth_callback_outcome": {"stage", "outcome"},
+        "observatory_evaluation_artifact_operation_count": {"operation", "outcome"},
+        "observatory_evaluation_artifact_operation_duration_ms": {"operation"},
+        "observatory_evaluation_deletion_action_count": {"selector", "phase", "outcome"},
+        "observatory_evaluation_deletion_deleted_count": {"selector"},
+        "observatory_evaluation_deletion_failure_count": {"phase", "failure_code"},
+        "observatory_evaluation_deletion_duration_ms": {"selector", "outcome"},
     }
     LABEL_VALUES = {
         "reason": set(REJECTION_REASONS),
@@ -423,7 +441,12 @@ class ObservatoryMetrics:
             "failure",
             "not_found",
             "execution_limit",
+            "duplicate",
+            "running",
         },
+        "operation": {"store"},
+        "selector": {"job", "dataset", "suite", "cutoff", "purge_all"},
+        "phase": {"started", "scores", "objects", "complete", "worker"},
         "event_type": {
             "stream",
             "connection",
@@ -433,7 +456,18 @@ class ObservatoryMetrics:
         },
         "action": {"delete_before", "purge_all"},
         "status": {"queued", "running", "succeeded", "failed"},
-        "failure_code": {"storage_failure", "conflict", "cancelled", "unknown"},
+        "failure_code": {
+            "storage_failure",
+            "storage_authentication",
+            "storage_integrity",
+            "storage_timeout",
+            "database_failure",
+            "target_invalid",
+            "lease_lost",
+            "conflict",
+            "cancelled",
+            "unknown",
+        },
         "stage": {
             "callback",
             "login_state_store",
@@ -443,8 +477,10 @@ class ObservatoryMetrics:
         },
     }
     DURATION_BUCKETS = (5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
+    _MAX_PERSISTENCE_TASKS = 256
+    _MAX_PERSISTENCE_DIAGNOSTICS = 32
 
-    def __init__(self, export_path: Path | None = None) -> None:
+    def __init__(self, export_path: Path | None = None, persistence: Any | None = None) -> None:
         self.values: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
         self._histogram_counts: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(
             int
@@ -456,6 +492,13 @@ class ObservatoryMetrics:
         # cross-process health histograms come from the Observatory-owned
         # PostgreSQL health port and are rendered as persisted series.
         self.export_path = export_path
+        self.persistence = persistence
+        self._persistence_tasks: set[asyncio.Task[Any]] = set()
+        self._persistence_failures = 0
+        self._persistence_drops = 0
+        self._persistence_diagnostics: deque[str] = deque(
+            maxlen=self._MAX_PERSISTENCE_DIAGNOSTICS
+        )
         self._external_write_failed = False
 
     def record(
@@ -481,6 +524,105 @@ class ObservatoryMetrics:
                 # Keep the local series available for diagnostics if the
                 # shared sink is temporarily unavailable.
                 self._external_write_failed = True
+        self._schedule_persistence(name, float(value), supplied)
+
+    def _schedule_persistence(
+        self, name: str, value: float, labels: Mapping[str, str]
+    ) -> None:
+        recorder = getattr(self.persistence, "record_metric", None)
+        if not callable(recorder):
+            return
+        self._reap_persistence_tasks()
+        if len(self._persistence_tasks) >= self._MAX_PERSISTENCE_TASKS:
+            self._record_persistence_issue("queue_full", dropped=True)
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._record_persistence_issue("no_event_loop", dropped=True)
+            return
+        record_metric = cast(Callable[..., Coroutine[Any, Any, None]], recorder)
+        task: asyncio.Task[None] = loop.create_task(
+            record_metric(
+                name,
+                value,
+                dict(labels),
+                histogram=name in self.HISTOGRAMS,
+            )
+        )
+        self._persistence_tasks.add(task)
+
+    def _reap_persistence_tasks(self) -> None:
+        """Collect completed persistence tasks without retaining task state."""
+
+        completed = [task for task in self._persistence_tasks if task.done()]
+        for task in completed:
+            self._persistence_tasks.discard(task)
+            self._classify_persistence_result(task)
+
+    def _classify_persistence_result(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            self._record_persistence_issue("cancelled")
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            failure_code = getattr(exc, "failure_code", "database_failure")
+            if failure_code not in {"database_failure", "storage_timeout", "storage_failure"}:
+                failure_code = "database_failure"
+            self._record_persistence_issue(failure_code)
+
+    def _record_persistence_issue(self, code: str, *, dropped: bool = False) -> None:
+        if dropped:
+            self._persistence_drops += 1
+            event = f"dropped:{code}"
+        else:
+            self._persistence_failures += 1
+            event = f"failed:{code}"
+        self._persistence_diagnostics.append(event)
+        _LOGGER.warning("observatory metric persistence %s", event)
+
+    @property
+    def persistence_failures(self) -> int:
+        return self._persistence_failures
+
+    @property
+    def persistence_drops(self) -> int:
+        return self._persistence_drops
+
+    @property
+    def persistence_diagnostics(self) -> tuple[str, ...]:
+        return tuple(self._persistence_diagnostics)
+
+    async def flush(self, *, timeout_seconds: float = 5.0) -> None:
+        """Drain managed persistence writes before a worker process exits.
+
+        The timeout and task cap keep shutdown bounded.  Every completed or
+        cancelled task is classified without exposing provider exception text.
+        """
+
+        bounded_timeout = min(30.0, max(0.1, float(timeout_seconds)))
+        self._reap_persistence_tasks()
+        if not self._persistence_tasks:
+            return
+        tasks = tuple(self._persistence_tasks)
+        done, pending = await asyncio.wait(tasks, timeout=bounded_timeout)
+        for task in done:
+            self._persistence_tasks.discard(task)
+            self._classify_persistence_result(task)
+        if pending:
+            for task in pending:
+                task.cancel()
+            cancelled = await asyncio.gather(*pending, return_exceptions=True)
+            for task, result in zip(pending, cancelled, strict=True):
+                self._persistence_tasks.discard(task)
+                if isinstance(result, BaseException):
+                    self._record_persistence_issue("shutdown_timeout")
+
+    async def drain(self, *, timeout_seconds: float = 5.0) -> None:
+        """Compatibility alias for callers that use drain terminology."""
+
+        await self.flush(timeout_seconds=timeout_seconds)
 
     def set(self, name: str, value: float, labels: Mapping[str, str] | None = None) -> None:
         """Set an authoritative gauge/current total without read inflation."""
@@ -780,6 +922,12 @@ class ObservatoryMetrics:
         if set(normalized) - allowed:
             return False
         return all(value in cls.LABEL_VALUES.get(key, set()) for key, value in normalized.items())
+
+    @classmethod
+    def labels_valid(cls, name: str, labels: Mapping[str, str]) -> bool:
+        """Validate labels for service-owned persistence adapters."""
+
+        return cls._labels_valid(name, labels)
 
     @classmethod
     def _validate_labels(cls, name: str, labels: Mapping[str, str]) -> None:

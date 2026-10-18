@@ -8,12 +8,15 @@ depending on a database server or incidental SQL details.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from aura_observatory.adapters.memory import MemoryObservatoryStore
+from aura_observatory.adapters.query import ProductionObservatoryStore
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.ports import InsertOutcome
 from aura_observatory.query import (
@@ -545,6 +548,49 @@ async def test_retention_validation_rejects_ambiguous_or_non_utc_commands() -> N
     for request in invalid:
         with pytest.raises(ValueError):
             await service.retention(request)
+
+
+@pytest.mark.asyncio
+async def test_postgres_retention_boundary_exists_sql_is_balanced() -> None:
+    """Execute the exact SQL path so a missing EXISTS delimiter cannot regress."""
+
+    class Result:
+        async def fetchone(self) -> tuple[bool]:
+            return (True,)
+
+    class Connection:
+        def __init__(self) -> None:
+            self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+        async def execute(
+            self, statement: str, params: tuple[object, ...] = ()
+        ) -> Result:
+            self.statements.append((statement, params))
+            return Result()
+
+    connection = Connection()
+
+    @asynccontextmanager
+    async def factory() -> AsyncGenerator[Connection]:
+        yield connection
+
+    store = ProductionObservatoryStore(
+        factory,
+        "http://clickhouse.invalid",
+        database="aura_observatory",
+        user="observatory",
+        password="test-only",
+    )
+    lower = BASE_TIME
+    upper = lower + timedelta(hours=1)
+
+    assert await store._analytics_retention_boundary(lower, upper) is True  # pyright: ignore[reportPrivateUsage]
+    assert len(connection.statements) == 1
+    statement, params = connection.statements[0]
+    assert params == (lower,)
+    assert statement.startswith("SELECT EXISTS (SELECT 1 FROM observatory_retention_actions")
+    assert statement.endswith("requested_cutoff > %s)))")
+    assert statement.count("(") == statement.count(")")
 
 
 async def _wait_for_action(service: ObservatoryQueryService, action_id: str) -> None:

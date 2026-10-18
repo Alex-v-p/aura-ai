@@ -17,6 +17,8 @@ from aura_observatory.auth import (
 from aura_observatory.entrypoints.api.app import create_app
 from aura_observatory.settings import Settings
 
+REPOSITORY_ROOT = Path(__file__).parents[3]
+
 
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
@@ -78,7 +80,7 @@ def test_non_disposable_configuration_requires_matching_https_and_secure_cookie(
 
 
 def test_rendered_worker_and_migrate_settings_skip_api_only_bff_validation() -> None:
-    compose = yaml.safe_load(Path("compose.yaml").read_text(encoding="utf-8"))
+    compose = yaml.safe_load((REPOSITORY_ROOT / "compose.yaml").read_text(encoding="utf-8"))
     services = compose["services"]
     for service_name in ("observatory-worker", "observatory-migrate"):
         environment = services[service_name]["environment"]

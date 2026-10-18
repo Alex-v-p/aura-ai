@@ -30,6 +30,34 @@ from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.ports import ClaimOutcome, InsertOutcome
 from aura_observatory.settings import Settings
 
+EXPECTED_METADATA_PROHIBITED_FIELDS = {
+    "prompt",
+    "response",
+    "content",
+    "filename",
+    "arguments",
+    "result",
+    "endpoint",
+    "token",
+    "bearer",
+    "credential",
+    "password",
+    "private",
+    "hash",
+    "digest",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "authorization",
+    "nonce",
+    "code",
+    "state",
+    "issuer",
+    "subject",
+    "object_key",
+    "owner_identity",
+}
+
 
 def payload(observation_id: str = "01234567-89ab-4cde-8123-0123456789ab") -> dict[str, object]:
     return {
@@ -91,6 +119,37 @@ def test_wire_payload_keys_match_the_authoritative_schema() -> None:
         "environment",
         "hostId",
     }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("measurement", {"name": "duration_ms", "value": "12.5", "unit": "milliseconds"}),
+        ("dimensions", {"outcome": 1}),
+        (
+            "component",
+            {"id": "aura.runtime.model_inference", "version": 1},
+        ),
+        (
+            "deployment",
+            {
+                "deploymentId": "deployment-test",
+                "gitCommit": "0123456789abcdef01234567",
+                "environment": "test",
+                "hostId": 7,
+            },
+        ),
+        ("trace", {"traceId": 12345678901234567890123456789012}),
+    ],
+)
+def test_metadata_contract_uses_typed_validators_for_nested_fields(
+    field: str, value: object
+) -> None:
+    wire = payload()
+    wire[field] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        MetadataObservation.from_payload(wire)
 
 
 def test_clickhouse_row_contains_contract_kind_and_capture_policy() -> None:
@@ -852,6 +911,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.query_api",
         "aura.observatory.live_updates",
         "aura.observatory.retention",
+        "aura.observatory.evaluation_artifact_storage",
+        "aura.observatory.evaluation_deletion",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -906,5 +967,30 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_retention_deleted_count",
                 "observatory_retention_failure_count",
             }
+        elif manifest_id == "aura.observatory.evaluation_artifact_storage":
+            expected_metrics = {
+                "observatory_evaluation_artifact_operation_count",
+                "observatory_evaluation_artifact_operation_duration_ms",
+            }
+        elif manifest_id == "aura.observatory.evaluation_deletion":
+                expected_metrics = {
+                    "observatory_evaluation_deletion_action_count",
+                    "observatory_evaluation_deletion_deleted_count",
+                    "observatory_evaluation_deletion_failure_count",
+                    "observatory_evaluation_deletion_duration_ms",
+                }
         assert set(manifest["metrics"]) == expected_metrics
-        assert manifest["capture_policy"] == "metadata_only"
+        if manifest_id in {
+            "aura.observatory.evaluation_artifact_storage",
+            "aura.observatory.evaluation_deletion",
+        }:
+            assert manifest["capture_policy"] == "metadata_only"
+            assert (
+                set(manifest["cardinality"]["prohibited"])
+                == EXPECTED_METADATA_PROHIBITED_FIELDS
+            )
+        else:
+            # Preserve the established metadata-only expectation for the
+            # original AURA-0078 manifests without imposing the AURA-0090
+            # prohibited-field expansion on their legacy declarations.
+            assert manifest["capture_policy"] == "metadata_only"

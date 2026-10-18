@@ -68,6 +68,20 @@ class Settings(BaseSettings):
     observation_claim_lease_seconds: int = Field(default=60, ge=1, le=3600)
     ingest_max_batch_size: int = Field(default=500, ge=1, le=5000)
     ingest_max_payload_bytes: int = Field(default=1_000_000, ge=1024, le=10_000_000)
+    # Evaluation artifacts are a separate, least-privilege Garage boundary.
+    # These values are deliberately worker-only settings; the API composition
+    # does not construct an object-store adapter.
+    evaluation_object_endpoint: str = "http://garage:3900"
+    evaluation_object_bucket: str = "aura-observatory-evaluation"
+    evaluation_object_access_key: str = ""
+    evaluation_object_access_key_file: Path | None = None
+    evaluation_object_secret_key: str = ""
+    evaluation_object_secret_key_file: Path | None = None
+    evaluation_object_region: str = "garage"
+    evaluation_object_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    evaluation_artifact_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=1_073_741_824)
+    evaluation_deletion_page_size: int = Field(default=100, ge=1, le=1000)
+    evaluation_deletion_poll_seconds: float = Field(default=5.0, ge=0.1, le=300.0)
 
     @model_validator(mode="after")
     def compose_runtime_settings(self) -> Settings:
@@ -78,6 +92,12 @@ class Settings(BaseSettings):
         self.database_password = read_secret(self.database_password, self.database_password_file)
         self.clickhouse_password = read_secret(
             self.clickhouse_password, self.clickhouse_password_file
+        )
+        self.evaluation_object_access_key = read_secret(
+            self.evaluation_object_access_key, self.evaluation_object_access_key_file
+        )
+        self.evaluation_object_secret_key = read_secret(
+            self.evaluation_object_secret_key, self.evaluation_object_secret_key_file
         )
         if not self.database_url:
             encoded = quote(self.database_password, safe="")

@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -10,6 +11,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).parents[2]
 
@@ -495,9 +498,18 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("10.254.192.0/18", runner)
         self.assertNotIn("172.30.0.0/16", runner)
         self.assertNotIn("172.31.0.0/16", runner)
-        self.assertIn("no two free /28 subnets remain", runner)
+        self.assertIn("no three free /28 subnets remain", runner)
         self.assertIn("AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet", runner)
         self.assertIn("AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet", runner)
+        self.assertIn(
+            "print(selected[0], selected[1], selected[2])",
+            runner,
+        )
+        self.assertIn('test -n "$observatory_object_storage_subnet"', runner)
+        self.assertIn(
+            "AURA_OBSERVATORY_OBJECT_STORAGE_SUBNET=$observatory_object_storage_subnet",
+            runner,
+        )
         self.assertIn(
             "--profile observatory --profile checks down --volumes --remove-orphans",
             runner,
@@ -749,13 +761,16 @@ class ComposeTopologyTests(unittest.TestCase):
     def test_garage_is_private_digest_qualified_and_core_only(self) -> None:
         garage = service_block(self.compose, "aura-garage", "aura-garage-config")
         config = service_block(self.compose, "aura-garage-config", "aura-garage-bootstrap")
-        bootstrap = self.compose.split("  aura-garage-bootstrap:\n", 1)[1].split(
-            "\nsecrets:\n", 1
-        )[0]
+        bootstrap = service_block(
+            self.compose, "aura-garage-bootstrap", "observatory-garage-bootstrap"
+        )
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
         worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
         environment = (ROOT / ".env.example").read_text(encoding="utf-8")
         runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+        observatory_runner = (ROOT / "deploy/compose/run-observatory-full-stack-e2e.sh").read_text(
             encoding="utf-8"
         )
 
@@ -771,6 +786,10 @@ class ComposeTopologyTests(unittest.TestCase):
             environment,
         )
         self.assertIn("printf 'GK000000000000000000000000\\n'", runner)
+        self.assertIn(
+            "write_fixture_secret observatory-garage-access-key GK111111111111111111111111",
+            observatory_runner,
+        )
         self.assertIn("entrypoint: [/garage]", garage)
         self.assertIn("command: [--config, /run/garage-config/garage.toml, server]", garage)
         self.assertIn(
@@ -789,8 +808,50 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("GARAGE_IMAGE:", bootstrap)
         self.assertIn("node id 2>/dev/null | cut -d@ -f1", bootstrap)
         self.assertIn("/var/lib/garage:ro", bootstrap)
+        self.assertNotIn("observatory-garage-access-key", bootstrap)
+        self.assertNotIn("observatory-garage-secret-key", bootstrap)
         self.assertIn("aura-object-storage", garage)
         self.assertIn("aura-object-storage", bootstrap)
+        observatory_bootstrap = service_block(
+            self.compose, "observatory-garage-bootstrap", "observatory-api"
+        )
+        observatory_worker = service_block(self.compose, "observatory-worker", "observatory-migrate")
+        self.assertIn("observatory-object-storage", garage)
+        self.assertIn("observatory-garage-access-key", observatory_bootstrap)
+        self.assertIn("observatory-garage-secret-key", observatory_bootstrap)
+        self.assertIn("AURA_OBSERVATORY_GARAGE_BUCKET", observatory_bootstrap)
+        self.assertIn("networks: [observatory-object-storage]", observatory_bootstrap)
+        self.assertIn("bucket allow --write --key", observatory_bootstrap)
+        self.assertNotIn("bucket allow --read", observatory_bootstrap)
+        self.assertIn("bucket deny --read --key", observatory_bootstrap)
+        self.assertIn("bucket deny --owner --key", observatory_bootstrap)
+        self.assertIn("bucket info", observatory_bootstrap)
+        self.assertIn("permission verification failed closed", observatory_bootstrap)
+        self.assertIn("extract_permission_flags()", observatory_bootstrap)
+        self.assertIn('permission_flags}" != "W"', observatory_bootstrap)
+        self.assertNotIn("has_read_grant=", observatory_bootstrap)
+        self.assertNotIn("has_owner_grant=", observatory_bootstrap)
+        self.assertNotIn("has_write_grant=", observatory_bootstrap)
+        self.assertIn("AURA_GARAGE_BUCKET:", observatory_bootstrap)
+        self.assertIn('if [ -z "$${AURA_GARAGE_BUCKET}" ]', observatory_bootstrap)
+        self.assertIn('[ -n "$${AURA_GARAGE_BUCKET}" ]', observatory_bootstrap)
+        self.assertIn("extract_authorized_buckets()", observatory_bootstrap)
+        self.assertIn("==== BUCKETS FOR THIS KEY ====", observatory_bootstrap)
+        self.assertIn("Permissions", observatory_bootstrap)
+        self.assertIn("Global aliases", observatory_bootstrap)
+        self.assertIn("Local aliases", observatory_bootstrap)
+        self.assertIn("length(fields[2]) != 16", observatory_bootstrap)
+        self.assertIn("unexpected preexisting bucket grant", observatory_bootstrap)
+        self.assertIn("grant verification failed closed", observatory_bootstrap)
+        self.assertIn(
+            "aura-garage-bootstrap: {condition: service_completed_successfully}",
+            observatory_bootstrap,
+        )
+        self.assertIn("observatory-garage-access-key", observatory_worker)
+        self.assertIn("observatory-garage-secret-key", observatory_worker)
+        self.assertIn("observatory-object-storage", observatory_worker)
+        self.assertNotIn("observatory-garage-access-key", api)
+        self.assertNotIn("observatory-garage-secret-key", api)
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", api)
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", worker)
         self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", api)
@@ -800,6 +861,302 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertNotIn("ports:", garage)
         self.assertNotIn("aura-frontend", garage)
         self.assertIn("  aura-object-storage:\n    internal: true", self.compose)
+
+    def test_observatory_garage_bootstrap_rendered_command_is_shell_valid(self) -> None:
+        document = yaml.safe_load(self.compose)
+        command = document["services"]["observatory-garage-bootstrap"]["command"][0]
+        # Compose converts $$ escapes to literal shell dollars before invoking
+        # the service entrypoint. Validate the folded command after that
+        # interpolation step so multiline YAML cannot hide shell syntax errors.
+        rendered = command.replace("$$", "$")
+        result = subprocess.run(
+            ["/bin/sh", "-n"],
+            input=rendered,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_observatory_garage_rendered_command_reaches_grant_and_verification(self) -> None:
+        document = yaml.safe_load(self.compose)
+        command = document["services"]["observatory-garage-bootstrap"]["command"][0]
+        rendered = command.replace("$$", "$")
+        self.assertNotIn("#", rendered)
+        for statement in (
+            "bucket deny --read --key",
+            "bucket deny --owner --key",
+            "bucket allow --write --key",
+            "bucket info",
+            "key info",
+        ):
+            self.assertIn(statement, rendered)
+        self.assertLess(
+            rendered.index("bucket allow --write --key"),
+            rendered.index("bucket deny --read --key"),
+        )
+        self.assertNotIn(
+            "bucket deny --read --key \"${access_key}\" \"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
+            rendered,
+        )
+        self.assertNotIn(
+            "bucket deny --owner --key \"${access_key}\" \"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
+            rendered,
+        )
+        self.assertLess(
+            rendered.index("bucket allow --write --key"),
+            rendered.index("permission verification failed closed"),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="aura-garage-bootstrap-") as directory:
+            root = Path(directory)
+            fake_garage = root / "garage"
+            access_key = "GK111111111111111111111111"
+            log = root / "garage.log"
+            key_info_count = root / "key-info-count"
+            bucket_info_count = root / "bucket-info-count"
+            key_info_count.write_text("0", encoding="utf-8")
+            bucket_info_count.write_text("0", encoding="utf-8")
+            fake_garage.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$GARAGE_TEST_LOG\"\n"
+                "case \"$*\" in\n"
+                "  *' status') exit 0 ;;\n"
+                "  *' node id') printf 'node@local\\n'; exit 0 ;;\n"
+                "  *' layout show') printf 'node\\nCurrent cluster layout version: 1\\n'; exit 0 ;;\n"
+                "  *' key info'*)\n"
+                "    count=$(cat \"$GARAGE_TEST_KEY_INFO_COUNT\")\n"
+                "    count=$((count + 1))\n"
+                "    printf '%s' \"$count\" > \"$GARAGE_TEST_KEY_INFO_COUNT\"\n"
+                "    if [ \"$count\" -eq 1 ]; then\n"
+                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\nPermissions  ID  Global aliases  Local aliases\\n'\n"
+                "    else\n"
+                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\nPermissions  ID  Global aliases  Local aliases\\n W  7f4d8e7b11112222  aura-observatory-evaluation\\n'\n"
+                "    fi\n"
+                "    exit 0 ;;\n"
+                "  *' bucket info'*)\n"
+                "    count=$(cat \"$GARAGE_TEST_BUCKET_INFO_COUNT\")\n"
+                "    count=$((count + 1))\n"
+                "    printf '%s' \"$count\" > \"$GARAGE_TEST_BUCKET_INFO_COUNT\"\n"
+                "    if [ \"$count\" -gt 1 ]; then printf 'W  7f4d8e7b11112222  %s\\n\\n' \"$GARAGE_TEST_ACCESS_KEY\"; fi\n"
+                "    exit 0 ;;\n"
+                "  *' bucket allow '*) exit 0 ;;\n"
+                "  *' bucket deny '*)\n"
+                "    if [ \"${GARAGE_TEST_FAIL_DENY:-0}\" -eq 1 ]; then exit 1; fi\n"
+                "    exit 0 ;;\n"
+                "  *' key import '*) exit 0 ;;\n"
+                "esac\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_garage.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+            access_file = root / "access-key"
+            secret_file = root / "secret-key"
+            config_file = root / "garage.toml"
+            access_file.write_text(access_key + "\n", encoding="utf-8")
+            secret_file.write_text("secret\n", encoding="utf-8")
+            config_file.write_text("config\n", encoding="utf-8")
+            rendered = rendered.replace(
+                "/garage --config", f"{fake_garage} --config"
+            )
+            rendered = rendered.replace(
+                "/run/secrets/observatory-garage-access-key", str(access_file)
+            )
+            rendered = rendered.replace(
+                "/run/secrets/observatory-garage-secret-key", str(secret_file)
+            )
+            rendered = rendered.replace("/run/garage-config/garage.toml", str(config_file))
+            result = subprocess.run(
+                ["/bin/sh", "-ec", rendered],
+                env={
+                    **os.environ,
+                    "AURA_GARAGE_IMAGE": "garage:test@sha256:" + "a" * 64,
+                    "AURA_GARAGE_BUCKET": "aura-documents",
+                    "AURA_OBSERVATORY_GARAGE_BUCKET": "aura-observatory-evaluation",
+                    "GARAGE_TEST_LOG": str(log),
+                    "GARAGE_TEST_KEY_INFO_COUNT": str(key_info_count),
+                    "GARAGE_TEST_BUCKET_INFO_COUNT": str(bucket_info_count),
+                    "GARAGE_TEST_ACCESS_KEY": access_key,
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            operations = log.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(any("bucket deny --read --key" in line for line in operations))
+            self.assertTrue(any("bucket deny --owner --key" in line for line in operations))
+            self.assertTrue(any("bucket allow --write --key" in line for line in operations))
+            self.assertGreaterEqual(sum("bucket info" in line for line in operations), 2)
+            self.assertGreaterEqual(sum("key info" in line for line in operations), 2)
+            allow_index = next(
+                index for index, line in enumerate(operations) if "bucket allow --write --key" in line
+            )
+            read_deny_index = next(
+                index for index, line in enumerate(operations) if "bucket deny --read --key" in line
+            )
+            owner_deny_index = next(
+                index for index, line in enumerate(operations) if "bucket deny --owner --key" in line
+            )
+            self.assertLess(allow_index, read_deny_index)
+            self.assertLess(read_deny_index, owner_deny_index)
+
+            log.write_text("", encoding="utf-8")
+            key_info_count.write_text("0", encoding="utf-8")
+            bucket_info_count.write_text("0", encoding="utf-8")
+            failed_deny = subprocess.run(
+                ["/bin/sh", "-ec", rendered],
+                env={
+                    **os.environ,
+                    "AURA_GARAGE_IMAGE": "garage:test@sha256:" + "a" * 64,
+                    "AURA_GARAGE_BUCKET": "aura-documents",
+                    "AURA_OBSERVATORY_GARAGE_BUCKET": "aura-observatory-evaluation",
+                    "GARAGE_TEST_LOG": str(log),
+                    "GARAGE_TEST_KEY_INFO_COUNT": str(key_info_count),
+                    "GARAGE_TEST_BUCKET_INFO_COUNT": str(bucket_info_count),
+                    "GARAGE_TEST_ACCESS_KEY": access_key,
+                    "GARAGE_TEST_FAIL_DENY": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+            self.assertEqual(78, failed_deny.returncode)
+            failed_operations = log.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(any("bucket allow --write --key" in line for line in failed_operations))
+            self.assertTrue(any("bucket deny --read --key" in line for line in failed_operations))
+            self.assertFalse(any("bucket deny --owner --key" in line for line in failed_operations))
+            self.assertEqual(1, sum("bucket info" in line for line in failed_operations))
+            self.assertEqual(1, sum("key info" in line for line in failed_operations))
+
+    def test_observatory_garage_parser_matches_pinned_bucket_table(self) -> None:
+        document = yaml.safe_load(self.compose)
+        command = document["services"]["observatory-garage-bootstrap"]["command"][0]
+        rendered = command.replace("$$", "$")
+        match = re.search(
+            r"extract_authorized_buckets\(\) \{.*?\| awk .*? '(?P<program>.*?)'; \};",
+            rendered,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        expected = "aura-observatory-evaluation"
+        fresh_fixture = (
+            "Key name: fixture\n"
+            "Key ID: <redacted>\n"
+            "==== BUCKETS FOR THIS KEY ====\n"
+            "Permissions  ID  Global aliases  Local aliases\n"
+        )
+        target_fixture = fresh_fixture + " W  7f4d8e7b11112222  aura-observatory-evaluation\n"
+        result = subprocess.run(
+            ["awk", "-v", f"expected={expected}", match.group("program")],
+            input=fresh_fixture,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout.strip())
+
+        target = subprocess.run(
+            ["awk", "-v", f"expected={expected}", match.group("program")],
+            input=target_fixture,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, target.returncode, target.stderr)
+        self.assertEqual(expected, target.stdout.strip())
+
+        combined = subprocess.run(
+            ["awk", "-v", f"expected={expected}", match.group("program")],
+            input=(
+                target_fixture
+                + " W  1234567890abcdef  unrelated-bucket\n"
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, combined.returncode, combined.stderr)
+        self.assertEqual([expected, "unrelated-bucket"], combined.stdout.splitlines())
+
+        unexpected_fixture = fresh_fixture + " W  1234567890abcdef  unrelated-bucket\n"
+        unexpected = subprocess.run(
+            ["awk", "-v", f"expected={expected}", match.group("program")],
+            input=unexpected_fixture,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, unexpected.returncode, unexpected.stderr)
+        self.assertEqual("unrelated-bucket", unexpected.stdout.strip())
+
+    def test_observatory_garage_bootstrap_rejects_missing_core_bucket(self) -> None:
+        document = yaml.safe_load(self.compose)
+        command = document["services"]["observatory-garage-bootstrap"]["command"][0]
+        rendered = command.replace("$$", "$")
+        guard_match = re.search(
+            r'if \[ -z "\$\{AURA_GARAGE_BUCKET\}" \].*?fi;',
+            rendered,
+        )
+        self.assertIsNotNone(guard_match)
+        assert guard_match is not None
+        self.assertIn('[ -n "${AURA_GARAGE_BUCKET}" ]', rendered)
+        result = subprocess.run(
+            ["/bin/sh", "-c", guard_match.group(0)],
+            env={
+                **os.environ,
+                "AURA_GARAGE_BUCKET": "",
+                "AURA_OBSERVATORY_GARAGE_BUCKET": "aura-observatory-evaluation",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(78, result.returncode)
+
+    def test_observatory_garage_permission_flags_require_exact_write_row(self) -> None:
+        document = yaml.safe_load(self.compose)
+        command = document["services"]["observatory-garage-bootstrap"]["command"][0]
+        rendered = command.replace("$$", "$")
+        match = re.search(
+            r"extract_permission_flags\(\) \{.*?\| awk .*? '(?P<program>.*?)'; \};",
+            rendered,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        access_key = "GK111111111111111111111111"
+        for flags in ("W", "R", "RW", "WO", "RWO"):
+            result = subprocess.run(
+                ["awk", "-v", f"key={access_key}", match.group("program")],
+                input=f"{flags}  7f4d8e7b11112222  {access_key}\n",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(flags, result.stdout.strip())
+            verification = subprocess.run(
+                ["/bin/sh", "-c", 'if [ "$1" != "W" ]; then exit 78; fi', "sh", flags],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0 if flags == "W" else 78, verification.returncode)
+
+        missing = subprocess.run(
+            ["awk", "-v", f"key={access_key}", match.group("program")],
+            input="Permissions  ID  Global aliases  Local aliases\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(0, missing.returncode)
+        self.assertEqual("", missing.stdout.strip())
 
     def test_document_parser_isolated_from_credentials_and_general_egress(self) -> None:
         parser = service_block(self.compose, "aura-document-parser", "aura-garage")
@@ -844,6 +1201,10 @@ class ComposeTopologyTests(unittest.TestCase):
             "aura-object-storage": (
                 "AURA_OBJECT_STORAGE_SUBNET",
                 "10.254.240.0/28",
+            ),
+            "observatory-object-storage": (
+                "AURA_OBSERVATORY_OBJECT_STORAGE_SUBNET",
+                "10.254.242.0/28",
             ),
         }
         for network, (setting, subnet) in expected.items():
@@ -894,6 +1255,9 @@ class ComposeTopologyTests(unittest.TestCase):
                 "aura-garage",
                 "aura-garage-bootstrap",
             },
+            "observatory-object-storage": {
+                "aura-garage",
+            },
             "aura-document-parser": {
                 "aura-core-worker",
                 "aura-document-parser",
@@ -931,6 +1295,8 @@ class ComposeTopologyTests(unittest.TestCase):
                 "AURA_GARAGE_RPC_SECRET_FILE",
                 "AURA_GARAGE_ACCESS_KEY_FILE",
                 "AURA_GARAGE_SECRET_KEY_FILE",
+                "AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE",
+                "AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE",
             ):
                 secret = root / name
                 secret.write_text("topology-test-secret\n", encoding="utf-8")
@@ -978,6 +1344,8 @@ class ComposeTopologyTests(unittest.TestCase):
                 "AURA_OBSERVATORY_SESSION_PASSWORD_FILE",
                 "AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE",
                 "AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE",
+                "AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE",
+                "AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE",
                 "AUTHENTIK_DATABASE_PASSWORD_FILE",
                 "AUTHENTIK_SECRET_KEY_FILE",
                 "AUTHENTIK_BOOTSTRAP_PASSWORD_FILE",

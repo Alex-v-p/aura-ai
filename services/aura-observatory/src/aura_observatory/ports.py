@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from aura_observatory.contract import MetadataObservation
+
+if TYPE_CHECKING:
+    from aura_observatory.evaluation_storage import (
+        ArtifactRecord,
+        ArtifactUpload,
+        DeletionCommand,
+        DeletionSelector,
+        EvaluationScore,
+    )
 
 # These defaults are part of the bounded analytics request contract.  They
 # live beside the inward port so storage adapters can type the request without
@@ -304,6 +313,95 @@ class ObservatoryRetentionPort(Protocol):
     async def persisted_metric_series(self) -> list[dict[str, object]]: ...
 
 
+class EvaluationObjectStore(Protocol):
+    """Private worker-only object store addressed by opaque artifact UUIDs."""
+
+    async def put_stream(
+        self,
+        artifact_reference_id: str,
+        stream: AsyncIterator[bytes],
+        *,
+        content_type: str,
+        expected_sha256: str | None = None,
+    ) -> int: ...
+
+    async def delete(self, artifact_reference_id: str) -> None: ...
+
+
+class EvaluationArtifactRepository(Protocol):
+    """Transactional metadata boundary for authorized evaluation artifacts."""
+
+    async def reserve_artifact(
+        self, request: ArtifactUpload
+    ) -> ArtifactRecord | None | bool: ...
+
+    async def publish_artifact(self, artifact: ArtifactRecord) -> None: ...
+
+    async def mark_artifact_failed(self, artifact_reference_id: str, failure_code: str) -> None: ...
+
+    async def create_deletion_command(
+        self, command: DeletionCommand, *, score_ids: Sequence[str] = ()
+    ) -> DeletionCommand: ...
+
+    async def claim_deletion_command(self, command_id: str) -> str | None: ...
+
+    async def renew_deletion_lease(self, command_id: str, lease_token: str) -> bool: ...
+
+    async def mark_deletion_phase(
+        self, command_id: str, phase: str, *, lease_token: str | None = None
+    ) -> bool: ...
+
+    async def pending_deletion_commands(self, *, limit: int = 16) -> list[DeletionCommand]: ...
+
+    async def deletion_targets(self, command_id: str, *, limit: int) -> list[Mapping[str, str]]: ...
+
+    async def deletion_score_targets(
+        self, command_id: str, *, limit: int
+    ) -> list[Mapping[str, str]]: ...
+
+    async def mark_deletion_target(
+        self, command_id: str, artifact_reference_id: str, *, lease_token: str | None = None
+    ) -> bool: ...
+
+    async def mark_deletion_score_target(
+        self, command_id: str, score_id: str, *, lease_token: str | None = None
+    ) -> bool: ...
+
+    async def delete_artifact_metadata(
+        self,
+        artifact_reference_id: str,
+        *,
+        command_id: str | None = None,
+        lease_token: str | None = None,
+    ) -> bool: ...
+
+    async def complete_deletion_command(
+        self, command_id: str, deleted_count: int = 0, *, lease_token: str | None = None
+    ) -> int | None: ...
+
+    async def fail_deletion_command(
+        self, command_id: str, failure_code: str, *, lease_token: str | None = None
+    ) -> bool: ...
+
+
+class EvaluationScoreStore(Protocol):
+    """Metadata-safe score storage; implementations must have no content columns."""
+
+    async def insert_score(self, score: EvaluationScore) -> None: ...
+
+    async def delete_scores_for_artifact(self, artifact_reference_id: str) -> None: ...
+
+    async def delete_scores_for_selector(
+        self, selector: DeletionSelector, *, snapshot_at: datetime | None = None
+    ) -> None: ...
+
+    async def list_score_ids_for_selector(
+        self, selector: DeletionSelector, *, snapshot_at: datetime, limit: int
+    ) -> list[str]: ...
+
+    async def delete_scores_for_ids(self, score_ids: Sequence[str]) -> None: ...
+
+
 __all__ = [
     "ClaimOutcome",
     "DeletionResult",
@@ -316,4 +414,7 @@ __all__ = [
     "ObservatoryQueryPort",
     "ObservatoryReferencePort",
     "ObservatoryRetentionPort",
+    "EvaluationArtifactRepository",
+    "EvaluationObjectStore",
+    "EvaluationScoreStore",
 ]

@@ -10,6 +10,11 @@ set -Eeuo pipefail
 # diagnostics. The default remains cleanup on every exit.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+# Compose v5 can issue duplicate concurrent create requests for the same fixed
+# networks and volumes during a large `up --build`. Serialize Compose's
+# resource lifecycle for this disposable, low-memory acceptance stack so a
+# partially-created network cannot race its own IPAM allocation.
+export COMPOSE_PARALLEL_LIMIT=1
 # Keep credential-bearing Compose env/override artifacts in a repository-local
 # ignored fixture directory so Docker Desktop can bind-mount the secret source
 # files. The exit trap removes the directory and all of its contents.
@@ -52,7 +57,7 @@ cleanup() {
       docker compose -p "$project" --env-file "$env_file" -f "$ROOT/compose.yaml" -f "$override" \
         logs --no-color --tail=100 \
         observatory-postgres observatory-migrate observatory-clickhouse observatory-session \
-        observatory-api observatory-worker observatory-collector observatory-web \
+        observatory-garage-bootstrap observatory-api observatory-worker observatory-collector observatory-web \
         aura-core-postgres aura-core-migrate aura-core-api aura-core-worker aura-core-scheduler aura-web \
         2>&1 || true
       # The deterministic Ollama fixture is a separate Compose project and
@@ -140,6 +145,8 @@ write_fixture_secret aura-valkey-password fixture-valkey-password
 write_fixture_secret aura-garage-rpc-secret 0000000000000000000000000000000000000000000000000000000000000000
 write_fixture_secret aura-garage-access-key GK000000000000000000000000
 write_fixture_secret aura-garage-secret-key 1111111111111111111111111111111111111111111111111111111111111111
+write_fixture_secret observatory-garage-access-key GK111111111111111111111111
+write_fixture_secret observatory-garage-secret-key 2222222222222222222222222222222222222222222222222222222222222222
 write_fixture_secret observatory-database-password fixture-observatory-database-password
 write_fixture_secret observatory-oidc-client-secret fixture-observatory-oidc-client-secret
 write_fixture_secret observatory-session-password fixture-observatory-session-password
@@ -163,7 +170,7 @@ if [ "${#network_id_array[@]}" -gt 0 ]; then
 else
   printf '%s\n' '[]' > "$fixture_root/docker-networks.json"
 fi
-read -r object_storage_subnet document_parser_subnet < <(
+read -r object_storage_subnet document_parser_subnet observatory_object_storage_subnet < <(
   python3 - "$fixture_root/docker-networks.json" "$suffix" <<'PY'
 import ipaddress
 import json
@@ -189,16 +196,17 @@ for candidate in ipaddress.ip_network("10.254.192.0/18").subnets(new_prefix=28):
     if all(not candidate.overlaps(existing) for existing in occupied):
         free.append(candidate)
 
-if len(free) < 2:
-    raise SystemExit("no two free /28 subnets remain in the dedicated E2E pool")
+if len(free) < 3:
+    raise SystemExit("no three free /28 subnets remain in the dedicated E2E pool")
 
 start = int(suffix, 36) % len(free)
-selected = [free[(start + offset) % len(free)] for offset in range(2)]
-print(selected[0], selected[1])
+selected = [free[(start + offset) % len(free)] for offset in range(3)]
+print(selected[0], selected[1], selected[2])
 PY
 )
 test -n "$object_storage_subnet"
 test -n "$document_parser_subnet"
+test -n "$observatory_object_storage_subnet"
 
 cat > "$env_file" <<EOF
 AURA_STATE_ROOT=/unused/aura-observatory-e2e-state
@@ -209,6 +217,9 @@ AURA_VALKEY_PASSWORD_FILE=/run/secrets/aura-valkey-password
 AURA_GARAGE_RPC_SECRET_FILE=/run/secrets/aura-garage-rpc-secret
 AURA_GARAGE_ACCESS_KEY_FILE=/run/secrets/aura-garage-access-key
 AURA_GARAGE_SECRET_KEY_FILE=/run/secrets/aura-garage-secret-key
+AURA_OBSERVATORY_GARAGE_BUCKET=aura-observatory-evaluation
+AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE=/run/secrets/observatory-garage-access-key
+AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE=/run/secrets/observatory-garage-secret-key
 AURA_E2E_CORE_DATABASE_SECRET_SOURCE_FILE=$secret_root/aura-core-database-password
 AURA_E2E_OIDC_CLIENT_SECRET_SOURCE_FILE=$secret_root/aura-oidc-client-secret
 AURA_E2E_NATS_PASSWORD_SECRET_SOURCE_FILE=$secret_root/aura-nats-password
@@ -216,6 +227,8 @@ AURA_E2E_VALKEY_PASSWORD_SECRET_SOURCE_FILE=$secret_root/aura-valkey-password
 AURA_E2E_GARAGE_RPC_SECRET_SOURCE_FILE=$secret_root/aura-garage-rpc-secret
 AURA_E2E_GARAGE_ACCESS_KEY_SECRET_SOURCE_FILE=$secret_root/aura-garage-access-key
 AURA_E2E_GARAGE_SECRET_KEY_SECRET_SOURCE_FILE=$secret_root/aura-garage-secret-key
+AURA_E2E_OBSERVATORY_GARAGE_ACCESS_KEY_SECRET_SOURCE_FILE=$secret_root/observatory-garage-access-key
+AURA_E2E_OBSERVATORY_GARAGE_SECRET_KEY_SECRET_SOURCE_FILE=$secret_root/observatory-garage-secret-key
 AURA_OIDC_ISSUER=http://aura-e2e-oidc:8081
 AURA_OIDC_AUDIENCE=aura-web
 AURA_OIDC_CLIENT_ID=aura-web
@@ -230,6 +243,11 @@ AURA_OBSERVATORY_SESSION_PASSWORD_FILE=/run/secrets/observatory-session-password
 AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE=/run/secrets/observatory-ingest-credential
 AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE=/run/secrets/observatory-clickhouse-password
 AURA_OBSERVATORY_DATABASE_PASSWORD_FILE=/run/secrets/observatory-database-password
+AURA_OBSERVATORY_EVALUATION_OBJECT_ENDPOINT=http://aura-garage:3900
+AURA_OBSERVATORY_EVALUATION_OBJECT_REGION=garage
+AURA_OBSERVATORY_EVALUATION_OBJECT_BUCKET=aura-observatory-evaluation
+AURA_OBSERVATORY_EVALUATION_OBJECT_ACCESS_KEY_FILE=/run/secrets/observatory-garage-access-key
+AURA_OBSERVATORY_EVALUATION_OBJECT_SECRET_KEY_FILE=/run/secrets/observatory-garage-secret-key
 AURA_E2E_OBSERVATORY_DATABASE_PASSWORD_SECRET_SOURCE_FILE=$secret_root/observatory-database-password
 AURA_E2E_OBSERVATORY_OIDC_CLIENT_SECRET_SOURCE_FILE=$secret_root/observatory-oidc-client-secret
 AURA_E2E_OBSERVATORY_SESSION_PASSWORD_SECRET_SOURCE_FILE=$secret_root/observatory-session-password
@@ -246,6 +264,7 @@ AURA_OBSERVATORY_OWNER_SUBJECT=owner
 AURA_OBSERVATORY_SECURE_COOKIES=false
 AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet
 AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet
+AURA_OBSERVATORY_OBJECT_STORAGE_SUBNET=$observatory_object_storage_subnet
 EOF
 
 # The provider and browser runner are separate Compose concerns.  The temporary
@@ -323,6 +342,10 @@ services:
     volumes: !override
       - core_garage_data:/var/lib/garage:ro
       - core_garage_config:/run/garage-config:ro
+  observatory-garage-bootstrap:
+    volumes: !override
+      - core_garage_data:/var/lib/garage:ro
+      - core_garage_config:/run/garage-config:ro
   observatory-postgres:
     volumes: !override
       - observatory_postgres_data:/var/lib/postgresql/data
@@ -350,7 +373,8 @@ services:
       AURA_OBSERVATORY_BROWSER_HOST_RESOLVER_RULES: MAP observatory.localhost observatory-web
       AURA_OBSERVATORY_CORE_BASE_URL: http://aura-web:8080
       AURA_OBSERVATORY_CORE_MODEL: fixture-chat-2
-      AURA_OBSERVATORY_RUN_PROMPT: AURA_OBSERVATORY_E2E_METADATA_RUN
+      AURA_OBSERVATORY_RUN_PROMPT: AURA0090_PRIVACY_SENTINEL
+      AURA_OBSERVATORY_PRIVACY_SENTINEL: AURA0090_PRIVACY_SENTINEL
       AURA_OBSERVATORY_STORAGE_STATE_PATH: /tmp/observatory-browser-state.json
       AURA_OBSERVATORY_IDENTITY_MODE: external-oidc
       AURA_OBSERVATORY_ISSUER: http://aura-e2e-oidc:8081
@@ -386,6 +410,10 @@ secrets:
     file: ${AURA_E2E_GARAGE_ACCESS_KEY_SECRET_SOURCE_FILE}
   aura-garage-secret-key: !override
     file: ${AURA_E2E_GARAGE_SECRET_KEY_SECRET_SOURCE_FILE}
+  observatory-garage-access-key: !override
+    file: ${AURA_E2E_OBSERVATORY_GARAGE_ACCESS_KEY_SECRET_SOURCE_FILE}
+  observatory-garage-secret-key: !override
+    file: ${AURA_E2E_OBSERVATORY_GARAGE_SECRET_KEY_SECRET_SOURCE_FILE}
   observatory-database-password: !override
     file: ${AURA_E2E_OBSERVATORY_DATABASE_PASSWORD_SECRET_SOURCE_FILE}
   observatory-oidc-client-secret: !override
@@ -444,6 +472,470 @@ PY
 "${compose[@]}" up --build --detach --wait \
   aura-web observatory-web observatory-api observatory-collector
 "${compose[@]}" up --build --detach --wait aura-core-worker aura-core-scheduler observatory-worker
+# Exercise the worker-only evaluation storage boundary with bounded,
+# synthetic fixtures.  Stop the long-running worker first so command creation
+# and the explicit selector assertions cannot race its polling loop.  The
+# final command is left in an expired, persisted objects phase and is resumed
+# only after the worker is brought back up below.
+"${compose[@]}" stop observatory-worker
+"${compose[@]}" run --rm --no-deps --no-TTY observatory-worker /app/.venv/bin/python - <<'PY'
+import asyncio
+import hashlib
+import json
+from datetime import UTC, datetime
+from datetime import timedelta
+from typing import Any
+
+import httpx
+from aura_observatory.adapters.evaluation_storage import (
+    ClickHouseEvaluationScoreStore,
+    PostgresEvaluationArtifactRepository,
+)
+from aura_observatory.composition import (
+    build_evaluation_artifact_storage,
+    build_evaluation_deletion,
+    postgres_connection,
+)
+from aura_observatory.evaluation_storage import (
+    ArtifactUpload,
+    DeletionCommand,
+    DeletionKind,
+    DeletionSelector,
+    EvaluationScore,
+)
+from aura_observatory.settings import Settings
+
+
+RESTART_COMMAND_ID = "00000000-0000-4000-8000-000000009014"
+RESTART_COMMAND_KEY = "00000000-0000-4000-8000-000000009015"
+PAYLOAD = b"bounded-observatory-e2e-artifact"
+FIXTURES: tuple[dict[str, str], ...] = (
+    {
+        "label": "job-missing-object",
+        "authorization_id": "00000000-0000-4000-8000-000000009001",
+        "artifact_id": "00000000-0000-4000-8000-000000009002",
+        "reference_id": "00000000-0000-4000-8000-000000009003",
+        "request_id": "00000000-0000-4000-8000-000000009004",
+        "result_id": "00000000-0000-4000-8000-000000009005",
+        "idempotency_key": "00000000-0000-4000-8000-000000009006",
+        "job_id": "00000000-0000-4000-8000-000000009007",
+        "dataset_id": "00000000-0000-4000-8000-000000009008",
+        "suite_id": "00000000-0000-4000-8000-000000009009",
+        "score_id": "00000000-0000-4000-8000-000000009010",
+    },
+    {
+        "label": "dataset",
+        "authorization_id": "00000000-0000-4000-8000-000000009021",
+        "artifact_id": "00000000-0000-4000-8000-000000009022",
+        "reference_id": "00000000-0000-4000-8000-000000009023",
+        "request_id": "00000000-0000-4000-8000-000000009024",
+        "result_id": "00000000-0000-4000-8000-000000009025",
+        "idempotency_key": "00000000-0000-4000-8000-000000009026",
+        "job_id": "00000000-0000-4000-8000-000000009027",
+        "dataset_id": "00000000-0000-4000-8000-000000009028",
+        "suite_id": "00000000-0000-4000-8000-000000009029",
+        "score_id": "00000000-0000-4000-8000-000000009030",
+    },
+    {
+        "label": "suite",
+        "authorization_id": "00000000-0000-4000-8000-000000009031",
+        "artifact_id": "00000000-0000-4000-8000-000000009032",
+        "reference_id": "00000000-0000-4000-8000-000000009033",
+        "request_id": "00000000-0000-4000-8000-000000009034",
+        "result_id": "00000000-0000-4000-8000-000000009035",
+        "idempotency_key": "00000000-0000-4000-8000-000000009036",
+        "job_id": "00000000-0000-4000-8000-000000009037",
+        "dataset_id": "00000000-0000-4000-8000-000000009038",
+        "suite_id": "00000000-0000-4000-8000-000000009039",
+        "score_id": "00000000-0000-4000-8000-000000009040",
+    },
+    {
+        "label": "cutoff-old",
+        "authorization_id": "00000000-0000-4000-8000-000000009041",
+        "artifact_id": "00000000-0000-4000-8000-000000009042",
+        "reference_id": "00000000-0000-4000-8000-000000009043",
+        "request_id": "00000000-0000-4000-8000-000000009044",
+        "result_id": "00000000-0000-4000-8000-000000009045",
+        "idempotency_key": "00000000-0000-4000-8000-000000009046",
+        "job_id": "00000000-0000-4000-8000-000000009047",
+        "dataset_id": "00000000-0000-4000-8000-000000009048",
+        "suite_id": "00000000-0000-4000-8000-000000009049",
+        "score_id": "00000000-0000-4000-8000-000000009050",
+    },
+    {
+        "label": "cutoff-new",
+        "authorization_id": "00000000-0000-4000-8000-000000009051",
+        "artifact_id": "00000000-0000-4000-8000-000000009052",
+        "reference_id": "00000000-0000-4000-8000-000000009053",
+        "request_id": "00000000-0000-4000-8000-000000009054",
+        "result_id": "00000000-0000-4000-8000-000000009055",
+        "idempotency_key": "00000000-0000-4000-8000-000000009056",
+        "job_id": "00000000-0000-4000-8000-000000009057",
+        "dataset_id": "00000000-0000-4000-8000-000000009058",
+        "suite_id": "00000000-0000-4000-8000-000000009059",
+        "score_id": "00000000-0000-4000-8000-000000009060",
+    },
+    {
+        "label": "purge-all",
+        "authorization_id": "00000000-0000-4000-8000-000000009061",
+        "artifact_id": "00000000-0000-4000-8000-000000009062",
+        "reference_id": "00000000-0000-4000-8000-000000009063",
+        "request_id": "00000000-0000-4000-8000-000000009064",
+        "result_id": "00000000-0000-4000-8000-000000009065",
+        "idempotency_key": "00000000-0000-4000-8000-000000009066",
+        "job_id": "00000000-0000-4000-8000-000000009067",
+        "dataset_id": "00000000-0000-4000-8000-000000009068",
+        "suite_id": "00000000-0000-4000-8000-000000009069",
+        "score_id": "00000000-0000-4000-8000-000000009070",
+    },
+)
+
+
+async def chunks():
+    yield PAYLOAD
+
+
+async def main() -> None:
+    settings = Settings()
+    repository = PostgresEvaluationArtifactRepository(
+        lambda: postgres_connection(settings.database_url)
+    )
+    storage = build_evaluation_artifact_storage(settings)
+    score_store = ClickHouseEvaluationScoreStore(
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
+    deletion = build_evaluation_deletion(settings)
+    now = datetime.now(UTC).replace(microsecond=0)
+    cutoff = now - timedelta(days=1)
+    times = {
+        "job-missing-object": now,
+        "dataset": now,
+        "suite": now,
+        "cutoff-old": cutoff - timedelta(hours=1),
+        "cutoff-new": cutoff + timedelta(hours=1),
+        "purge-all": now,
+    }
+    digest = hashlib.sha256(PAYLOAD).hexdigest()
+
+    async def add_fixture(fixture: dict[str, str]) -> None:
+        observed_at = times[fixture["label"]]
+        async with postgres_connection(settings.database_url) as connection:
+            await connection.execute(
+                """INSERT INTO observatory_evaluation_authorizations(
+                authorization_record_id, request_id, dataset_id, capture_classification,
+                authorization_purpose, authorization_context, retention_mode, authorized_at)
+                VALUES (%s, %s, %s, 'full_content', 'owner_supplied_evaluation',
+                'controlled_evaluation', 'manual_only', %s)""",
+                (
+                    fixture["authorization_id"],
+                    fixture["request_id"],
+                    fixture["dataset_id"],
+                    now,
+                ),
+            )
+        request = ArtifactUpload(
+            artifact_id=fixture["artifact_id"],
+            artifact_reference_id=fixture["reference_id"],
+            request_id=fixture["request_id"],
+            result_id=fixture["result_id"],
+            idempotency_key=fixture["idempotency_key"],
+            authorization_record_id=fixture["authorization_id"],
+            capture_classification="full_content",
+            media_classification="evaluation_input",
+            media_type="application/octet-stream",
+            expected_sha256=digest,
+            max_bytes=1024,
+            job_id=fixture["job_id"],
+            dataset_id=fixture["dataset_id"],
+            suite_id=fixture["suite_id"],
+            created_at=observed_at,
+        )
+        await storage.store(request, chunks())
+        await score_store.insert_score(
+            EvaluationScore(
+                score_id=fixture["score_id"],
+                job_id=fixture["job_id"],
+                result_id=fixture["result_id"],
+                dataset_id=fixture["dataset_id"],
+                suite_id=fixture["suite_id"],
+                evaluator_id="00000000-0000-4000-8000-000000009013",
+                evaluator_version="e2e",
+                evaluator_kind="deterministic",
+                component_id="aura.observatory.e2e.storage",
+                component_version="e2e",
+                capture_classification="full_content",
+                evidence_status="observed",
+                value=0.0,
+                outcome="pass",
+                observed_at=observed_at,
+                artifact_reference_id=fixture["reference_id"],
+            )
+        )
+
+    for fixture in FIXTURES:
+        await add_fixture(fixture)
+
+    # Also retain a score with no content-bearing artifact reference.  It is
+    # part of the purge fixture and proves nullable outcome/value semantics.
+    missing_score_id = "00000000-0000-4000-8000-000000009071"
+    purge = next(item for item in FIXTURES if item["label"] == "purge-all")
+    await score_store.insert_score(
+        EvaluationScore(
+            score_id=missing_score_id,
+            job_id=purge["job_id"],
+            result_id=purge["result_id"],
+            dataset_id=purge["dataset_id"],
+            suite_id=purge["suite_id"],
+            evaluator_id="00000000-0000-4000-8000-000000009013",
+            evaluator_version="e2e",
+            evaluator_kind="deterministic",
+            component_id="aura.observatory.e2e.storage",
+            component_version="e2e",
+            capture_classification="metadata_only",
+            evidence_status="not_observed",
+            value=None,
+            outcome=None,
+            observed_at=now,
+            artifact_reference_id=None,
+        )
+    )
+
+    async def clickhouse_rows(query: str) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                settings.clickhouse_url,
+                params={"database": settings.clickhouse_database},
+                auth=(settings.clickhouse_user, settings.clickhouse_password),
+                content=query + " FORMAT JSONEachRow",
+            )
+            response.raise_for_status()
+        return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    score_ids = [item["score_id"] for item in FIXTURES] + [missing_score_id]
+    score_rows = await clickhouse_rows(
+        "SELECT score_id, job_id, result_id, dataset_id, suite_id, "
+        "score_value, outcome, artifact_reference_id FROM evaluation_scores "
+        "WHERE score_id IN (" + ",".join(f"toUUID('{value}')" for value in score_ids) + ")"
+    )
+    if len(score_rows) != len(score_ids):
+        raise SystemExit("ClickHouse score readback did not return every bounded fixture")
+    by_score_id = {str(row["score_id"]): row for row in score_rows}
+    for fixture in FIXTURES:
+        row = by_score_id.get(fixture["score_id"])
+        if not row or float(row["score_value"]) != 0.0 or row["outcome"] != "pass":
+            raise SystemExit("ClickHouse score readback lost safe zero-score correlation")
+        for key in ("job_id", "result_id", "dataset_id", "suite_id"):
+            if not row.get(key):
+                raise SystemExit("ClickHouse score readback lost a bounded correlation")
+    missing_row = by_score_id.get(missing_score_id)
+    if not missing_row or missing_row["score_value"] is not None or missing_row["outcome"] is not None:
+        raise SystemExit("ClickHouse nullable score readback was not preserved")
+
+    async def assert_deleted(fixture: dict[str, str], *, expect_deleted: bool) -> None:
+        async with postgres_connection(settings.database_url) as connection:
+            result = await connection.execute(
+                "SELECT COUNT(*) FROM observatory_evaluation_artifacts WHERE artifact_reference_id = %s",
+                (fixture["reference_id"],),
+            )
+            row = await result.fetchone()
+        if not row or int(row[0]) != (0 if expect_deleted else 1):
+            raise SystemExit("evaluation artifact metadata selector result was incorrect")
+        rows = await clickhouse_rows(
+            "SELECT count() AS count FROM evaluation_scores WHERE score_id = "
+            f"toUUID('{fixture['score_id']}')"
+        )
+        if not rows or int(rows[0]["count"]) != (0 if expect_deleted else 1):
+            raise SystemExit("evaluation score selector result was incorrect")
+
+    async def execute_command(command: DeletionCommand, expected_count: int) -> None:
+        # Exercise the production use case, including its authenticated
+        # ClickHouse HTTP score snapshot.  Passing IDs directly to the
+        # repository would bypass the boundary this acceptance is intended to
+        # validate.
+        await deletion.create_command(command)
+        if await deletion.execute(command, page_size=10) != expected_count:
+            raise SystemExit("evaluation deletion selector returned an unexpected count")
+
+    job = FIXTURES[0]
+    # Simulate provider-side loss before the durable command runs; Garage
+    # DELETE remains idempotent while PG/ClickHouse removal is still exact.
+    await storage.object_store.delete(job["reference_id"])
+    job_command = DeletionCommand(
+        command_id="00000000-0000-4000-8000-000000009011",
+        idempotency_key="00000000-0000-4000-8000-000000009012",
+        selector=DeletionSelector(DeletionKind.JOB, job["job_id"]),
+        confirmation="DELETE_EVALUATION_ARTIFACTS",
+    )
+    await execute_command(job_command, 1)
+    if await deletion.execute(job_command, page_size=10) != 0:
+        raise SystemExit("missing-object deletion retry was not idempotent")
+    await assert_deleted(job, expect_deleted=True)
+
+    dataset = FIXTURES[1]
+    await execute_command(
+        DeletionCommand(
+            command_id="00000000-0000-4000-8000-000000009072",
+            idempotency_key="00000000-0000-4000-8000-000000009073",
+            selector=DeletionSelector(DeletionKind.DATASET, dataset["dataset_id"]),
+            confirmation="DELETE_EVALUATION_ARTIFACTS",
+        ),
+        1,
+    )
+    await assert_deleted(dataset, expect_deleted=True)
+
+    suite = FIXTURES[2]
+    await execute_command(
+        DeletionCommand(
+            command_id="00000000-0000-4000-8000-000000009074",
+            idempotency_key="00000000-0000-4000-8000-000000009075",
+            selector=DeletionSelector(DeletionKind.SUITE, suite["suite_id"]),
+            confirmation="DELETE_EVALUATION_ARTIFACTS",
+        ),
+        1,
+    )
+    await assert_deleted(suite, expect_deleted=True)
+
+    old_fixture = FIXTURES[3]
+    new_fixture = FIXTURES[4]
+    await execute_command(
+        DeletionCommand(
+            command_id="00000000-0000-4000-8000-000000009076",
+            idempotency_key="00000000-0000-4000-8000-000000009077",
+            selector=DeletionSelector(DeletionKind.CUTOFF, cutoff),
+            confirmation="DELETE_EVALUATION_ARTIFACTS",
+        ),
+        1,
+    )
+    await assert_deleted(old_fixture, expect_deleted=True)
+    await assert_deleted(new_fixture, expect_deleted=False)
+
+    # Persist, claim, and phase the final command while the worker is stopped.
+    # Expire only its lease so the restarted production worker must resume the
+    # same immutable target rather than taking a fresh selector snapshot.
+    restart_command = DeletionCommand(
+        command_id=RESTART_COMMAND_ID,
+        idempotency_key=RESTART_COMMAND_KEY,
+        selector=DeletionSelector(DeletionKind.PURGE_ALL),
+        confirmation="DELETE_EVALUATION_ARTIFACTS",
+    )
+    await deletion.create_command(restart_command)
+    lease_token = await repository.claim_deletion_command(RESTART_COMMAND_ID)
+    if lease_token is None or not await repository.mark_deletion_phase(
+        RESTART_COMMAND_ID, "objects", lease_token=lease_token
+    ):
+        raise SystemExit("could not persist the restart recovery phase")
+    async with postgres_connection(settings.database_url) as connection:
+        await connection.execute(
+            "UPDATE observatory_evaluation_deletion_commands SET lease_expires_at = "
+            "CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE command_id = %s",
+            (RESTART_COMMAND_ID,),
+        )
+    print("Observatory evaluation storage fixtures and score readback prepared")
+
+
+asyncio.run(main())
+print("Observatory evaluation storage/deletion preflight passed")
+PY
+"${compose[@]}" up --detach --wait observatory-worker
+# The worker was stopped while the final purge command was claimed in its
+# persisted objects phase.  Verify that a fresh worker resumes that exact
+# command, removes the object/metadata/score target, and writes one
+# content-free audit without selecting new targets.
+"${compose[@]}" run --rm --no-deps --no-TTY observatory-worker /app/.venv/bin/python - <<'PY'
+import asyncio
+import json
+import time
+from typing import Any
+
+import httpx
+from aura_observatory.composition import postgres_connection
+from aura_observatory.settings import Settings
+
+
+COMMAND_ID = "00000000-0000-4000-8000-000000009014"
+REFERENCE_IDS = (
+    "00000000-0000-4000-8000-000000009053",
+    "00000000-0000-4000-8000-000000009063",
+)
+SCORE_IDS = (
+    "00000000-0000-4000-8000-000000009060",
+    "00000000-0000-4000-8000-000000009070",
+    "00000000-0000-4000-8000-000000009071",
+)
+
+
+async def main() -> None:
+    settings = Settings()
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        async with postgres_connection(settings.database_url) as connection:
+            result = await connection.execute(
+                "SELECT status, deletion_phase, deleted_count FROM "
+                "observatory_evaluation_deletion_commands WHERE command_id = %s",
+                (COMMAND_ID,),
+            )
+            row = await result.fetchone()
+        if row and row[0] == "completed":
+            if row[1] != "objects" or int(row[2]) != 2:
+                raise SystemExit("restart recovery completed with an unexpected persisted count")
+            break
+        if row and row[0] not in {"queued", "running"}:
+            raise SystemExit("restart recovery entered an invalid terminal state")
+        await asyncio.sleep(2)
+    else:
+        raise SystemExit("restarted Observatory worker did not resume the persisted command")
+
+    async with postgres_connection(settings.database_url) as connection:
+        result = await connection.execute(
+            "SELECT COUNT(*) FROM observatory_evaluation_artifacts "
+            "WHERE artifact_reference_id IN (%s, %s)",
+            REFERENCE_IDS,
+        )
+        artifact_row = await result.fetchone()
+        result = await connection.execute(
+            "SELECT COUNT(*) FROM observatory_evaluation_deletion_targets "
+            "WHERE command_id = %s AND completed_at IS NULL",
+            (COMMAND_ID,),
+        )
+        pending_target_row = await result.fetchone()
+        result = await connection.execute(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE outcome = 'completed') "
+            "FROM observatory_evaluation_deletion_audits WHERE command_id = %s",
+            (COMMAND_ID,),
+        )
+        audit_row = await result.fetchone()
+    if not artifact_row or int(artifact_row[0]) != 0:
+        raise SystemExit("restart recovery left artifact metadata")
+    if not pending_target_row or int(pending_target_row[0]) != 0:
+        raise SystemExit("restart recovery retargeted or left a pending artifact target")
+    if not audit_row or tuple(map(int, audit_row)) != (1, 1):
+        raise SystemExit("restart recovery did not write one completed content-free audit")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            settings.clickhouse_url,
+            params={"database": settings.clickhouse_database},
+            auth=(settings.clickhouse_user, settings.clickhouse_password),
+            content=(
+                "SELECT count() AS count FROM evaluation_scores WHERE score_id IN ("
+                + ",".join(f"toUUID('{value}')" for value in SCORE_IDS)
+                + ") FORMAT JSONEachRow"
+            ),
+        )
+        response.raise_for_status()
+    score_rows: list[dict[str, Any]] = [
+        json.loads(line) for line in response.text.splitlines() if line.strip()
+    ]
+    if not score_rows or int(score_rows[0]["count"]) != 0:
+        raise SystemExit("restart recovery left ClickHouse score targets")
+
+
+asyncio.run(main())
+print("Observatory evaluation worker restart recovery passed")
+PY
 # Verify the actual worker container can resolve and reach the deterministic
 # provider before the browser creates a run. This is intentionally a bounded,
 # metadata-only GET from the worker network namespace; it catches an
@@ -857,6 +1349,30 @@ PY
 "${compose[@]}" build frontend-e2e
 "${compose[@]}" run --rm --no-deps --no-TTY frontend-e2e
 test -s "$browser_state"
+# Scan bounded service logs and the metrics exposition for the same synthetic
+# reference used by the browser SSE/URL/storage privacy assertions.  The
+# reference is intentionally non-secret, and failures report only a generic
+# result so it cannot be echoed as a diagnostic.
+privacy_log="$fixture_root/privacy-scan.log"
+"${compose[@]}" logs --no-color --tail=500 \
+  aura-core-api aura-core-worker aura-core-scheduler observatory-api observatory-worker observatory-collector \
+  >"$privacy_log" 2>/dev/null || true
+if LC_ALL=C grep -Fq 'AURA0090_PRIVACY_SENTINEL' "$privacy_log"; then
+  printf '%s\n' 'privacy scan found synthetic content in a captured service log' >&2
+  exit 1
+fi
+"${compose[@]}" exec -T observatory-api /app/.venv/bin/python - <<'PY'
+import urllib.request
+
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8000/metrics", timeout=5) as response:
+        body = response.read(1_000_000)
+except OSError as exc:
+    raise SystemExit("privacy metrics scan unavailable") from exc
+if b"AURA0090_PRIVACY_SENTINEL" in body:
+    raise SystemExit("privacy scan found synthetic content in metrics exposition")
+print("Observatory bounded privacy scan passed")
+PY
 
 # Exercise the same scoped Compose down/up lifecycle used by the shipped
 # service, without removing named volumes. This proves the session store's

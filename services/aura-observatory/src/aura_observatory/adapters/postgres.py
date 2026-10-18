@@ -295,6 +295,78 @@ class PostgresCatalog:
             )
             row = await result.fetchone()
         return None if row is None else row[0]
+
+    async def record_metric(
+        self,
+        name: str,
+        value: float,
+        labels: Mapping[str, str],
+        *,
+        histogram: bool = False,
+    ) -> None:
+        """Persist one allowlisted evaluation metric series without payloads."""
+
+        evaluation_names = {
+            "observatory_evaluation_artifact_operation_count",
+            "observatory_evaluation_artifact_operation_duration_ms",
+            "observatory_evaluation_deletion_action_count",
+            "observatory_evaluation_deletion_deleted_count",
+            "observatory_evaluation_deletion_failure_count",
+            "observatory_evaluation_deletion_duration_ms",
+        }
+        if name not in evaluation_names or not math.isfinite(value) or abs(value) > 1e15:
+            return
+        normalized = {str(key): str(label) for key, label in labels.items()}
+        if not ObservatoryMetrics.labels_valid(name, normalized):
+            return
+        columns = {
+            "operation": normalized.get("operation", ""),
+            "outcome": normalized.get("outcome", ""),
+            "selector": normalized.get("selector", ""),
+            "phase": normalized.get("phase", ""),
+            "failure_code": normalized.get("failure_code", ""),
+        }
+        buckets = {
+            str(bucket): int(value <= bucket)
+            for bucket in ObservatoryMetrics.DURATION_BUCKETS
+        } if histogram else {}
+        bucket_merge = ", ".join(
+            f"'{bucket}', COALESCE("
+            "(observatory_evaluation_metric_series.histogram_buckets->>"
+            f"'{bucket}')::bigint, 0) "
+            f"+ COALESCE((EXCLUDED.histogram_buckets->>'{bucket}')::bigint, 0)"
+            for bucket in ObservatoryMetrics.DURATION_BUCKETS
+        )
+        async with self._connection_factory() as connection:
+            await connection.execute(
+                f"""INSERT INTO observatory_evaluation_metric_series(
+                metric_name, label_operation, label_outcome, label_selector,
+                label_phase, label_failure_code, value, histogram_count,
+                histogram_buckets, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                CURRENT_TIMESTAMP)
+                ON CONFLICT (
+                    metric_name, label_operation, label_outcome, label_selector,
+                    label_phase, label_failure_code
+                ) DO UPDATE SET
+                    value = observatory_evaluation_metric_series.value + EXCLUDED.value,
+                    histogram_count = observatory_evaluation_metric_series.histogram_count
+                        + EXCLUDED.histogram_count,
+                    histogram_buckets = jsonb_build_object({bucket_merge}),
+                    updated_at = CURRENT_TIMESTAMP""",
+                (
+                    name,
+                    columns["operation"],
+                    columns["outcome"],
+                    columns["selector"],
+                    columns["phase"],
+                    columns["failure_code"],
+                    value,
+                    1 if histogram else 0,
+                    json.dumps(buckets, separators=(",", ":")),
+                ),
+            )
+
     async def record_rejection(self, reason: str, amount: int = 1) -> None:
         if amount < 1:
             return
@@ -460,45 +532,83 @@ class PostgresCatalog:
                 "storage_latency_buckets FROM observatory_ingest_counters "
                 "WHERE counter_key = 'global'"
             )
-        row = await result.fetchone()
-        if row is None or len(row) < 4:
-            return []
-        try:
-            cumulative_count = max(0, int(row[1] or 0))
-            cumulative_sum = float(row[2] or 0.0)
-        except (TypeError, ValueError, OverflowError):
-            return []
-        if not math.isfinite(cumulative_sum):
-            return []
-        if cumulative_count == 0:
-            return []
-        raw_buckets = row[3]
-        if isinstance(raw_buckets, str):
+            row = await result.fetchone()
+            evaluation_result = await connection.execute(
+                """SELECT metric_name, label_operation, label_outcome, label_selector,
+                label_phase, label_failure_code, value, histogram_count, histogram_buckets
+                FROM observatory_evaluation_metric_series
+                ORDER BY metric_name, label_operation, label_outcome, label_selector,
+                label_phase, label_failure_code LIMIT 64"""
+            )
+            evaluation_rows = await evaluation_result.fetchall()
+        series: list[dict[str, object]] = []
+        if row is not None and len(row) >= 4:
             try:
-                raw_buckets = json.loads(raw_buckets)
-            except json.JSONDecodeError:
-                raw_buckets = {}
-        bucket_mapping = (
-            cast(dict[object, object], raw_buckets) if isinstance(raw_buckets, dict) else {}
-        )
-        buckets: dict[str, int] = {}
-        for bucket in ObservatoryMetrics.DURATION_BUCKETS:
-            raw_bucket = bucket_mapping.get(str(bucket), 0)
-            try:
-                value = int(raw_bucket) if isinstance(raw_bucket, (int, float, str)) else 0
+                cumulative_count = max(0, int(row[1] or 0))
+                cumulative_sum = float(row[2] or 0.0)
             except (TypeError, ValueError, OverflowError):
-                value = 0
-            buckets[str(bucket)] = max(0, value)
-        return [
-            {
-                "name": "observatory_ingest_storage_duration_ms",
-                "value": cumulative_sum,
-                "sum": cumulative_sum,
-                "count": cumulative_count,
-                "buckets": buckets,
-                "labels": {},
+                cumulative_count = 0
+                cumulative_sum = 0.0
+            if cumulative_count > 0 and math.isfinite(cumulative_sum):
+                raw_buckets = row[3]
+                if isinstance(raw_buckets, str):
+                    try:
+                        raw_buckets = json.loads(raw_buckets)
+                    except json.JSONDecodeError:
+                        raw_buckets = {}
+                buckets = _metric_buckets(cast(object, raw_buckets))
+                series.append(
+                    {
+                        "name": "observatory_ingest_storage_duration_ms",
+                        "value": cumulative_sum,
+                        "sum": cumulative_sum,
+                        "count": cumulative_count,
+                        "buckets": buckets,
+                        "labels": {},
+                    }
+                )
+        for evaluation_row in evaluation_rows:
+            if len(evaluation_row) < 9:
+                continue
+            name = str(evaluation_row[0])
+            labels = {
+                key: str(evaluation_row[index])
+                for key, index in (
+                    ("operation", 1),
+                    ("outcome", 2),
+                    ("selector", 3),
+                    ("phase", 4),
+                    ("failure_code", 5),
+                )
+                if evaluation_row[index]
             }
-        ]
+            if name not in {
+                "observatory_evaluation_artifact_operation_count",
+                "observatory_evaluation_artifact_operation_duration_ms",
+                "observatory_evaluation_deletion_action_count",
+                "observatory_evaluation_deletion_deleted_count",
+                "observatory_evaluation_deletion_failure_count",
+                "observatory_evaluation_deletion_duration_ms",
+            } or not ObservatoryMetrics.labels_valid(name, labels):
+                continue
+            value = _finite_metric_value(evaluation_row[6])
+            if name in {
+                "observatory_evaluation_artifact_operation_duration_ms",
+                "observatory_evaluation_deletion_duration_ms",
+            }:
+                series.append(
+                    {
+                        "name": name,
+                        "value": value,
+                        "sum": value,
+                        "count": _bounded_metric_count(evaluation_row[7]),
+                        "buckets": _metric_buckets(evaluation_row[8]),
+                        "labels": labels,
+                    }
+                )
+            else:
+                series.append({"name": name, "value": value, "labels": labels})
+        return series
 
     async def record_worker_heartbeat(self, at: datetime | None = None) -> None:
         async with self._connection_factory() as connection:
@@ -1271,6 +1381,42 @@ async def _close_claim_context(
         await context.__aexit__(type(cleanup_error), cleanup_error, cleanup_error.__traceback__)
         raise cleanup_error
     await context.__aexit__(exc_type, exc, traceback)
+
+
+def _finite_metric_value(value: object) -> float:
+    try:
+        number = float(cast(Any, value))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return number if math.isfinite(number) and abs(number) <= 1e15 else 0.0
+
+
+def _bounded_metric_count(value: object) -> int:
+    try:
+        number = int(cast(Any, value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, min(number, 1_000_000_000))
+
+
+def _metric_buckets(value: object) -> dict[str, int]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[object, object], value)
+    result: dict[str, int] = {}
+    for bucket in ObservatoryMetrics.DURATION_BUCKETS:
+        raw = mapping.get(str(bucket), 0)
+        try:
+            count = int(cast(Any, raw))
+        except (TypeError, ValueError, OverflowError):
+            count = 0
+        result[str(bucket)] = max(0, min(count, 1_000_000_000))
+    return result
 
 
 __all__ = ["PostgresCatalog", "PostgresObservationIdRegistry"]

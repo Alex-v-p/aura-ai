@@ -19,6 +19,8 @@ OBSERVATORY_TYPED_COMPONENTS = frozenset(
         "aura.observatory.telemetry_storage",
         "aura.observatory.query_api",
         "aura.observatory.live_updates",
+        "aura.observatory.evaluation_artifact_storage",
+        "aura.observatory.evaluation_deletion",
     }
 )
 OBSERVATORY_METRIC_TYPES = frozenset({"counter", "gauge", "histogram"})
