@@ -1,0 +1,128 @@
+agent: contract_steward
+work_item: AURA-0089
+status: complete
+runtime:
+  model: gpt-6-astra
+  reasoning_effort: high
+  execution_tier: priority
+  agent_thread_id: /root/aura_0089_contracts
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1, contracts.evaluation-events-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/evaluation/v1/failure-codes.schema.json
+  - contracts/events/evaluation/v1/evaluation-events.schema.json
+  - work-items/handoffs/AURA-0089-contract.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no other writer was authorized to edit the two v1 contract roots during this ownership slice
+  compatibility: backward_compatible
+  definitions:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      changes:
+        - Added one atomic JSON Schema 2020-12 resource union with distinct closed dataset, case, suite, evaluator, score, request, result, artifact, experiment, baseline, and replay definitions.
+        - Added stable UUID identities, bounded semantic versions, UTC timestamps, SHA-256 integrity, idempotency keys, explicit component and evaluator versions, deterministic limits, and reproducibility evidence.
+        - Distinguished synthetic, owner_supplied, and captured cases and the public_project, private, sensitive, and environment scopes without portable owner identity.
+        - Required explicit controlled-evaluation authorization purpose, capture classification, and manual-only retention; metadata_only cases reject content, digests, and artifact references, while content-bearing classifications require an opaque authorization record.
+        - Split metadata_only, hashed, and content-bearing capture authorization into structurally distinct branches; metadata_only and hashed cases and replays cannot carry artifact references, while Artifact records accept only redacted, sampled_content, or full_content authorization.
+        - Required every content-bearing artifact-reference array to contain at least one opaque UUID and documented the consumer invariant that each referenced artifact authorization must be at least as restrictive as its enclosing case or replay.
+        - Restricted content to a closed inert input/expected/context shape and documented that it cannot grant instruction, permission, policy, path, provider, endpoint, credential, object-key, or execution authority.
+        - Bound requests and result-bearing resources to exact dataset, suite, evaluator, component, code, image, configuration, model, deployment, prompt, policy, fixture, seed, clock, locale, budget, deadline, and concurrency evidence without embedding raw content.
+        - Distinguished deterministic, local_judge, and human_review evaluators and required explicit evidence state, outcome, uncertainty, rubric, and calibration metadata where applicable so absent evidence is never inferred.
+        - Prohibited both score value and outcome when evidence is not_observed or not_applicable; both remain mandatory only for observed evidence.
+        - Defined artifact metadata using only opaque UUID references, integrity, media classification, capture authority, manual retention, and deletion-scope categories; filenames, endpoints, bucket names, paths, credentials, provider object keys, and bytes are absent.
+        - Defined declarative experiments and replay evidence without selecting an executor, transport, storage provider, queue, or runtime behavior.
+        - Required service-generated non-secret UUID idempotency keys and rejected exact duplicate experiment variants while preserving the existing two-to-sixteen bound.
+        - Defined immutable candidate and manually owner-promoted baseline states with opaque promotion records, immutable result sets, and bounded thresholds; automatic promotion and protected repository baseline mutation are not authorized.
+    - id: evaluation-events-v1
+      version: 1
+      source: contracts/events/evaluation/v1/evaluation-events.schema.json
+      changes:
+        - Added exactly evaluation.requested, evaluation.completed, evaluation.cancelled, and evaluation.failed durable lifecycle events.
+        - Required stable event, correlation, causation, request, job, attempt, and idempotency identifiers plus bounded request, dataset, and suite provenance hashes and versions.
+        - Kept event data content-free and closed; completion carries only a result identity/digest and opaque artifact-reference UUIDs, while cancellation and failure carry bounded codes rather than comments, exceptions, payload excerpts, or provider diagnostics.
+        - Excluded raw input, output, prompts, rubrics, comments, artifact content, credentials, endpoints, filenames, provider object keys, owner identity, arbitrary attributes, and hidden reasoning.
+        - Reused the finite evaluation-failure-codes-v1 taxonomy for failed lifecycle events instead of accepting arbitrary producer or provider-derived codes.
+    - id: evaluation-failure-codes-v1
+      version: 1
+      source: contracts/evaluation/v1/failure-codes.schema.json
+      changes:
+        - Added one finite content-free provider-neutral taxonomy shared by evaluation results and failed durable events.
+        - Limited failures to request-invalid, deadline, resource-limit, dependency-unavailable, execution, result-validation, storage, and internal categories.
+        - Required producers to map internal failures before publication and prohibited exception text, provider diagnostics, payload excerpts, credentials, endpoints, and content-derived codes.
+  compatibility_notes:
+    - All three contract identifiers and versioned roots are new; no existing contract, producer requirement, or consumer payload is changed.
+    - The shared failure taxonomy is a new v1 contract referenced by both new unions, so a failure category cannot drift between persisted results and durable events.
+    - Production telemetry contracts remain unchanged and metadata_only; neither new schema is referenced from contracts/telemetry.
+    - All resource and event objects are closed so future additions require an explicit compatible contract revision.
+    - Content-bearing fields exist only in evaluation-v1 controlled resources; evaluation-events-v1 remains content-free for later durable transport use.
+    - Cross-property identity inequality, timestamp ordering, semantic content scanning, and digest verification require producer and consumer validation because portable JSON Schema cannot prove them.
+  producers:
+    - Future Aura Observatory evaluation definition and orchestration implementations authorized by AURA-0092 through AURA-0096
+    - Future Aura Core controlled evaluation runner authorized by AURA-0091
+  consumers:
+    - Future Aura Core evaluation runner request consumer
+    - Future Aura Observatory evaluation worker, scheduler, storage, API, CLI, SSE, and Web implementations
+    - Evaluation contract, privacy, reproducibility, and lifecycle-event test suites
+  rollout:
+    - Register and validate all three new v1 roots before implementing persistence, durable transport, runner, API, or browser consumers.
+    - Implement consumers with strict version dispatch, closed-object validation, idempotency, content-as-data handling, and content-free event publication.
+    - Keep metadata_only production telemetry independent; explicitly authorized content may move only through later evaluation artifact boundaries.
+    - Resolve and validate evaluation-failure-codes-v1 with both resource and event schemas, generate idempotency UUIDs inside the owning service, and map all internal/provider errors to the finite taxonomy before persistence or publication.
+    - Verify referenced artifact authorization at read and execution boundaries and reject any artifact whose authorization is less restrictive than the enclosing case or replay.
+    - Introduce runtime producers and consumers only in their separately reviewed downstream work items; this contract slice does not choose NATS subjects, Garage layout, API resources, judge inventory, or deletion mechanics.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0089.yaml
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - python3 -m json.tool contracts/evaluation/v1/failure-codes.schema.json
+    - python3 -m json.tool contracts/events/evaluation/v1/evaluation-events.schema.json
+    - strict AJV 8 JSON Schema 2020-12 compilation for evaluation-v1, evaluation-failure-codes-v1, and evaluation-events-v1 with external references resolved
+    - AJV representative validation for all 11 resource definitions and all 4 lifecycle event definitions
+    - AJV negative validation rejecting content in a metadata_only case and raw prompt data in a lifecycle event
+    - AJV review regression probes rejecting not-observed score value/outcome, metadata_only and hashed artifact references, empty content artifact arrays, metadata_only and hashed Artifact records, arbitrary result/event failure codes, non-UUID idempotency keys, and exact duplicate experiment variants while accepting corrected positive representatives
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0089_*.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright tests/test_aura0089_*.py (0 errors, 0 warnings)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest tests/test_aura0089_*.py -q (62 passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0089.yaml (not applicable)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0089.yaml (no protected changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0089.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Runtime, migration, storage, NATS, API, generated-client, browser, and full-stack checks are outside this contract-only work item or assigned to downstream work items.
+decisions:
+  - Used one atomic resource union and one atomic lifecycle-event union so each v1 contract has a single version, resolver boundary, and compatibility surface without duplicated common definitions.
+  - Used only JSON Schema 2020-12 and repository-established closed-object conventions; no generated client or business behavior was added.
+  - Centralized failure classification in evaluation-failure-codes-v1 so results and events cannot independently accept open, exception-derived, or provider-derived categories.
+  - Reused the strict lowercase UUID definition for idempotency rather than introducing a user-controlled string namespace; generation and provenance remain service responsibilities.
+  - Kept authorization as an opaque record identifier and purpose instead of owner identity, claims, credentials, or provider details.
+  - Required authorizationContext controlled_evaluation for every capture classification and an authorization record for every non-metadata classification; ordinary production telemetry remains outside these contracts.
+  - Kept evaluation content in a narrow UntrustedContent definition and all durable events content-free; storage and transport must preserve this separation.
+  - Made content-bearing capture a distinct authorization branch, prohibited metadata_only and hashed content/artifact references, required non-empty content artifact arrays, and made downstream authorization-strength checks an explicit consumer obligation.
+  - Made exact execution provenance self-contained on requests and result-bearing resources so reproducibility does not depend on private Core state or an implicit mutable deployment.
+  - Represented unavailable score evidence explicitly and required uncertainty metadata rather than synthesizing a value from missing observations.
+  - Kept local_judge as a bounded evaluator kind but deliberately omitted model inventory, prompt templates, rubric text, seeds, calibration datasets, and advisory thresholds reserved for AURA-0094.
+  - Kept baselines immutable with explicit manual promotion metadata while leaving statistical comparison and promotion workflow to AURA-0096.
+  - Did not consult online documentation because dependency-version verification was not assigned and the repository already fixes JSON Schema 2020-12 and applicable architecture decisions.
+risks:
+  - JSON Schema can close structures and bound strings but cannot prove that authorized free text is semantically free of credentials or instructions; later producers must scan and classify content, and every consumer must treat it as inert data.
+  - JSON Schema cannot compare capture-policy restrictiveness across separately resolved artifact records; storage, API, and runner consumers must enforce that referenced artifacts are authorized at least as restrictively as their enclosing resource.
+  - Portable JSON Schema cannot require event, correlation, and causation UUIDs to differ or prove digest correctness; later producers and consumers must enforce those semantic invariants.
+  - Downstream work must map these contracts without adding raw content to durable events, telemetry, logs, metrics, SSE, URLs, or browser persistence.
+unresolved: []

@@ -22,13 +22,44 @@ Capture levels are `none`, `metadata_only`, `hashed`, `redacted`, `sampled_conte
 
 The envisioned evaluation system manages versioned datasets, suites, deterministic and model-assisted evaluators, human review, experiments, baselines, thresholds, regression and change-point detection, cohort comparison, component attribution, reproducibility metadata, exports, and retention. Operational and quality metrics remain distinct.
 
+## AURA-0089 owner decisions
+
+The following decisions are authoritative for the versioned evaluation
+contracts and their downstream implementations:
+
+- Content-bearing evaluation data is permitted only when an owner-authorized
+  dataset or controlled evaluation request explicitly selects a non-
+  `metadata_only` capture classification and declares its authorization
+  purpose, scope, and retention mode. Ordinary production telemetry remains
+  `metadata_only`.
+- Evaluation artifacts have manual-only retention. They remain available until
+  an explicitly authorized manual deletion; no automatic expiry or background
+  purge is implied by this policy. Storage credentials, object layout, and
+  deletion mechanics are assigned to the artifact-storage work item.
+- Deterministic evaluators are preferred. Model-assisted judges are local
+  Ollama only; cloud judges are not enabled by this policy. The exact local
+  model inventory, prompts, rubrics, seeds, calibration datasets, and advisory
+  thresholds remain deferred to the calibration work item.
+- Baselines are immutable after creation and may be promoted only by an
+  explicit owner action from a defined result set. Automatic promotion and
+  mutation of protected repository baselines are prohibited.
+
+These decisions do not resolve global retention or encryption periods for
+memory, files, credentials, recordings, telemetry, or other platform data.
+
 Observatory PostgreSQL owns transactional metadata; ClickHouse stores high-cardinality observations; Prometheus stores infrastructure metrics; Loki stores logs; object storage holds approved large artifacts. Grafana remains a supplementary low-level diagnostic interface.
 
 ## Authoritative implementation direction
 
 Observatory uses separate Python and Angular products and databases. OpenTelemetry SDKs and Collector provide the telemetry boundary; ClickHouse, Prometheus, Loki, and Grafana remain separate stores and views. Polars, PyArrow, NumPy/SciPy, and ECharts support analysis. ClickHouse and PostgreSQL migrations are service-owned and versioned. Core controls redaction and capture before telemetry leaves its boundary, and Observatory never reads Core tables.
 
-Evaluation prefers deterministic checks, versioned local Ollama judges, and human calibration. Cloud judges require explicit policy. Exact judge inventory, calibration rules, telemetry retention, and captured-content retention remain open. See [technology stack](../architecture/technology-stack.md), [ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md), and [open decisions](./open-decisions.md).
+Evaluation prefers deterministic checks, versioned local Ollama judges, and
+human calibration. Cloud judges are not enabled. Exact judge inventory,
+calibration rules, telemetry retention, and captured-content retention remain
+open where they are not covered by the AURA-0089 owner decisions above. See
+[technology stack](../architecture/technology-stack.md),
+[ADR-0013](../adr/0013-postgresql-nats-valkey-garage-consistency.md), and
+[open decisions](./open-decisions.md).
 
 ## Related working summaries
 

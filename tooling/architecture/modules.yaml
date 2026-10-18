@@ -203,6 +203,20 @@ modules:
   python_modules: []
   source_files: []
   dependencies: []
+- id: aura-contract.evaluation-v1
+  root: contracts/evaluation/v1
+  kind: event-contract
+  public_api: contracts/evaluation/v1/evaluation.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-contract.evaluation-events-v1
+  root: contracts/events/evaluation/v1
+  kind: event-contract
+  public_api: contracts/events/evaluation/v1/evaluation-events.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
 - id: aura-core.service
   root: services/aura-core
   kind: service

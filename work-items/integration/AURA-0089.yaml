@@ -1,0 +1,53 @@
+agent: integration_maintainer
+work_item: AURA-0089
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0089-general.yaml (PASS; general reviewer)
+  - work-items/reviews/AURA-0089-architecture.yaml (PASS; architecture_guardian verdict)
+  - work-items/reviews/AURA-0089-security-privacy.yaml (PASS; security_privacy_reviewer verdict)
+  - work-items/reviews/AURA-0089-observability.yaml (PASS; observability_steward verdict)
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Active work item validation passed before archival; the integrated
+      archived record preserves the validated AURA-0089 scope and status.
+    - >-
+      Changed-path validation passed for all 18 changed paths and every path
+      remained within the approved AURA-0089 allowed paths.
+    - >-
+      Repository-shape, module-registry, service-isolation, contract-change,
+      and git-diff checks passed.
+    - >-
+      Observability validation reported skipped as declared because this
+      contract-only work item has no runtime observability surface.
+    - >-
+      Baseline-protection validation reported skipped with no protected
+      baseline or threshold changes detected.
+    - >-
+      Observatory AURA-0089 Ruff and Pyright checks passed with zero errors.
+    - >-
+      Focused AURA-0089 contract and lifecycle tests passed: 62 passed.
+    - >-
+      Work-item, implementation-handoff, and review-verdict schema
+      meta-validation passed for the archived work item, five complete
+      handoffs, and four PASS review artifacts.
+    - >-
+      The change is contract-only: no runtime, API, migration, frontend,
+      deployment, generated-client, browser, or protected-baseline changes
+      were introduced; browser acceptance is not applicable.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    JSON Schema cannot enforce cross-resource identity equality, digest
+    recomputation, semantic scanning of untrusted content, or artifact
+    authorization-strength comparisons; downstream producers and consumers
+    must enforce those invariants in their assigned work items.
+  - >-
+    Evaluation storage, event transport, Core runner, orchestration,
+    evaluator, API, browser, and baseline behavior remain deferred to the
+    downstream AURA-0090 through AURA-0096 work items.
