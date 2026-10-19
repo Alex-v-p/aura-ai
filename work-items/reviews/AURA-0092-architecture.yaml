@@ -1,0 +1,25 @@
+agent: architecture_guardian
+work_item: AURA-0092
+verdict: PASS
+checked:
+  - >-
+    Verified provider direction, module registration, versioned contract
+    packaging, PostgreSQL authority, NATS transport-only semantics, and strict
+    Core/Observatory implementation and data isolation on the exact final tree.
+  - >-
+    Verified the evaluation worker alone receives dispatch authority while the
+    database-only scheduler has no NATS, artifact, Core, or public-network
+    authority; all new deployables remain private and portless.
+  - >-
+    Verified the pinned Collector uses the supported normal Prometheus pull
+    reader with service.instance.id suppressed, no experimental self-pipeline,
+    and container-only OTLP/self-metric ports on the private ingest network.
+  - >-
+    Work-item, changed-path, repository-shape, module-registry,
+    service-isolation, observability, Compose, and diff validation passed,
+    including 28 focused deployment tests and all 49 topology tests.
+  - >-
+    Reviewed the final serialized Docker matrix and scoped cleanup; no ADR,
+    product-boundary exception, public API, frontend, or protected-baseline
+    change is required.
+findings: []

@@ -7,10 +7,11 @@ up Aura Core's values from the process environment.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +66,11 @@ class Settings(BaseSettings):
         ),
     )
     collector_endpoint: str = "http://observatory-collector:4318"
+    telemetry_otlp_enabled: bool = False
+    telemetry_otlp_endpoint: str = ""
+    telemetry_otlp_queue_capacity: int = Field(default=32, ge=1, le=1024)
+    telemetry_otlp_max_attempts: int = Field(default=3, ge=1, le=5)
+    telemetry_otlp_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     observation_claim_lease_seconds: int = Field(default=60, ge=1, le=3600)
     ingest_max_batch_size: int = Field(default=500, ge=1, le=5000)
     ingest_max_payload_bytes: int = Field(default=1_000_000, ge=1024, le=10_000_000)
@@ -82,6 +88,29 @@ class Settings(BaseSettings):
     evaluation_artifact_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=1_073_741_824)
     evaluation_deletion_page_size: int = Field(default=100, ge=1, le=1000)
     evaluation_deletion_poll_seconds: float = Field(default=5.0, ge=0.1, le=300.0)
+    # AURA-0092 orchestration is isolated from telemetry ingestion.  The
+    # scheduler never reads these NATS settings or receives a broker secret.
+    evaluation_nats_url: str = "nats://aura-nats:4222"
+    evaluation_nats_user: str = "aura-observatory-dispatch"
+    evaluation_nats_password: str = ""
+    evaluation_nats_password_file: Path | None = None
+    evaluation_worker_id: str = "00000000-0000-4000-8000-000000000092"
+    evaluation_scheduler_id: str = "00000000-0000-4000-8000-000000000093"
+    evaluation_batch_size: int = Field(default=32, ge=1, le=1000)
+    evaluation_poll_seconds: float = Field(default=2.0, ge=0.1, le=300.0)
+    evaluation_shutdown_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    evaluation_lease_seconds: int = Field(default=120, ge=1, le=3600)
+    evaluation_max_attempts: int = Field(default=3, ge=1, le=10)
+    evaluation_retry_base_seconds: int = Field(default=10, ge=1, le=3600)
+    evaluation_retry_max_seconds: int = Field(default=3600, ge=1, le=86400)
+    evaluation_max_envelope_bytes: int = Field(default=1_000_000, ge=1024, le=10_000_000)
+
+    @field_validator("evaluation_worker_id", "evaluation_scheduler_id")
+    @classmethod
+    def validate_evaluation_process_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", value):
+            raise ValueError("evaluation process id must be a bounded identifier")
+        return value
 
     @model_validator(mode="after")
     def compose_runtime_settings(self) -> Settings:
@@ -98,6 +127,9 @@ class Settings(BaseSettings):
         )
         self.evaluation_object_secret_key = read_secret(
             self.evaluation_object_secret_key, self.evaluation_object_secret_key_file
+        )
+        self.evaluation_nats_password = read_secret(
+            self.evaluation_nats_password, self.evaluation_nats_password_file
         )
         if not self.database_url:
             encoded = quote(self.database_password, safe="")
@@ -135,6 +167,11 @@ class Settings(BaseSettings):
         except OSError:
             return None
         return token or None
+
+    def evaluation_nats_credential(self) -> tuple[str, str]:
+        """Return the least-privilege dispatch identity for the worker only."""
+
+        return self.evaluation_nats_user, self.evaluation_nats_password
 
     @property
     def oidc_discovery_url(self) -> str:

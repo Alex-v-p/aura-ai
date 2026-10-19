@@ -15,6 +15,11 @@ COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY services/aura-observatory/ ./services/aura-observatory/
+# The orchestration validator resolves this closed contract relative to the
+# repository root (`/app/contracts/...`). Copy the complete authoritative
+# evaluation-v1 directory unchanged so all local `$ref` dependencies travel
+# with the transport schema; do not create a service-local/generated fork.
+COPY contracts/evaluation/v1/ ./contracts/evaluation/v1/
 
 RUN uv sync --frozen --no-dev \
     && rm -rf "${UV_CACHE_DIR}"
@@ -30,6 +35,12 @@ CMD ["/app/.venv/bin/uvicorn", "aura_observatory.entrypoints.api.app:app", "--ho
 
 FROM runtime AS worker
 CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.worker"]
+
+FROM runtime AS evaluation-worker
+CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.evaluation_worker"]
+
+FROM runtime AS evaluation-scheduler
+CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.evaluation_scheduler"]
 
 FROM runtime AS migrate
 CMD ["/app/.venv/bin/python", "-m", "aura_observatory.entrypoints.cli"]

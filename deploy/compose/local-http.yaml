@@ -88,6 +88,16 @@ services:
       AURA_OBSERVATORY_SECURE_COOKIES: "false"
     networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress]
 
+  observatory-evaluation-worker:
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: disposable_local
+    networks: [observatory-db, aura-evaluation-bus, observatory-ingest]
+
+  observatory-evaluation-scheduler:
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: disposable_local
+    networks: [observatory-db, observatory-ingest]
+
   authentik-server:
     environment:
       AUTHENTIK_HOST_BROWSER: http://authentik.localhost:9000

@@ -913,6 +913,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.retention",
         "aura.observatory.evaluation_artifact_storage",
         "aura.observatory.evaluation_deletion",
+        "aura.observatory.evaluation_orchestration",
+        "aura.observatory.evaluation_scheduler",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -973,22 +975,44 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_evaluation_artifact_operation_duration_ms",
             }
         elif manifest_id == "aura.observatory.evaluation_deletion":
-                expected_metrics = {
-                    "observatory_evaluation_deletion_action_count",
-                    "observatory_evaluation_deletion_deleted_count",
-                    "observatory_evaluation_deletion_failure_count",
-                    "observatory_evaluation_deletion_duration_ms",
-                }
+            expected_metrics = {
+                "observatory_evaluation_deletion_action_count",
+                "observatory_evaluation_deletion_deleted_count",
+                "observatory_evaluation_deletion_failure_count",
+                "observatory_evaluation_deletion_duration_ms",
+            }
+        elif manifest_id == "aura.observatory.evaluation_orchestration":
+            expected_metrics = {
+                "observatory_evaluation_job_admission_count",
+                "observatory_evaluation_attempt_transition_count",
+                "observatory_evaluation_retry_scheduled_count",
+                "observatory_evaluation_cancellation_count",
+                "observatory_evaluation_deadline_count",
+                "observatory_evaluation_outbox_pending_count",
+                "observatory_evaluation_backlog_count",
+                "observatory_evaluation_outbox_oldest_age_seconds",
+                "observatory_evaluation_outbox_publication_count",
+                "observatory_evaluation_result_consumption_count",
+                "observatory_evaluation_terminal_count",
+                "observatory_evaluation_dependency_outcome_count",
+                "observatory_evaluation_result_lag_seconds",
+                "observatory_evaluation_operation_duration_ms",
+            }
+        elif manifest_id == "aura.observatory.evaluation_scheduler":
+            expected_metrics = {
+                "observatory_evaluation_worker_heartbeat_age_seconds",
+                "observatory_evaluation_scheduler_heartbeat_age_seconds",
+                "observatory_evaluation_scheduler_occurrence_count",
+                "observatory_evaluation_dependency_outcome_count",
+                "observatory_evaluation_operation_duration_ms",
+            }
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {
             "aura.observatory.evaluation_artifact_storage",
             "aura.observatory.evaluation_deletion",
         }:
             assert manifest["capture_policy"] == "metadata_only"
-            assert (
-                set(manifest["cardinality"]["prohibited"])
-                == EXPECTED_METADATA_PROHIBITED_FIELDS
-            )
+            assert set(manifest["cardinality"]["prohibited"]) == EXPECTED_METADATA_PROHIBITED_FIELDS
         else:
             # Preserve the established metadata-only expectation for the
             # original AURA-0078 manifests without imposing the AURA-0090

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -39,6 +39,120 @@ from aura_core.runtime.replay.registry import (
 from aura_core.runtime.replay.state import SqlEvaluationRunnerLedger
 from aura_core.runtime.streaming.publisher import EventPublisher
 from aura_core.runtime.tools.public import ToolRegistry
+
+_NATS_ERROR_CLASSES = frozenset(
+    {
+        "authorization",
+        "budget",
+        "provider",
+        "provider_protocol",
+        "timeout",
+        "unknown",
+    }
+)
+
+
+def _bounded_nats_error_class(error: BaseException) -> str:
+    """Map NATS provider failures to a finite, content-free dimension.
+
+    The pinned NATS client invokes ``error_cb`` from its reconnect loop.  The
+    default callback logs ``exc_info`` and therefore leaks provider traceback
+    details (which may include private connection information).  Classifying
+    only the exception type name keeps the callback useful for operations while
+    never reading the exception text, endpoint, or embedded identifiers.
+    """
+
+    name = type(error).__name__.lower()
+    if "timeout" in name:
+        return "timeout"
+    if any(marker in name for marker in ("authorization", "credential", "authentication")):
+        return "authorization"
+    if any(marker in name for marker in ("payload", "buffer", "consumer")):
+        return "budget"
+    if any(marker in name for marker in ("protocol", "subject", "subscription", "header")):
+        return "provider_protocol"
+    if any(marker in name for marker in ("connection", "server", "socket", "eof", "stale")):
+        return "provider"
+    return "unknown"
+
+
+def _record_nats_diagnostic(
+    metrics: MetadataMetrics,
+    metric: str,
+    *,
+    outcome: str,
+    error_class: str,
+) -> None:
+    """Emit only allowlisted NATS diagnostics and never affect the callback."""
+
+    if error_class not in _NATS_ERROR_CLASSES:
+        error_class = "unknown"
+    try:
+        metrics.increment(
+            "aura.evaluation.runner",
+            metric,
+            dependency="nats_jetstream",
+            outcome=outcome,
+            error_class=error_class,
+        )
+    except Exception:
+        # A telemetry sink outage must not change NATS reconnect behavior.
+        return
+
+
+def _evaluation_nats_callbacks(
+    metrics: MetadataMetrics,
+) -> dict[str, Callable[..., Awaitable[None]]]:
+    """Build privacy-safe callbacks for the pinned NATS client."""
+
+    async def error_cb(error: Exception) -> None:
+        _record_nats_diagnostic(
+            metrics,
+            "evaluation_runner_nats_fetch_failure_count",
+            outcome="error",
+            error_class=_bounded_nats_error_class(error),
+        )
+
+    async def disconnected_cb() -> None:
+        _record_nats_diagnostic(
+            metrics,
+            "evaluation_runner_nats_fetch_failure_count",
+            outcome="error",
+            error_class="provider",
+        )
+
+    async def closed_cb() -> None:
+        _record_nats_diagnostic(
+            metrics,
+            "evaluation_runner_nats_drain_failure_count",
+            outcome="closed",
+            error_class="provider",
+        )
+
+    async def reconnected_cb() -> None:
+        _record_nats_diagnostic(
+            metrics,
+            "evaluation_runner_nats_recovery_count",
+            outcome="ok",
+            error_class="unknown",
+        )
+
+    return {
+        "error_cb": error_cb,
+        "disconnected_cb": disconnected_cb,
+        "closed_cb": closed_cb,
+        "reconnected_cb": reconnected_cb,
+    }
+
+
+async def _connect_evaluation_nats(
+    nats_url: str,
+    metrics: MetadataMetrics,
+) -> Any:
+    """Connect the runner with callbacks that cannot log provider details."""
+
+    connect: Any = getattr(nats, "connect")  # noqa: B009
+    return await connect(nats_url, **_evaluation_nats_callbacks(metrics))
 
 
 class ConfiguredRuntimeEvidence(RuntimeEvidenceProvider):
@@ -335,8 +449,7 @@ async def build_evaluation_runner(
     registry = ReplayRegistry()
     registry.register_replay(DocumentProcessingEvaluationReplay())
     registry.register_synthetic(SyntheticEvaluationScenario())
-    connect: Any = getattr(nats, "connect")  # noqa: B009
-    connection = await connect(effective.nats_url)
+    connection = await _connect_evaluation_nats(effective.nats_url, metrics)
     publisher = EvaluationJetStreamPublisher(connection, metrics=metrics)
     lifecycle = TelemetryLifecycle(metrics)
     runner = EvaluationRunner(

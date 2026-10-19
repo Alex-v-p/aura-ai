@@ -1,0 +1,51 @@
+agent: core_worker
+work_item: AURA-0092
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/fix_aura0092_core_nats_privacy
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-core.evaluation-runner
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/tests/test_aura0092_nats_diagnostics.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-runner-transport-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation-runner-transport.schema.json
+      consumer_boundary:
+        - No transport schema or Core business behavior changed; only NATS client diagnostics were bounded at bootstrap.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.evaluation.runner
+  metrics_added: []
+verification:
+  passed:
+    - uv run ruff check services/aura-core/src/aura_core/bootstrap/evaluation_runner.py services/aura-core/tests/test_aura0092_nats_diagnostics.py
+    - uv run pyright services/aura-core/src/aura_core/bootstrap/evaluation_runner.py services/aura-core/tests/test_aura0092_nats_diagnostics.py (0 errors, 0 warnings)
+    - uv run pytest services/aura-core/tests/test_aura0092_nats_diagnostics.py (3 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0092_nats_diagnostics.py (66 passed)
+    - uv run pyright services/aura-core (0 errors, 0 warnings)
+    - git diff --check
+  failed:
+    - uv run ruff check services/aura-core (pre-existing E501 in services/aura-core/migrations/versions/0015_notification_delivery.py:53; outside owned paths)
+  not_run:
+    - Full Core pytest suite and Docker Desktop acceptance remain assigned to the AURA-0092 integration owner.
+decisions:
+  - Passed explicit pinned-NATS error, disconnected, closed, and reconnected callbacks into the evaluation runner connection so the client default callback cannot emit raw exc_info tracebacks.
+  - Classified only exception type names into the existing finite telemetry error classes; exception text, endpoint, credentials, traceback, and identifiers are never read or emitted.
+  - Reused existing allowlisted runner NATS metrics and bounded dimensions, avoiding a Core manifest or telemetry-registry change in this narrowly authorized correction.
+  - Callback telemetry failures are swallowed so an exporter or telemetry sink outage cannot alter NATS reconnect or startup behavior.
+risks:
+  - The existing full-Core Ruff check remains blocked by an unrelated migration line-length violation outside this ownership zone.
+unresolved: []

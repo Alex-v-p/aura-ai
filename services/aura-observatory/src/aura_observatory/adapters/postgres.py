@@ -40,9 +40,7 @@ def _definition_statements(definition: Mapping[str, object]) -> list[tuple[str, 
     version = str(definition["componentVersion"])
     dependencies = definition.get("dependencies", [])
     dependency_rows = (
-        cast(list[Mapping[str, object]], dependencies)
-        if isinstance(dependencies, list)
-        else []
+        cast(list[Mapping[str, object]], dependencies) if isinstance(dependencies, list) else []
     )
     statements: list[tuple[str, tuple[Any, ...]]] = [
         (
@@ -60,8 +58,12 @@ def _definition_statements(definition: Mapping[str, object]) -> list[tuple[str, 
             manifest_hash = EXCLUDED.manifest_hash,
             updated_at = CURRENT_TIMESTAMP""",
             (
-                component_id, version, str(definition["owner"]), str(definition["category"]),
-                str(definition["inputSchemaId"]), str(definition["outputSchemaId"]),
+                component_id,
+                version,
+                str(definition["owner"]),
+                str(definition["category"]),
+                str(definition["inputSchemaId"]),
+                str(definition["outputSchemaId"]),
                 list(cast(list[object], definition.get("measurements", []))),
                 list(cast(list[object], definition.get("evaluators", []))),
                 manifest_hash(definition),
@@ -123,9 +125,7 @@ class PostgresCatalog:
                 (component_id, version),
             )
 
-    async def sync_component_definitions(
-        self, definitions: Sequence[Mapping[str, object]]
-    ) -> int:
+    async def sync_component_definitions(self, definitions: Sequence[Mapping[str, object]]) -> int:
         """Atomically upsert the bounded, already-validated manifest set.
 
         The caller owns parsing and validation.  This adapter only accepts the
@@ -196,9 +196,7 @@ class PostgresCatalog:
             for row in rows
         ]
 
-    async def reverse_component_dependencies(
-        self, dependency_id: str
-    ) -> list[tuple[str, str]]:
+    async def reverse_component_dependencies(self, dependency_id: str) -> list[tuple[str, str]]:
         async with self._connection_factory() as connection:
             result = await connection.execute(
                 """SELECT source_component_id, source_component_version
@@ -307,12 +305,9 @@ class PostgresCatalog:
         """Persist one allowlisted evaluation metric series without payloads."""
 
         evaluation_names = {
-            "observatory_evaluation_artifact_operation_count",
-            "observatory_evaluation_artifact_operation_duration_ms",
-            "observatory_evaluation_deletion_action_count",
-            "observatory_evaluation_deletion_deleted_count",
-            "observatory_evaluation_deletion_failure_count",
-            "observatory_evaluation_deletion_duration_ms",
+            metric_name
+            for metric_name in ObservatoryMetrics.ALLOWED
+            if metric_name.startswith("observatory_evaluation_")
         }
         if name not in evaluation_names or not math.isfinite(value) or abs(value) > 1e15:
             return
@@ -326,10 +321,11 @@ class PostgresCatalog:
             "phase": normalized.get("phase", ""),
             "failure_code": normalized.get("failure_code", ""),
         }
-        buckets = {
-            str(bucket): int(value <= bucket)
-            for bucket in ObservatoryMetrics.DURATION_BUCKETS
-        } if histogram else {}
+        buckets = (
+            {str(bucket): int(value <= bucket) for bucket in ObservatoryMetrics.DURATION_BUCKETS}
+            if histogram
+            else {}
+        )
         bucket_merge = ", ".join(
             f"'{bucket}', COALESCE("
             "(observatory_evaluation_metric_series.histogram_buckets->>"
@@ -486,14 +482,10 @@ class PostgresCatalog:
                 except json.JSONDecodeError:
                     raw = {}
             samples_value: object = (
-                cast(dict[str, object], raw).get("samples", [])
-                if isinstance(raw, dict)
-                else []
+                cast(dict[str, object], raw).get("samples", []) if isinstance(raw, dict) else []
             )
             samples: list[object] = (
-                list(cast(list[object], samples_value))
-                if isinstance(samples_value, list)
-                else []
+                list(cast(list[object], samples_value)) if isinstance(samples_value, list) else []
             )
             samples = [
                 value
@@ -534,19 +526,42 @@ class PostgresCatalog:
             )
             row = await result.fetchone()
             evaluation_result = await connection.execute(
-                """SELECT metric_name, label_operation, label_outcome, label_selector,
-                label_phase, label_failure_code, value, histogram_count, histogram_buckets
+                """WITH ranked AS (
+                SELECT metric_name, label_operation, label_outcome, label_selector,
+                label_phase, label_failure_code, value, histogram_count, histogram_buckets,
+                ROW_NUMBER() OVER (
+                    PARTITION BY metric_name
+                    ORDER BY label_operation, label_outcome, label_selector,
+                    label_phase, label_failure_code
+                ) AS series_rank
                 FROM observatory_evaluation_metric_series
+                WHERE metric_name LIKE 'observatory_evaluation_%'
+                )
+                SELECT metric_name, label_operation, label_outcome, label_selector,
+                label_phase, label_failure_code, value, histogram_count, histogram_buckets
+                FROM ranked
+                WHERE series_rank <= 64
                 ORDER BY metric_name, label_operation, label_outcome, label_selector,
-                label_phase, label_failure_code LIMIT 64"""
+                label_phase, label_failure_code"""
             )
             evaluation_rows = await evaluation_result.fetchall()
+            lease_result = await connection.execute(
+                """SELECT component_id,
+                GREATEST(0.0, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - heartbeat_at)))
+                FROM observatory_evaluation_worker_leases
+                WHERE component_id IN (%s, %s)""",
+                (
+                    "aura.observatory.evaluation_orchestration",
+                    "aura.observatory.evaluation_scheduler",
+                ),
+            )
+            lease_rows = await lease_result.fetchall()
         series: list[dict[str, object]] = []
         if row is not None and len(row) >= 4:
             try:
                 cumulative_count = max(0, int(row[1] or 0))
                 cumulative_sum = float(row[2] or 0.0)
-            except (TypeError, ValueError, OverflowError):
+            except TypeError, ValueError, OverflowError:
                 cumulative_count = 0
                 cumulative_sum = 0.0
             if cumulative_count > 0 and math.isfinite(cumulative_sum):
@@ -583,19 +598,13 @@ class PostgresCatalog:
                 if evaluation_row[index]
             }
             if name not in {
-                "observatory_evaluation_artifact_operation_count",
-                "observatory_evaluation_artifact_operation_duration_ms",
-                "observatory_evaluation_deletion_action_count",
-                "observatory_evaluation_deletion_deleted_count",
-                "observatory_evaluation_deletion_failure_count",
-                "observatory_evaluation_deletion_duration_ms",
+                metric_name
+                for metric_name in ObservatoryMetrics.ALLOWED
+                if metric_name.startswith("observatory_evaluation_")
             } or not ObservatoryMetrics.labels_valid(name, labels):
                 continue
             value = _finite_metric_value(evaluation_row[6])
-            if name in {
-                "observatory_evaluation_artifact_operation_duration_ms",
-                "observatory_evaluation_deletion_duration_ms",
-            }:
+            if name in ObservatoryMetrics.HISTOGRAMS:
                 series.append(
                     {
                         "name": name,
@@ -608,6 +617,24 @@ class PostgresCatalog:
                 )
             else:
                 series.append({"name": name, "value": value, "labels": labels})
+        heartbeat_names = {
+            "aura.observatory.evaluation_orchestration": (
+                "observatory_evaluation_worker_heartbeat_age_seconds"
+            ),
+            "aura.observatory.evaluation_scheduler": (
+                "observatory_evaluation_scheduler_heartbeat_age_seconds"
+            ),
+        }
+        for lease_row in lease_rows:
+            if len(lease_row) < 2:
+                continue
+            name = heartbeat_names.get(str(lease_row[0]))
+            try:
+                age = float(lease_row[1])
+            except TypeError, ValueError, OverflowError:
+                continue
+            if name is not None and math.isfinite(age) and 0.0 <= age <= 1e15:
+                series.append({"name": name, "value": age, "labels": {}})
         return series
 
     async def record_worker_heartbeat(self, at: datetime | None = None) -> None:
@@ -750,12 +777,10 @@ class PostgresCatalog:
             params.append(to_time)
         if cursor:
             try:
-                raw = json.loads(
-                    base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-                )
+                raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
                 conditions.append("(observed_at, snapshot_id) < (%s, %s)")
                 params.extend((datetime.fromisoformat(raw["at"]), raw["id"]))
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            except ValueError, KeyError, TypeError, json.JSONDecodeError:
                 raise ValueError("invalid cursor") from None
         page_limit = max(1, min(200, int(limit)))
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
@@ -803,7 +828,8 @@ class PostgresCatalog:
         async with self._connection_factory() as connection:
             result = await connection.execute(
                 "SELECT snapshot_id, event_sequence FROM observatory_ingest_health_history "
-                + "WHERE " + " AND ".join(conditions)
+                + "WHERE "
+                + " AND ".join(conditions)
                 + " ORDER BY event_sequence",
                 tuple(params),
             )
@@ -826,8 +852,7 @@ class PostgresCatalog:
     async def latest_health_event_sequence(self) -> int:
         async with self._connection_factory() as connection:
             result = await connection.execute(
-                "SELECT COALESCE(MAX(event_sequence), 0) "
-                "FROM observatory_ingest_health_history"
+                "SELECT COALESCE(MAX(event_sequence), 0) FROM observatory_ingest_health_history"
             )
             row = await result.fetchone()
         return int(row[0] or 0) if row else 0
@@ -1386,7 +1411,7 @@ async def _close_claim_context(
 def _finite_metric_value(value: object) -> float:
     try:
         number = float(cast(Any, value))
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         return 0.0
     return number if math.isfinite(number) and abs(number) <= 1e15 else 0.0
 
@@ -1394,7 +1419,7 @@ def _finite_metric_value(value: object) -> float:
 def _bounded_metric_count(value: object) -> int:
     try:
         number = int(cast(Any, value))
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         return 0
     return max(0, min(number, 1_000_000_000))
 
@@ -1413,7 +1438,7 @@ def _metric_buckets(value: object) -> dict[str, int]:
         raw = mapping.get(str(bucket), 0)
         try:
             count = int(cast(Any, raw))
-        except (TypeError, ValueError, OverflowError):
+        except TypeError, ValueError, OverflowError:
             count = 0
         result[str(bucket)] = max(0, min(count, 1_000_000_000))
     return result

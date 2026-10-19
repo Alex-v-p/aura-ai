@@ -15,11 +15,25 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from time import monotonic
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 _LOGGER = logging.getLogger(__name__)
 
+COMPONENT_SPAN_COMPONENTS = frozenset(
+    {
+        "aura.observatory.evaluation_orchestration",
+        "aura.observatory.evaluation_scheduler",
+    }
+)
+COMPONENT_SPAN_OPERATIONS = frozenset(
+    {"dispatch", "publish", "result_apply", "recover", "schedule_materialize", "heartbeat"}
+)
+COMPONENT_SPAN_DEPENDENCIES = frozenset({"postgresql", "evaluation_nats"})
+COMPONENT_SPAN_OUTCOMES = frozenset({"success", "failure", "duplicate", "timeout", "unavailable"})
+COMPONENT_SPAN_ERRORS = frozenset(
+    {"database_failure", "transport_unavailable", "timeout", "validation"}
+)
 MAX_LAG_MS = 604_800_000.0
 MAX_LATENCY_MS = 600_000.0
 HEALTH_HISTORY_LIMIT = 1000
@@ -137,6 +151,30 @@ class BoundedLatencyWindow:
             return round(values[lower] + (values[upper] - values[lower]) * fraction, 3)
 
         return LatencySummary(len(values), self._values[-1], percentile(0.50), percentile(0.95))
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentSpan:
+    """Bounded metadata-only operation span; never contains lifecycle IDs."""
+
+    component_id: str
+    component_version: str
+    deployment_id: str
+    operation: str
+    duration_ms: float
+    outcome: str
+    dependency: str | None = None
+    error_code: str | None = None
+    trace_id: str = ""
+    span_id: str = ""
+
+
+class ComponentSpanExporter(Protocol):
+    """Inward port for bounded metadata-only component span export."""
+
+    def submit(self, span: ComponentSpan) -> None: ...
+
+    async def flush(self, *, timeout_seconds: float = 5.0) -> None: ...
 
 
 @dataclass(slots=True)
@@ -346,6 +384,8 @@ class ObservatoryMetrics:
             "observatory_ingest_storage_duration_ms",
             "observatory_evaluation_artifact_operation_duration_ms",
             "observatory_evaluation_deletion_duration_ms",
+            "observatory_evaluation_result_lag_seconds",
+            "observatory_evaluation_operation_duration_ms",
         }
     )
 
@@ -378,6 +418,23 @@ class ObservatoryMetrics:
         "observatory_evaluation_deletion_deleted_count",
         "observatory_evaluation_deletion_failure_count",
         "observatory_evaluation_deletion_duration_ms",
+        "observatory_evaluation_job_admission_count",
+        "observatory_evaluation_attempt_transition_count",
+        "observatory_evaluation_retry_scheduled_count",
+        "observatory_evaluation_terminal_count",
+        "observatory_evaluation_dependency_outcome_count",
+        "observatory_evaluation_cancellation_count",
+        "observatory_evaluation_deadline_count",
+        "observatory_evaluation_outbox_pending_count",
+        "observatory_evaluation_backlog_count",
+        "observatory_evaluation_outbox_oldest_age_seconds",
+        "observatory_evaluation_outbox_publication_count",
+        "observatory_evaluation_result_consumption_count",
+        "observatory_evaluation_worker_heartbeat_age_seconds",
+        "observatory_evaluation_scheduler_heartbeat_age_seconds",
+        "observatory_evaluation_scheduler_occurrence_count",
+        "observatory_evaluation_result_lag_seconds",
+        "observatory_evaluation_operation_duration_ms",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -408,6 +465,23 @@ class ObservatoryMetrics:
         "observatory_evaluation_deletion_deleted_count": {"selector"},
         "observatory_evaluation_deletion_failure_count": {"phase", "failure_code"},
         "observatory_evaluation_deletion_duration_ms": {"selector", "outcome"},
+        "observatory_evaluation_job_admission_count": {"outcome"},
+        "observatory_evaluation_attempt_transition_count": {"outcome"},
+        "observatory_evaluation_retry_scheduled_count": {"outcome"},
+        "observatory_evaluation_terminal_count": {"outcome"},
+        "observatory_evaluation_dependency_outcome_count": {"operation", "outcome"},
+        "observatory_evaluation_cancellation_count": {"outcome"},
+        "observatory_evaluation_deadline_count": {"outcome"},
+        "observatory_evaluation_outbox_pending_count": set(),
+        "observatory_evaluation_backlog_count": set(),
+        "observatory_evaluation_outbox_oldest_age_seconds": set(),
+        "observatory_evaluation_outbox_publication_count": {"outcome"},
+        "observatory_evaluation_result_consumption_count": {"outcome"},
+        "observatory_evaluation_worker_heartbeat_age_seconds": set(),
+        "observatory_evaluation_scheduler_heartbeat_age_seconds": set(),
+        "observatory_evaluation_scheduler_occurrence_count": {"outcome"},
+        "observatory_evaluation_result_lag_seconds": set(),
+        "observatory_evaluation_operation_duration_ms": {"operation"},
     }
     LABEL_VALUES = {
         "reason": set(REJECTION_REASONS),
@@ -443,8 +517,25 @@ class ObservatoryMetrics:
             "execution_limit",
             "duplicate",
             "running",
+            "accepted",
+            "published",
+            "applied",
+            "out_of_order",
+            "recovered",
+            "materialized",
+            "deadline",
         },
-        "operation": {"store"},
+        "operation": {
+            "store",
+            "result_apply",
+            "dispatch",
+            "publish",
+            "recover",
+            "heartbeat",
+            "schedule_materialize",
+            "postgresql",
+            "evaluation_nats",
+        },
         "selector": {"job", "dataset", "suite", "cutoff", "purge_all"},
         "phase": {"started", "scores", "objects", "complete", "worker"},
         "event_type": {
@@ -480,7 +571,14 @@ class ObservatoryMetrics:
     _MAX_PERSISTENCE_TASKS = 256
     _MAX_PERSISTENCE_DIAGNOSTICS = 32
 
-    def __init__(self, export_path: Path | None = None, persistence: Any | None = None) -> None:
+    def __init__(
+        self,
+        export_path: Path | None = None,
+        persistence: Any | None = None,
+        *,
+        span_exporter: ComponentSpanExporter | None = None,
+        deployment_id: str = "observatory",
+    ) -> None:
         self.values: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
         self._histogram_counts: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(
             int
@@ -496,10 +594,67 @@ class ObservatoryMetrics:
         self._persistence_tasks: set[asyncio.Task[Any]] = set()
         self._persistence_failures = 0
         self._persistence_drops = 0
-        self._persistence_diagnostics: deque[str] = deque(
-            maxlen=self._MAX_PERSISTENCE_DIAGNOSTICS
-        )
+        self._persistence_diagnostics: deque[str] = deque(maxlen=self._MAX_PERSISTENCE_DIAGNOSTICS)
+        self._persistence_logged_codes: set[str] = set()
         self._external_write_failed = False
+        self._component_spans: deque[ComponentSpan] = deque(maxlen=256)
+        self.span_exporter = span_exporter
+        self.deployment_id = deployment_id
+        self._trace_id = uuid4().hex
+
+    def record_component_span(
+        self,
+        *,
+        component_id: str,
+        component_version: str,
+        deployment_id: str,
+        operation: str,
+        duration_ms: float,
+        outcome: str,
+        dependency: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record one finite, content-free span at the telemetry boundary."""
+
+        if component_id not in COMPONENT_SPAN_COMPONENTS:
+            raise ValueError("component span component is not allowlisted")
+        if component_version != "1.0.0" or not deployment_id or len(deployment_id) > 64:
+            raise ValueError("component span identity is invalid")
+        if operation not in COMPONENT_SPAN_OPERATIONS:
+            raise ValueError("component span operation is not allowlisted")
+        if outcome not in COMPONENT_SPAN_OUTCOMES:
+            raise ValueError("component span outcome is not allowlisted")
+        if dependency is not None and dependency not in COMPONENT_SPAN_DEPENDENCIES:
+            raise ValueError("component span dependency is not allowlisted")
+        if error_code is not None and error_code not in COMPONENT_SPAN_ERRORS:
+            raise ValueError("component span error is not allowlisted")
+        duration = bounded_latency_ms(duration_ms)
+        if duration is None:
+            raise ValueError("component span duration is invalid")
+        span = ComponentSpan(
+            component_id=component_id,
+            component_version=component_version,
+            deployment_id=deployment_id,
+            operation=operation,
+            duration_ms=duration,
+            outcome=outcome,
+            dependency=dependency,
+            error_code=error_code,
+            trace_id=self._trace_id,
+            span_id=uuid4().hex[:16],
+        )
+        self._component_spans.append(span)
+        if self.span_exporter is not None:
+            self.span_exporter.submit(span)
+        self.record(
+            "observatory_evaluation_operation_duration_ms",
+            duration,
+            {"operation": operation},
+        )
+
+    @property
+    def component_spans(self) -> tuple[ComponentSpan, ...]:
+        return tuple(self._component_spans)
 
     def record(
         self, name: str, value: float = 1.0, labels: Mapping[str, str] | None = None
@@ -527,9 +682,16 @@ class ObservatoryMetrics:
         self._schedule_persistence(name, float(value), supplied)
 
     def _schedule_persistence(
-        self, name: str, value: float, labels: Mapping[str, str]
+        self,
+        name: str,
+        value: float,
+        labels: Mapping[str, str],
+        *,
+        replace: bool = False,
     ) -> None:
-        recorder = getattr(self.persistence, "record_metric", None)
+        setter = getattr(self.persistence, "set_metric", None) if replace else None
+        use_setter = replace and callable(setter)
+        recorder = setter if use_setter else getattr(self.persistence, "record_metric", None)
         if not callable(recorder):
             return
         self._reap_persistence_tasks()
@@ -543,12 +705,9 @@ class ObservatoryMetrics:
             return
         record_metric = cast(Callable[..., Coroutine[Any, Any, None]], recorder)
         task: asyncio.Task[None] = loop.create_task(
-            record_metric(
-                name,
-                value,
-                dict(labels),
-                histogram=name in self.HISTOGRAMS,
-            )
+            record_metric(name, value, dict(labels))
+            if use_setter
+            else record_metric(name, value, dict(labels), histogram=name in self.HISTOGRAMS)
         )
         self._persistence_tasks.add(task)
 
@@ -580,7 +739,9 @@ class ObservatoryMetrics:
             self._persistence_failures += 1
             event = f"failed:{code}"
         self._persistence_diagnostics.append(event)
-        _LOGGER.warning("observatory metric persistence %s", event)
+        if code not in self._persistence_logged_codes:
+            self._persistence_logged_codes.add(code)
+            _LOGGER.warning("observatory metric persistence %s", event)
 
     @property
     def persistence_failures(self) -> int:
@@ -603,21 +764,22 @@ class ObservatoryMetrics:
 
         bounded_timeout = min(30.0, max(0.1, float(timeout_seconds)))
         self._reap_persistence_tasks()
-        if not self._persistence_tasks:
-            return
-        tasks = tuple(self._persistence_tasks)
-        done, pending = await asyncio.wait(tasks, timeout=bounded_timeout)
-        for task in done:
-            self._persistence_tasks.discard(task)
-            self._classify_persistence_result(task)
-        if pending:
-            for task in pending:
-                task.cancel()
-            cancelled = await asyncio.gather(*pending, return_exceptions=True)
-            for task, result in zip(pending, cancelled, strict=True):
+        if self._persistence_tasks:
+            tasks = tuple(self._persistence_tasks)
+            done, pending = await asyncio.wait(tasks, timeout=bounded_timeout)
+            for task in done:
                 self._persistence_tasks.discard(task)
-                if isinstance(result, BaseException):
-                    self._record_persistence_issue("shutdown_timeout")
+                self._classify_persistence_result(task)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                cancelled = await asyncio.gather(*pending, return_exceptions=True)
+                for task, result in zip(pending, cancelled, strict=True):
+                    self._persistence_tasks.discard(task)
+                    if isinstance(result, BaseException):
+                        self._record_persistence_issue("shutdown_timeout")
+        if self.span_exporter is not None:
+            await self.span_exporter.flush(timeout_seconds=bounded_timeout)
 
     async def drain(self, *, timeout_seconds: float = 5.0) -> None:
         """Compatibility alias for callers that use drain terminology."""
@@ -640,6 +802,7 @@ class ObservatoryMetrics:
                 self._write_external(name, key[1], float(value), replace=True)
             except OSError:
                 self._external_write_failed = True
+        self._schedule_persistence(name, float(value), supplied, replace=True)
 
     def _write_external(
         self,
@@ -811,6 +974,11 @@ class ObservatoryMetrics:
                     "observatory_ingest_worker_heartbeat_age_ms",
                     "observatory_ingest_backlog_count",
                     "observatory_query_freshness_lag_ms",
+                    "observatory_evaluation_backlog_count",
+                    "observatory_evaluation_outbox_pending_count",
+                    "observatory_evaluation_outbox_oldest_age_seconds",
+                    "observatory_evaluation_worker_heartbeat_age_seconds",
+                    "observatory_evaluation_scheduler_heartbeat_age_seconds",
                 }
                 else "counter"
             )
@@ -936,6 +1104,8 @@ class ObservatoryMetrics:
 
 
 __all__ = [
+    "ComponentSpan",
+    "ComponentSpanExporter",
     "HEALTH_HISTORY_LIMIT",
     "REJECTION_REASONS",
     "BoundedLatencyWindow",

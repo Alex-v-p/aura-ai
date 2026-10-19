@@ -21,6 +21,8 @@ OBSERVATORY_TYPED_COMPONENTS = frozenset(
         "aura.observatory.live_updates",
         "aura.observatory.evaluation_artifact_storage",
         "aura.observatory.evaluation_deletion",
+        "aura.observatory.evaluation_orchestration",
+        "aura.observatory.evaluation_scheduler",
     }
 )
 TYPED_COMPONENTS = OBSERVATORY_TYPED_COMPONENTS | {"aura.evaluation.runner"}

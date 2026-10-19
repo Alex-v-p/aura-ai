@@ -166,6 +166,10 @@ modules:
   - aura-observatory.adapters.clickhouse
   - aura-observatory.adapters.postgres
   - aura-observatory.adapters.query
+  - aura-observatory.adapters.evaluation-orchestration
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.metrics
+  - aura-observatory.ports
   - aura-observatory.evaluation-storage
   - aura-observatory.adapters.evaluation-storage
   - aura-observatory.adapters.object-storage
@@ -2255,3 +2259,51 @@ modules:
   kind: event-contract
   public_api: contracts/events/automation/v1/notification-events.schema.json
   dependencies: []
+- id: aura-observatory.evaluation-orchestration
+  root: services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  python_modules:
+  - aura_observatory.evaluation_orchestration
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-transport
+  root: services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  python_modules:
+  - aura_observatory.evaluation_transport
+  dependencies:
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.ports
+- id: aura-observatory.adapters.evaluation-orchestration
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_orchestration
+  dependencies:
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.metrics
+- id: aura-observatory.entrypoints.evaluation-worker
+  root: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  python_modules:
+  - aura_observatory.entrypoints.evaluation_worker
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-transport
+  - aura-observatory.settings
+- id: aura-observatory.entrypoints.evaluation-scheduler
+  root: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  python_modules:
+  - aura_observatory.entrypoints.evaluation_scheduler
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.settings

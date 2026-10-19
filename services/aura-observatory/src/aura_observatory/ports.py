@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from aura_observatory.contract import MetadataObservation
 
@@ -131,6 +131,38 @@ class ObservatoryHealthPort(Protocol):
     async def health_event_sequence(self, event_id: str) -> int | None: ...
     async def latest_health_event_sequence(self) -> int: ...
     async def metric_series(self) -> list[dict[str, object]]: ...
+
+
+class EvaluationSchedulerPort(Protocol):
+    """DB-only application port for deterministic schedule materialization."""
+
+    async def materialize_due_schedules(
+        self, *, now: datetime, limit: int, lease_token: str
+    ) -> int: ...
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationDispatchIntent:
+    """Application-safe dispatch intent; providers choose wire subjects."""
+
+    kind: Literal["request", "cancellation"]
+    envelope: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationResultDelivery:
+    """A validated result envelope and its provider-owned acknowledgement."""
+
+    envelope: Mapping[str, object]
+    acknowledge: Callable[[], Awaitable[None]]
+
+
+class EvaluationTransportPort(Protocol):
+    """Inward transport port with no provider subject or connection details."""
+
+    async def publish(self, intent: EvaluationDispatchIntent, event_id: str) -> None: ...
+
+    def results(self, stop: Any) -> AsyncIterator[EvaluationResultDelivery]: ...
 
 
 class NullObservatoryHealthPort:
@@ -331,9 +363,7 @@ class EvaluationObjectStore(Protocol):
 class EvaluationArtifactRepository(Protocol):
     """Transactional metadata boundary for authorized evaluation artifacts."""
 
-    async def reserve_artifact(
-        self, request: ArtifactUpload
-    ) -> ArtifactRecord | None | bool: ...
+    async def reserve_artifact(self, request: ArtifactUpload) -> ArtifactRecord | None | bool: ...
 
     async def publish_artifact(self, artifact: ArtifactRecord) -> None: ...
 
@@ -402,6 +432,24 @@ class EvaluationScoreStore(Protocol):
     async def delete_scores_for_ids(self, score_ids: Sequence[str]) -> None: ...
 
 
+class EvaluationOrchestrationPort(Protocol):
+    """Application boundary for durable evaluation lifecycle operations."""
+
+    async def admit(self, request: Any, *, now: datetime | None = None) -> Any: ...
+
+    async def dispatch_once(self, *, now: datetime | None = None) -> int: ...
+
+    async def publish_outbox_once(self, *, now: datetime | None = None) -> int: ...
+
+    async def cancel(
+        self, job_id: str, *, reason: str = "OWNER_REQUESTED", now: datetime | None = None
+    ) -> bool: ...
+
+    async def consume_result(
+        self, envelope: Mapping[str, object], *, now: datetime | None = None
+    ) -> str: ...
+
+
 __all__ = [
     "ClaimOutcome",
     "DeletionResult",
@@ -417,4 +465,5 @@ __all__ = [
     "EvaluationArtifactRepository",
     "EvaluationObjectStore",
     "EvaluationScoreStore",
+    "EvaluationOrchestrationPort",
 ]

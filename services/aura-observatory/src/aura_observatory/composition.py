@@ -10,6 +10,11 @@ import psycopg
 from redis.asyncio import Redis
 
 from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
+from aura_observatory.adapters.evaluation_orchestration import (
+    OtlpComponentSpanExporter,
+    PostgresEvaluationMetricStore,
+    PostgresEvaluationOrchestrationRepository,
+)
 from aura_observatory.adapters.evaluation_storage import (
     ClickHouseEvaluationScoreStore,
     PostgresEvaluationArtifactRepository,
@@ -24,12 +29,17 @@ from aura_observatory.auth import (
     RedisLoginStateBackend,
     RedisSessionBackend,
 )
+from aura_observatory.evaluation_orchestration import (
+    EvaluationOrchestrationService,
+    EvaluationSchedulerService,
+)
 from aura_observatory.evaluation_storage import (
     ArtifactStorageService,
     EvaluationDeletionService,
 )
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.metrics import ObservatoryMetrics
+from aura_observatory.ports import EvaluationTransportPort
 from aura_observatory.query import ObservatoryHealthProjector, ObservatoryQueryService
 from aura_observatory.settings import Settings
 
@@ -37,7 +47,32 @@ from aura_observatory.settings import Settings
 def _production_metrics(settings: Settings, persistence: Any | None = None) -> ObservatoryMetrics:
     """Use the established bounded sink and optional cross-process export."""
 
-    return ObservatoryMetrics(settings.metrics_file, persistence=persistence)
+    span_exporter = None
+    if settings.telemetry_otlp_enabled:
+        span_exporter = OtlpComponentSpanExporter(
+            settings.telemetry_otlp_endpoint or settings.collector_endpoint,
+            credential=settings.ingest_credential(),
+            queue_capacity=settings.telemetry_otlp_queue_capacity,
+            max_attempts=settings.telemetry_otlp_max_attempts,
+            timeout_seconds=settings.telemetry_otlp_timeout_seconds,
+            environment=settings.environment,
+            git_commit=settings.deployment_commit,
+            host_id=settings.deployment_host,
+            service_role=(
+                "worker"
+                if settings.role in {"worker", "evaluation_worker"}
+                else "scheduler"
+                if settings.role == "evaluation_scheduler"
+                else settings.service_role
+            ),
+            deployment_id=settings.deployment_id,
+        )
+    return ObservatoryMetrics(
+        settings.metrics_file,
+        persistence=persistence,
+        span_exporter=span_exporter,
+        deployment_id=settings.deployment_id,
+    )
 
 
 @asynccontextmanager
@@ -185,6 +220,60 @@ def build_evaluation_deletion(settings: Settings) -> EvaluationDeletionService:
     )
 
 
+def build_evaluation_orchestration(
+    settings: Settings,
+    *,
+    transport: EvaluationTransportPort | None = None,
+) -> EvaluationOrchestrationService:
+    """Compose the dedicated evaluation worker's durable orchestration port."""
+
+    repository = PostgresEvaluationOrchestrationRepository(
+        lambda: postgres_connection(settings.database_url),
+        retry_base_seconds=settings.evaluation_retry_base_seconds,
+        retry_max_seconds=settings.evaluation_retry_max_seconds,
+    )
+    metrics_store = PostgresEvaluationMetricStore(
+        lambda: postgres_connection(settings.database_url)
+    )
+    return EvaluationOrchestrationService(
+        repository,
+        transport,
+        metrics=_production_metrics(settings, metrics_store),
+        worker_id=settings.evaluation_worker_id,
+        batch_size=settings.evaluation_batch_size,
+        lease_seconds=settings.evaluation_lease_seconds,
+        retry_base_seconds=settings.evaluation_retry_base_seconds,
+        retry_max_seconds=settings.evaluation_retry_max_seconds,
+        max_attempts=settings.evaluation_max_attempts,
+    )
+
+
+def build_evaluation_scheduler_repository(
+    settings: Settings,
+) -> PostgresEvaluationOrchestrationRepository:
+    """Compose a DB-only scheduler repository without broker credentials."""
+
+    return PostgresEvaluationOrchestrationRepository(
+        lambda: postgres_connection(settings.database_url),
+        retry_base_seconds=settings.evaluation_retry_base_seconds,
+        retry_max_seconds=settings.evaluation_retry_max_seconds,
+    )
+
+
+def build_evaluation_scheduler(settings: Settings) -> EvaluationSchedulerService:
+    """Compose the DB-only application scheduler without broker credentials."""
+
+    metrics_store = PostgresEvaluationMetricStore(
+        lambda: postgres_connection(settings.database_url)
+    )
+    return EvaluationSchedulerService(
+        build_evaluation_scheduler_repository(settings),
+        metrics=_production_metrics(settings, metrics_store),
+        worker_id=settings.evaluation_scheduler_id,
+        batch_size=settings.evaluation_batch_size,
+    )
+
+
 __all__ = [
     "build_auth",
     "build_health_projector",
@@ -192,5 +281,8 @@ __all__ = [
     "build_query_service",
     "build_evaluation_artifact_storage",
     "build_evaluation_deletion",
+    "build_evaluation_orchestration",
+    "build_evaluation_scheduler_repository",
+    "build_evaluation_scheduler",
     "postgres_connection",
 ]

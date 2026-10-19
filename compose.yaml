@@ -706,20 +706,141 @@ services:
       AURA_OBSERVATORY_EVALUATION_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-garage-access-key
       AURA_OBSERVATORY_EVALUATION_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-garage-secret-key
       AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES: ${AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES:-16777216}
-      AURA_NATS_URL: nats://aura-nats:4222
-      AURA_NATS_USER: ${AURA_NATS_DISPATCH_USER:-aura-evaluation-dispatch}
-      AURA_NATS_PASSWORD_FILE: /run/secrets/aura-nats-dispatch-password
-      AURA_EVALUATION_NATS_REQUEST_SUBJECT: aura.evaluation.runner.requested.v1
-      AURA_EVALUATION_NATS_CANCELLATION_SUBJECT: aura.evaluation.runner.cancellation.v1
-      AURA_EVALUATION_NATS_RESULT_SUBJECT: aura.evaluation.runner.results.v1
-    secrets: [observatory-database-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-garage-access-key, observatory-garage-secret-key, aura-nats-dispatch-password]
-    networks: [observatory-db, observatory-ingest, observatory-object-storage, aura-evaluation-bus]
+    secrets: [observatory-database-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-garage-access-key, observatory-garage-secret-key]
+    networks: [observatory-db, observatory-ingest, observatory-object-storage]
     depends_on:
       observatory-migrate: {condition: service_completed_successfully}
       observatory-postgres: {condition: service_healthy}
       observatory-clickhouse: {condition: service_healthy}
       observatory-garage-bootstrap: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  # Evaluation orchestration is a separate process from telemetry ingestion.
+  # It owns only Observatory PostgreSQL state and the private evaluation bus;
+  # the dispatch identity is file-injected and never reaches the scheduler or
+  # the regular Observatory worker.
+  observatory-evaluation-worker:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-observatory.Dockerfile
+      target: evaluation-worker
+    init: true
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: ${AURA_OBSERVATORY_ENVIRONMENT:-production}
+      AURA_OBSERVATORY_ROLE: evaluation_worker
+      AURA_OBSERVATORY_DATABASE_HOST: observatory-postgres
+      AURA_OBSERVATORY_DATABASE_PORT: "5432"
+      AURA_OBSERVATORY_DATABASE_NAME: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      AURA_OBSERVATORY_DATABASE_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      AURA_OBSERVATORY_DATABASE_PASSWORD_FILE: /run/secrets/observatory-database-password
+      AURA_OBSERVATORY_EVALUATION_NATS_URL: ${AURA_OBSERVATORY_EVALUATION_NATS_URL:-nats://aura-nats:4222}
+      AURA_OBSERVATORY_EVALUATION_NATS_USER: ${AURA_OBSERVATORY_EVALUATION_NATS_USER:-aura-evaluation-dispatch}
+      AURA_OBSERVATORY_EVALUATION_NATS_PASSWORD_FILE: /run/secrets/aura-nats-dispatch-password
+      AURA_OBSERVATORY_EVALUATION_WORKER_ID: ${AURA_OBSERVATORY_EVALUATION_WORKER_ID:-observatory-evaluation-worker}
+      # Evaluation process spans use the same bounded metadata-only OTLP
+      # exporter as the other Observatory components.  This identity is
+      # deployment configuration, never derived from evaluation content.
+      AURA_OBSERVATORY_TELEMETRY_OTLP_ENABLED: ${AURA_OBSERVATORY_TELEMETRY_OTLP_ENABLED:-true}
+      AURA_OBSERVATORY_TELEMETRY_OTLP_ENDPOINT: ${AURA_OBSERVATORY_TELEMETRY_OTLP_ENDPOINT:-http://observatory-collector:4318/v1/traces}
+      AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE: /run/secrets/observatory-ingest-credential
+      AURA_OBSERVATORY_DEPLOYMENT_ID: ${AURA_OBSERVATORY_DEPLOYMENT_ID:-local}
+      AURA_OBSERVATORY_DEPLOYMENT_COMMIT: ${AURA_OBSERVATORY_DEPLOYMENT_COMMIT:-0000000}
+      AURA_OBSERVATORY_DEPLOYMENT_HOST: ${AURA_OBSERVATORY_DEPLOYMENT_HOST:-local}
+      AURA_OBSERVATORY_EVALUATION_BATCH_SIZE: ${AURA_OBSERVATORY_EVALUATION_BATCH_SIZE:-32}
+      AURA_OBSERVATORY_EVALUATION_POLL_SECONDS: ${AURA_OBSERVATORY_EVALUATION_POLL_SECONDS:-2}
+      AURA_OBSERVATORY_EVALUATION_LEASE_SECONDS: ${AURA_OBSERVATORY_EVALUATION_LEASE_SECONDS:-120}
+      AURA_OBSERVATORY_EVALUATION_MAX_ATTEMPTS: ${AURA_OBSERVATORY_EVALUATION_MAX_ATTEMPTS:-3}
+      AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS:-10}
+      AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS:-3600}
+      AURA_OBSERVATORY_EVALUATION_MAX_ENVELOPE_BYTES: ${AURA_OBSERVATORY_EVALUATION_MAX_ENVELOPE_BYTES:-1000000}
+    secrets: [observatory-database-password, aura-nats-dispatch-password, observatory-ingest-credential]
+    networks: [observatory-db, aura-evaluation-bus, observatory-ingest]
+    depends_on:
+      observatory-migrate: {condition: service_completed_successfully}
+      observatory-postgres: {condition: service_healthy}
       aura-evaluation-nats-bootstrap: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import aura_observatory.entrypoints.evaluation_worker"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: "0.5"
+    mem_limit: 384m
+    pids_limit: 96
+    ulimits:
+      nofile:
+        soft: 256
+        hard: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    restart: unless-stopped
+
+  # The scheduler is intentionally DB-only. It claims due work and recovery
+  # leases through PostgreSQL and has no NATS, object-store, or public network
+  # credentials or attachments.
+  observatory-evaluation-scheduler:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-observatory.Dockerfile
+      target: evaluation-scheduler
+    init: true
+    environment:
+      AURA_OBSERVATORY_ENVIRONMENT: ${AURA_OBSERVATORY_ENVIRONMENT:-production}
+      AURA_OBSERVATORY_ROLE: evaluation_scheduler
+      AURA_OBSERVATORY_DATABASE_HOST: observatory-postgres
+      AURA_OBSERVATORY_DATABASE_PORT: "5432"
+      AURA_OBSERVATORY_DATABASE_NAME: ${AURA_OBSERVATORY_DATABASE_NAME:-aura_observatory}
+      AURA_OBSERVATORY_DATABASE_USER: ${AURA_OBSERVATORY_DATABASE_USER:-observatory}
+      AURA_OBSERVATORY_DATABASE_PASSWORD_FILE: /run/secrets/observatory-database-password
+      AURA_OBSERVATORY_EVALUATION_SCHEDULER_ID: ${AURA_OBSERVATORY_EVALUATION_SCHEDULER_ID:-observatory-evaluation-scheduler}
+      # The scheduler emits only bounded metadata spans.  It joins the
+      # Collector network for this exporter but remains DB-only for
+      # orchestration: it receives no evaluation NATS identity or network.
+      AURA_OBSERVATORY_TELEMETRY_OTLP_ENABLED: ${AURA_OBSERVATORY_TELEMETRY_OTLP_ENABLED:-true}
+      AURA_OBSERVATORY_TELEMETRY_OTLP_ENDPOINT: ${AURA_OBSERVATORY_TELEMETRY_OTLP_ENDPOINT:-http://observatory-collector:4318/v1/traces}
+      AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE: /run/secrets/observatory-ingest-credential
+      AURA_OBSERVATORY_DEPLOYMENT_ID: ${AURA_OBSERVATORY_DEPLOYMENT_ID:-local}
+      AURA_OBSERVATORY_DEPLOYMENT_COMMIT: ${AURA_OBSERVATORY_DEPLOYMENT_COMMIT:-0000000}
+      AURA_OBSERVATORY_DEPLOYMENT_HOST: ${AURA_OBSERVATORY_DEPLOYMENT_HOST:-local}
+      AURA_OBSERVATORY_EVALUATION_BATCH_SIZE: ${AURA_OBSERVATORY_EVALUATION_BATCH_SIZE:-32}
+      AURA_OBSERVATORY_EVALUATION_POLL_SECONDS: ${AURA_OBSERVATORY_EVALUATION_POLL_SECONDS:-2}
+      AURA_OBSERVATORY_EVALUATION_LEASE_SECONDS: ${AURA_OBSERVATORY_EVALUATION_LEASE_SECONDS:-120}
+      AURA_OBSERVATORY_EVALUATION_MAX_ATTEMPTS: ${AURA_OBSERVATORY_EVALUATION_MAX_ATTEMPTS:-3}
+      AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS:-10}
+      AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS:-3600}
+    secrets: [observatory-database-password, observatory-ingest-credential]
+    networks: [observatory-db, observatory-ingest]
+    depends_on:
+      observatory-migrate: {condition: service_completed_successfully}
+      observatory-postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import aura_observatory.entrypoints.evaluation_scheduler"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: "0.25"
+    mem_limit: 256m
+    pids_limit: 64
+    ulimits:
+      nofile:
+        soft: 128
+        hard: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
     restart: unless-stopped
 
   # Core evaluation is a separate process with no published port and no
@@ -892,12 +1013,20 @@ services:
   observatory-collector:
     profiles: [observatory]
     image: ${AURA_OBSERVATORY_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.138.0}
-    command: [--config=/etc/otelcol-contrib/config.yaml]
+    # The pinned Collector emits its token filename and receiver/exporter
+    # endpoints at info level. Keep operational warnings/errors available while
+    # preventing those diagnostics from becoming a secret/path or URL sink;
+    # queueing and retry behavior remain configured in the Collector file.
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+      - --set=service.telemetry.logs.level=warn
+      - --set=service.telemetry.logs.disable_caller=true
+      - --set=service.telemetry.logs.disable_stacktrace=true
     secrets: [observatory-ingest-credential]
     volumes:
       - ./deploy/compose/observatory-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks: [observatory-ingest]
-    expose: ["4317", "4318"]
+    expose: ["4317", "4318", "8888"]
     depends_on:
       observatory-api: {condition: service_healthy}
     restart: unless-stopped

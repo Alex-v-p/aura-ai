@@ -47,9 +47,34 @@ exporters:
       enabled: true
       num_consumers: 2
       queue_size: 256
-
 service:
   extensions: [bearertokenauth]
+  # Keep Collector self-telemetry on the private ingest network. The exporter
+  # failure counters preserve finite outage evidence after info-level
+  # diagnostics are suppressed, without adding a host port or resource data.
+  telemetry:
+    resource:
+      service.instance.id: null
+    logs:
+      # Collector provider diagnostics can include endpoint and auth-file
+      # context even at warn/error levels. Keep stdout/stderr content-free;
+      # bounded outage evidence is retained through the private metrics reader.
+      output_paths: [/dev/null]
+      error_output_paths: [/dev/null]
+    metrics:
+      # Normal preserves the bounded exporter queue/send counters used for
+      # outage evidence without emitting endpoint address/port dimensions in
+      # the private metrics surface.
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+                without_scope_info: true
+                without_type_suffix: true
+                without_units: true
   pipelines:
     traces:
       receivers: [otlp]
