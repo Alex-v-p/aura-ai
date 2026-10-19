@@ -1,0 +1,184 @@
+agent: contract_steward
+work_item: AURA-0091
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura_0091_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-runner-transport-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+  - work-items/handoffs/AURA-0091-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for
+    evaluation-runner-transport-v1; the settled AURA-0089 schemas were read
+    but not edited.
+  compatibility: backward_compatible
+  definitions:
+    - id: evaluation-runner-transport-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation-runner-transport.schema.json
+      changes:
+        - >-
+          Added one closed JSON Schema 2020-12 union for requested,
+          cancellation-requested, completed, cancelled, and failed Core
+          evaluation-runner transport messages.
+        - >-
+          Required stable message, correlation, causation, request, job,
+          attempt, idempotency, request-digest, and UTC occurrence fields on
+          every envelope.
+        - >-
+          Bound requests to one finite execution kind, an exact target
+          component, the settled AURA-0089 capture authorization and
+          execution provenance, bounded runner and evaluation limits, a UTC
+          deadline, bounded case UUIDs, and opaque artifact references.
+        - >-
+          Restricted artifact references to opaque UUIDs, finite media
+          classifications and media types, byte counts, SHA-256 integrity,
+          and settled content-capture authorization; locators and bytes are
+          absent.
+        - >-
+          Prohibited input artifact references for metadata_only and hashed
+          requests so only explicitly content-authorized evaluations can
+          reference retrievable content.
+        - >-
+          Required completed, cancelled, and failed messages to repeat the
+          declared capture, effective limits, deadline, and execution
+          provenance and to report every reproducibility binding as verified,
+          missing, or mismatched with a bounded observed value when present.
+        - >-
+          Limited cancellation reasons and terminal failure codes to finite
+          enums, reusing evaluation-failure-codes-v1 for failed results.
+        - >-
+          Kept every object closed and omitted raw input, output, prompt,
+          rubric, comment, artifact bytes, credentials, endpoints, bucket
+          names, object keys, paths, filenames, owner identity, exception
+          text, arbitrary attributes, dynamic imports, provider selection,
+          and tool authority.
+  compatibility_notes:
+    - >-
+      evaluation-runner-transport-v1 is a new contract identifier and v1
+      root; it changes no payload accepted by an existing producer or
+      consumer.
+    - >-
+      evaluation-v1, evaluation-events-v1, and
+      evaluation-failure-codes-v1 remain byte-for-byte unchanged.
+    - >-
+      References reuse settled AURA-0089 authorization, component,
+      provenance, limit, and failure-code meanings without widening
+      production telemetry or portable owner authority.
+    - >-
+      All transport objects are closed; future fields or message kinds need
+      an explicit compatible contract revision.
+    - >-
+      Cross-field identity inequality, timestamp ordering, canonical digest
+      calculation, deterministic identifier derivation, authorization
+      compatibility, and observed-versus-declared evidence comparison remain
+      producer and consumer validation because portable JSON Schema cannot
+      establish them.
+  producers:
+    - >-
+      Aura Observatory evaluation orchestration authorized for AURA-0092,
+      producing requested and cancellation-requested messages.
+    - >-
+      Aura Core Evaluation Runner authorized for AURA-0091, producing
+      completed, cancelled, and failed messages.
+  consumers:
+    - >-
+      Aura Core Evaluation Runner request and cancellation durable consumers.
+    - >-
+      Aura Observatory evaluation worker and scheduler terminal-result
+      consumers authorized for AURA-0092.
+    - Evaluation runner contract, privacy, recovery, and reproducibility tests.
+  rollout:
+    - >-
+      Register the new v1 root and enforce exact schema-version dispatch before
+      enabling evaluation NATS subjects or durable consumers.
+    - >-
+      Producers must canonicalize and hash requests, generate deterministic
+      service-owned identities, and publish reference-only messages.
+    - >-
+      Consumers must validate the closed schema before durable claim, verify
+      authorization and artifact integrity at the owning service boundary,
+      and map internal failures to the finite shared taxonomy.
+    - >-
+      Deploy the dedicated NATS identities and runner only after contract,
+      ACL, idempotency, privacy, and outage acceptance passes; production
+      Core remains independent and production telemetry remains metadata_only.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/evaluation/v1/evaluation-runner-transport.schema.json
+    - >-
+      AJV 8 strict JSON Schema 2020-12 compilation with the local
+      evaluation-v1 and evaluation-failure-codes-v1 references resolved
+    - >-
+      AJV 8 representative validation for all five transport variants and
+      eight privacy/closure negatives covering top-level and nested prompt,
+      endpoint, credential, arbitrary-attribute, exception, and unauthorized
+      metadata-only artifact-reference rejection
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0091.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      The aggregate observability validator currently reports the expected
+      missing aura.evaluation.runner component manifest, metrics, and
+      evaluators; those outputs belong to the parallel Core implementation
+      zone and must pass before integration.
+    - >-
+      Persistent contract tests under services/aura-core/tests are assigned
+      to the test/evaluation worker; this contract-owned slice added no test
+      file outside its assigned paths.
+    - >-
+      Core lint, type, unit, system, migration, NATS, topology, and real-stack
+      checks depend on the other AURA-0091 ownership zones and remain required
+      for integration.
+decisions:
+  - >-
+    Added a dedicated transport union instead of widening the AURA-0089
+    resource or lifecycle-event schemas; those contracts describe persisted
+    resources and public lifecycle facts rather than complete runner commands.
+  - >-
+    Reused AURA-0089 definitions by JSON reference for capture authorization,
+    component bindings, execution limits, execution provenance, and failure
+    codes so their meanings cannot drift between orchestration and execution.
+  - >-
+    Kept request and result payloads reference-only; authorized content moves
+    through opaque artifact references with an integrity digest and never in
+    NATS message bodies.
+  - >-
+    Required a complete fixed runtime-evidence object so missing and mismatched
+    reproducibility data remains explicit instead of being inferred or hidden
+    in an arbitrary attribute map.
+  - >-
+    Used finite cancellation and failure categories and omitted free-form
+    reason or exception fields to keep terminal messages content-free.
+  - >-
+    Added runner-specific queue, model-call, and artifact-operation ceilings
+    around the settled evaluation ExecutionLimits without encoding queueing,
+    retry, or execution business behavior in the schema.
+risks:
+  - >-
+    The AURA-0091 producer and consumer implementations must remain aligned
+    with the finalized field names and reject conflicting identity reuse;
+    runtime conformance is outside this contract-only slice.
+unresolved: []

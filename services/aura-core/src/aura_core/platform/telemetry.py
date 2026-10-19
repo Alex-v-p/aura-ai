@@ -63,6 +63,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
     "aura.governance.approval_workflow": "1.1.0",
+    "aura.evaluation.runner": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -407,6 +408,32 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "outbox_duplicates",
         }
     ),
+    "aura.evaluation.runner": frozenset(
+        {
+            "evaluation_runner_queue_time_ms",
+            "evaluation_runner_fixture_load_duration_ms",
+            "evaluation_runner_execution_duration_ms",
+            "evaluation_runner_outcome_count",
+            "evaluation_runner_cancellation_count",
+            "evaluation_runner_resource_limit_count",
+            "evaluation_runner_reproducibility_completeness",
+            "evaluation_runner_queue_accepted",
+            "evaluation_runner_nats_fetch_failure_count",
+            "evaluation_runner_nats_publish_failure_count",
+            "evaluation_runner_nats_drain_failure_count",
+            "evaluation_runner_nats_recovery_count",
+            "evaluation_runner_nats_poison_count",
+            "evaluation_runner_terminal_settlement_failure_count",
+            "evaluation_runner_lease_renewal_failure_count",
+            "evaluation_runner_lease_lost_count",
+            "evaluation_runner_artifact_cleanup_failure_count",
+            "evaluation_runner_recovery_scan_failure_count",
+            "evaluation_runner_recovery_count",
+            "evaluation_runner_publication_recovery_failure_count",
+            "evaluation_runner_terminal_accounting_failure_count",
+            "evaluation_runner_nats_identity_conflict_count",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -588,6 +615,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         {"document.search", "document.preview", "document.detail"}
     ),
     "aura.knowledge.document_deletion": frozenset({"document.delete"}),
+    "aura.evaluation.runner": frozenset({"evaluation.execute", "evaluation.fixture.load"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -619,6 +647,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.artifacts.attachment_processing": "attachment_processing_duration_ms",
     "aura.artifacts.attachment_deletion": "attachment_deletion_duration_ms",
     "aura.models.inference": "inference_duration_ms",
+    "aura.evaluation.runner": "evaluation_runner_execution_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -853,7 +882,6 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "conversation_store",
             "event_store",
             "model_policy",
-            "model_provider",
             "nats_jetstream",
             "postgresql",
             "sse_client",
@@ -876,6 +904,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "transport_validation",
             "application_validation",
             "application_unknown",
+            "model_provider",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -884,6 +913,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "authorization",
             "cancel",
             "conflict",
+            "identity",
             "delivery",
             "disabled",
             "idempotency",
@@ -908,6 +938,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "validation",
             "query_embedding",
             "database",
+            "database_programming",
             "telemetry",
             "budget",
             "scope",
@@ -954,6 +985,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "allowed",
             "completed",
             "failed",
+            "timeout",
             "rejected",
             "personal",
             "explicit_request",
@@ -996,6 +1028,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "verified",
             "ready",
             "storage_unavailable",
+            "fenced",
+            "recovered",
         }
     ),
     "operation": frozenset(
@@ -1244,6 +1278,8 @@ class DeploymentMetadata:
 _DEPLOYMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
+
+
 def _valid_bounded_metadata(value: str, pattern: re.Pattern[str], label: str) -> None:
     if (
         not pattern.fullmatch(value)
@@ -1314,10 +1350,7 @@ def _wire_observation(item: Measurement, deployment: DeploymentMetadata) -> dict
             for key, value in attributes.items()
             if key in {"run_id", "conversation_id"}
         }
-    dimensions = {
-        _WIRE_DIMENSIONS.get(key, key): value
-        for key, value in item.dimensions
-    }
+    dimensions = {_WIRE_DIMENSIONS.get(key, key): value for key, value in item.dimensions}
     observation: dict[str, object] = {
         "schemaVersion": 1,
         "observationId": str(item.observation_id),
@@ -1370,9 +1403,7 @@ class StructuredContainerLogExporter:
             self._writer(line)
 
     @staticmethod
-    def _measurement_line(
-        item: Measurement, deployment: DeploymentMetadata | None = None
-    ) -> str:
+    def _measurement_line(item: Measurement, deployment: DeploymentMetadata | None = None) -> str:
         if deployment is not None:
             wire = _wire_observation(item, deployment)
             # Keep the established structured-log keys for local operators
@@ -1664,8 +1695,7 @@ class OtlpHttpTelemetryExporter:
                 execution.append(("policy_revision", value))
                 break
         values.extend(
-            self._string_attribute(f"aura.execution.{key}", value)
-            for key, value in execution
+            self._string_attribute(f"aura.execution.{key}", value) for key, value in execution
         )
         return values
 
@@ -1737,8 +1767,7 @@ class OtlpHttpTelemetryExporter:
                 span["parentSpanId"] = item.parent_span_id
             if item.link_span_ids:
                 span["links"] = [
-                    {"traceId": trace_id, "spanId": link}
-                    for link in item.link_span_ids
+                    {"traceId": trace_id, "spanId": link} for link in item.link_span_ids
                 ]
             spans.append(span)
         payload = {
@@ -1757,6 +1786,7 @@ class OtlpHttpTelemetryExporter:
         }
         return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
+
 class _DefaultOtlpHttpTransport:
     async def send(
         self, endpoint: str, payload: bytes, credential: str | None, timeout: float
@@ -1766,9 +1796,7 @@ class _DefaultOtlpHttpTransport:
             headers["Authorization"] = f"Bearer {credential}"
 
         def request() -> None:
-            request = urllib.request.Request(
-                endpoint, data=payload, headers=headers, method="POST"
-            )
+            request = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     if response.status >= 300:

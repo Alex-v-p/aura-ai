@@ -263,6 +263,104 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/__init__.py
   dependencies: []
+- id: aura-core.runtime.replay
+  root: services/aura-core/src/aura_core/runtime/replay
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/replay/registry.py
+  python_modules:
+  - aura_core.runtime.replay
+  source_files:
+  - services/aura-core/src/aura_core/runtime/replay/__init__.py
+  dependencies:
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.runtime.replay.registry
+  root: services/aura-core/src/aura_core/runtime/replay/registry.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/registry.py
+  python_modules:
+  - aura_core.runtime.replay.registry
+  dependencies: []
+- id: aura-core.runtime.replay.state
+  root: services/aura-core/src/aura_core/runtime/replay/state.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/state.py
+  python_modules:
+  - aura_core.runtime.replay.state
+  dependencies: []
+- id: aura-core.runtime.replay.application
+  root: services/aura-core/src/aura_core/runtime/replay/application.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/application.py
+  python_modules:
+  - aura_core.runtime.replay.application
+  dependencies:
+  - aura-core.platform.evaluation-transport
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.platform.evaluation-transport
+  root: services/aura-core/src/aura_core/platform/evaluation_transport.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/evaluation_transport.py
+  python_modules:
+  - aura_core.platform.evaluation_transport
+  dependencies: []
+- id: aura-core.entrypoints.evaluation-runner
+  root: services/aura-core/src/aura_core/entrypoints/evaluation_runner
+  kind: entrypoint
+  public_api: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  python_modules:
+  - aura_core.entrypoints.evaluation_runner
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/runner.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/state.py
+  dependencies:
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.bootstrap.evaluation-runner
+  root: services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  python_modules:
+  - aura_core.bootstrap.evaluation_runner
+  dependencies:
+  - aura-core.bootstrap.document-uow
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.telemetry
+  - aura-core.providers.object-storage.evaluation
+  - aura-core.providers.object-storage.garage
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+  - aura-core.runtime.streaming.publisher
+  - aura-core.runtime.tools
+- id: aura-core.entrypoints.evaluation-runner.main
+  root: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  python_modules:
+  - aura_core.entrypoints.evaluation_runner.main
+  dependencies:
+  - aura-core.bootstrap.evaluation-runner
+  - aura-core.platform.auth
+- id: aura-core.providers.object-storage.evaluation
+  root: services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  python_modules:
+  - aura_core.providers.object_storage.evaluation
+  dependencies:
+  - aura-core.platform.evaluation-transport
 - id: aura-core.domains
   root: services/aura-core/src/aura_core/domains
   kind: package
@@ -1862,6 +1960,7 @@ modules:
   dependencies:
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
+  - aura-core.platform.evaluation-transport
   - aura-core.platform.outbox.service
   - aura-core.platform.telemetry
 - id: aura-core.platform.outbox.persistence

@@ -23,7 +23,120 @@ OBSERVATORY_TYPED_COMPONENTS = frozenset(
         "aura.observatory.evaluation_deletion",
     }
 )
+TYPED_COMPONENTS = OBSERVATORY_TYPED_COMPONENTS | {"aura.evaluation.runner"}
 OBSERVATORY_METRIC_TYPES = frozenset({"counter", "gauge", "histogram"})
+RUNNER_METRIC_UNITS = frozenset({"milliseconds", "count", "ratio"})
+RUNNER_METRIC_ATTRIBUTES = frozenset({"outcome", "error_class", "dependency"})
+RUNNER_METRIC_DEFINITION_FIELDS = frozenset(
+    {"name", "type", "unit", "labels", "dependencies", "trace", "correlation", "export"}
+)
+RUNNER_METRIC_EXPORTS = frozenset({"structured_container_log", "otlp"})
+RUNNER_ALLOWED_DEPENDENCIES = frozenset(
+    {
+        "postgresql",
+        "evaluation_nats",
+        "evaluation_object_storage",
+        "core_public_replay_ports",
+        "application_validation",
+        "application_unknown",
+        "model_provider",
+        "object_storage",
+        "nats_jetstream",
+    }
+)
+RUNNER_ALLOWED_LABEL_VALUES = {
+    "outcome": frozenset(
+        {
+            "accepted",
+            "canceled",
+            "completed",
+            "delivery",
+            "error",
+            "expired",
+            "fenced",
+            "invalid",
+            "malformed_envelope",
+            "ok",
+            "published",
+            "recovered",
+            "rejected",
+            "transport_error",
+            "transport_published",
+        }
+    ),
+    "error_class": frozenset(
+        {
+            "authorization",
+            "budget",
+            "cancellation",
+            "conflict",
+            "database",
+            "database_programming",
+            "delivery",
+            "execution",
+            "identity",
+            "provider",
+            "timeout",
+            "unknown",
+            "validation",
+        }
+    ),
+    "dependency": RUNNER_ALLOWED_DEPENDENCIES,
+}
+RUNNER_TRACE_ATTRIBUTES = frozenset(
+    {"trace_id", "span_id", "parent_span_id", "correlation_id", "attempt_id"}
+)
+RUNNER_PROHIBITED_FIELDS = frozenset(
+    {
+        "access_token",
+        "argument",
+        "arguments",
+        "arbitrary_attributes",
+        "attributes",
+        "authorization",
+        "bearer",
+        "bearer_token",
+        "content",
+        "credentials",
+        "digest",
+        "document_content",
+        "prompt",
+        "raw_content",
+        "raw_result",
+        "response",
+        "response_content",
+        "response_payload",
+        "payload",
+        "result",
+        "results",
+        "artifact_bytes",
+        "filename",
+        "object_key",
+        "owner",
+        "owner_identity",
+        "password",
+        "private",
+        "refresh_token",
+        "secret",
+        "token",
+        "tokens",
+        "tool_argument",
+        "tool_arguments",
+        "tool_result",
+        "tool_results",
+        "credential",
+        "endpoint",
+        "exception",
+        "id_token",
+        "memory_content",
+        "owner_subject",
+        "url",
+        "uri",
+    }
+)
+RUNNER_EXPORT_HEALTH_COUNTERS = frozenset(
+    {"accepted", "rejected", "dropped", "export_failures", "abandoned_batches"}
+)
 OBSERVATORY_REQUIRED_PROHIBITED_FIELDS = frozenset(
     {
         "prompt",
@@ -161,6 +274,162 @@ def _typed_observatory_errors(path: Path, manifest: dict[str, Any]) -> list[str]
     return errors
 
 
+def _runner_metric_type(name: str) -> str | None:
+    """Return the required type for a runner metric name, if it is known."""
+
+    if name.endswith("_duration_ms") or name.endswith("_time_ms"):
+        return "histogram"
+    if name.endswith("_reproducibility_completeness"):
+        return "gauge"
+    if name.startswith("evaluation_runner_"):
+        return "counter"
+    return None
+
+
+def _typed_runner_errors(path: Path, manifest: dict[str, Any]) -> list[str]:
+    """Validate the closed metadata contract for the Core evaluation runner."""
+
+    location = str(path.relative_to(ROOT))
+    component = manifest.get("component")
+    if not isinstance(component, dict) or component.get("id") != "aura.evaluation.runner":
+        return []
+
+    errors: list[str] = []
+    metrics = manifest.get("metrics")
+    metric_names = set(metrics) if _string_list(metrics) else set()
+    if not metric_names:
+        errors.append(f"{location}: runner metrics must be a non-empty string list")
+        return errors
+
+    definitions = manifest.get("metric_definitions")
+    if not isinstance(definitions, list) or not definitions:
+        errors.append(f"{location}: runner metric_definitions are required")
+        definitions = []
+
+    semantics = manifest.get("metric_semantics")
+    if not isinstance(semantics, dict) or set(semantics) != metric_names:
+        errors.append(f"{location}: runner metric_semantics must cover each metric exactly once")
+    elif not all(isinstance(value, str) and value.strip() for value in semantics.values()):
+        errors.append(f"{location}: runner metric_semantics values must be non-empty strings")
+
+    units = manifest.get("metric_units")
+    if not isinstance(units, dict) or set(units) != metric_names:
+        errors.append(f"{location}: runner metric_units must cover each metric exactly once")
+    else:
+        for name in metric_names:
+            unit = units.get(name)
+            if unit not in RUNNER_METRIC_UNITS:
+                errors.append(f"{location}: metric_units[{name}] is not a bounded unit")
+            expected_type = _runner_metric_type(name)
+            if expected_type is None:
+                errors.append(f"{location}: runner metric has no bounded type: {name}")
+            elif unit == "milliseconds" and expected_type != "histogram":
+                errors.append(f"{location}: duration metric must be a histogram: {name}")
+            elif unit == "ratio" and expected_type != "gauge":
+                errors.append(f"{location}: ratio metric must be a gauge: {name}")
+            elif unit == "count" and expected_type != "counter":
+                errors.append(f"{location}: count metric must be a counter: {name}")
+
+    definition_names: list[str] = []
+    for index, definition in enumerate(definitions):
+        prefix = f"{location}: metric_definitions[{index}]"
+        if not isinstance(definition, dict):
+            errors.append(f"{prefix} must be a mapping")
+            continue
+        if set(definition) != RUNNER_METRIC_DEFINITION_FIELDS:
+            errors.append(f"{prefix} must use the closed per-metric field set")
+        name = definition.get("name")
+        if not isinstance(name, str) or name not in metric_names:
+            errors.append(f"{prefix}.name must identify a declared runner metric")
+        else:
+            definition_names.append(name)
+            expected_type = _runner_metric_type(name)
+            if definition.get("type") != expected_type:
+                errors.append(f"{prefix}.type does not match the metric name contract")
+            expected_unit = units.get(name) if isinstance(units, dict) else None
+            if definition.get("unit") != expected_unit:
+                errors.append(f"{prefix}.unit does not match metric_units")
+        labels = definition.get("labels")
+        if (
+            not _string_list(labels)
+            or len(labels) != len(set(labels))
+            or set(labels) != RUNNER_METRIC_ATTRIBUTES
+        ):
+            errors.append(f"{prefix}.labels must be the fixed bounded label set")
+        else:
+            for label in labels:
+                if label not in RUNNER_ALLOWED_LABEL_VALUES:
+                    errors.append(f"{prefix}.labels contains an unknown label: {label}")
+        dependencies_for_metric = definition.get("dependencies")
+        if not _nonempty_string_list(dependencies_for_metric) or not set(
+            dependencies_for_metric
+        ) <= RUNNER_ALLOWED_DEPENDENCIES:
+            errors.append(f"{prefix}.dependencies contains an unbounded value")
+        if definition.get("trace") != "evaluation_runner":
+            errors.append(f"{prefix}.trace must be evaluation_runner")
+        if definition.get("correlation") != "attempt_id":
+            errors.append(f"{prefix}.correlation must be attempt_id")
+        export = definition.get("export")
+        if not _string_list(export) or set(export) != RUNNER_METRIC_EXPORTS:
+            errors.append(f"{prefix}.export must include structured_container_log and otlp")
+
+    if len(definition_names) != len(set(definition_names)):
+        errors.append(f"{location}: runner metric definition names must be unique")
+    if set(definition_names) != metric_names:
+        errors.append(f"{location}: runner metric_definitions must cover each metric exactly once")
+
+    if manifest.get("capture_policy") != "metadata_only":
+        errors.append(f"{location}: runner capture_policy must be metadata_only")
+
+    dependencies = manifest.get("dependencies")
+    if not _nonempty_string_list(dependencies):
+        errors.append(f"{location}: runner dependencies must be a non-empty string list")
+
+    cardinality = manifest.get("cardinality")
+    if not isinstance(cardinality, dict):
+        errors.append(f"{location}: runner cardinality metadata is required")
+        cardinality = {}
+    metric_attributes = cardinality.get("metric_attributes")
+    trace_only = cardinality.get("trace_only")
+    prohibited = cardinality.get("prohibited")
+    if set(metric_attributes or ()) != RUNNER_METRIC_ATTRIBUTES or not _string_list(
+        metric_attributes
+    ):
+        errors.append(f"{location}: runner metric_attributes must be the fixed bounded set")
+    if set(trace_only or ()) != RUNNER_TRACE_ATTRIBUTES or not _string_list(trace_only):
+        errors.append(f"{location}: runner trace_only must be the fixed bounded set")
+    if not _string_list(prohibited) or not RUNNER_PROHIBITED_FIELDS <= set(prohibited):
+        errors.append(f"{location}: runner prohibited fields lack required privacy fields")
+
+    export = manifest.get("export")
+    if not isinstance(export, dict):
+        errors.append(f"{location}: runner export semantics are required")
+    else:
+        if export.get("sink") != "structured_container_log_and_otlp":
+            errors.append(f"{location}: runner export sink is not bounded")
+        if export.get("cadence") != "periodic_and_shutdown":
+            errors.append(f"{location}: runner export cadence is not bounded")
+        if export.get("retry") != "bounded_three_attempts":
+            errors.append(f"{location}: runner export retry is not bounded")
+        counters = export.get("health_counters")
+        if not _nonempty_string_list(counters) or set(counters) != RUNNER_EXPORT_HEALTH_COUNTERS:
+            errors.append(f"{location}: runner export health counters are not fixed and bounded")
+
+    retention = manifest.get("retention")
+    if not isinstance(retention, dict):
+        errors.append(f"{location}: runner process retention must be bounded")
+    else:
+        expected_retention = {
+            "process_buffer": "bounded",
+            "overflow": "drop_oldest_and_count",
+            "export_failure": "retry_three_times_then_drop_and_count",
+        }
+        if retention != expected_retention:
+            errors.append(f"{location}: runner process retention is not the bounded policy")
+
+    return errors
+
+
 def component_manifests() -> list[ManifestEntry]:
     manifests: list[ManifestEntry] = []
     patterns = [
@@ -241,6 +510,7 @@ def catalogue_errors(
         ):
             errors.append(f"{location}: capture_policy is required")
         errors.extend(_typed_observatory_errors(path, manifest))
+        errors.extend(_typed_runner_errors(path, manifest))
     if not entries:
         errors.append("No observable component manifests exist in the component catalogue.")
     return sorted(set(errors))

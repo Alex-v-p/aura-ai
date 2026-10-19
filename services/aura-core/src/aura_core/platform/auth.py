@@ -182,6 +182,26 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("AURA_OBJECT_STORAGE_SECRET_KEY_FILE"),
     )
+    evaluation_runner_max_concurrency: int = Field(default=2, ge=1, le=64)
+    evaluation_runner_max_queue_depth: int = Field(default=32, ge=1, le=4096)
+    evaluation_runner_max_timeout_ms: int = Field(default=300_000, ge=100, le=86_400_000)
+    evaluation_runner_max_queue_time_ms: int = Field(default=3_600_000, ge=100, le=3_600_000)
+    evaluation_runner_max_cases: int = Field(default=100, ge=1, le=100_000)
+    evaluation_runner_max_input_bytes: int = Field(default=16 * 1024 * 1024, ge=0)
+    evaluation_runner_max_output_bytes: int = Field(default=16 * 1024 * 1024, ge=0)
+    evaluation_runner_max_tokens: int = Field(default=1_000_000, ge=0)
+    evaluation_runner_max_model_calls: int = Field(default=100, ge=0)
+    evaluation_runner_max_artifact_operations: int = Field(default=100, ge=0)
+    evaluation_runner_request_durable: str = "aura-core-evaluation-runner"
+    evaluation_runner_cancellation_durable: str = "aura-core-evaluation-cancellation"
+    evaluation_runtime_image_digest: str = ""
+    evaluation_runtime_model_id: str = ""
+    evaluation_runtime_model_version: str = ""
+    evaluation_runtime_model_digest: str = ""
+    evaluation_runtime_fixture_revision: str = ""
+    evaluation_runtime_prompt_revision: str = ""
+    evaluation_runtime_policy_revision: str = ""
+    evaluation_runtime_seed: int | None = None
     document_parser_url: str = Field(
         default="http://document-parser:8080",
         validation_alias=AliasChoices("AURA_DOCUMENT_PARSER_URL"),

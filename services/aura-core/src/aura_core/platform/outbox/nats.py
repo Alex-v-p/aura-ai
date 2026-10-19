@@ -1,9 +1,10 @@
 """NATS JetStream transport adapter. Business state remains Core-owned."""
 
+import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 import nats
@@ -11,6 +12,14 @@ from nats.errors import TimeoutError as NatsTimeoutError
 
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import MetricsPort, NullMetrics
+from aura_core.platform.evaluation_transport import (
+    EVALUATION_CANCELLATION_SUBJECT,
+    EVALUATION_REQUEST_SUBJECT,
+    EVALUATION_RESULT_SUBJECT,
+    EVALUATION_STREAM,
+    TransportValidationError,
+    validate_message,
+)
 from aura_core.platform.outbox.service import (
     APPROVAL_EVENT_TOPIC,
     RUN_COMMAND_TOPIC,
@@ -31,6 +40,201 @@ RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
 # Deliberately plain Core NATS: this subject is live-only and must never be
 # included in a JetStream stream or transactional outbox command.
 THINKING_EVENT_SUBJECT = "aura.runs.thinking.v1"
+
+
+class EvaluationTransportMetrics(Protocol):
+    def increment(self, component: str, name: str, **attributes: str) -> None: ...
+
+
+def _evaluation_metric(
+    metrics: EvaluationTransportMetrics | None,
+    name: str,
+    *,
+    outcome: str,
+    error_class: str | None = None,
+) -> None:
+    """Record bounded transport health without coupling delivery to telemetry."""
+
+    if metrics is None:
+        return
+    attributes = {"dependency": "nats_jetstream", "outcome": outcome}
+    if error_class is not None:
+        attributes["error_class"] = error_class
+    try:
+        metrics.increment("aura.evaluation.runner", name, **attributes)
+    except Exception:
+        return
+
+
+class EvaluationJetStreamPublisher:
+    """Durable result publisher for the isolated evaluation identity."""
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        subject: str = EVALUATION_RESULT_SUBJECT,
+        metrics: EvaluationTransportMetrics | None = None,
+    ) -> None:
+        self._connection = connection
+        self._subject = subject
+        self._metrics = metrics
+        self._publish_degraded = False
+
+    async def publish(self, payload: Mapping[str, object]) -> None:
+        try:
+            encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            if len(encoded) > 1_048_576:
+                raise ValueError("evaluation result exceeds transport limit")
+            validate_message(payload)
+            jetstream = self._connection.jetstream()
+            await jetstream.publish(
+                self._subject,
+                encoded,
+                headers={"Nats-Msg-Id": str(payload["messageId"])},
+            )
+        except Exception:
+            _evaluation_metric(
+                self._metrics,
+                "evaluation_runner_nats_publish_failure_count",
+                outcome="error",
+                error_class="delivery",
+            )
+            self._publish_degraded = True
+            raise
+        if self._publish_degraded:
+            _evaluation_metric(
+                self._metrics,
+                "evaluation_runner_nats_recovery_count",
+                outcome="ok",
+            )
+            self._publish_degraded = False
+
+
+class EvaluationJetStreamConsumer:
+    """Authenticated pull consumers with ack-after-durable-receipt semantics."""
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        request_durable: str = "aura-core-evaluation-runner",
+        cancellation_durable: str = "aura-core-evaluation-cancellation",
+        metrics: EvaluationTransportMetrics | None = None,
+    ) -> None:
+        self._connection = connection
+        self._request_durable = request_durable
+        self._cancellation_durable = cancellation_durable
+        self._metrics = metrics
+
+    async def consume(self, runner: Any, stop: asyncio.Event) -> None:
+        jetstream = self._connection.jetstream()
+
+        async def subscribe(subject: str, durable: str) -> Any:
+            for attempt in range(3):
+                try:
+                    subscription = await jetstream.pull_subscribe(
+                        subject,
+                        durable=durable,
+                        stream=EVALUATION_STREAM,
+                    )
+                except Exception:
+                    _evaluation_metric(
+                        self._metrics,
+                        "evaluation_runner_nats_drain_failure_count",
+                        outcome="error",
+                        error_class="delivery",
+                    )
+                    if attempt == 2 or stop.is_set():
+                        raise
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                    continue
+                if attempt:
+                    _evaluation_metric(
+                        self._metrics,
+                        "evaluation_runner_nats_recovery_count",
+                        outcome="ok",
+                    )
+                return subscription
+            raise RuntimeError("evaluation subscription unavailable")
+
+        request_sub = await subscribe(EVALUATION_REQUEST_SUBJECT, self._request_durable)
+        cancellation_sub = await subscribe(
+            EVALUATION_CANCELLATION_SUBJECT, self._cancellation_durable
+        )
+
+        async def drain(subscription: Any) -> None:
+            degraded = False
+            while not stop.is_set():
+                try:
+                    messages = await subscription.fetch(1, timeout=0.5)
+                except NatsTimeoutError:
+                    continue
+                except Exception:
+                    _evaluation_metric(
+                        self._metrics,
+                        "evaluation_runner_nats_fetch_failure_count",
+                        outcome="error",
+                        error_class="delivery",
+                    )
+                    degraded = True
+                    continue
+                if degraded:
+                    _evaluation_metric(
+                        self._metrics,
+                        "evaluation_runner_nats_recovery_count",
+                        outcome="ok",
+                    )
+                    degraded = False
+                for message in messages:
+                    try:
+                        payload = json.loads(message.data)
+                        if not isinstance(payload, dict):
+                            raise TransportValidationError("evaluation message is not an object")
+                        validate_message(cast(dict[str, object], payload))
+                        await runner.accept(payload)
+                        await message.ack()
+                    except (TransportValidationError, UnicodeDecodeError, json.JSONDecodeError):
+                        # Poison messages are terminally rejected and cannot
+                        # be retried into an unbounded redelivery loop.
+                        await message.ack()
+                        _evaluation_metric(
+                            self._metrics,
+                            "evaluation_runner_nats_poison_count",
+                            outcome="rejected",
+                            error_class="validation",
+                        )
+                    except Exception as exc:
+                        if type(exc).__name__ == "AttemptConflict":
+                            # Identity conflicts are permanent poison: retrying
+                            # a request under a different tuple cannot make it
+                            # valid and would redeliver forever.
+                            _evaluation_metric(
+                                self._metrics,
+                                "evaluation_runner_nats_poison_count",
+                                outcome="rejected",
+                                error_class="conflict",
+                            )
+                            await message.ack()
+                            _evaluation_metric(
+                                self._metrics,
+                                "evaluation_runner_nats_identity_conflict_count",
+                                outcome="rejected",
+                                error_class="identity",
+                            )
+                            continue
+                        # Leave transient provider/application failures
+                        # unacknowledged for bounded JetStream redelivery.
+                        _evaluation_metric(
+                            self._metrics,
+                            "evaluation_runner_nats_drain_failure_count",
+                            outcome="error",
+                            error_class="delivery",
+                        )
+                        degraded = True
+                        continue
+
+        await asyncio.gather(drain(request_sub), drain(cancellation_sub))
 
 
 class NatsOutbox:

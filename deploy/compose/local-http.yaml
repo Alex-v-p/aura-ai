@@ -35,6 +35,11 @@ services:
       - local_http_core_garage_data:/var/lib/garage:ro
       - local_http_core_garage_config:/run/garage-config:ro
 
+  aura-evaluation-runner-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
   authentik-postgres:
     volumes: !override
       - local_http_authentik_postgres_data:/var/lib/postgresql/data

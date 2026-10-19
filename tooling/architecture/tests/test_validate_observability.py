@@ -27,6 +27,112 @@ class TypedObservabilityValidatorTests(unittest.TestCase):
             for name in names
         ]
 
+    def _runner_manifest(self):
+        path = ROOT / "services/aura-core/resources/component-manifests/evaluation-runner.yaml"
+        return path, OBSERVABILITY.read_yaml(path)
+
+    def test_aura0091_runner_uses_typed_bounded_metadata_contract(self):
+        path, manifest = self._runner_manifest()
+
+        self.assertIn("aura.evaluation.runner", OBSERVABILITY.TYPED_COMPONENTS)
+        self.assertEqual([], OBSERVABILITY.catalogue_errors([(path, manifest)]))
+
+        metrics = manifest["metrics"]
+        self.assertEqual(set(metrics), set(manifest["metric_semantics"]))
+        self.assertEqual(set(metrics), set(manifest["metric_units"]))
+        self.assertEqual(
+            set(manifest["export"]["health_counters"]),
+            OBSERVABILITY.RUNNER_EXPORT_HEALTH_COUNTERS,
+        )
+
+    def test_aura0091_runner_rejects_untyped_metric_and_unbounded_export(self):
+        path, manifest = self._runner_manifest()
+        mutated = deepcopy(manifest)
+        metric = "evaluation_runner_queue_accepted"
+        mutated["metric_units"][metric] = "seconds"
+        mutated["metric_semantics"].pop(metric)
+        mutated["cardinality"]["metric_attributes"].append("request_id")
+        mutated["export"]["health_counters"].append("request_id")
+        mutated["retention"]["process_buffer"] = "unbounded"
+
+        errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+
+        self.assertTrue(any("metric_semantics must cover" in error for error in errors))
+        self.assertTrue(any("is not a bounded unit" in error for error in errors))
+        self.assertTrue(
+            any("metric_attributes must be the fixed bounded set" in error for error in errors)
+        )
+        self.assertTrue(
+            any("health counters are not fixed and bounded" in error for error in errors)
+        )
+        self.assertTrue(
+            any("process retention is not the bounded policy" in error for error in errors)
+        )
+
+    def test_aura0091_runner_rejects_missing_trace_dependency_privacy_and_export_fields(self):
+        path, manifest = self._runner_manifest()
+        mutated = deepcopy(manifest)
+        mutated["dependencies"] = []
+        mutated["cardinality"]["trace_only"] = ["trace_id"]
+        mutated["cardinality"]["prohibited"] = ["content"]
+        mutated["export"].pop("sink")
+
+        errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+
+        self.assertTrue(
+            any("dependencies must be a non-empty string list" in error for error in errors)
+        )
+        self.assertTrue(
+            any("trace_only must be the fixed bounded set" in error for error in errors)
+        )
+        self.assertTrue(
+            any("prohibited fields lack required privacy fields" in error for error in errors)
+        )
+        self.assertTrue(any("export sink is not bounded" in error for error in errors))
+
+    def test_aura0091_runner_requires_closed_per_metric_definitions(self):
+        path, manifest = self._runner_manifest()
+        mutations = {
+            "name": "evaluation_runner_unknown_metric",
+            "type": "summary",
+            "unit": "seconds",
+            "labels": ["request_id"],
+            "dependencies": ["unbounded_dependency"],
+            "trace": "request_payload",
+            "correlation": "request_id",
+            "export": ["prometheus"],
+        }
+
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                mutated = deepcopy(manifest)
+                mutated["metric_definitions"][0][field] = value
+                errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+                self.assertTrue(
+                    any("metric_definitions" in error for error in errors),
+                    msg=f"missing per-metric validation for {field}: {errors}",
+                )
+
+    def test_aura0091_runner_requires_exact_capture_policy_and_private_field_set(self):
+        path, manifest = self._runner_manifest()
+        mutated = deepcopy(manifest)
+        mutated["capture_policy"] = "controlled_evaluation"
+        errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+        self.assertTrue(any("capture_policy must be metadata_only" in error for error in errors))
+
+        for field in OBSERVABILITY.RUNNER_PROHIBITED_FIELDS:
+            with self.subTest(prohibited=field):
+                mutated = deepcopy(manifest)
+                mutated["cardinality"]["prohibited"].remove(field)
+                errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+                self.assertTrue(
+                    any(
+                        "prohibited fields lack required privacy fields" in error
+                        for error in errors
+                    ),
+                    msg=f"missing private-field validation for {field}: {errors}",
+                )
+
     def test_aura0090_components_use_typed_metadata_contract(self):
         identifiers = {
             "aura.observatory.evaluation_artifact_storage",

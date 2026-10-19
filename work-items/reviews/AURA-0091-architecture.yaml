@@ -1,0 +1,29 @@
+agent: architecture_guardian
+work_item: AURA-0091
+verdict: PASS
+checked:
+  - >-
+    Re-verified the approved ownership zones and complete current diff: the
+    evaluation runner remains a separate thin Core deployable over public Core
+    application ports, with no Observatory source, database, frontend, or
+    protected-baseline changes.
+  - >-
+    Confirmed synthetic evaluation traverses the public RunCoordinator using
+    isolated established Core ports and versioned fixture adapters, while
+    document replay uses the public DocumentService seam and the closed replay
+    registry rejects dynamic component selection.
+  - >-
+    Confirmed fixture revisions are adapter-owned and exact deployment pins
+    fail closed before module or synthetic execution; transport, NATS, SQL
+    ledger, Garage, and migration boundaries remain service-owned and
+    provider-directed.
+  - >-
+    Confirmed the runner topology has no exposed port, only the required
+    Core database, evaluation NATS, evaluation-object, and private ingest
+    networks, dedicated credentials, bounded resources, and no normal Core
+    request dependency on evaluation services.
+  - >-
+    Confirmed module registration, repository shape, service isolation,
+    changed-path, contract, baseline, and deployment topology validation pass;
+    no new ADR or architectural exception is required.
+findings: []

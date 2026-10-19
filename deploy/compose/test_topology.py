@@ -194,7 +194,7 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("AURA_DOCUMENT_EMBEDDING_DIMENSION=768", environment)
 
     def test_browser_e2e_runner_uses_only_the_web_network(self) -> None:
-        e2e = self.compose.split("  frontend-e2e:\n", 1)[1].split("\nsecrets:\n", 1)[0]
+        e2e = compose_service_blocks(self.compose)["frontend-e2e"]
 
         self.assertIn("BASE_URL: http://aura-web:8080", e2e)
         self.assertIn("networks: [aura-frontend]", e2e)
@@ -813,7 +813,9 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("aura-object-storage", garage)
         self.assertIn("aura-object-storage", bootstrap)
         observatory_bootstrap = service_block(
-            self.compose, "observatory-garage-bootstrap", "observatory-api"
+            self.compose,
+            "observatory-garage-bootstrap",
+            "aura-evaluation-runner-garage-bootstrap",
         )
         observatory_worker = service_block(self.compose, "observatory-worker", "observatory-migrate")
         self.assertIn("observatory-object-storage", garage)
@@ -1728,7 +1730,23 @@ class ComposeTopologyTests(unittest.TestCase):
             env_file = fixture / ".env"
             local_env_file = fixture / ".env.local-http"
             password = fixture / "owner-password"
-            env_file.write_text("# launcher test environment\n", encoding="utf-8")
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "# launcher test environment",
+                        f"AURA_NATS_BOOTSTRAP_PASSWORD_FILE={fixture / 'bootstrap-password'}",
+                        f"AURA_NATS_DISPATCH_PASSWORD_FILE={fixture / 'dispatch-password'}",
+                        f"AURA_NATS_RUNNER_PASSWORD_FILE={fixture / 'runner-password'}",
+                        f"AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE={fixture / 'runner-database-password'}",
+                        f"AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE={fixture / 'observatory-access'}",
+                        f"AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE={fixture / 'observatory-secret'}",
+                        f"AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE={fixture / 'runner-access'}",
+                        f"AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE={fixture / 'runner-secret'}",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
 
             def install_stub(name: str, body: str) -> None:
                 path = bin_dir / name

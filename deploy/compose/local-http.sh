@@ -216,6 +216,84 @@ while True:
 PY
 }
 
+ensure_local_secret() {
+  local key=$1 kind=$2 configured path
+  configured=$(configured_value "$key")
+  case "$key" in
+    AURA_NATS_BOOTSTRAP_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-bootstrap-password} ;;
+    AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-database-password} ;;
+    AURA_NATS_DISPATCH_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-dispatch-password} ;;
+    AURA_NATS_RUNNER_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-runner-password} ;;
+    AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-access-key} ;;
+    AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-secret-key} ;;
+    AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-access-key} ;;
+    AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-secret-key} ;;
+  esac
+  path=$(absolute_path "$configured")
+  [ -n "$configured" ] || die "$key must be configured"
+  umask 077
+  mkdir -p "$(dirname -- "$path")"
+  python3 - "$path" "$kind" <<'PY'
+import os
+import secrets
+import stat
+import sys
+
+path, kind = sys.argv[1:]
+if not hasattr(os, "O_NOFOLLOW"):
+    raise SystemExit("local secret creation requires no-follow filesystem support")
+
+
+def validate_existing() -> None:
+    metadata = os.lstat(path)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit("local secret path must be a regular file")
+    if metadata.st_mode & 0o077 or not metadata.st_mode & 0o400:
+        raise SystemExit("local secret file permissions must be owner-readable only")
+    if metadata.st_size == 0:
+        raise SystemExit("local secret file is empty")
+
+
+if os.path.lexists(path):
+    validate_existing()
+    raise SystemExit(0)
+
+if kind == "garage-access":
+    value = "GK" + secrets.token_urlsafe(18)
+elif kind == "garage-secret":
+    value = secrets.token_urlsafe(48)
+elif kind == "nats":
+    value = secrets.token_urlsafe(32)
+elif kind == "database":
+    value = secrets.token_urlsafe(48)
+else:
+    raise SystemExit("unknown generated local secret kind")
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+descriptor = os.open(path, flags, 0o600)
+try:
+    payload = (value + "\n").encode("utf-8")
+    offset = 0
+    while offset < len(payload):
+        offset += os.write(descriptor, payload[offset:])
+    os.fchmod(descriptor, 0o600)
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+}
+
+ensure_evaluation_secrets() {
+  ensure_local_secret AURA_NATS_BOOTSTRAP_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_DISPATCH_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_RUNNER_PASSWORD_FILE nats
+  ensure_local_secret AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE database
+  ensure_local_secret AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE garage-secret
+}
+
 write_local_environment() {
   local subject=$1 relay_url=${2:-} owner_username owner_name owner_password_file temp
   case $subject in
@@ -272,6 +350,7 @@ up() {
   local relay_url
   [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; copy .env.example to .env first"
   ensure_owner_password
+  ensure_evaluation_secrets
   start_ollama_relay
   relay_url=$OLLAMA_RELAY_URL
   # Compose interpolates the whole project before selecting services.  A
