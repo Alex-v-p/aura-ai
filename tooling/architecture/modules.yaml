@@ -139,6 +139,34 @@ modules:
   dependencies:
   - aura-observatory.ports
   - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-definitions
+  root: services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  python_modules:
+  - aura_observatory.evaluation_definitions
+  dependencies:
+  - aura-contract.evaluation-v1
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-evaluators
+  root: services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  python_modules:
+  - aura_observatory.evaluation_evaluators
+  dependencies:
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-storage
+  - aura-observatory.ports
+- id: aura-observatory.adapters.evaluation-definitions
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_definitions
+  dependencies:
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.ports
 - id: aura-observatory.adapters.evaluation-storage
   root: services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
   kind: python
@@ -172,6 +200,9 @@ modules:
   - aura-observatory.ports
   - aura-observatory.evaluation-storage
   - aura-observatory.adapters.evaluation-storage
+  - aura-observatory.adapters.evaluation-definitions
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-evaluators
   - aura-observatory.adapters.object-storage
   - aura-observatory.auth
   - aura-observatory.ingest

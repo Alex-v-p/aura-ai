@@ -1,0 +1,133 @@
+agent: observatory_worker
+work_item: AURA-0093
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.evaluation-definitions
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+  - services/aura-observatory/resources/component-manifests/deterministic-evaluators.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - Closed dataset, case, suite, evaluator, expectation, component, limit, and threshold projections are validated before persistence.
+        - Case content is rejected from the stored domain projection; only digests and opaque authorized artifact UUIDs cross the PostgreSQL adapter.
+migrations:
+  changed: true
+  postgresql:
+    - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  clickhouse:
+    - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+observability:
+  components:
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.deterministic_evaluators
+  metrics_added:
+    - observatory_evaluation_definition_operation_count
+    - observatory_evaluation_definition_validation_count
+    - observatory_evaluator_execution_count
+    - observatory_evaluator_duration_ms
+    - observatory_evaluator_outcome_count
+    - observatory_evaluator_incomplete_evidence_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0093.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0093.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0093.yaml (skipped; no protected baseline changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0093.yaml
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src services/aura-observatory/tests
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory (0 errors, 0 warnings, 0 informations)
+    - uv run pytest services/aura-observatory/tests/test_aura0089_contract.py services/aura-observatory/tests/test_aura0090_migrations.py services/aura-observatory/tests/test_aura0092_migration.py (49 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0086_backend.py services/aura-observatory/tests/test_aura0086_acceptance.py (12 passed)
+    - git diff --check
+    - Representative content-free CaseDefinition round trip and deterministic exact evaluator repeatability
+    - cd services/aura-observatory && uv run ruff check on all changed production modules
+    - cd services/aura-observatory && uv run pyright (0 errors, 0 warnings, 0 informations)
+    - Definition source-kind and manual-retention parity, exact UTC serialization, strict replay evidence validation, score metadata validation, and six-metric observability allowlist checks
+    - Atomic PostgreSQL definition insert path with conflict/idempotent/rejected content-free audit statements and dataset-case membership checks reviewed statically
+    - Focused AURA-0093 contract/definitions/evaluators/score/migration/observability suite: 134 passed
+    - Full Observatory suite: 835 passed, 10 skipped, 2 dependency deprecation warnings
+    - Strengthened evaluator coverage: schema additional-field rejection, context injection completeness/failure, tool schema/side-effect/idempotency enforcement, reserved nested evidence IDs, and typed boolean flags
+    - In-memory definition repository audit coverage for accepted, duplicate, conflict/rejected, and rejected admission outcomes
+    - Production correction pass: exact evaluation-v1 conditional parity, required non-empty support evidence for supported claims, authorization-record lookup with dataset/timestamp/revocation checks, owner-supplied artifact enforcement, artifact UUID/reference identity validation, composite suite dataset FK, immutable case membership, rubric/calibration fingerprinting, durable rejection audits, closed digest/ID/policy/resource evidence validation, explicit context security observations, exact retrieval ranks/cutoffs, distinct retrieval recall/precision/MRR/citation/freshness/irrelevant metrics plus aggregate, selected-evaluator application dispatch, trusted provenance binding, threshold metadata persistence, and composed application service
+    - Focused Ruff and Pyright after correction pass: passed (Pyright 0 errors, 0 warnings, 0 informations)
+    - Final review correction: deterministic registry accepts only closed UUID/symbolic built-ins plus the one reviewed AURA-0089 legacy exact UUID; no UUID-agnostic metric fallback remains.
+    - Final review correction: suite references are deterministic-only, evaluator compatibility is injected from composition without a reverse import, and every suite component ID must be declared by each bound evaluator.
+    - Final review correction: source kind, capture classification, authorization purpose, artifact identity, and containing dataset are validated as one closed compatibility set; synthetic sources remain metadata-only.
+    - Final review correction: response properties and instruction/style IDs, replay numeric fields, and nested boolean/enumeration projections are closed and bounded.
+    - Final review correction: definition operations use monotonic timing with bounded validation/database classifications; definition-state reads and ClickHouse score writes emit separate dependency spans, while evaluator duration covers only the selected deterministic call and execution count is once per invocation.
+    - Final focused evaluator suite: 60 passed.
+    - Final production correction: TypedReplayEvidence rejects boolean byte_count and token_count values while retaining bounded integer validation.
+    - Final focused AURA-0093 matrix: 160 passed.
+    - Final full Observatory suite: 861 passed, 10 skipped, 2 dependency deprecation warnings.
+    - Final Ruff source/test suite, Pyright, work-item, observability, module-registry, service-isolation, changed-path, and diff checks: passed.
+    - Final review correction: claim citation flags, response refusal, selected-token counts, and all optional projection booleans require strict runtime types; support-evidence collections are bounded typed opaque IDs.
+    - Final review correction: evaluator execution count and compute-only duration are emitted immediately after evaluation and before score persistence; dimension-level outcome metrics remain preserved, and downstream ClickHouse failures emit separate clickhouse storage-failure dependency telemetry.
+    - Final review correction: Postgres provider failures cross the adapter as bounded DefinitionStorageError values, are sanitized by the admission service, classified as database_failure, and do not increment validation-rejection counters.
+    - Final strict AURA-0093 matrix: 160 passed.
+    - Final full Observatory suite: 861 passed, 10 skipped, 2 dependency deprecation warnings.
+    - Final Ruff, Pyright, observability, module, isolation, work-item, changed-path, diff, and observability-tooling tests: passed.
+  failed:
+    []
+  not_run:
+    - AURA-0093 evaluator, definition, migration integration, privacy, and Core seam tests remain with the test/evaluation and Core workers.
+    - PostgreSQL fresh/upgraded integration requires the platform-provided disposable Observatory database.
+decisions:
+  - Dataset, case, suite, and evaluator domain records are immutable by stable identifier/version and canonical fingerprint; same-fingerprint writes are idempotent and conflicting reuse raises DefinitionConflictError.
+  - PostgreSQL uses normalized typed columns plus a sanitized closed definition JSON projection; no raw evaluation bytes or provider locators are admitted.
+  - Cases reject embedded content in this service-owned persistence projection. Owner-supplied content requires a content digest or opaque artifact UUID and the corresponding authorization classification.
+  - Suites are admitted only after exact dataset/evaluator/component references exist; thresholds are inert typed comparison metadata and cannot authorize execution or promote baselines.
+  - The deterministic registry contains exactly nine reviewed families at version 1.0.0: exact, schema, retrieval, context, tool, policy, groundedness, response, and resource. Unknown identifiers and versions fail closed.
+  - Evaluators return explicit observed, not_observed, and not_applicable evidence states and finite pass/fail measurements. The existing EvaluationScore port remains the score persistence boundary through to_evaluation_score.
+  - Nested replay evidence is closed recursively: reserved/private claim support and resource keys, non-boolean control flags, undeclared schema fields, missing injection evidence, and mismatched tool schema/side-effect/idempotency observations fail closed.
+  - Non-metadata dataset/case admission resolves authoritative AURA-0090 authorization metadata, including dataset, purpose/context, classification, manual retention, timestamp, and revocation; owner-supplied cases require opaque authorized artifacts.
+  - Definition rejection audits are retried on a fresh transaction after rollback, while rejected state is never committed and provider exception details remain bounded.
+  - The typed application service derives suite/dataset/evaluator/component and threshold provenance from immutable definitions; caller-supplied provenance is checked and never trusted for dispatch.
+  - Evaluation scores persist bounded threshold applicability/value/operator/status alongside case, metric, evidence status, failure code, opaque evidence reference, and reproducibility metadata through forward-only ClickHouse migration 0006.
+  - In-memory and PostgreSQL definition repositories emit content-free accepted, duplicate, conflict, and rejected audit outcomes; suite thresholds must match the bound evaluator metric, with only the reviewed legacy exact_match to evaluation.exact.ratio compatibility alias.
+  - The Observatory implementation has no aura_core import, Core table access, runner transport change, public API, CLI, SSE, browser, judge, baseline, or dependency change.
+  - Evaluator compatibility is a narrow injected port from composition; the definition service has no reverse dependency on the evaluator registry and the module graph remains acyclic.
+  - PostgreSQL definition-state reads and ClickHouse score writes are independently classified and timed; application duration is not reported as evaluator compute latency.
+  - Source-kind and authorization compatibility is enforced both at admission and at the containing dataset boundary; owner-supplied/captured content cannot be attached to a synthetic metadata-only dataset.
+  - Response byte and token counts require actual bounded integers; Python boolean values are rejected despite bool inheriting from int.
+  - Dimension-level evaluator outcome metrics are intentionally retained for multi-measurement evaluators; invocation count and compute duration remain once per evaluator call.
+  - Provider failures are represented by DefinitionStorageError internally and sanitized before crossing the public definition-admission boundary.
+risks:
+  - The broad existing Observatory suite requires the test/evaluation worker to update protected manifest-surface expectations for the two authorized AURA-0093 component manifests before integration.
+  - PostgreSQL adapter integration is unverified here because no disposable database was started by this worker; migration is forward-only and rerunnable and has no DROP TABLE or sensitive storage columns.
+  - PostgreSQL adapter behavior depends on provider rowcount semantics for ON CONFLICT paths; a live disposable PostgreSQL run is still required to verify concurrent duplicate/conflict and audit transaction behavior.
+  - The new ClickHouse score metadata migration is forward-only and must be applied after 0005; no prior migration was altered.
+  - Artifact metadata lookup is intentionally content-free and requires an available, non-revoked artifact whose dataset, authorization record, purpose, context, retention, digest classification, and status match the case.
+  - The production authorization adapter now exposes a narrow record-and-dataset lookup; legacy test doubles without that method use artifact metadata only as a compatibility fallback.
+  - Typed replay evidence rejects reserved identifiers/content-shaped values and bounded-invalid enums; callers must provide reviewed opaque IDs and SHA-256 digests.
+  - Existing AURA-0089 evaluator definitions may use the legacy exact_match metric name; suite admission treats only that reviewed exact-evaluator alias as compatible with evaluation.exact.ratio, while all other threshold metrics must equal the bound evaluator declaration exactly.
+  - Suite component existence is checked against the existing Observatory component catalogue; deployment must synchronize the corresponding component manifests before admitting a suite.
+  - Retrieval multi-family compatibility retains the legacy aggregate projection, while selected retrieval execution and application persistence retain every bounded quality dimension.
+unresolved: []

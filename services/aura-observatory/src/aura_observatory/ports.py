@@ -11,6 +11,12 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from aura_observatory.contract import MetadataObservation
 
 if TYPE_CHECKING:
+    from aura_observatory.evaluation_definitions import (
+        CaseDefinition,
+        DatasetDefinition,
+        EvaluatorDefinition,
+        SuiteDefinition,
+    )
     from aura_observatory.evaluation_storage import (
         ArtifactRecord,
         ArtifactUpload,
@@ -18,6 +24,24 @@ if TYPE_CHECKING:
         DeletionSelector,
         EvaluationScore,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationArtifactMetadata:
+    """Content-free authorization metadata used during case admission."""
+
+    artifact_reference_id: str
+    dataset_id: str
+    capture_classification: str
+    authorization_record_id: str
+    authorization_purpose: str
+    authorization_context: str
+    retention_mode: str
+    sha256: str
+    status: str
+    revoked: bool = False
+    authorized_at: datetime | None = None
+
 
 # These defaults are part of the bounded analytics request contract.  They
 # live beside the inward port so storage adapters can type the request without
@@ -369,6 +393,14 @@ class EvaluationArtifactRepository(Protocol):
 
     async def mark_artifact_failed(self, artifact_reference_id: str, failure_code: str) -> None: ...
 
+    async def lookup_artifact_metadata(
+        self, artifact_reference_id: str
+    ) -> EvaluationArtifactMetadata | None: ...
+
+    async def lookup_authorization_metadata(
+        self, authorization_record_id: str, dataset_id: str
+    ) -> EvaluationArtifactMetadata | None: ...
+
     async def create_deletion_command(
         self, command: DeletionCommand, *, score_ids: Sequence[str] = ()
     ) -> DeletionCommand: ...
@@ -432,6 +464,32 @@ class EvaluationScoreStore(Protocol):
     async def delete_scores_for_ids(self, score_ids: Sequence[str]) -> None: ...
 
 
+class EvaluationDefinitionRepository(Protocol):
+    """Immutable Observatory-owned definitions and exact-version references."""
+
+    async def create_dataset(self, definition: DatasetDefinition) -> DatasetDefinition: ...
+
+    async def create_case(self, definition: CaseDefinition) -> CaseDefinition: ...
+
+    async def create_evaluator(self, definition: EvaluatorDefinition) -> EvaluatorDefinition: ...
+
+    async def create_suite(self, definition: SuiteDefinition) -> SuiteDefinition: ...
+
+    async def get_dataset(self, resource_id: str, version: str) -> DatasetDefinition | None: ...
+
+    async def get_case(self, resource_id: str, version: str) -> CaseDefinition | None: ...
+
+    async def get_evaluator(self, resource_id: str, version: str) -> EvaluatorDefinition | None: ...
+
+    async def get_suite(self, resource_id: str, version: str) -> SuiteDefinition | None: ...
+
+    async def component_exists(self, component_id: str, version: str) -> bool: ...
+
+    async def dataset_case_membership_complete(self, dataset_id: str, version: str) -> bool: ...
+
+    async def case_declared(self, dataset_id: str, version: str, case_id: str) -> bool: ...
+
+
 class EvaluationOrchestrationPort(Protocol):
     """Application boundary for durable evaluation lifecycle operations."""
 
@@ -465,5 +523,6 @@ __all__ = [
     "EvaluationArtifactRepository",
     "EvaluationObjectStore",
     "EvaluationScoreStore",
+    "EvaluationDefinitionRepository",
     "EvaluationOrchestrationPort",
 ]

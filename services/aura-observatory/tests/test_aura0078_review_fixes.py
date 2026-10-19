@@ -915,6 +915,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.evaluation_deletion",
         "aura.observatory.evaluation_orchestration",
         "aura.observatory.evaluation_scheduler",
+        "aura.observatory.evaluation_definitions",
+        "aura.observatory.deterministic_evaluators",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -1005,6 +1007,18 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_evaluation_scheduler_occurrence_count",
                 "observatory_evaluation_dependency_outcome_count",
                 "observatory_evaluation_operation_duration_ms",
+            }
+        elif manifest_id == "aura.observatory.evaluation_definitions":
+            expected_metrics = {
+                "observatory_evaluation_definition_operation_count",
+                "observatory_evaluation_definition_validation_count",
+            }
+        elif manifest_id == "aura.observatory.deterministic_evaluators":
+            expected_metrics = {
+                "observatory_evaluator_execution_count",
+                "observatory_evaluator_duration_ms",
+                "observatory_evaluator_outcome_count",
+                "observatory_evaluator_incomplete_evidence_count",
             }
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {

@@ -228,6 +228,233 @@
       },
       "description": "Explicitly authorized inert evaluation data. Consumers must never interpret it as system instructions, permissions, configuration, paths, provider selection, endpoints, credentials, object keys, or execution authority."
     },
+    "ExpectationMetadataIdentifier": {
+      "allOf": [
+        { "$ref": "#/$defs/SafeIdentifier" },
+        {
+          "not": {
+            "type": "string",
+            "pattern": "(?:^|[._:+-])(?:[Oo][Ww][Nn][Ee][Rr]|[Uu][Ss][Ee][Rr]|[Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Aa][Ss][Hh]|[Dd][Ii][Gg][Ee][Ss][Tt]|[Ee][Nn][Dd][Pp][Oo][Ii][Nn][Tt]|[Uu][Rr][Ll]|[Uu][Rr][Ii]|[Pp][Aa][Tt][Hh]|[Ff][Ii][Ll][Ee][Nn][Aa][Mm][Ee]|[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Oo][Bb][Jj][Ee][Cc][Tt][._:+-][Kk][Ee][Yy])(?:$|[._:+-])"
+          }
+        }
+      ],
+      "description": "Bounded expectation metadata identifier. Case-insensitive reserved privacy, identity, credential, network-locator, storage-locator, content, digest, authentication, and session segments are prohibited when delimited by the identifier grammar."
+    },
+    "EvidenceId": {
+      "$ref": "#/$defs/ExpectationMetadataIdentifier",
+      "description": "Opaque fixture-scoped evidence identity; never content, a storage locator, filename, URL, owner identity, or provider object key."
+    },
+    "ExactFieldExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fieldId", "expectedDigest", "normalization"],
+      "properties": {
+        "fieldId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "expectedDigest": { "$ref": "#/$defs/Sha256" },
+        "normalization": { "type": "string", "enum": ["none", "canonical_json", "unicode_nfc", "trimmed_text"] }
+      },
+      "description": "Digest-only exact-field expectation over a service-owned typed replay projection."
+    },
+    "ExactExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/ExactFieldExpectation" } }
+      }
+    },
+    "SchemaExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaDigest", "dialect", "additionalFieldsPolicy"],
+      "properties": {
+        "schemaDigest": { "$ref": "#/$defs/Sha256" },
+        "dialect": { "type": "string", "enum": ["json_schema_2020_12", "openapi_3_1", "typed_projection_v1"] },
+        "additionalFieldsPolicy": { "type": "string", "enum": ["allow", "reject"] },
+        "requiredFieldIds": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" } }
+      },
+      "description": "Schema identity and bounded structural expectations; schema bytes remain in an authorized artifact or reviewed fixture."
+    },
+    "RankedEvidenceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "relevanceGrade", "citationRequired", "freshness"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/EvidenceId" },
+        "relevanceGrade": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "citationRequired": { "type": "boolean" },
+        "freshness": { "type": "string", "enum": ["current", "stale", "not_applicable"] }
+      }
+    },
+    "RetrievalExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rankedEvidence", "cutoffs"],
+      "properties": {
+        "rankedEvidence": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/RankedEvidenceExpectation" } },
+        "cutoffs": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 1000 } },
+        "irrelevantEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } }
+      },
+      "description": "Bounded relevance, rank, citation, freshness, and irrelevant-result expectations for deterministic recall, precision, MRR, ranking, stale-result, and irrelevant-context evaluation."
+    },
+    "ContextExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredEvidenceIds", "maxSelectedTokens", "truncation", "conflictHandling"],
+      "properties": {
+        "requiredEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "prohibitedEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "maxSelectedTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 },
+        "truncation": { "type": "string", "enum": ["required", "allowed", "prohibited", "not_applicable"] },
+        "conflictHandling": { "type": "string", "enum": ["preserve_authority", "report_conflict", "reject_conflict", "not_applicable"] },
+        "injectionHandling": { "type": "string", "enum": ["ignore_untrusted_instructions", "reject_context", "not_applicable"] }
+      }
+    },
+    "ToolCallExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "toolId", "argumentSchemaDigest", "argumentMatch", "outcome", "sideEffect", "idempotency"],
+      "properties": {
+        "callId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "toolId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "argumentSchemaDigest": { "$ref": "#/$defs/Sha256" },
+        "expectedArgumentDigest": { "$ref": "#/$defs/Sha256" },
+        "argumentMatch": { "type": "string", "enum": ["schema_only", "exact_digest"] },
+        "outcome": { "type": "string", "enum": ["completed", "denied", "confirmation_required", "failed", "not_executed"] },
+        "sideEffect": { "type": "string", "enum": ["none", "expected", "prohibited", "not_observed"] },
+        "idempotency": { "type": "string", "enum": ["required", "not_required", "not_applicable"] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "argumentMatch": { "const": "exact_digest" } }, "required": ["argumentMatch"] },
+          "then": { "type": "object", "required": ["expectedArgumentDigest"] },
+          "else": { "not": { "type": "object", "required": ["expectedArgumentDigest"] } }
+        }
+      ],
+      "description": "Declarative tool evidence only; it never grants tool selection, arguments, permission, confirmation, or execution authority."
+    },
+    "ToolExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expectedCalls", "maxRedundantCalls"],
+      "properties": {
+        "expectedCalls": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/ToolCallExpectation" }, "description": "An empty array explicitly expects no tool call." },
+        "prohibitedToolIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" } },
+        "maxRedundantCalls": { "type": "integer", "minimum": 0, "maximum": 64 }
+      }
+    },
+    "PolicyExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "confirmation", "sensitiveDataHandling", "consequentialAction"],
+      "properties": {
+        "decision": { "type": "string", "enum": ["allow", "deny", "confirm"] },
+        "confirmation": { "type": "string", "enum": ["required", "not_required", "prohibited"] },
+        "sensitiveDataHandling": { "type": "string", "enum": ["allow_authorized", "redact", "deny", "not_applicable"] },
+        "consequentialAction": { "type": "string", "enum": ["execute_after_confirmation", "deny", "no_action", "not_applicable"] },
+        "policyRevision": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }
+      },
+      "description": "Expected policy evidence only; it cannot authorize a policy, permission, identity, confirmation, or action."
+    },
+    "ClaimExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimId", "support", "supportEvidenceIds", "citation"],
+      "properties": {
+        "claimId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "support": { "type": "string", "enum": ["supported", "unsupported", "refused"] },
+        "supportEvidenceIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "citation": { "type": "string", "enum": ["required", "optional", "prohibited", "not_applicable"] }
+      }
+    },
+    "GroundednessExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claims", "unsupportedClaimPolicy"],
+      "properties": {
+        "claims": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/ClaimExpectation" } },
+        "unsupportedClaimPolicy": { "type": "string", "enum": ["fail", "allow_refusal", "not_applicable"] }
+      }
+    },
+    "ResponseExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["properties", "maxBytes", "maxTokens"],
+      "properties": {
+        "expectedDigest": { "$ref": "#/$defs/Sha256" },
+        "normalization": { "type": "string", "enum": ["none", "unicode_nfc", "trimmed_text"] },
+        "requiredInstructionIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }, "description": "Opaque reviewed instruction identities emitted by a typed replay projection; never instruction text." },
+        "requiredStyleIds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }, "description": "Opaque reviewed style identities emitted by a typed replay projection; never prompt or rubric text." },
+        "refusal": { "type": "string", "enum": ["required", "allowed", "prohibited"] },
+        "properties": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["non_empty", "valid_utf8", "schema_valid", "citation_present", "refusal_present", "requested_style_marker_present"] }
+        },
+        "maxBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "required": ["expectedDigest"] },
+          "then": { "type": "object", "required": ["normalization"] },
+          "else": { "not": { "type": "object", "required": ["normalization"] } }
+        }
+      ],
+      "description": "Deterministically observable response properties; semantic model judging remains outside this contract."
+    },
+    "ResourceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "maxLatencyMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "maxQueueMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "maxInputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxOutputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 },
+        "maxMemoryBytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
+        "maxProviderCalls": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxOperations": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "minThroughputPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 }
+      }
+    },
+    "CaseExpectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "exact": { "$ref": "#/$defs/ExactExpectation" },
+        "schema": { "$ref": "#/$defs/SchemaExpectation" },
+        "retrieval": { "$ref": "#/$defs/RetrievalExpectation" },
+        "context": { "$ref": "#/$defs/ContextExpectation" },
+        "tool": { "$ref": "#/$defs/ToolExpectation" },
+        "policy": { "$ref": "#/$defs/PolicyExpectation" },
+        "groundedness": { "$ref": "#/$defs/GroundednessExpectation" },
+        "response": { "$ref": "#/$defs/ResponseExpectation" },
+        "resource": { "$ref": "#/$defs/ResourceExpectation" }
+      },
+      "description": "Closed bounded deterministic expectations over typed replay evidence. Definitions are inert data and cannot select code, providers, endpoints, storage, policy, permissions, or execution."
+    },
+    "ManualThreshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluator", "metric", "aggregation", "operator", "value", "unit", "minimumSampleSize", "missingEvidencePolicy"],
+      "properties": {
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "metric": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "aggregation": { "type": "string", "enum": ["each", "minimum", "maximum", "mean", "p50", "p95", "p99", "total"] },
+        "operator": { "type": "string", "enum": ["greater_than_or_equal", "less_than_or_equal", "equal"] },
+        "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "unit": { "type": "string", "enum": ["ratio", "count", "milliseconds", "bytes", "tokens", "operations", "per_second"] },
+        "minimumSampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "missingEvidencePolicy": { "type": "string", "enum": ["fail", "inconclusive", "not_applicable"] }
+      },
+      "description": "Manual deterministic comparison metadata; it cannot promote a baseline, authorize execution, or alter resource limits."
+    },
     "Dataset": {
       "type": "object",
       "additionalProperties": false,
@@ -262,6 +489,7 @@
         "content": { "$ref": "#/$defs/UntrustedContent" },
         "contentDigest": { "$ref": "#/$defs/Sha256" },
         "inputArtifactIds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" }, "description": "Opaque references to artifacts whose authorization must be verified by consumers as at least as restrictive as this case's capture authorization." },
+        "expectations": { "$ref": "#/$defs/CaseExpectations" },
         "retentionMode": { "$ref": "#/$defs/RetentionMode" },
         "provenance": { "$ref": "#/$defs/ResourceProvenance" },
         "createdAt": { "$ref": "#/$defs/Timestamp" }
@@ -294,6 +522,7 @@
         "evaluators": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/EvaluatorReference" } },
         "components": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ComponentBinding" } },
         "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "manualThresholds": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/ManualThreshold" } },
         "retentionMode": { "$ref": "#/$defs/RetentionMode" },
         "provenance": { "$ref": "#/$defs/ResourceProvenance" },
         "createdAt": { "$ref": "#/$defs/Timestamp" }

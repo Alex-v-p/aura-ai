@@ -1,0 +1,269 @@
+id: AURA-0093
+title: Add versioned datasets suites and deterministic evaluators
+status: integrated
+change_class: repository_governance
+intent: >
+  Let Observatory define immutable authorized evaluation datasets cases suites
+  and deterministic evaluators, execute bounded repeatable scoring over typed
+  Core replay evidence, and persist content-free scores while preserving Core
+  ownership, metadata-only production telemetry, manual retention, and strict
+  evaluation-content isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - The accepted architecture already assigns evaluation definitions deterministic scoring and analysis to Observatory and exact component execution to the isolated Core Evaluation Runner, so this item introduces no new service protocol provider or architectural boundary and requires no new ADR.
+    - Observatory PostgreSQL is authoritative for immutable dataset case suite and evaluator definitions, authorization provenance and manual thresholds; ClickHouse remains authoritative for high-cardinality content-free scores through the existing evaluation score port; authorized raw artifacts remain solely in the existing Observatory Garage bucket.
+    - Dataset and case records contain bounded identifiers capture authorization classifications digests scopes component bindings and opaque artifact references; PostgreSQL never stores prompts responses documents rubric text comments filenames object locators or other evaluation content.
+    - Dataset versions are immutable and explicitly classify their source as synthetic or owner_supplied; owner-supplied content requires an authorized artifact reference while synthetic cases may use only reviewed deterministic fixture identifiers and typed expectations.
+    - Suites bind exact dataset evaluator and component versions plus bounded execution budgets and explicit manual deterministic thresholds; threshold comparison reports evidence but does not create or promote a baseline.
+    - The evaluation v1 contract gains only additive closed typed definitions for case expectations and suite thresholds; arbitrary mappings dynamic evaluator configuration caller-selected code and unbounded extension attributes remain prohibited.
+    - Deterministic evaluators are registered by closed service-owned identifier and version, consume only typed bounded case expectations and typed replay projections, and produce finite content-free score records with stable metric names outcomes evidence references and reproducibility metadata.
+    - Exact and schema retrieval context tool policy groundedness response and resource evaluators are deterministic-first, fail closed on malformed or missing evidence, explicitly represent not_applicable and incomplete evidence, and never infer success from absent data.
+    - Existing suitable Core test evaluators may be exposed through reviewed public Core evaluator or replay ports and production modules, but Observatory never imports aura_core and no Core implementation is copied into Observatory.
+    - AURA-0093 may add closed replay projections or public exports needed to evaluate exact deployed components, but it does not widen NATS transport with raw content, directly read Core state, make the Core runner authoritative for scores, or make normal Core availability depend on Observatory.
+    - Evaluation content is untrusted, retained until explicit manual deletion, and cannot appear in NATS lifecycle events production telemetry logs metrics traces errors SSE URLs screenshots test reports or browser persistence.
+    - Independent review authorizes a narrow artifact-metadata lookup through the existing AURA-0090 repository, exact dataset-to-case-version membership, atomic content-free definition audits, a typed evaluator application service, runtime metadata-only instrumentation, and a forward-only ClickHouse score-metadata migration; these corrections preserve existing service and provider boundaries and require no ADR.
+    - The score metadata migration may add bounded case metric evidence-status failure-code opaque evidence-reference reproducibility and threshold-applicability columns to the existing Observatory-owned score table, but may not alter prior ClickHouse migrations or persist evaluation content.
+    - This item adds no public HTTP CLI SSE browser judge model experiment baseline alert external message or production telemetry capture behavior; those remain assigned to AURA-0094 through AURA-0097.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-003
+  - EVA-004
+  - EVA-005
+  - EVA-006
+  - EVA-007
+  - EVA-008
+  - EVA-009
+  - EVA-010
+  - EVA-011
+  - EVA-012
+  - EVA-013
+  - EVA-014
+  - EVA-015
+  - CMP-001
+  - CMP-002
+  - CMP-003
+  - CMP-004
+  - CMP-005
+  - CMP-006
+  - CMP-007
+  - CMP-008
+  - CMP-009
+  - CMP-010
+  - CMP-011
+  - CMP-012
+  - CMP-013
+  - CMP-014
+  - CMP-015
+  - CMP-016
+  - CMP-017
+  - CMP-018
+  - CMP-019
+ownership_zones:
+  - contracts.evaluation-v1
+  - services.aura-observatory.evaluation-definitions
+  - services.aura-observatory.deterministic-evaluators
+  - services.aura-observatory.evaluation-definition-state
+  - services.aura-observatory.evaluation-score-storage
+  - services.aura-core.public-evaluator-ports
+  - services.aura-core.runtime-replay-projections
+  - repository.module-registration
+  - evaluation.dataset-suite-evaluator-tests
+allowed_paths:
+  - work-items/active/AURA-0093.yaml
+  - work-items/archived/AURA-0093.yaml
+  - work-items/handoffs/AURA-0093-*.yaml
+  - work-items/reviews/AURA-0093-*.yaml
+  - work-items/integration/AURA-0093.yaml
+  - contracts/evaluation/v1/evaluation.schema.json
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml
+  - services/aura-observatory/resources/component-manifests/deterministic-evaluators.yaml
+  - services/aura-observatory/tests/test_aura0093_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0086_query_corrections.py
+  - services/aura-core/src/aura_core/runtime/replay/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/__init__.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/evaluation.py
+  - services/aura-core/resources/component-manifests/*.yaml
+  - services/aura-core/tests/test_aura0093_*.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+  - tooling/architecture/tests/test_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+  - contracts/events/**
+  - contracts/openapi/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0005_evaluation_scores.sql
+  - services/aura-core/src/aura_core/entrypoints/**
+  - services/aura-core/src/aura_core/bootstrap/**
+  - services/aura-core/src/aura_core/platform/**
+  - services/aura-core/migrations/**
+  - frontend/**
+  - deploy/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: true
+  affected:
+    - evaluation-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-definitions
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.deterministic_evaluators
+  required_metrics:
+    - observatory_evaluation_definition_operation_count
+    - observatory_evaluation_definition_validation_count
+    - observatory_evaluator_execution_count
+    - observatory_evaluator_duration_ms
+    - observatory_evaluator_outcome_count
+    - observatory_evaluator_incomplete_evidence_count
+  required_evaluators:
+    - evaluation_definition_contract_validation
+    - evaluation_definition_immutability
+    - evaluation_suite_binding_validation
+    - deterministic_evaluator_repeatability
+    - deterministic_evaluator_negative_cases
+    - evaluation_score_privacy
+    - evaluation_core_boundary_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Evaluation content is explicitly authorized untrusted data and cannot select imports callables providers endpoints credentials object paths subjects policies permissions or execution authority.
+    - Dataset case suite evaluator expectation and threshold schemas are closed and bounded and reject unknown fields unsupported versions malformed identifiers non-finite numbers arbitrary attributes and credential or endpoint shaped extension data.
+    - PostgreSQL definition rows store only identifiers versions scopes classifications provenance digests component bindings budgets thresholds fixture identifiers and opaque artifact references; authorized bytes remain only in Garage under existing manual-retention controls.
+    - Definitions are immutable after creation and idempotent same-fingerprint writes return the existing record while identifier-version conflicts with a different fingerprint fail closed and remain auditable without content.
+    - Owner-supplied cases require explicit capture authorization artifact classification byte count digest and opaque reference compatibility; synthetic cases cannot silently acquire owner data or normal Core state.
+    - Evaluator dispatch is a closed registry with exact identifier and version matching and cannot dynamically import execute expressions invoke tools or broaden component authority.
+    - Every evaluator consumes bounded typed evidence treats missing partial malformed and contradictory evidence explicitly and emits finite scores bounded counts fixed outcome enums and opaque evidence references without copying raw inputs or outputs.
+    - Metric log trace and error dimensions are fixed low-cardinality operation evaluator-kind outcome and failure-code values and never contain dataset suite case job attempt artifact owner component-instance digest content or exception text.
+    - Observatory never imports aura_core reads Core databases or depends on Core process memory; any Core change exposes existing deterministic behavior only through public production ports and exact-version replay projections.
+    - Manual thresholds are inert comparison metadata and cannot promote repository or database baselines authorize execution change budgets or weaken a failing result.
+    - Deletion and retention behavior remains manual and is not widened by definition persistence; no TTL scheduled purge or hidden content cache is added.
+  data_classes:
+    - evaluation_definition_metadata
+    - evaluation_content_authorization_metadata
+    - evaluation_expectation_metadata
+    - evaluation_threshold_metadata
+    - evaluation_score_metadata
+    - evaluation_reproducibility_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The additive evaluation-v1 schema defines closed bounded typed case expectations for exact schema retrieval context tool policy groundedness response and resource evaluation and closed bounded manual suite thresholds without invalidating existing AURA-0089 resources.
+  - Dataset case suite and evaluator contracts retain stable identifiers explicit schema versions immutable resource versions timestamps capture classifications provenance digests component bindings limits and reproducibility references and reject unknown fields sensitive keys arbitrary attributes and non-finite numbers.
+  - A forward-only idempotent PostgreSQL migration from empty and upgraded Observatory schemas creates normalized immutable dataset case suite evaluator binding threshold and definition-audit state without altering migrations 0001 through 0008 or reading Core tables.
+  - Synthetic and owner-supplied dataset versions use explicit scopes and source classifications; owner-supplied cases require authorized opaque artifact references and synthetic cases use reviewed fixture identities without storing raw content in PostgreSQL.
+  - Creating a definition with the same stable identifier version and canonical fingerprint is idempotent while conflicting immutable reuse fails closed; exact referenced dataset evaluator component and artifact versions must exist and remain compatible before a suite can be admitted.
+  - Suite definitions bind exact dataset evaluator and component versions plus bounded case token byte duration provider concurrency and resource budgets and typed manual thresholds whose units directions and missing-evidence policy are explicit.
+  - A closed evaluator registry resolves only reviewed identifier-version pairs and rejects unknown mismatched duplicate dynamically selected or incompatible evaluators without importing Core or executing user-controlled code.
+  - Deterministic exact and schema evaluators compare typed normalized outputs and schemas with explicit mismatch evidence and stable finite scores across repeated execution.
+  - Deterministic retrieval and context evaluators measure recall ranking citation support irrelevant-context resistance context use and injection resistance from bounded typed evidence while distinguishing missing partial and not-applicable evidence.
+  - Deterministic tool and policy evaluators measure selection argument shape authorization denial approval boundary and consequential-action behavior without executing tools or accepting arbitrary executable policies.
+  - Deterministic groundedness and response evaluators measure claim support citation consistency instruction satisfaction refusal and bounded response properties without a model judge network access or heuristic leakage of raw content.
+  - Deterministic resource evaluators compare declared and observed time token byte provider and operation measurements against bounded budgets with explicit units and deterministic boundary semantics.
+  - Evaluator results use the existing Observatory score port and ClickHouse score storage as finite content-free records with job case evaluator metric score outcome threshold applicability evidence reference and reproducibility metadata and never store raw content in ClickHouse.
+  - Existing suitable document retrieval grounding and attachment evaluation behavior is reached through reviewed public Core evaluator or replay seams with exact component versions; no Core behavior is copied into Observatory and unknown or non-replayable components fail closed.
+  - Definition and evaluator component manifests declare ownership dependencies measurements schemas evaluator identities metadata-only operational capture authorized-content data handling and manual retention without creating a deployable service.
+  - Unit property contract migration upgrade idempotency concurrency privacy and boundary tests cover every evaluator family positive negative malformed missing partial contradictory threshold and resource-boundary cases and prove repeated execution is stable.
+  - Privacy tests prove evaluation content credentials endpoints object locators filenames owner identity arbitrary attributes and exception text never enter PostgreSQL metadata ClickHouse scores NATS events telemetry logs metrics traces errors or committed reports and fixtures.
+  - Existing AURA-0090 artifact storage AURA-0091 runner and AURA-0092 orchestration tests remain passing and Core normal tests prove the public evaluator seams do not affect API worker scheduler migration readiness or ordinary activity.
+  - No HTTP OpenAPI CLI SSE Angular browser local judge experiment baseline promotion alert external delivery dependency upgrade protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0093.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0093.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0093.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0093.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0093.yaml
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - cd services/aura-core && uv run ruff check src/aura_core/runtime/replay src/aura_core/domains/knowledge/documents src/aura_core/domains/artifacts/attachments tests/test_aura0093_*.py
+  - cd services/aura-core && uv run pyright
+  - cd services/aura-core && uv run pytest tests/test_aura0093_*.py
+  - cd services/aura-core && uv run pytest tests/test_document_contract.py tests/test_document_retrieval.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Local Ollama judge definitions prompts rubrics seeds model digests calibration disagreement and human review remain assigned to AURA-0094 and cloud judges remain prohibited.
+  - Evaluation HTTP OpenAPI CLI SSE browser dataset upload artifact download suite composition progress review and deletion workflows remain assigned to AURA-0095.
+  - Experiments cohorts immutable database baselines regression comparison attribution history and explicit promotion remain assigned to AURA-0096; protected repository baselines remain unchanged.
+  - Dashboard saved-query alert annotation and incident behavior remains assigned to AURA-0097.
+  - Full-stack evaluation browser acceptance dependency outage coverage and final operator documentation remain assigned to AURA-0098.

@@ -1,0 +1,66 @@
+agent: integration_maintainer
+work_item: AURA-0093
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0093-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0093-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0093-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0093-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0093-test-evaluation.yaml (PASS; test_evaluation_engineer)
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      All four implementation handoffs are complete, all five required review
+      verdicts are PASS, and no unresolved findings or semantic conflicts remain.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0093.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0093.yaml passed for the complete implementation
+      scope.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0093.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0093.yaml passed with the expected no-change skip.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0093.yaml passed.
+    - cd services/aura-observatory && uv run ruff check src tests passed.
+    - cd services/aura-observatory && uv run pyright passed with zero diagnostics.
+    - cd services/aura-observatory && uv run pytest tests passed: 868 passed, 10 skipped, 2 warnings.
+    - >-
+      cd services/aura-core && uv run ruff check src/aura_core/runtime/replay
+      src/aura_core/domains/knowledge/documents
+      src/aura_core/domains/artifacts/attachments tests/test_aura0093_*.py passed.
+    - cd services/aura-core && uv run pyright passed with zero diagnostics.
+    - cd services/aura-core && uv run pytest tests/test_aura0093_*.py passed: 4 passed.
+    - >-
+      cd services/aura-core && uv run pytest tests/test_document_contract.py
+      tests/test_document_retrieval.py passed: 29 passed.
+    - >-
+      Live project-scoped Docker Desktop PostgreSQL 17 migration, forward
+      rerun, concurrent idempotent insert, immutable conflict, row-count, and
+      durable audit test passed: 1 passed; exact disposable container was
+      removed by scoped cleanup and no credential was printed or persisted.
+    - git diff --check passed.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The complete Core Ruff command retains one pre-existing unrelated E501 in
+    services/aura-core/migrations/versions/0015_notification_delivery.py:53;
+    that migration is outside AURA-0093 and was not changed.
+  - >-
+    Ten Observatory tests remain explicitly skipped because they require
+    unrelated opt-in external services; the AURA-0093 PostgreSQL integration
+    was run live against a disposable Docker Desktop PostgreSQL 17 instance.

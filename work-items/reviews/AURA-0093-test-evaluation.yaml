@@ -1,0 +1,56 @@
+agent: test_evaluation_engineer
+work_item: AURA-0093
+verdict: PASS
+checked:
+  - >-
+    Re-read the active AURA-0093 work item, EVA-001–015 and CMP-001–019
+    acceptance criteria, evaluation-v1 contract, current implementation diff,
+    prior findings, and implementation/review handoffs. No reviewed
+    production or test implementation was modified.
+  - >-
+    Ran `AURA_WORK_ITEM=AURA-0093 uv run pytest -q
+    services/aura-observatory/tests/test_aura0093_*.py
+    services/aura-core/tests/test_aura0093_*.py`: 164 passed and one opt-in
+    PostgreSQL test skipped when no URL was configured.
+  - >-
+    Ran the complete Observatory suite: 861 passed, 10 skipped, and two
+    existing deprecation warnings. Ran assigned Observatory Ruff and Pyright
+    checks: Ruff passed and Pyright reported zero errors, warnings, or
+    informations.
+  - >-
+    Ran the opt-in PostgreSQL integration against a disposable PostgreSQL 17
+    container: fresh schema migration, forward rerun, concurrent
+    same-fingerprint admission, immutable conflict, row-count, and durable
+    accepted/duplicate/rejected audit checks all passed. The disposable
+    container was removed after the check.
+  - >-
+    Verified retrieval execution now emits bounded, separately named
+    recall@1, precision@1, recall@3, precision@3, MRR, citation-support,
+    freshness, irrelevant-rate, and aggregate measurements; focused tests
+    assert the distinct metric set and adversarial retrieval outcomes.
+  - >-
+    Verified application scoring rejects a component/version not bound to the
+    admitted suite and preserves threshold applicability, reference, value,
+    operator, and missing-evidence status in the persisted score metadata.
+  - >-
+    Ran the response-focused evaluator probes: 12 passed. Boundary checks
+    confirm boolean refusal, instruction, style, and property comparisons are
+    counted as numeric score checks, including valid false values, and do not
+    produce false missing-evidence results.
+  - >-
+    Verified evaluator-family tests cover exact, schema, retrieval, context,
+    tool, policy, groundedness, response, and resource positive, missing,
+    malformed, contradictory, boundary, repeatability, and closed-registry
+    paths. Definition tests cover immutable idempotency/conflict, dependency
+    membership, captured/owner-supplied authorization, artifact mismatch,
+    and suite threshold binding.
+  - >-
+    Verified observability tests exercise all six declared AURA-0093 metrics,
+    component spans, rejected-definition validation counters, bounded labels,
+    and content-free OTLP output; score and migration tests cover complete
+    content-free metadata and forward/idempotent schema changes.
+  - >-
+    Verified no remaining test-evaluation finding was evidenced after the
+    strengthened implementation and focused/live checks; no protected
+    baselines or golden results were changed by this review.
+findings: []

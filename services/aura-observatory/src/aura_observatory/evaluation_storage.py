@@ -6,6 +6,7 @@ evaluation work items.  Bytes are streamed once to the private object-store
 port and are never represented in a domain record, log, metric, or database
 parameter.
 """
+# pyright: reportUnnecessaryIsInstance=false
 
 from __future__ import annotations
 
@@ -60,6 +61,7 @@ class _ObjectStoreFixture(Protocol):
 
 class _ScoreStoreFixture(Protocol):
     async def delete_scores_for_artifact(self, reference: str) -> None: ...
+
 
 MAX_IDENTIFIER_LENGTH = 128
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
@@ -291,6 +293,16 @@ class EvaluationScore:
     outcome: str | None
     observed_at: datetime
     artifact_reference_id: str | None = None
+    case_id: str | None = None
+    metric: str = "evaluation.score"
+    failure_code: str | None = None
+    evidence_reference: str | None = None
+    reproducibility: str = "deterministic-v1"
+    threshold_applicable: bool | None = None
+    threshold_reference: str | None = None
+    threshold_value: float | None = None
+    threshold_operator: str | None = None
+    threshold_status: str | None = None
 
     def validate(self) -> None:
         for name in (
@@ -304,6 +316,53 @@ class EvaluationScore:
             _require_uuid(getattr(self, name), name)
         if self.artifact_reference_id is not None:
             _require_uuid(self.artifact_reference_id, "artifact_reference_id")
+        if self.case_id is not None:
+            _require_uuid(self.case_id, "case_id")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]{0,95}", self.metric):
+            raise ArtifactStorageError("score_invalid")
+        for value, _name in (
+            (self.failure_code, "failure_code"),
+            (self.evidence_reference, "evidence_reference"),
+            (self.threshold_reference, "threshold_reference"),
+            (self.reproducibility, "reproducibility"),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or len(value) > 128
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value)
+            ):
+                raise ArtifactStorageError("score_invalid")
+        if self.threshold_applicable is not None and not isinstance(
+            self.threshold_applicable, bool
+        ):
+            raise ArtifactStorageError("score_invalid")
+        if self.threshold_value is not None and (
+            not math.isfinite(self.threshold_value) or abs(self.threshold_value) > 1.0e15
+        ):
+            raise ArtifactStorageError("score_invalid")
+        if self.threshold_operator is not None and self.threshold_operator not in {
+            "greater_than_or_equal",
+            "less_than_or_equal",
+            "equal",
+        }:
+            raise ArtifactStorageError("score_invalid")
+        if self.threshold_status is not None and self.threshold_status not in {
+            "pass",
+            "fail",
+            "inconclusive",
+            "not_applicable",
+        }:
+            raise ArtifactStorageError("score_invalid")
+        if self.threshold_applicable is False and any(
+            value is not None
+            for value in (
+                self.threshold_reference,
+                self.threshold_value,
+                self.threshold_operator,
+                self.threshold_status,
+            )
+        ):
+            raise ArtifactStorageError("score_invalid")
         if self.evaluator_kind not in {"deterministic", "local_judge", "human_review"}:
             raise ArtifactStorageError("score_invalid")
         if self.capture_classification not in {
@@ -606,14 +665,14 @@ class EvaluationDeletionService:
                 await lease.ensure()
                 await _fenced_phase(self.repository, command.command_id, "scores", lease.token)
                 delete_ids: Any = getattr(self.score_store, "delete_scores_for_ids", None)
-                score_target_reader: Any = getattr(
-                    self.repository, "deletion_score_targets", None
-                )
+                score_target_reader: Any = getattr(self.repository, "deletion_score_targets", None)
                 score_target_marker: Any = getattr(
                     self.repository, "mark_deletion_score_target", None
                 )
-                if callable(delete_ids) and callable(score_target_reader) and callable(
-                    score_target_marker
+                if (
+                    callable(delete_ids)
+                    and callable(score_target_reader)
+                    and callable(score_target_marker)
                 ):
                     while True:
                         score_targets = await cast(Any, score_target_reader)(
@@ -768,9 +827,7 @@ class _DeletionLeaseGuard:
             raise DeletionFailure("lease_lost")
         renew = getattr(self.repository, "renew_deletion_lease", None)
         if callable(renew):
-            result = await _call_with_optional_lease(
-                renew, (self.command_id,), self.token
-            )
+            result = await _call_with_optional_lease(renew, (self.command_id,), self.token)
             if result is False:
                 self.lost = True
                 raise DeletionFailure("lease_lost")
@@ -782,9 +839,7 @@ class _DeletionLeaseGuard:
                 renew = getattr(self.repository, "renew_deletion_lease", None)
                 if not callable(renew):
                     return
-                renewed = await _call_with_optional_lease(
-                    renew, (self.command_id,), self.token
-                )
+                renewed = await _call_with_optional_lease(renew, (self.command_id,), self.token)
                 if renewed is False:
                     self.lost = True
                     return
@@ -807,7 +862,7 @@ class _DeletionLeaseGuard:
 def _accepts_lease(method: Any) -> bool:
     try:
         parameters = inspect.signature(method).parameters.values()
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return True
     return any(
         parameter.name == "lease_token" or parameter.kind is parameter.VAR_KEYWORD
@@ -863,9 +918,7 @@ async def _fenced_complete(
     return deleted if result is None else int(result)
 
 
-async def _fenced_failure(
-    repository: Any, command_id: str, failure_code: str, token: str
-) -> None:
+async def _fenced_failure(repository: Any, command_id: str, failure_code: str, token: str) -> None:
     method = getattr(repository, "fail_deletion_command", None)
     if not callable(method):
         return
@@ -910,8 +963,7 @@ def _require_uuid(value: str, field_name: str) -> None:
 
 def _require_version(value: str, field_name: str) -> None:
     if not _VERSION_RE.fullmatch(value) or any(
-        segment in _RESERVED_VERSION_SEGMENTS
-        for segment in re.split(r"[._+-]+", value.casefold())
+        segment in _RESERVED_VERSION_SEGMENTS for segment in re.split(r"[._+-]+", value.casefold())
     ):
         raise ArtifactStorageError("score_invalid", f"{field_name} is not a valid version")
 
@@ -966,9 +1018,7 @@ def _failure_code(error: Exception) -> str:
     return _bounded_failure_code(error, _DELETION_FAILURE_CODES, fallback="storage_failure")
 
 
-def _bounded_failure_code(
-    error: BaseException, allowed: frozenset[str], *, fallback: str
-) -> str:
+def _bounded_failure_code(error: BaseException, allowed: frozenset[str], *, fallback: str) -> str:
     """Read only a finite adapter code; never expose exception diagnostics."""
 
     value = getattr(error, "failure_code", None)
@@ -1008,11 +1058,10 @@ async def _put_stream_with_digest(
     method = store.put_stream
     try:
         parameters = dict(inspect.signature(method).parameters)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         parameters: dict[str, inspect.Parameter] = {}
     if "expected_sha256" in parameters or any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     ):
         return await method(
             reference,

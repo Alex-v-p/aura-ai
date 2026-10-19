@@ -24,15 +24,30 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
     {
         "aura.observatory.evaluation_orchestration",
         "aura.observatory.evaluation_scheduler",
+        "aura.observatory.evaluation_definitions",
+        "aura.observatory.deterministic_evaluators",
     }
 )
 COMPONENT_SPAN_OPERATIONS = frozenset(
-    {"dispatch", "publish", "result_apply", "recover", "schedule_materialize", "heartbeat"}
+    {
+        "dispatch",
+        "publish",
+        "result_apply",
+        "recover",
+        "schedule_materialize",
+        "heartbeat",
+        "admit",
+        "evaluate",
+        "read",
+        "write",
+    }
 )
-COMPONENT_SPAN_DEPENDENCIES = frozenset({"postgresql", "evaluation_nats"})
+COMPONENT_SPAN_DEPENDENCIES = frozenset(
+    {"postgresql", "clickhouse", "evaluation_definition_state", "evaluation_nats"}
+)
 COMPONENT_SPAN_OUTCOMES = frozenset({"success", "failure", "duplicate", "timeout", "unavailable"})
 COMPONENT_SPAN_ERRORS = frozenset(
-    {"database_failure", "transport_unavailable", "timeout", "validation"}
+    {"database_failure", "storage_failure", "transport_unavailable", "timeout", "validation"}
 )
 MAX_LAG_MS = 604_800_000.0
 MAX_LATENCY_MS = 600_000.0
@@ -386,6 +401,7 @@ class ObservatoryMetrics:
             "observatory_evaluation_deletion_duration_ms",
             "observatory_evaluation_result_lag_seconds",
             "observatory_evaluation_operation_duration_ms",
+            "observatory_evaluator_duration_ms",
         }
     )
 
@@ -435,6 +451,12 @@ class ObservatoryMetrics:
         "observatory_evaluation_scheduler_occurrence_count",
         "observatory_evaluation_result_lag_seconds",
         "observatory_evaluation_operation_duration_ms",
+        "observatory_evaluation_definition_operation_count",
+        "observatory_evaluation_definition_validation_count",
+        "observatory_evaluator_execution_count",
+        "observatory_evaluator_duration_ms",
+        "observatory_evaluator_outcome_count",
+        "observatory_evaluator_incomplete_evidence_count",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -482,6 +504,16 @@ class ObservatoryMetrics:
         "observatory_evaluation_scheduler_occurrence_count": {"outcome"},
         "observatory_evaluation_result_lag_seconds": set(),
         "observatory_evaluation_operation_duration_ms": {"operation"},
+        "observatory_evaluation_definition_operation_count": {"resource_type", "outcome"},
+        "observatory_evaluation_definition_validation_count": {
+            "resource_type",
+            "outcome",
+            "failure_code",
+        },
+        "observatory_evaluator_execution_count": {"evaluator_kind", "outcome"},
+        "observatory_evaluator_duration_ms": {"evaluator_kind"},
+        "observatory_evaluator_outcome_count": {"evaluator_kind", "outcome"},
+        "observatory_evaluator_incomplete_evidence_count": {"evaluator_kind", "evidence_status"},
     }
     LABEL_VALUES = {
         "reason": set(REJECTION_REASONS),
@@ -524,6 +556,9 @@ class ObservatoryMetrics:
             "recovered",
             "materialized",
             "deadline",
+            "pass",
+            "fail",
+            "inconclusive",
         },
         "operation": {
             "store",
@@ -535,7 +570,16 @@ class ObservatoryMetrics:
             "schedule_materialize",
             "postgresql",
             "evaluation_nats",
+            "admit",
+            "evaluate",
+            "read",
+            "write",
+            "clickhouse",
+            "evaluation_definition_state",
         },
+        "resource_type": {"dataset", "case", "suite", "evaluator"},
+        "evaluator_kind": {"deterministic", "local_judge", "human_review"},
+        "evidence_status": {"observed", "not_observed", "not_applicable"},
         "selector": {"job", "dataset", "suite", "cutoff", "purge_all"},
         "phase": {"started", "scores", "objects", "complete", "worker"},
         "event_type": {
@@ -558,6 +602,7 @@ class ObservatoryMetrics:
             "conflict",
             "cancelled",
             "unknown",
+            "validation",
         },
         "stage": {
             "callback",

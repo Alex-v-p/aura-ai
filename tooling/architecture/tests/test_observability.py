@@ -119,6 +119,45 @@ class ObservabilityTests(unittest.TestCase):
         )
         self.assertTrue(any("evaluators" in error and "bounded" in error for error in errors))
 
+    def test_aura0093_typed_observatory_components_are_mutation_checked(self):
+        paths = [
+            ROOT
+            / "services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml",
+            ROOT
+            / (
+                "services/aura-observatory/resources/component-manifests/"
+                "deterministic-evaluators.yaml"
+            ),
+        ]
+        for path in paths:
+            manifest = OBSERVABILITY.read_yaml(path)
+            self.assertIn(manifest["component"]["id"], OBSERVABILITY.OBSERVATORY_TYPED_COMPONENTS)
+            mutated = deepcopy(manifest)
+            mutated["metric_definitions"][0]["labels"] = ["raw_content"]
+            errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+            self.assertTrue(any("labels must be declared" in error for error in errors))
+            mutated = deepcopy(manifest)
+            mutated["capture_policy"] = "full_content"
+            errors = OBSERVABILITY.catalogue_errors([(path, mutated)])
+            self.assertTrue(
+                any("capture_policy must be metadata_only" in error for error in errors)
+            )
+
+    def test_aura0093_runtime_declares_every_typed_metric(self):
+        runtime = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "services/aura-observatory/src").rglob("*.py")
+        )
+        for name in (
+            "observatory_evaluation_definition_operation_count",
+            "observatory_evaluation_definition_validation_count",
+            "observatory_evaluator_execution_count",
+            "observatory_evaluator_duration_ms",
+            "observatory_evaluator_outcome_count",
+            "observatory_evaluator_incomplete_evidence_count",
+        ):
+            self.assertIn(name, runtime)
+
     def test_no_argument_validates_complete_catalogue(self):
         result = subprocess.run(
             [sys.executable, str(VALIDATOR)],

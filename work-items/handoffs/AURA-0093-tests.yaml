@@ -1,0 +1,165 @@
+agent: test_evaluation_engineer
+work_item: AURA-0093
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0093_tests
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.dataset-suite-evaluator-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0093_contract.py
+  - services/aura-observatory/tests/test_aura0093_definitions.py
+  - services/aura-observatory/tests/test_aura0093_evaluators.py
+  - services/aura-observatory/tests/test_aura0093_migration.py
+  - services/aura-observatory/tests/test_aura0093_observability.py
+  - services/aura-observatory/tests/test_aura0093_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0093_score.py
+  - services/aura-core/tests/test_aura0093_core.py
+  - work-items/handoffs/AURA-0093-tests.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.deterministic_evaluators
+    - aura.core.document_evaluators
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0093_*.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright in services/aura-observatory
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      Legacy component manifest and runtime metric regressions (2 passed).
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-core/src/aura_core/runtime/replay
+      services/aura-core/src/aura_core/domains/knowledge/documents
+      services/aura-core/tests/test_aura0093_core.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright in services/aura-core
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-core/tests/test_aura0093_core.py -q (4 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q
+      tooling/architecture/tests/test_observability.py
+      services/aura-observatory/tests/test_aura0093_observability.py
+      services/aura-core/tests/test_aura0093_core.py (14 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory
+      (0 errors, 0 warnings, 0 informations) and services/aura-core (0 errors,
+      0 warnings, 0 informations)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0093.yaml (passed; 36 changed paths)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0093_postgres_integration.py -q
+      with a project-scoped Docker Desktop PostgreSQL 17 container (1 passed;
+      exact container and anonymous volumes removed by scoped cleanup; no
+      credential output or persistence)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0093_*.py -q (167 passed, 1
+      opt-in PostgreSQL skip)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q (868 passed, 10 skipped)
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Added independent contract representatives for all nine typed expectation
+    families and manual thresholds, including closure, bounds, conditional
+    digest rules, malformed values, private-shaped fields, and AURA-0089
+    compatibility.
+  - >-
+    Added in-memory definition admission tests for immutable idempotent reuse,
+    conflicting reuse, exact cross-record references, threshold binding, and
+    content-free storage projections.
+  - >-
+    Added deterministic evaluator coverage for positive, contradictory,
+    missing, partial, not-applicable, malformed, boundary, repeatability, and
+    closed-registry cases across all nine families, plus existing score-port
+    projection privacy.
+  - >-
+    Added forward-only migration assertions for fresh/rerunnable normalized
+    state, immutable keys, restrictive foreign keys, manual retention, and
+    absence of Core or content-bearing storage.
+  - >-
+    Added Core public evaluator export/isolation tests without copying or
+    changing production evaluation behavior.
+  - >-
+    Updated the authorized legacy AURA-0078 manifest allowlist for the two
+    AURA-0093 Observatory components and their declared metric sets.
+  - >-
+    Added typed application-score and ClickHouse metadata round-trip/privacy
+    coverage, all six AURA-0093 metrics with success/failure/incomplete spans,
+    mutation-tested manifests, and runtime metric declarations.
+  - >-
+    Added an opt-in isolated-schema PostgreSQL test for fresh migration,
+    forward rerun, concurrent same-fingerprint insertion, conflicting
+    insertion, and content-free audit outcomes.
+  - >-
+    Added second-review regression coverage for closed policy and injection
+    enums, claim support IDs, conditional normalization, digest-only and
+    owner-supplied authorization, artifact identity, suite version membership,
+    rubric/calibration fingerprints, sensitive identifiers, fixed resource
+    keys, explicit evidence states, retrieval metric boundaries, evaluator
+    registry admission, selected-evaluator dispatch, ScoreContext provenance,
+    threshold provenance, validation metrics, and durable conflict audits.
+  - >-
+    Corrected legacy owner-supplied and captured fixtures so source kind,
+    capture classification, authorization purpose, artifact metadata, and
+    containing dataset version are compatible; added synthetic/owner/captured
+    cross-classification negatives.
+  - >-
+    Added negative admission coverage for arbitrary exact-match UUIDs,
+    local-judge references, unsupported evaluator components, and the injected
+    compatibility port while preserving the acyclic composition boundary.
+  - >-
+    Replaced observability source-string-only evidence with service-level
+    definition and application tests covering accepted, validation rejection,
+    state failure, incomplete, not-applicable, evaluator-fail, retrieval
+    multi-score, ClickHouse failure, exact metric multiplicity, compute-only
+    duration histogram counts, span provenance/error classes, exporter drops,
+    and privacy.
+  - >-
+    Added ResponseProjection closed-property, count, boolean-type, and numeric
+    magnitude boundary probes.
+  - >-
+    Added strict optional-boolean and bounded claim-support evidence probes,
+    including non-boolean citation/idempotency flags and malformed support IDs.
+  - >-
+    Added application observability for evaluator telemetry emitted before a
+    ClickHouse score-store failure, with exactly one compute invocation and
+    duration plus distinct provider and application storage spans.
+  - >-
+    Added a production-shaped PostgreSQL provider-error regression proving the
+    adapter exposes only DefinitionStorageError, records database_failure
+    dependency telemetry, and does not increment validation-rejection metrics.
+risks:
+  - >-
+    Live PostgreSQL fresh/upgrade/rerun and concurrent adapter coverage passed
+    in a project-scoped Docker Desktop PostgreSQL 17 container; the exact
+    disposable container and volumes were removed afterward and no credential
+    was printed or persisted.
+  - >-
+    Core public evaluator tests intentionally verify existing deterministic
+    behavior and do not exercise a full deployed replay runner.
+unresolved: []

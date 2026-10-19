@@ -10,6 +10,9 @@ import psycopg
 from redis.asyncio import Redis
 
 from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
+from aura_observatory.adapters.evaluation_definitions import (
+    PostgresEvaluationDefinitionRepository,
+)
 from aura_observatory.adapters.evaluation_orchestration import (
     OtlpComponentSpanExporter,
     PostgresEvaluationMetricStore,
@@ -28,6 +31,11 @@ from aura_observatory.auth import (
     ObservatoryAuth,
     RedisLoginStateBackend,
     RedisSessionBackend,
+)
+from aura_observatory.evaluation_definitions import EvaluationDefinitionService
+from aura_observatory.evaluation_evaluators import (
+    DeterministicEvaluatorRegistry,
+    EvaluationApplicationService,
 )
 from aura_observatory.evaluation_orchestration import (
     EvaluationOrchestrationService,
@@ -274,6 +282,48 @@ def build_evaluation_scheduler(settings: Settings) -> EvaluationSchedulerService
     )
 
 
+def build_evaluation_definition_repository(
+    settings: Settings,
+) -> PostgresEvaluationDefinitionRepository:
+    """Compose the immutable Observatory definition repository."""
+
+    metrics_store = PostgresCatalog(lambda: postgres_connection(settings.database_url))
+    return PostgresEvaluationDefinitionRepository(
+        lambda: postgres_connection(settings.database_url),
+        metrics=_production_metrics(settings, metrics_store),
+    )
+
+
+def build_evaluation_definition_service(settings: Settings) -> EvaluationDefinitionService:
+    """Compose definition admission with the closed evaluator compatibility port."""
+
+    return EvaluationDefinitionService(
+        build_evaluation_definition_repository(settings),
+        artifact_repository=PostgresEvaluationArtifactRepository(
+            lambda: postgres_connection(settings.database_url)
+        ),
+        metrics=_production_metrics(settings),
+        evaluator_compatibility=DeterministicEvaluatorRegistry().validate_definition,
+    )
+
+
+def build_evaluation_application_service(settings: Settings) -> EvaluationApplicationService:
+    """Compose the typed definition-to-score application boundary."""
+
+    return EvaluationApplicationService(
+        build_evaluation_definition_repository(settings),
+        ClickHouseEvaluationScoreStore(
+            settings.clickhouse_url,
+            database=settings.clickhouse_database,
+            user=settings.clickhouse_user,
+            password=settings.clickhouse_password,
+            metrics=_production_metrics(settings),
+        ),
+        registry=DeterministicEvaluatorRegistry(),
+        metrics=_production_metrics(settings),
+    )
+
+
 __all__ = [
     "build_auth",
     "build_health_projector",
@@ -284,5 +334,8 @@ __all__ = [
     "build_evaluation_orchestration",
     "build_evaluation_scheduler_repository",
     "build_evaluation_scheduler",
+    "build_evaluation_definition_repository",
+    "build_evaluation_definition_service",
+    "build_evaluation_application_service",
     "postgres_connection",
 ]

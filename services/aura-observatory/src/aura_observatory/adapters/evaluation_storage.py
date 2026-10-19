@@ -10,7 +10,8 @@ import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from time import monotonic
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -24,8 +25,12 @@ from aura_observatory.evaluation_storage import (
     DeletionSelector,
     EvaluationScore,
 )
+from aura_observatory.ports import EvaluationArtifactMetadata
 
 _LOGGER = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from aura_observatory.metrics import ObservatoryMetrics
 
 
 class PostgresEvaluationArtifactRepository:
@@ -33,6 +38,72 @@ class PostgresEvaluationArtifactRepository:
 
     def __init__(self, connection_factory: Callable[[], Any]) -> None:
         self._connection_factory = connection_factory
+
+    async def lookup_artifact_metadata(
+        self, artifact_reference_id: str
+    ) -> EvaluationArtifactMetadata | None:
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT artifact.artifact_reference_id, artifact.dataset_id,
+                artifact.capture_classification, artifact.authorization_record_id,
+                authz.authorization_purpose, authz.authorization_context,
+                authz.retention_mode, artifact.sha256, artifact.status,
+                authz.authorized_at, (authz.revoked_at IS NOT NULL) AS revoked
+                FROM observatory_evaluation_artifacts AS artifact
+                JOIN observatory_evaluation_authorizations AS authz
+                  ON authz.authorization_record_id = artifact.authorization_record_id
+                WHERE artifact.artifact_reference_id = %s LIMIT 1""",
+                (artifact_reference_id,),
+            )
+            row = await result.fetchone()
+        if row is None:
+            return None
+        return EvaluationArtifactMetadata(
+            artifact_reference_id=str(row[0]),
+            dataset_id=str(row[1]),
+            capture_classification=str(row[2]),
+            authorization_record_id=str(row[3]),
+            authorization_purpose=str(row[4]),
+            authorization_context=str(row[5]),
+            retention_mode=str(row[6]),
+            sha256=str(row[7]),
+            status=str(row[8]),
+            authorized_at=cast(datetime, row[9]).astimezone(UTC),
+            revoked=bool(row[10]),
+        )
+
+    async def lookup_authorization_metadata(
+        self, authorization_record_id: str, dataset_id: str
+    ) -> EvaluationArtifactMetadata | None:
+        """Resolve authorization state without exposing any artifact bytes."""
+
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT authorization_record_id, dataset_id,
+                capture_classification, authorization_purpose,
+                authorization_context, retention_mode, authorized_at,
+                (revoked_at IS NOT NULL) AS revoked
+                FROM observatory_evaluation_authorizations
+                WHERE authorization_record_id = %s AND dataset_id = %s
+                LIMIT 1""",
+                (authorization_record_id, dataset_id),
+            )
+            row = await result.fetchone()
+        if row is None:
+            return None
+        return EvaluationArtifactMetadata(
+            artifact_reference_id="",
+            dataset_id=str(row[1]),
+            capture_classification=str(row[2]),
+            authorization_record_id=str(row[0]),
+            authorization_purpose=str(row[3]),
+            authorization_context=str(row[4]),
+            retention_mode=str(row[5]),
+            sha256="",
+            status="authorized",
+            authorized_at=cast(datetime, row[6]).astimezone(UTC),
+            revoked=bool(row[7]),
+        )
 
     async def reserve_artifact(self, request: ArtifactUpload) -> ArtifactRecord | None | bool:
         async with self._connection_factory() as connection:
@@ -589,12 +660,19 @@ class ClickHouseEvaluationScoreStore:
     """Finite, metadata-only evaluation score persistence."""
 
     def __init__(
-        self, endpoint: str, *, database: str, user: str = "default", password: str = ""
+        self,
+        endpoint: str,
+        *,
+        database: str,
+        user: str = "default",
+        password: str = "",
+        metrics: ObservatoryMetrics | None = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.database = database
         self.user = user
         self.password = password
+        self._metrics = metrics
 
     async def insert_score(self, score: EvaluationScore) -> None:
         score.validate()
@@ -619,28 +697,65 @@ class ClickHouseEvaluationScoreStore:
             # server setting or ISO-8601 ``T``/``Z`` extensions.
             "observed_at": _clickhouse_timestamp(score.observed_at),
             "artifact_reference_id": score.artifact_reference_id,
+            "case_id": score.case_id,
+            "metric": score.metric,
+            "failure_code": score.failure_code,
+            "evidence_reference_id": score.evidence_reference,
+            "reproducibility": score.reproducibility,
+            "threshold_applicable": score.threshold_applicable,
+            "threshold_reference": score.threshold_reference,
+            "threshold_value": score.threshold_value,
+            "threshold_operator": score.threshold_operator,
+            "threshold_status": score.threshold_status,
         }
         query = "INSERT INTO evaluation_scores FORMAT JSONEachRow\n" + json.dumps(
             row, separators=(",", ":")
         )
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                self.endpoint,
-                params={
-                    "database": self.database,
-                    "insert_deduplicate": "1",
-                    "insert_deduplication_token": score.score_id,
-                },
-                auth=(self.user, self.password),
-                content=query,
-            )
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _LOGGER.error(
-                    "ClickHouse evaluation score insert failed status=%s", response.status_code
+        started = monotonic()
+        response: httpx.Response | None = None
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                response = await client.post(
+                    self.endpoint,
+                    params={
+                        "database": self.database,
+                        "insert_deduplicate": "1",
+                        "insert_deduplication_token": score.score_id,
+                    },
+                    auth=(self.user, self.password),
+                    content=query,
                 )
-                raise ArtifactStorageError("database_failure") from exc
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _LOGGER.error(
+                "ClickHouse evaluation score insert failed status=%s",
+                response.status_code if response is not None else 0,
+            )
+            self._record_write(started, "database_failure")
+            raise ArtifactStorageError("database_failure") from exc
+        except Exception:
+            self._record_write(started, "storage_failure")
+            raise
+        self._record_write(started, None)
+
+    def _record_write(self, started: float, error_code: str | None) -> None:
+        if self._metrics is None:
+            return
+        outcome = "failure" if error_code else "success"
+        self._metrics.record(
+            "observatory_evaluation_dependency_outcome_count",
+            labels={"operation": "clickhouse", "outcome": outcome},
+        )
+        self._metrics.record_component_span(
+            component_id="aura.observatory.deterministic_evaluators",
+            component_version="1.0.0",
+            deployment_id=self._metrics.deployment_id,
+            operation="write",
+            duration_ms=max(0.0, (monotonic() - started) * 1000.0),
+            outcome=outcome,
+            dependency="clickhouse",
+            error_code=error_code,
+        )
 
     async def delete_scores_for_artifact(self, artifact_reference_id: str) -> None:
         query = (
