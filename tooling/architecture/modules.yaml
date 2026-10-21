@@ -184,6 +184,33 @@ modules:
   - aura_observatory.adapters.object_storage
   dependencies:
   - aura-observatory.ports
+- id: aura-observatory.local-judges
+  root: services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  python_modules:
+  - aura_observatory.evaluation_judges
+  dependencies:
+  - aura-observatory.evaluation-storage
+  - aura-observatory.metrics
+  - aura-observatory.ports
+- id: aura-observatory.calibration
+  root: services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  python_modules:
+  - aura_observatory.evaluation_calibration
+  dependencies:
+  - aura-observatory.local-judges
+  - aura-observatory.metrics
+- id: aura-observatory.adapters.local-ollama
+  root: services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  python_modules:
+  - aura_observatory.adapters.local_ollama
+  dependencies:
+  - aura-observatory.local-judges
 - id: aura-observatory.composition
   root: services/aura-observatory/src/aura_observatory/composition.py
   kind: bootstrap
@@ -204,6 +231,9 @@ modules:
   - aura-observatory.evaluation-definitions
   - aura-observatory.evaluation-evaluators
   - aura-observatory.adapters.object-storage
+  - aura-observatory.adapters.local-ollama
+  - aura-observatory.local-judges
+  - aura-observatory.calibration
   - aura-observatory.auth
   - aura-observatory.ingest
   - aura-observatory.settings
@@ -2329,6 +2359,8 @@ modules:
   - aura-observatory.evaluation-orchestration
   - aura-observatory.evaluation-transport
   - aura-observatory.settings
+  - aura-observatory.local-judges
+  - aura-observatory.calibration
 - id: aura-observatory.entrypoints.evaluation-scheduler
   root: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
   kind: entrypoint

@@ -632,6 +632,75 @@ services:
       observatory-garage-bootstrap: {condition: service_completed_successfully}
     restart: "no"
 
+  # Provision a distinct read-only key for local judge artifact reads. This
+  # one-shot job is the only provisioning exception to the worker-only
+  # credential boundary; no long-running product service receives this key.
+  observatory-judge-garage-bootstrap:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/garage-bootstrap.Dockerfile
+      args:
+        GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+        BUSYBOX_IMAGE: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        case "$${AURA_GARAGE_IMAGE}" in *@sha256:*) ;; *) echo 'AURA_GARAGE_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        access_key="$$(cat /run/secrets/observatory-judge-garage-access-key)";
+        secret_key="$$(cat /run/secrets/observatory-judge-garage-secret-key)";
+        if [ -z "$${access_key}" ] || [ -z "$${secret_key}" ] || [ -z "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ]; then echo 'Observatory judge Garage identity is incomplete' >&2; exit 78; fi;
+        until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        extract_authorized_buckets() { printf '%s\n' "$${1}" | awk -v expected="$${2}" '
+          function emit_row(line, count, fields, alias) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line);
+            count = split(line, fields, /[[:space:]]+/);
+            if (count < 2 || fields[2] !~ /^[[:xdigit:]]+$/ || length(fields[2]) != 16) return;
+            alias = "";
+            if (count >= 3 && fields[3] != "-" && fields[3] != "—") alias = fields[3];
+            else if (count >= 4 && fields[4] != "-" && fields[4] != "—") alias = fields[4];
+            if (alias == expected && expected != "") print expected;
+            else if (alias != "") print alias;
+            else print fields[2];
+          }
+          /^[[:space:]]*==== BUCKETS FOR THIS KEY ====[[:space:]]*$/ { table = 1; next }
+          table && /^[[:space:]]*Permissions[[:space:]]+ID[[:space:]]+Global aliases[[:space:]]+Local aliases[[:space:]]*$/ { next }
+          table && NF >= 2 { emit_row($$0); next }
+          table { table = 0 }
+        '; };
+        extract_permission_flags() { printf '%s\n' "$${1}" | awk -v key="$${2}" 'index($$0, key) && NF > 0 { print $$1; found = 1; exit } END { if (!found) exit 1 }'; };
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then if ! /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1; then echo 'Observatory judge Garage key import failed closed' >&2; exit 78; fi; fi;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then echo 'Observatory judge Garage key could not be inspected' >&2; exit 78; fi;
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_GARAGE_BUCKET}")";
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ]; then echo 'Observatory judge Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
+        if ! /garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_GARAGE_BUCKET}" >/dev/null 2>&1; then echo 'Observatory evaluation bucket is unavailable' >&2; exit 78; fi;
+        if ! /garage --config /run/garage-config/garage.toml bucket allow --read --key "$${access_key}" "$${AURA_OBSERVATORY_GARAGE_BUCKET}" >/dev/null 2>&1; then echo 'Observatory judge Garage read grant failed closed' >&2; exit 78; fi;
+        if ! /garage --config /run/garage-config/garage.toml bucket deny --write --key "$${access_key}" "$${AURA_OBSERVATORY_GARAGE_BUCKET}" >/dev/null 2>&1; then echo 'Observatory judge Garage write deny failed closed' >&2; exit 78; fi;
+        if ! /garage --config /run/garage-config/garage.toml bucket deny --owner --key "$${access_key}" "$${AURA_OBSERVATORY_GARAGE_BUCKET}" >/dev/null 2>&1; then echo 'Observatory judge Garage owner deny failed closed' >&2; exit 78; fi;
+        bucket_info="$$(/garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_GARAGE_BUCKET}" 2>/dev/null || true)";
+        permission_flags="$$(extract_permission_flags "$${bucket_info}" "$${access_key}" || true)";
+        if [ "$${permission_flags}" != "R" ]; then echo 'Observatory judge Garage permission verification failed closed (expected compact permission flag R)' >&2; exit 78; fi;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_GARAGE_BUCKET}")";
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}" || true)";
+        target_bucket_count="$$(printf '%s\n' "$${existing_buckets}" | grep -Fxc -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ] || [ "$${target_bucket_count}" -ne 1 ]; then echo 'Observatory judge Garage key grant verification failed closed' >&2; exit 78; fi;
+        unset access_key secret_key key_info bucket_info existing_buckets unexpected_buckets permission_flags target_bucket_count
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+      AURA_OBSERVATORY_GARAGE_BUCKET: ${AURA_OBSERVATORY_GARAGE_BUCKET:-aura-observatory-evaluation}
+    secrets: [observatory-judge-garage-access-key, observatory-judge-garage-secret-key]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage:/var/lib/garage:ro
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config:ro
+    networks: [observatory-object-storage]
+    depends_on:
+      observatory-garage-bootstrap: {condition: service_completed_successfully}
+    restart: "no"
+
   # Observatory is deliberately opt-in.  None of these services is present
   # in the normal Aura startup graph unless --profile observatory is selected.
   observatory-api:
@@ -754,12 +823,35 @@ services:
       AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_BASE_SECONDS:-10}
       AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS: ${AURA_OBSERVATORY_EVALUATION_RETRY_MAX_SECONDS:-3600}
       AURA_OBSERVATORY_EVALUATION_MAX_ENVELOPE_BYTES: ${AURA_OBSERVATORY_EVALUATION_MAX_ENVELOPE_BYTES:-1000000}
-    secrets: [observatory-database-password, aura-nats-dispatch-password, observatory-ingest-credential]
-    networks: [observatory-db, aura-evaluation-bus, observatory-ingest]
+      AURA_OBSERVATORY_EVALUATION_OBJECT_ENDPOINT: ${AURA_OBSERVATORY_EVALUATION_OBJECT_ENDPOINT:-http://aura-garage:3900}
+      AURA_OBSERVATORY_EVALUATION_OBJECT_REGION: ${AURA_OBSERVATORY_EVALUATION_OBJECT_REGION:-garage}
+      AURA_OBSERVATORY_EVALUATION_OBJECT_BUCKET: ${AURA_OBSERVATORY_EVALUATION_OBJECT_BUCKET:-aura-observatory-evaluation}
+      AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-judge-garage-access-key
+      AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-judge-garage-secret-key
+      # The normal profile has one deployment-owned host-gateway origin. The
+      # disposable local-http overlay may replace this only with its generated
+      # loopback relay origin.
+      AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN: http://host.docker.internal:11434
+      AURA_OBSERVATORY_LOCAL_JUDGE_TIMEOUT_SECONDS: ${AURA_OBSERVATORY_LOCAL_JUDGE_TIMEOUT_SECONDS:-120}
+      AURA_OBSERVATORY_LOCAL_JUDGE_MAX_CONCURRENCY: ${AURA_OBSERVATORY_LOCAL_JUDGE_MAX_CONCURRENCY:-1}
+      # Never allow host-provided proxy variables to redirect authorized
+      # evaluation content away from the fixed local provider boundary.
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+    secrets: [observatory-database-password, aura-nats-dispatch-password, observatory-ingest-credential, observatory-judge-garage-access-key, observatory-judge-garage-secret-key]
+    networks: [observatory-db, aura-evaluation-bus, observatory-ingest, observatory-object-storage, observatory-judge-egress]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       observatory-migrate: {condition: service_completed_successfully}
       observatory-postgres: {condition: service_healthy}
       aura-evaluation-nats-bootstrap: {condition: service_completed_successfully}
+      observatory-judge-garage-bootstrap: {condition: service_completed_successfully}
     healthcheck:
       test: [CMD, python, -c, "import aura_observatory.entrypoints.evaluation_worker"]
       interval: 10s
@@ -1095,6 +1187,10 @@ secrets:
     file: ${AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE:-./.secrets/observatory-garage-access-key}
   observatory-garage-secret-key:
     file: ${AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE:-./.secrets/observatory-garage-secret-key}
+  observatory-judge-garage-access-key:
+    file: ${AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE:-./.secrets/observatory-judge-garage-access-key}
+  observatory-judge-garage-secret-key:
+    file: ${AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE:-./.secrets/observatory-judge-garage-secret-key}
   aura-evaluation-runner-garage-access-key:
     file: ${AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE:-./.secrets/aura-evaluation-runner-garage-access-key}
   aura-evaluation-runner-garage-secret-key:
@@ -1162,6 +1258,13 @@ networks:
   # Only the Observatory API and configured OIDC provider join this narrowly
   # scoped identity egress network.
   observatory-identity-egress: {}
+  # The judge network is intentionally internal: it cannot route arbitrary
+  # public egress. Docker Desktop's internal-network semantics do not provide
+  # a host-gateway exception, so the host/local Ollama boundary remains an
+  # ADR_REQUIRED deployment concern until Docker can express that narrow route
+  # without a proxy or additional capability.
+  observatory-judge-egress:
+    internal: true
   # Garage is the only shared endpoint; only the Observatory bootstrap job
   # and worker join this network for evaluation artifact access.
   observatory-object-storage:

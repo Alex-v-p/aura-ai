@@ -7,7 +7,7 @@ references, digests, phases and failure codes are bounded metadata.
 
 # JSON Schema is intentionally traversed through a dynamic, closed data model;
 # the boundary below narrows all values before they enter the state machine.
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnnecessaryIsInstance=false
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnnecessaryIsInstance=false, reportGeneralTypeIssues=false
 
 from __future__ import annotations
 
@@ -466,6 +466,56 @@ class EvaluationAttempt:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalWorkItem:
+    """One durable, bounded local-judge/calibration work claim."""
+
+    work_id: str
+    kind: str
+    lease_token: str
+    request: object | None = None
+    arguments: Mapping[str, object] | None = None
+    fingerprint: str = ""
+    source_job_id: str | None = None
+    source_attempt_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalWorkAdmission:
+    """A bounded admission projection derived from durable Observatory state."""
+
+    work_id: str
+    source_job_id: str
+    source_attempt_id: str
+    kind: str
+    idempotency_key: str
+    fingerprint: str
+    payload: Mapping[str, object]
+    available_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def validate(self) -> None:
+        for value in (
+            self.work_id,
+            self.source_job_id,
+            self.source_attempt_id,
+            self.idempotency_key,
+        ):
+            _require_uuid(value, "local_work_identifier")
+        if self.kind not in {"judge", "calibration"}:
+            raise OrchestrationError("local_work_kind_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.fingerprint):
+            raise OrchestrationError("local_work_fingerprint_invalid")
+        _require_utc(self.available_at, "local_work_available_at")
+        _walk_transport(self.payload)
+        if set(self.payload) == set():
+            raise OrchestrationError("local_work_payload_invalid")
+        encoded = json.dumps(self.payload, sort_keys=True, separators=(",", ":")).encode()
+        if len(encoded) > 65_536:
+            raise OrchestrationError("local_work_payload_limit")
+        if canonical_digest(self.payload) != self.fingerprint:
+            raise OrchestrationError("local_work_fingerprint_mismatch")
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationOutboxEntry:
     event_id: str
     event_type: str
@@ -594,6 +644,24 @@ class EvaluationOrchestrationRepository(Protocol):
     async def materialize_due_schedules(
         self, *, now: datetime, limit: int, lease_token: str
     ) -> int: ...
+
+    async def claim_local_work(
+        self, *, now: datetime, lease_seconds: int, worker_id: str
+    ) -> LocalWorkItem | None: ...
+
+    async def complete_local_work(
+        self, work: LocalWorkItem, *, result: object, at: datetime
+    ) -> bool: ...
+
+    async def fail_local_work(
+        self, work: LocalWorkItem, *, failure_code: str, at: datetime
+    ) -> bool: ...
+
+    async def enqueue_local_work(self, admission: LocalWorkAdmission) -> bool: ...
+
+    async def enqueue_admitted_local_work(self, *, job_id: str, now: datetime) -> int: ...
+
+    async def enqueue_pending_local_work(self, *, now: datetime, limit: int = 32) -> int: ...
 
 
 class EvaluationSchedulerService:
@@ -730,6 +798,95 @@ class EvaluationOrchestrationService:
         self.retry_max_seconds = retry_max_seconds
         self.max_attempts = max_attempts
 
+    async def claim_local_work(self) -> LocalWorkItem | None:
+        """Claim one durable local evaluation item, if the queue has work."""
+        started = monotonic()
+        try:
+            work = await self.repository.claim_local_work(
+                now=datetime.now(UTC), lease_seconds=self.lease_seconds, worker_id=self.worker_id
+            )
+        except Exception as error:
+            self._record_dependency_failure("dispatch", started, "postgresql")
+            raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        self._span("dispatch", started, "success", None, "postgresql")
+        self._metric(
+            "observatory_evaluation_dependency_outcome_count",
+            labels={"operation": "postgresql", "outcome": "success"},
+        )
+        return work
+
+    async def enqueue_admitted_local_work(self, job_id: str) -> int:
+        """Materialize local work only from the persisted admitted job/definitions."""
+
+        _require_uuid(job_id, "job_id")
+        producer = getattr(self.repository, "enqueue_admitted_local_work", None)
+        if not callable(producer):
+            return 0
+        typed_producer = cast(Callable[..., Awaitable[int]], producer)
+        started = monotonic()
+        try:
+            inserted = int(await typed_producer(job_id=job_id, now=datetime.now(UTC)))
+        except Exception as error:
+            self._record_dependency_failure("admit", started, "postgresql")
+            raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        self._span("admit", started, "success", None, "postgresql")
+        # Keep this phase's dedicated span for local-work attribution, but do
+        # not add a second aggregate PostgreSQL-success counter for the same
+        # logical admission lifecycle.
+        return inserted
+
+    async def enqueue_pending_local_work(self, *, limit: int = 32) -> int:
+        if not 1 <= limit <= 1000:
+            raise OrchestrationError("local_work_limit_invalid")
+        producer = getattr(self.repository, "enqueue_pending_local_work", None)
+        if not callable(producer):
+            return 0
+        typed_producer = cast(Callable[..., Awaitable[int]], producer)
+        started = monotonic()
+        try:
+            inserted = int(await typed_producer(now=datetime.now(UTC), limit=limit))
+        except Exception as error:
+            self._record_dependency_failure("dispatch", started, "postgresql")
+            raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        self._span("dispatch", started, "success", None, "postgresql")
+        self._metric(
+            "observatory_evaluation_dependency_outcome_count",
+            labels={"operation": "postgresql", "outcome": "success"},
+        )
+        return inserted
+
+    async def complete_local_work(self, work: LocalWorkItem, result: object) -> None:
+        started = monotonic()
+        try:
+            completed = await self.repository.complete_local_work(
+                work, result=result, at=datetime.now(UTC)
+            )
+        except Exception as error:
+            self._record_dependency_failure("dispatch", started, "postgresql")
+            raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        self._span("dispatch", started, "success", None, "postgresql")
+        if not completed:
+            raise OrchestrationError("local_work_lease_lost")
+
+    async def fail_local_work(self, work: LocalWorkItem, failure_code: str) -> None:
+        safe_code = (
+            failure_code
+            if failure_code
+            in {"validation", "provider_unavailable", "provider_timeout", "storage_failure"}
+            else "storage_failure"
+        )
+        started = monotonic()
+        try:
+            failed = await self.repository.fail_local_work(
+                work, failure_code=safe_code, at=datetime.now(UTC)
+            )
+        except Exception as error:
+            self._record_dependency_failure("dispatch", started, "postgresql")
+            raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        self._span("dispatch", started, "success", None, "postgresql")
+        if not failed:
+            raise OrchestrationError("local_work_lease_lost")
+
     async def admit(
         self, request: EvaluationAdmission, *, now: datetime | None = None
     ) -> EvaluationJob:
@@ -739,6 +896,10 @@ class EvaluationOrchestrationService:
             raise OrchestrationError("max_attempts_exceeds_deployment")
         job_id = _deterministic_job_id(request.idempotency_key)
         job = await self.repository.admit(request, job_id)
+        # The adapter derives local work from the committed job and exact
+        # persisted definitions.  No caller-supplied kind, payload, or
+        # authorization flag crosses this boundary.
+        await self.enqueue_admitted_local_work(job.job_id)
         self._metric("observatory_evaluation_job_admission_count", labels={"outcome": "accepted"})
         return job
 
@@ -952,12 +1113,8 @@ class EvaluationOrchestrationService:
         if acknowledge is not None:
             await acknowledge()
         if application.terminal_transition == "deadline":
-            self._metric(
-                "observatory_evaluation_deadline_count", labels={"outcome": "deadline"}
-            )
-            self._metric(
-                "observatory_evaluation_terminal_count", labels={"outcome": "deadline"}
-            )
+            self._metric("observatory_evaluation_deadline_count", labels={"outcome": "deadline"})
+            self._metric("observatory_evaluation_terminal_count", labels={"outcome": "deadline"})
         message_type = str(validated["messageType"])
         data = cast(Mapping[str, object], validated["data"])
         retry_scheduled = False
@@ -1140,7 +1297,83 @@ class InMemoryEvaluationOrchestrationRepository:
         self.audits: list[dict[str, str]] = []
         self.schedules: dict[str, EvaluationSchedule] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
+        self.local_work: dict[str, LocalWorkItem] = {}
+        self._local_idempotency: dict[str, tuple[str, str]] = {}
         self._lock = asyncio.Lock()
+
+    async def enqueue_local_work(self, admission: LocalWorkAdmission) -> bool:
+        admission.validate()
+        async with self._lock:
+            prior = self._local_idempotency.get(admission.idempotency_key)
+            if prior is not None:
+                if prior[1] != admission.fingerprint:
+                    raise OrchestrationError("idempotency_conflict")
+                return False
+            self._local_idempotency[admission.idempotency_key] = (
+                admission.work_id,
+                admission.fingerprint,
+            )
+            self.local_work[admission.work_id] = LocalWorkItem(
+                admission.work_id,
+                admission.kind,
+                "",
+                request=admission.payload if admission.kind == "judge" else None,
+                arguments=admission.payload if admission.kind == "calibration" else None,
+                fingerprint=admission.fingerprint,
+                source_job_id=admission.source_job_id,
+                source_attempt_id=admission.source_attempt_id,
+            )
+            return True
+
+    async def enqueue_admitted_local_work(self, *, job_id: str, now: datetime) -> int:
+        _require_uuid(job_id, "job_id")
+        del now
+        # In-memory jobs intentionally do not invent local-judge authority.
+        # Tests or local composition may enqueue an already-derived admission
+        # through enqueue_local_work, mirroring the PostgreSQL port.
+        return 0
+
+    async def enqueue_pending_local_work(self, *, now: datetime, limit: int = 32) -> int:
+        del now, limit
+        return 0
+
+    async def claim_local_work(
+        self, *, now: datetime, lease_seconds: int, worker_id: str
+    ) -> LocalWorkItem | None:
+        if lease_seconds < 1 or not worker_id:
+            raise OrchestrationError("local_work_lease_invalid")
+        del now
+        async with self._lock:
+            for work_id, item in list(self.local_work.items()):
+                if item.lease_token:
+                    continue
+                token = str(uuid4())
+                claimed = replace(item, lease_token=token)
+                self.local_work[work_id] = claimed
+                return claimed
+        return None
+
+    async def complete_local_work(
+        self, work: LocalWorkItem, *, result: object, at: datetime
+    ) -> bool:
+        del result, at
+        async with self._lock:
+            current = self.local_work.get(work.work_id)
+            if current is None or current.lease_token != work.lease_token:
+                return False
+            self.local_work.pop(work.work_id, None)
+            return True
+
+    async def fail_local_work(
+        self, work: LocalWorkItem, *, failure_code: str, at: datetime
+    ) -> bool:
+        del failure_code, at
+        async with self._lock:
+            current = self.local_work.get(work.work_id)
+            if current is None or current.lease_token != work.lease_token:
+                return False
+            self.local_work.pop(work.work_id, None)
+            return True
 
     async def admit(self, request: EvaluationAdmission, job_id: str) -> EvaluationJob:
         async with self._lock:
@@ -1893,6 +2126,8 @@ __all__ = [
     "EvaluationSchedule",
     "InMemoryEvaluationOrchestrationRepository",
     "JobState",
+    "LocalWorkAdmission",
+    "LocalWorkItem",
     "OrchestrationError",
     "_scheduled_admission",
 ]

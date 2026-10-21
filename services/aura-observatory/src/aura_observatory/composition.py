@@ -22,6 +22,7 @@ from aura_observatory.adapters.evaluation_storage import (
     ClickHouseEvaluationScoreStore,
     PostgresEvaluationArtifactRepository,
 )
+from aura_observatory.adapters.local_ollama import LocalOllamaAdapter
 from aura_observatory.adapters.object_storage import GarageEvaluationObjectStore
 from aura_observatory.adapters.postgres import PostgresCatalog, PostgresObservationIdRegistry
 from aura_observatory.adapters.query import ProductionObservatoryStore
@@ -32,10 +33,20 @@ from aura_observatory.auth import (
     RedisLoginStateBackend,
     RedisSessionBackend,
 )
+from aura_observatory.evaluation_calibration import (
+    CalibrationService,
+    PostgresCalibrationRepository,
+)
 from aura_observatory.evaluation_definitions import EvaluationDefinitionService
 from aura_observatory.evaluation_evaluators import (
     DeterministicEvaluatorRegistry,
     EvaluationApplicationService,
+)
+from aura_observatory.evaluation_judges import (
+    AuthorizedArtifactReader,
+    LocalJudgeService,
+    PostgresJudgeDefinitionRepository,
+    PostgresJudgeExecutionRepository,
 )
 from aura_observatory.evaluation_orchestration import (
     EvaluationOrchestrationService,
@@ -324,6 +335,99 @@ def build_evaluation_application_service(settings: Settings) -> EvaluationApplic
     )
 
 
+def build_local_judge_service(
+    settings: Settings, *, metrics: ObservatoryMetrics | None = None
+) -> LocalJudgeService:
+    """Compose the worker-only local judge with a separate read identity."""
+
+    artifact_repository = PostgresEvaluationArtifactRepository(
+        lambda: postgres_connection(settings.database_url)
+    )
+    object_store = GarageEvaluationObjectStore(
+        settings.evaluation_object_endpoint,
+        settings.evaluation_object_bucket,
+        access_key=settings.judge_object_access_key,
+        secret_key=settings.judge_object_secret_key,
+        region=settings.evaluation_object_region,
+        timeout_seconds=settings.evaluation_object_timeout_seconds,
+    )
+    shared_metrics = metrics or _production_metrics(settings)
+    score_store = ClickHouseEvaluationScoreStore(
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        metrics=shared_metrics,
+        component_id="aura.observatory.local_judges",
+    )
+    definition_repository = PostgresJudgeDefinitionRepository(
+        lambda: postgres_connection(settings.database_url)
+    )
+    qualification_repository = PostgresCalibrationRepository(
+        lambda: postgres_connection(settings.database_url)
+    )
+
+    async def resolve_qualification(**scope: str) -> object | None:
+        return await qualification_repository.active_qualification(
+            suite_id=scope["suite_id"],
+            suite_version=scope["suite_version"],
+            dataset_id=scope["dataset_id"],
+            dataset_version=scope["dataset_version"],
+            evaluator_id=scope["evaluator_id"],
+            evaluator_version=scope["evaluator_version"],
+            judge_id=scope["judge_id"],
+            judge_version=scope["judge_version"],
+            model_name=scope["model_name"],
+            model_version=scope["model_version"],
+            model_digest=scope["model_digest"],
+            instruction_version=scope["prompt_version"],
+            prompt_artifact_id=scope["prompt_artifact_id"],
+            prompt_artifact_version=scope["prompt_artifact_version"],
+            prompt_artifact_digest=scope["prompt_artifact_digest"],
+            rubric_version=scope["rubric_version"],
+            rubric_artifact_id=scope["rubric_artifact_id"],
+            rubric_artifact_version=scope["rubric_artifact_version"],
+            rubric_artifact_digest=scope["rubric_artifact_digest"],
+            calibration_version=scope["calibration_version"],
+        )
+
+    async def resolve_calibration_result(result_id: str) -> object | None:
+        return await qualification_repository.get_calibration_result(result_id)
+
+    execution_repository = PostgresJudgeExecutionRepository(
+        lambda: postgres_connection(settings.database_url)
+    )
+    return LocalJudgeService(
+        LocalOllamaAdapter(
+            settings.local_judge_origin,
+            timeout_seconds=settings.local_judge_timeout_seconds,
+        ),
+        AuthorizedArtifactReader(
+            artifact_repository,
+            object_store,
+            metrics=shared_metrics,
+        ),
+        definition_repository=definition_repository,
+        execution_repository=execution_repository,
+        score_store=score_store,
+        metrics=shared_metrics,
+        max_concurrency=settings.local_judge_max_concurrency,
+        qualification_resolver=resolve_qualification,
+        calibration_result_resolver=resolve_calibration_result,
+    )
+
+
+def build_calibration_service(
+    settings: Settings, *, metrics: ObservatoryMetrics | None = None
+) -> CalibrationService:
+    """Compose durable PostgreSQL-backed calibration state for the worker."""
+
+    return CalibrationService(
+        PostgresCalibrationRepository(lambda: postgres_connection(settings.database_url)),
+        metrics=metrics or _production_metrics(settings),
+    )
+
+
 __all__ = [
     "build_auth",
     "build_health_projector",
@@ -337,5 +441,7 @@ __all__ = [
     "build_evaluation_definition_repository",
     "build_evaluation_definition_service",
     "build_evaluation_application_service",
+    "build_local_judge_service",
+    "build_calibration_service",
     "postgres_connection",
 ]

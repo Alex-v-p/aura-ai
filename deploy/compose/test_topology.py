@@ -1880,6 +1880,7 @@ exit 0
 
             for target, relay_port, label in (
                 ("127.0.0.1:01135", "01135", "loopback self-target"),
+                ("8.8.8.8:11434", "11435", "public relay target"),
                 ("192.168.0.40:11434", "114350", "overlong relay port"),
             ):
                 result = run_launcher("none", target=target, relay_port=relay_port)

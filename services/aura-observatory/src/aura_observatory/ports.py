@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         EvaluatorDefinition,
         SuiteDefinition,
     )
+    from aura_observatory.evaluation_judges import JudgeArtifactReference, JudgeResponse
     from aura_observatory.evaluation_storage import (
         ArtifactRecord,
         ArtifactUpload,
@@ -41,6 +42,13 @@ class EvaluationArtifactMetadata:
     status: str
     revoked: bool = False
     authorized_at: datetime | None = None
+    # These are authoritative storage facts used by content-bearing workers;
+    # they are never accepted from a transport request.
+    artifact_version: str = "1.0.0"
+    media_type: str = "text/plain"
+    byte_count: int = 0
+    media_classification: str = "evaluation_input"
+    intended_use: str = "input"
 
 
 # These defaults are part of the bounded analytics request contract.  They
@@ -508,6 +516,40 @@ class EvaluationOrchestrationPort(Protocol):
     ) -> str: ...
 
 
+class LocalJudgePort(Protocol):
+    """Narrow worker boundary for an admitted local model provider."""
+
+    async def verify_model(
+        self, model_name: str, model_digest: str, *, model_version: str
+    ) -> None: ...
+
+    async def generate(
+        self,
+        *,
+        model_name: str,
+        prompt: bytes,
+        rubric: bytes,
+        evidence: tuple[bytes, ...],
+        timeout_seconds: float,
+        max_output_bytes: int,
+        max_output_tokens: int,
+        context_tokens: int,
+        seed: int,
+    ) -> JudgeResponse: ...
+
+
+class JudgeArtifactReadPort(Protocol):
+    """Bounded, authorization-aware read of one opaque evaluation artifact."""
+
+    async def read(
+        self,
+        reference: JudgeArtifactReference,
+        *,
+        max_bytes: int,
+        intended_use: str | None = None,
+    ) -> bytes: ...
+
+
 __all__ = [
     "ClaimOutcome",
     "DeletionResult",
@@ -525,4 +567,6 @@ __all__ = [
     "EvaluationScoreStore",
     "EvaluationDefinitionRepository",
     "EvaluationOrchestrationPort",
+    "LocalJudgePort",
+    "JudgeArtifactReadPort",
 ]

@@ -48,6 +48,10 @@ class PostgresEvaluationArtifactRepository:
                 artifact.capture_classification, artifact.authorization_record_id,
                 authz.authorization_purpose, authz.authorization_context,
                 authz.retention_mode, artifact.sha256, artifact.status,
+                artifact.media_type, artifact.media_classification,
+                artifact.byte_count,
+                artifact.intended_use,
+                artifact.artifact_version,
                 authz.authorized_at, (authz.revoked_at IS NOT NULL) AS revoked
                 FROM observatory_evaluation_artifacts AS artifact
                 JOIN observatory_evaluation_authorizations AS authz
@@ -68,8 +72,13 @@ class PostgresEvaluationArtifactRepository:
             retention_mode=str(row[6]),
             sha256=str(row[7]),
             status=str(row[8]),
-            authorized_at=cast(datetime, row[9]).astimezone(UTC),
-            revoked=bool(row[10]),
+            media_type=str(row[9]),
+            media_classification=str(row[10]),
+            byte_count=int(row[11]),
+            intended_use=str(row[12]),
+            artifact_version=str(row[13]),
+            authorized_at=cast(datetime, row[14]).astimezone(UTC),
+            revoked=bool(row[15]),
         )
 
     async def lookup_authorization_metadata(
@@ -106,6 +115,7 @@ class PostgresEvaluationArtifactRepository:
         )
 
     async def reserve_artifact(self, request: ArtifactUpload) -> ArtifactRecord | None | bool:
+        intended_use = request.intended_use or "input"
         async with self._connection_factory() as connection:
             existing_result = await connection.execute(
                 """SELECT artifact.artifact_id, artifact.artifact_reference_id,
@@ -113,7 +123,8 @@ class PostgresEvaluationArtifactRepository:
                 artifact.authorization_record_id, artifact.capture_classification,
                 artifact.media_classification, artifact.media_type, artifact.byte_count,
                 artifact.sha256, artifact.job_id, artifact.dataset_id, artifact.suite_id,
-                artifact.created_at, artifact.status, artifact.declared_max_bytes
+                artifact.created_at, artifact.status, artifact.declared_max_bytes,
+                artifact.intended_use, artifact.artifact_version
                 FROM observatory_evaluation_artifacts AS artifact
                 JOIN observatory_evaluation_authorizations AS authz
                   ON authz.authorization_record_id = artifact.authorization_record_id
@@ -159,9 +170,19 @@ class PostgresEvaluationArtifactRepository:
                     "created_at",
                     "status",
                     "declared_max_bytes",
+                    "intended_use",
+                    "artifact_version",
                 )
                 if any(
-                    str(_row_value(existing, index, columns[index])) != str(value)
+                    str(
+                        _row_value_or(
+                            existing,
+                            index,
+                            columns[index],
+                            "input" if index == 17 else "1.0.0" if index == 18 else None,
+                        )
+                    )
+                    != str(value)
                     for index, value in (
                         (0, request.artifact_id),
                         (1, request.artifact_reference_id),
@@ -176,6 +197,14 @@ class PostgresEvaluationArtifactRepository:
                         (12, request.dataset_id),
                         (13, request.suite_id),
                         (16, request.max_bytes),
+                        (
+                            17,
+                            intended_use,
+                        ),
+                        (
+                            18,
+                            request.artifact_version,
+                        ),
                     )
                 ):
                     raise ArtifactStorageError("idempotency_conflict")
@@ -221,9 +250,10 @@ class PostgresEvaluationArtifactRepository:
                 artifact_id, artifact_reference_id, request_id, result_id,
                 idempotency_key, authorization_record_id, capture_classification,
                 media_classification, media_type, byte_count, sha256, job_id,
-                dataset_id, suite_id, status, declared_max_bytes, created_at, updated_at)
+                dataset_id, suite_id, status, declared_max_bytes, created_at, updated_at,
+                intended_use, artifact_version)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s,
-                'pending', %s, %s, CURRENT_TIMESTAMP)""",
+                'pending', %s, %s, CURRENT_TIMESTAMP, %s, %s)""",
                 (
                     request.artifact_id,
                     request.artifact_reference_id,
@@ -240,6 +270,8 @@ class PostgresEvaluationArtifactRepository:
                     request.suite_id,
                     request.max_bytes,
                     request.created_at.astimezone(UTC),
+                    request.intended_use,
+                    request.artifact_version,
                 ),
             )
             return None
@@ -261,6 +293,8 @@ class PostgresEvaluationArtifactRepository:
                   AND authz.authorization_context = %s
                   AND authz.retention_mode = 'manual_only'
                   AND authz.capture_classification = artifact.capture_classification
+                  AND artifact.intended_use = %s
+                  AND artifact.artifact_version = %s
                   AND artifact.sha256 = %s""",
                 (
                     artifact.byte_count,
@@ -268,6 +302,8 @@ class PostgresEvaluationArtifactRepository:
                     artifact.artifact_reference_id,
                     artifact.authorization_purpose,
                     artifact.authorization_context,
+                    artifact.intended_use,
+                    artifact.artifact_version,
                     artifact.sha256,
                 ),
             )
@@ -667,12 +703,14 @@ class ClickHouseEvaluationScoreStore:
         user: str = "default",
         password: str = "",
         metrics: ObservatoryMetrics | None = None,
+        component_id: str = "aura.observatory.deterministic_evaluators",
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.database = database
         self.user = user
         self.password = password
         self._metrics = metrics
+        self._component_id = component_id
 
     async def insert_score(self, score: EvaluationScore) -> None:
         score.validate()
@@ -707,6 +745,33 @@ class ClickHouseEvaluationScoreStore:
             "threshold_value": score.threshold_value,
             "threshold_operator": score.threshold_operator,
             "threshold_status": score.threshold_status,
+            "judge_definition_id": score.judge_definition_id,
+            "judge_definition_version": score.judge_definition_version,
+            "model_name": score.model_name,
+            "model_version": score.model_version,
+            "model_digest": score.model_digest,
+            "prompt_version": score.prompt_version,
+            "rubric_version": score.rubric_version,
+            "calibration_version": score.calibration_version,
+            "judge_seed": score.seed,
+            "judge_budget_timeout_ms": score.budget_timeout_ms,
+            "judge_budget_max_input_bytes": score.budget_max_input_bytes,
+            "judge_budget_max_output_bytes": score.budget_max_output_bytes,
+            "judge_budget_max_output_tokens": score.budget_max_output_tokens,
+            "judge_budget_max_context_tokens": score.budget_max_context_tokens,
+            "judge_budget_max_concurrency": score.budget_max_concurrency,
+            "score_disposition": score.score_disposition,
+            "qualification_id": score.qualification_id,
+            "qualification_version": score.qualification_version,
+            "prompt_artifact_id": score.prompt_artifact_id,
+            "prompt_artifact_version": score.prompt_artifact_version,
+            "prompt_artifact_digest": score.prompt_artifact_digest,
+            "rubric_artifact_id": score.rubric_artifact_id,
+            "rubric_artifact_version": score.rubric_artifact_version,
+            "rubric_artifact_digest": score.rubric_artifact_digest,
+            "calibration_id": score.calibration_id,
+            "uncertainty": score.uncertainty,
+            "disagreement": score.disagreement,
         }
         query = "INSERT INTO evaluation_scores FORMAT JSONEachRow\n" + json.dumps(
             row, separators=(",", ":")
@@ -747,7 +812,7 @@ class ClickHouseEvaluationScoreStore:
             labels={"operation": "clickhouse", "outcome": outcome},
         )
         self._metrics.record_component_span(
-            component_id="aura.observatory.deterministic_evaluators",
+            component_id=self._component_id,
             component_version="1.0.0",
             deployment_id=self._metrics.deployment_id,
             operation="write",
@@ -923,6 +988,16 @@ def _artifact_from_row(row: Any) -> ArtifactRecord:
         dataset_id=str(_row_value(row, 12, "dataset_id")),
         suite_id=str(_row_value(row, 13, "suite_id")),
         created_at=_row_value(row, 14, "created_at"),
+        intended_use=(
+            str(_row_value(row, 17, "intended_use"))
+            if _has_row(row, 17, "intended_use")
+            else "input"
+        ),
+        artifact_version=(
+            str(_row_value(row, 18, "artifact_version"))
+            if _has_row(row, 18, "artifact_version")
+            else "1.0.0"
+        ),
     )
 
 
@@ -930,6 +1005,22 @@ def _row_value(row: Any, index: int, name: str) -> Any:
     if isinstance(row, Mapping):
         return cast(Mapping[str, Any], row)[name]
     return row[index]
+
+
+def _row_value_or(row: Any, index: int, name: str, default: Any) -> Any:
+    if isinstance(row, Mapping):
+        return cast(Mapping[str, Any], row).get(name, default)
+    return row[index] if len(row) > index else default
+
+
+def _has_row(row: Any, index: int, name: str | None = None) -> bool:
+    if isinstance(row, Mapping):
+        return name is None or name in row
+    if isinstance(row, tuple):
+        return len(cast(tuple[object, ...], row)) > index
+    if isinstance(row, list):
+        return len(cast(list[object], row)) > index
+    return False
 
 
 def _updated(result: Any) -> bool:

@@ -104,6 +104,15 @@ class Settings(BaseSettings):
     evaluation_retry_base_seconds: int = Field(default=10, ge=1, le=3600)
     evaluation_retry_max_seconds: int = Field(default=3600, ge=1, le=86400)
     evaluation_max_envelope_bytes: int = Field(default=1_000_000, ge=1024, le=10_000_000)
+    # AURA-0094 worker-only local judge boundary.  The origin is fixed by
+    # deployment configuration and is never accepted from a request.
+    local_judge_origin: str = "http://ollama:11434"
+    local_judge_timeout_seconds: float = Field(default=120.0, ge=0.1, le=120.0)
+    local_judge_max_concurrency: int = Field(default=1, ge=1, le=2)
+    judge_object_access_key: str = ""
+    judge_object_access_key_file: Path | None = None
+    judge_object_secret_key: str = ""
+    judge_object_secret_key_file: Path | None = None
 
     @field_validator("evaluation_worker_id", "evaluation_scheduler_id")
     @classmethod
@@ -130,6 +139,12 @@ class Settings(BaseSettings):
         )
         self.evaluation_nats_password = read_secret(
             self.evaluation_nats_password, self.evaluation_nats_password_file
+        )
+        self.judge_object_access_key = read_secret(
+            self.judge_object_access_key, self.judge_object_access_key_file
+        )
+        self.judge_object_secret_key = read_secret(
+            self.judge_object_secret_key, self.judge_object_secret_key_file
         )
         if not self.database_url:
             encoded = quote(self.database_password, safe="")

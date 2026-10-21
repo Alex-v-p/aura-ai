@@ -40,6 +40,11 @@ services:
       - local_http_core_garage_data:/var/lib/garage:ro
       - local_http_core_garage_config:/run/garage-config:ro
 
+  observatory-judge-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
   authentik-postgres:
     volumes: !override
       - local_http_authentik_postgres_data:/var/lib/postgresql/data
@@ -91,7 +96,8 @@ services:
   observatory-evaluation-worker:
     environment:
       AURA_OBSERVATORY_ENVIRONMENT: disposable_local
-    networks: [observatory-db, aura-evaluation-bus, observatory-ingest]
+      AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN: ${AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN:-http://host.docker.internal:11434}
+    networks: [observatory-db, aura-evaluation-bus, observatory-ingest, observatory-object-storage, observatory-judge-egress]
 
   observatory-evaluation-scheduler:
     environment:

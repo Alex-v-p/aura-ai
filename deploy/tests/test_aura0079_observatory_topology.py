@@ -123,7 +123,12 @@ def test_observatory_database_and_ingest_networks_are_private_and_separate() -> 
     assert all(
         definition.get("internal") is True
         for name, definition in private_networks.items()
-        if name not in {"observatory-edge", "observatory-identity-egress"}
+        if name
+        not in {
+            "observatory-edge",
+            "observatory-identity-egress",
+            "observatory-judge-egress",
+        }
     )
 
     memberships: dict[str, set[str]] = {

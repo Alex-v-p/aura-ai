@@ -1,0 +1,77 @@
+agent: platform_worker
+work_item: AURA-0094
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0094_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.observatory-local-judge
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0094_runtime.py
+  - deploy/tests/test_aura0094_topology.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - Compose supplies only the worker-local artifact-read and Ollama provider boundaries; no public API, event, or transport contract changed.
+migrations:
+  changed: false
+  postgresql: []
+  clickhouse: []
+observability:
+  components:
+    - aura.observatory.local_judges
+    - aura.observatory.calibration
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0094.yaml
+    - python3 -m pytest -q deploy/tests/test_aura0094_topology.py
+    - python3 -m unittest deploy.compose.test_topology
+    - docker compose --env-file .env --profile observatory config --quiet
+    - docker compose --env-file .env -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity --profile observatory config --quiet
+    - bash -n deploy/compose/local-http.sh
+    - python3 -m pytest -q deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py
+    - python3 -m unittest deploy.compose.test_topology
+    - python3 -m pytest -q deploy/tests/test_aura0079_observatory_topology.py deploy/tests/test_aura0090_topology.py deploy/tests/test_aura0091_topology.py deploy/tests/test_aura0092_topology.py
+    - Project-scoped Docker Desktop probe with a temporary host listener: internal judge network blocked host.docker.internal and example.com, and cleanup removed only the temporary network/container.
+    - git diff --check
+  failed:
+  not_run:
+    - Full Docker Desktop stack and Garage/Ollama runtime acceptance; integration owner controls the single serialized stack instance.
+    - Full Observatory lint, type checking, and tests; owned by Observatory implementation/test workers.
+decisions:
+  - Changed observatory-judge-egress to an internal network with no published port, so it cannot route arbitrary public egress. Docker Desktop evidence shows that this also blocks host.docker.internal; Compose has no host-gateway exception on an internal network.
+  - Kept Ollama optional at runtime: the evaluation worker has bounded timeout/concurrency settings and no Ollama dependency in Compose readiness, so normal Core and Observatory readiness do not depend on the provider. The intended host/local Ollama boundary is therefore ADR_REQUIRED until Docker can express it without a proxy or additional capability.
+  - Hard-coded the normal Compose judge origin to the deployment-owned host-gateway URL, allowed only the generated host-gateway relay origin in local-http mode, rejected public relay targets, and blanked all HTTP(S)/ALL proxy variables with NO_PROXY=*.
+  - Added a separate file-backed judge Garage access/secret pair and one-shot idempotent bootstrap. The bootstrap is the necessary provisioning exception to the worker-only long-running credential boundary; the judge key is limited to the existing evaluation bucket and verified as compact read-only R permission with write and owner denied.
+  - Reused the existing encrypted Garage state root and private object-storage network. The existing Observatory write identity and Core evaluation-runner identity remain unchanged and are not mounted into the evaluation worker.
+  - Extended local-http secret generation/preservation without writing secrets to tracked files; reset continues to remove only project-scoped disposable volumes and preserve secret files, while down preserves all disposable state.
+  - Added a relay override for local HTTP mode so the optional loopback Ollama relay is used consistently by Core and the worker while ambient provider URLs remain unset and authoritative generated overlay values win.
+  - Recorded current pinned Docker Compose/Garage v2.1 deployment behavior through the existing digest-qualified image, file-injected secrets, no-host-port internal storage boundary, and fail-closed grant verification patterns; no dependency or image upgrade was introduced.
+  - Applied the owner decision recorded in AURA-0094: the internal, fail-closed judge network may remain unable to reach host.docker.internal Ollama for this checkpoint. Provider-unavailable is an accepted availability limitation and is not a release blocker; any future reachable route requires a separately governed deployment decision.
+risks:
+  - Existing AURA-0092 topology tests contain exact old network-set assertions and therefore require an integration-owner test update when the AURA-0094 worker network expansion is integrated; changing those forbidden historical tests was outside this ownership zone.
+  - Docker Desktop currently cannot route host.docker.internal from the internal judge network. Local judge executions can therefore fail closed as provider-unavailable until a future work item defines and validates a governed route; no proxy, privileged workaround, host networking, or general egress was introduced.
+unresolved: []

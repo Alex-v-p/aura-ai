@@ -1,0 +1,74 @@
+agent: integration_maintainer
+work_item: AURA-0094
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0094-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0094-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0094-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0094-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0094-test-evaluation.yaml (PASS; test_evaluation_engineer)
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Work-item schema and semantic validation passed for
+      work-items/active/AURA-0094.yaml before archival.
+    - >-
+      Changed-path validation passed for all 53 current paths; every path is
+      within the AURA-0094 allowlist.
+    - >-
+      Implementation-handoff schema validation passed for all four AURA-0094
+      handoffs, and review-verdict schema validation passed for all five
+      AURA-0094 reviews.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0094.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0094.yaml completed with the expected no-change
+      skip.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0094.yaml passed.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests passed.
+    - uv run pyright services/aura-observatory passed with zero diagnostics.
+    - >-
+      uv run pytest services/aura-observatory/tests -q passed: 1075 passed,
+      15 skipped, 2 warnings.
+    - uv run pytest deploy/tests -q passed: 69 passed.
+    - python3 -m unittest deploy.compose.test_topology passed: 49 tests.
+    - uv run pytest deploy/tests/test_aura0094_*.py -q passed: 7 passed.
+    - >-
+      uv run pytest tooling/architecture/tests/test_observability.py
+      deploy/tests/test_aura0094_*.py -q passed: 17 passed.
+    - docker compose --env-file .env --profile observatory config --quiet passed.
+    - bash -n deploy/compose/local-http.sh deploy/docker/garage-*.sh passed.
+    - git diff --check passed.
+    - >-
+      The owner decision dated 2026-10-21 explicitly accepts provider-unavailable
+      local-judge behavior for this checkpoint while retaining the internal,
+      fail-closed judge network and deferring live Ollama acceptance to AURA-0098.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The parent integration maintainer has not yet created the focused local
+    Conventional Commit or pushed anything; the reviewed worktree is preserved
+    for that checkpoint.
+  - >-
+    Real Compose-to-Ollama execution remains unproven because the owner-selected
+    internal network intentionally cannot reach host-local Ollama. This is an
+    accepted availability limitation for AURA-0094 and is deferred to AURA-0098;
+    no proxy, sidecar, host networking, privileged capability, or general egress
+    was introduced.
+  - >-
+    Live ClickHouse migration/deletion-recovery acceptance remains opt-in and
+    was skipped without a repository-scoped endpoint; mocked and migration-ledger
+    coverage passed, and live acceptance remains assigned to the later full-stack
+    validation work.

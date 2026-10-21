@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import math
 import os
 import tempfile
 from collections import defaultdict, deque
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -19,6 +21,9 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 _LOGGER = logging.getLogger(__name__)
+_TRACE_CONTEXT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "observatory_trace_context", default=None
+)
 
 COMPONENT_SPAN_COMPONENTS = frozenset(
     {
@@ -26,6 +31,8 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
         "aura.observatory.evaluation_scheduler",
         "aura.observatory.evaluation_definitions",
         "aura.observatory.deterministic_evaluators",
+        "aura.observatory.local_judges",
+        "aura.observatory.calibration",
     }
 )
 COMPONENT_SPAN_OPERATIONS = frozenset(
@@ -38,16 +45,67 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "heartbeat",
         "admit",
         "evaluate",
+        "judge",
+        "label",
+        "calibrate",
+        "qualify",
+        "review",
+        "revoke",
         "read",
         "write",
+        "verify_model",
+        "read_artifacts",
+        "generate",
+        "write_score",
+        "definition_get",
+        "execution_get",
+        "execution_claim",
+        "execution_complete",
+        "execution_fail",
     }
 )
 COMPONENT_SPAN_DEPENDENCIES = frozenset(
-    {"postgresql", "clickhouse", "evaluation_definition_state", "evaluation_nats"}
+    {
+        "postgresql",
+        "clickhouse",
+        "evaluation_definition_state",
+        "evaluation_nats",
+        "ollama",
+        "garage",
+    }
 )
 COMPONENT_SPAN_OUTCOMES = frozenset({"success", "failure", "duplicate", "timeout", "unavailable"})
 COMPONENT_SPAN_ERRORS = frozenset(
-    {"database_failure", "storage_failure", "transport_unavailable", "timeout", "validation"}
+    {
+        "database_failure",
+        "storage_failure",
+        "transport_unavailable",
+        "timeout",
+        "validation",
+        "provider_failure",
+        "provider_timeout",
+        "provider_unavailable",
+        "provider_redirect",
+        "provider_resource_limit",
+        "model_not_found",
+        "model_digest_drift",
+        "provider_malformed",
+        "provider_oversized",
+        "artifact_unauthorized",
+        "artifact_revoked",
+        "artifact_integrity",
+        "artifact_storage_failure",
+        "metadata_storage_failure",
+        "definition_storage_failure",
+        "execution_storage_failure",
+        "qualification_denied",
+        "authorization_required",
+        "artifact_limit",
+        "duplicate",
+        "insufficient",
+        "rejected",
+        "not_found",
+    }
 )
 MAX_LAG_MS = 604_800_000.0
 MAX_LATENCY_MS = 600_000.0
@@ -402,6 +460,7 @@ class ObservatoryMetrics:
             "observatory_evaluation_result_lag_seconds",
             "observatory_evaluation_operation_duration_ms",
             "observatory_evaluator_duration_ms",
+            "observatory_local_judge_duration_ms",
         }
     )
 
@@ -457,6 +516,14 @@ class ObservatoryMetrics:
         "observatory_evaluator_duration_ms",
         "observatory_evaluator_outcome_count",
         "observatory_evaluator_incomplete_evidence_count",
+        "observatory_local_judge_request_count",
+        "observatory_local_judge_duration_ms",
+        "observatory_local_judge_outcome_count",
+        "observatory_local_judge_provider_failure_count",
+        "observatory_judge_disagreement_count",
+        "observatory_calibration_review_count",
+        "observatory_calibration_qualification_count",
+        "observatory_calibration_duration_ms",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -514,6 +581,14 @@ class ObservatoryMetrics:
         "observatory_evaluator_duration_ms": {"evaluator_kind"},
         "observatory_evaluator_outcome_count": {"evaluator_kind", "outcome"},
         "observatory_evaluator_incomplete_evidence_count": {"evaluator_kind", "evidence_status"},
+        "observatory_local_judge_request_count": {"outcome"},
+        "observatory_local_judge_duration_ms": set(),
+        "observatory_local_judge_outcome_count": {"outcome"},
+        "observatory_local_judge_provider_failure_count": {"failure_code"},
+        "observatory_judge_disagreement_count": {"disagreement"},
+        "observatory_calibration_review_count": {"outcome"},
+        "observatory_calibration_qualification_count": {"outcome"},
+        "observatory_calibration_duration_ms": {"operation", "outcome"},
     }
     LABEL_VALUES = {
         "reason": set(REJECTION_REASONS),
@@ -559,6 +634,8 @@ class ObservatoryMetrics:
             "pass",
             "fail",
             "inconclusive",
+            "qualified",
+            "revoked",
         },
         "operation": {
             "store",
@@ -572,14 +649,40 @@ class ObservatoryMetrics:
             "evaluation_nats",
             "admit",
             "evaluate",
+            "judge",
+            "calibrate",
+            "qualify",
+            "review",
+            "revoke",
             "read",
             "write",
             "clickhouse",
             "evaluation_definition_state",
+            "local_judge",
+            "verify_model",
+            "read_artifacts",
+            "generate",
+            "write_score",
+            "definition_get",
+            "execution_get",
+            "execution_claim",
+            "execution_complete",
+            "execution_fail",
+            "label",
         },
         "resource_type": {"dataset", "case", "suite", "evaluator"},
         "evaluator_kind": {"deterministic", "local_judge", "human_review"},
         "evidence_status": {"observed", "not_observed", "not_applicable"},
+        "disagreement": {
+            "none",
+            "within_tolerance",
+            "score_disagreement",
+            "outcome_disagreement",
+            "score",
+            "label",
+            "evidence",
+            "insufficient_evidence",
+        },
         "selector": {"job", "dataset", "suite", "cutoff", "purge_all"},
         "phase": {"started", "scores", "objects", "complete", "worker"},
         "event_type": {
@@ -603,6 +706,23 @@ class ObservatoryMetrics:
             "cancelled",
             "unknown",
             "validation",
+            "provider_failure",
+            "provider_timeout",
+            "provider_unavailable",
+            "provider_redirect",
+            "model_not_found",
+            "provider_resource_limit",
+            "model_digest_drift",
+            "provider_malformed",
+            "provider_oversized",
+            "artifact_unauthorized",
+            "artifact_revoked",
+            "artifact_integrity",
+            "artifact_storage_failure",
+            "metadata_storage_failure",
+            "definition_storage_failure",
+            "execution_storage_failure",
+            "qualification_denied",
         },
         "stage": {
             "callback",
@@ -685,7 +805,7 @@ class ObservatoryMetrics:
             outcome=outcome,
             dependency=dependency,
             error_code=error_code,
-            trace_id=self._trace_id,
+            trace_id=_TRACE_CONTEXT.get() or self._trace_id,
             span_id=uuid4().hex[:16],
         )
         self._component_spans.append(span)
@@ -696,6 +816,17 @@ class ObservatoryMetrics:
             duration,
             {"operation": operation},
         )
+
+    @contextmanager
+    def trace_context(self, trace_id: str | None = None) -> Generator[str]:
+        """Correlate one bounded claimed work item across dependency spans."""
+
+        value = trace_id or uuid4().hex
+        token = _TRACE_CONTEXT.set(value)
+        try:
+            yield value
+        finally:
+            _TRACE_CONTEXT.reset(token)
 
     @property
     def component_spans(self) -> tuple[ComponentSpan, ...]:

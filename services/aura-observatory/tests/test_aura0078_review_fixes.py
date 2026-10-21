@@ -917,6 +917,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.evaluation_scheduler",
         "aura.observatory.evaluation_definitions",
         "aura.observatory.deterministic_evaluators",
+        "aura.observatory.local_judges",
+        "aura.observatory.calibration",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -1020,6 +1022,20 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_evaluator_outcome_count",
                 "observatory_evaluator_incomplete_evidence_count",
             }
+        elif manifest_id == "aura.observatory.local_judges":
+            expected_metrics = {
+                "observatory_local_judge_request_count",
+                "observatory_local_judge_duration_ms",
+                "observatory_local_judge_outcome_count",
+                "observatory_local_judge_provider_failure_count",
+            }
+        elif manifest_id == "aura.observatory.calibration":
+            expected_metrics = {
+                "observatory_judge_disagreement_count",
+                "observatory_calibration_review_count",
+                "observatory_calibration_qualification_count",
+                "observatory_calibration_duration_ms",
+            }
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {
             "aura.observatory.evaluation_artifact_storage",
@@ -1027,6 +1043,11 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         }:
             assert manifest["capture_policy"] == "metadata_only"
             assert set(manifest["cardinality"]["prohibited"]) == EXPECTED_METADATA_PROHIBITED_FIELDS
+        elif manifest_id in {
+            "aura.observatory.local_judges",
+            "aura.observatory.calibration",
+        }:
+            assert manifest["capture_policy"] == "authorized_evaluation_content"
         else:
             # Preserve the established metadata-only expectation for the
             # original AURA-0078 manifests without imposing the AURA-0090

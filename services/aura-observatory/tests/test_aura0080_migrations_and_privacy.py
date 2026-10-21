@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -65,8 +66,11 @@ def test_postgres_schema_has_retention_state_and_content_free_audit_shape() -> N
     )
     assert "retention" in text
     assert "audit" in text
-    for forbidden in ("prompt", "response", "filename", "credential", "bearer", "owner_identity"):
+    for forbidden in ("response", "filename", "credential", "bearer", "owner_identity"):
         assert forbidden not in text
+    # Evaluation-v1 may persist prompt/rubric version and opaque artifact
+    # metadata. It must never persist their content-bearing representation.
+    assert not re.search(r"\b(prompt|rubric|response)\s+(text|bytea|jsonb)\b", text)
 
 
 def test_clickhouse_schema_keeps_observations_and_span_topology_service_owned() -> None:

@@ -123,7 +123,7 @@ def test_evaluation_adapter_names_only_observatory_tables_and_never_logs_payload
     assert "observatory_evaluation_deletion_commands" in source
     assert "observatory_evaluation_deletion_targets" in source
     assert "evaluation_scores" in source
-    for forbidden in ("filename", "object_key", "owner_identity", "prompt", "rubric", "raw_bytes"):
+    for forbidden in ("filename", "object_key", "owner_identity", "raw_bytes"):
         assert forbidden not in source.casefold()
     assert "insert_deduplication_token" in source
     assert "param_reference" in source

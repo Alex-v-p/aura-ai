@@ -18,7 +18,7 @@ import math
 import re
 from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol, cast
@@ -131,6 +131,17 @@ class ArtifactStorageError(RuntimeError):
         super().__init__(message or failure_code)
 
 
+def _utc_timestamp(value: datetime) -> str:
+    """Render an aware UTC instant in evaluation-v1's canonical ``Z`` form."""
+
+    if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
+        raise ArtifactStorageError("score_invalid")
+    rendered = value.astimezone(UTC).isoformat(timespec="microseconds")[:-6]
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered + "Z"
+
+
 class DeletionFailure(RuntimeError):
     """Bounded, recoverable deletion failure."""
 
@@ -179,6 +190,8 @@ class ArtifactUpload:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     authorization_purpose: str = "owner_supplied_evaluation"
     authorization_context: str = "controlled_evaluation"
+    intended_use: str | None = None
+    artifact_version: str = "1.0.0"
 
     def validate(self, configured_max_bytes: int) -> None:
         for name in (
@@ -207,6 +220,38 @@ class ArtifactUpload:
             raise ArtifactStorageError("integrity_invalid")
         if self.max_bytes < 0 or self.max_bytes > min(configured_max_bytes, 1_073_741_824):
             raise ArtifactStorageError("artifact_limit_exceeded")
+        if not _VERSION_RE.fullmatch(self.artifact_version):
+            raise ArtifactStorageError("authorization_required")
+        # AURA-0090 callers predating intended_use are normalized to input at
+        # the service boundary.  New content-bearing callers must provide an
+        # explicit use so the role matrix below is enforced.
+        if self.intended_use is None:
+            return
+        if self.intended_use not in {"prompt", "rubric", "input", "comment"}:
+            raise ArtifactStorageError("authorization_required")
+        if (
+            self.intended_use in {"prompt", "rubric", "input"}
+            and self.media_classification != "evaluation_input"
+        ):
+            raise ArtifactStorageError("authorization_required")
+        if (
+            self.intended_use in {"prompt", "rubric"}
+            and self.authorization_purpose == "controlled_replay"
+        ) or (
+            self.intended_use == "input"
+            and self.authorization_purpose
+            not in {
+                "synthetic_benchmark",
+                "owner_supplied_evaluation",
+                "controlled_replay",
+            }
+        ):
+            raise ArtifactStorageError("authorization_required")
+        if self.intended_use == "comment" and (
+            self.authorization_purpose != "human_review"
+            or self.media_classification != "evaluation_evidence"
+        ):
+            raise ArtifactStorageError("authorization_required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +273,8 @@ class ArtifactRecord:
     created_at: datetime
     authorization_purpose: str = "owner_supplied_evaluation"
     authorization_context: str = "controlled_evaluation"
+    intended_use: str = "input"
+    artifact_version: str = "1.0.0"
 
 
 class DeletionKind(StrEnum):
@@ -303,6 +350,34 @@ class EvaluationScore:
     threshold_value: float | None = None
     threshold_operator: str | None = None
     threshold_status: str | None = None
+    # Exact local-judge provenance; all fields are bounded metadata only.
+    judge_definition_id: str | None = None
+    judge_definition_version: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
+    model_digest: str | None = None
+    prompt_version: str | None = None
+    rubric_version: str | None = None
+    calibration_version: str | None = None
+    seed: int | None = None
+    budget_timeout_ms: int | None = None
+    budget_max_input_bytes: int | None = None
+    budget_max_output_bytes: int | None = None
+    budget_max_output_tokens: int | None = None
+    budget_max_context_tokens: int | None = None
+    budget_max_concurrency: int | None = None
+    score_disposition: str | None = None
+    qualification_id: str | None = None
+    qualification_version: str | None = None
+    uncertainty: float | None = None
+    disagreement: str | None = None
+    prompt_artifact_id: str | None = None
+    prompt_artifact_version: str | None = None
+    prompt_artifact_digest: str | None = None
+    rubric_artifact_id: str | None = None
+    rubric_artifact_version: str | None = None
+    rubric_artifact_digest: str | None = None
+    calibration_id: str | None = None
 
     def validate(self) -> None:
         for name in (
@@ -318,6 +393,71 @@ class EvaluationScore:
             _require_uuid(self.artifact_reference_id, "artifact_reference_id")
         if self.case_id is not None:
             _require_uuid(self.case_id, "case_id")
+        for name in (
+            "judge_definition_id",
+            "qualification_id",
+            "prompt_artifact_id",
+            "rubric_artifact_id",
+            "calibration_id",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _require_uuid(value, name)
+        for name in (
+            "judge_definition_version",
+            "model_version",
+            "prompt_version",
+            "rubric_version",
+            "calibration_version",
+            "qualification_version",
+            "prompt_artifact_version",
+            "rubric_artifact_version",
+        ):
+            value = getattr(self, name)
+            if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", value):
+                raise ArtifactStorageError("score_invalid")
+        if self.model_name is not None and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", self.model_name
+        ):
+            raise ArtifactStorageError("score_invalid")
+        if self.model_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.model_digest):
+            raise ArtifactStorageError("score_invalid")
+        for value in (self.prompt_artifact_digest, self.rubric_artifact_digest):
+            if value is not None and not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ArtifactStorageError("score_invalid")
+        if self.seed is not None and (
+            isinstance(self.seed, bool) or not 0 <= self.seed <= 2_147_483_647
+        ):
+            raise ArtifactStorageError("score_invalid")
+        for value, low, high in (
+            (self.budget_timeout_ms, 100, 120_000),
+            (self.budget_max_input_bytes, 1, 1_048_576),
+            (self.budget_max_output_bytes, 1, 8_192),
+            (self.budget_max_output_tokens, 1, 2_048),
+            (self.budget_max_context_tokens, 1, 16_384),
+            (self.budget_max_concurrency, 1, 2),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high
+            ):
+                raise ArtifactStorageError("score_invalid")
+        if self.score_disposition is not None and self.score_disposition not in {
+            "advisory_only",
+            "calibrated_enabled",
+        }:
+            raise ArtifactStorageError("score_invalid")
+        if self.uncertainty is not None and (
+            not math.isfinite(self.uncertainty) or not 0 <= self.uncertainty <= 1
+        ):
+            raise ArtifactStorageError("score_invalid")
+        if self.disagreement is not None and self.disagreement not in {
+            "none",
+            "within_tolerance",
+            "score_disagreement",
+            "outcome_disagreement",
+            "insufficient_evidence",
+        }:
+            raise ArtifactStorageError("score_invalid")
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]{0,95}", self.metric):
             raise ArtifactStorageError("score_invalid")
         for value, _name in (
@@ -382,9 +522,92 @@ class EvaluationScore:
             raise ArtifactStorageError("score_invalid")
         if self.value is not None and (not math.isfinite(self.value) or abs(self.value) > 1e15):
             raise ArtifactStorageError("score_invalid")
+        _utc_timestamp(self.observed_at)
         _require_version(self.evaluator_version, "evaluator_version")
         _require_version(self.component_version, "component_version")
         _require_component_id(self.component_id)
+
+    def as_local_judge_contract(self) -> dict[str, object]:
+        """Return the closed evaluation-v1 LocalJudgeScoreMetadata projection."""
+
+        self.validate()
+        if self.evaluator_kind != "local_judge":
+            raise ArtifactStorageError("score_invalid")
+        required = (
+            self.judge_definition_id,
+            self.judge_definition_version,
+            self.model_name,
+            self.model_version,
+            self.model_digest,
+            self.prompt_version,
+            self.rubric_version,
+            self.calibration_version,
+            self.prompt_artifact_id,
+            self.prompt_artifact_version,
+            self.prompt_artifact_digest,
+            self.rubric_artifact_id,
+            self.rubric_artifact_version,
+            self.rubric_artifact_digest,
+            self.calibration_id,
+            self.seed,
+            self.budget_timeout_ms,
+            self.budget_max_input_bytes,
+            self.budget_max_output_bytes,
+            self.budget_max_output_tokens,
+            self.budget_max_context_tokens,
+            self.budget_max_concurrency,
+            self.score_disposition,
+            self.disagreement,
+        )
+        if any(value is None for value in required):
+            raise ArtifactStorageError("score_invalid")
+        budget = {
+            "timeoutMs": self.budget_timeout_ms,
+            "maxInputBytes": self.budget_max_input_bytes,
+            "maxOutputBytes": self.budget_max_output_bytes,
+            "maxOutputTokens": self.budget_max_output_tokens,
+            "maxContextTokens": self.budget_max_context_tokens,
+            "maxConcurrency": self.budget_max_concurrency,
+            "temperature": 0,
+        }
+        value: dict[str, object] = {
+            "judgeDefinition": {
+                "judgeDefinitionId": self.judge_definition_id,
+                "judgeDefinitionVersion": self.judge_definition_version,
+            },
+            "model": {
+                "provider": "local_ollama",
+                "modelName": self.model_name,
+                "modelVersion": self.model_version,
+                "modelDigest": self.model_digest,
+            },
+            "prompt": {
+                "artifactId": self.prompt_artifact_id,
+                "artifactVersion": self.prompt_artifact_version,
+                "purpose": "judge_prompt",
+                "digest": self.prompt_artifact_digest,
+            },
+            "rubric": {
+                "artifactId": self.rubric_artifact_id,
+                "artifactVersion": self.rubric_artifact_version,
+                "purpose": "judge_rubric",
+                "digest": self.rubric_artifact_digest,
+            },
+            "calibration": {
+                "calibrationId": self.calibration_id,
+                "calibrationVersion": self.calibration_version,
+            },
+            "seed": self.seed,
+            "budget": budget,
+            "scoreDisposition": self.score_disposition,
+            "disagreement": self.disagreement,
+        }
+        if self.qualification_id is not None:
+            value["qualification"] = {
+                "qualificationId": self.qualification_id,
+                "qualificationVersion": self.qualification_version,
+            }
+        return value
 
 
 class EvaluationMetrics:
@@ -440,6 +663,8 @@ class ArtifactStorageService:
         except ArtifactStorageError:
             self._record_artifact_failure(started)
             raise
+        if request.intended_use is None:
+            request = replace(request, intended_use="input")
         if request.capture_classification not in ALLOWED_CAPTURE_CLASSIFICATIONS:
             self._record_artifact_failure(started)
             raise ArtifactStorageError("authorization_required")
@@ -505,6 +730,8 @@ class ArtifactStorageService:
                 created_at=request.created_at.astimezone(UTC),
                 authorization_purpose=request.authorization_purpose,
                 authorization_context=request.authorization_context,
+                intended_use=request.intended_use or "input",
+                artifact_version=request.artifact_version,
             )
         except ArtifactStorageError as exc:
             await _best_effort_delete(self.object_store, request.artifact_reference_id)

@@ -29,6 +29,7 @@ COMPOSE_ENV_UNSET=(env
   -u AURA_SECURE_COOKIES
   -u AUTHENTIK_HOST_BROWSER)
 COMPOSE_ENV_UNSET+=( -u AURA_OLLAMA_URL )
+COMPOSE_ENV_UNSET+=( -u AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN )
 
 OLLAMA_RELAY_UNIT=aura-local-ollama-relay.service
 OLLAMA_RELAY_STARTED=0
@@ -88,8 +89,21 @@ validate_relay_target() {
   done
   validate_relay_port "$port"
   case "$host" in
-    0.*|255.255.255.255) die "AURA_LOCAL_OLLAMA_RELAY_TARGET must be a routable host" ;;
+    127.*|10.*|192.168.*) ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) ;;
+    *) die "AURA_LOCAL_OLLAMA_RELAY_TARGET must be loopback or RFC1918" ;;
   esac
+}
+
+validate_local_judge_origin() {
+  local origin=$1 relay_port=${2:-}
+  if [ "$origin" = "http://host.docker.internal:11434" ]; then
+    return 0
+  fi
+  if [ -n "$relay_port" ] && [ "$origin" = "http://host.docker.internal:$relay_port" ]; then
+    return 0
+  fi
+  die "AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN must be the fixed host-gateway Ollama origin or the generated local relay"
 }
 
 stop_ollama_relay() {
@@ -226,6 +240,8 @@ ensure_local_secret() {
     AURA_NATS_RUNNER_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-runner-password} ;;
     AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-access-key} ;;
     AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-secret-key} ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE) configured=${configured:-./.secrets/observatory-judge-garage-access-key} ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE) configured=${configured:-./.secrets/observatory-judge-garage-secret-key} ;;
     AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-access-key} ;;
     AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-secret-key} ;;
   esac
@@ -290,6 +306,8 @@ ensure_evaluation_secrets() {
   ensure_local_secret AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE database
   ensure_local_secret AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE garage-secret
   ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE garage-secret
 }
@@ -305,6 +323,9 @@ write_local_environment() {
   owner_username=${owner_username:-aura-owner}
   owner_name=${owner_name:-Aura Owner}
   owner_password_file=${owner_password_file:-./.secrets/authentik-owner-password}
+  if [ -n "$relay_url" ]; then
+    validate_local_judge_origin "$relay_url" "${relay_url##*:}"
+  fi
   case "$owner_username$owner_name$owner_password_file" in
     *$'\n'*|*$'\r'*) die "local identity values must be single-line values" ;;
   esac
@@ -327,6 +348,7 @@ AUTHENTIK_OWNER_PASSWORD_FILE=$owner_password_file
 EOF
   if [ -n "$relay_url" ]; then
     printf 'AURA_OLLAMA_URL=%s\n' "$relay_url" >>"$temp"
+    printf 'AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN=%s\n' "$relay_url" >>"$temp"
   fi
   mv -f "$temp" "$LOCAL_ENV_FILE"
 }

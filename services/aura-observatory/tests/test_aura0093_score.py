@@ -208,9 +208,11 @@ async def test_clickhouse_score_insert_preserves_complete_content_free_metadata(
     assert row["threshold_applicable"] == 1
     assert row["threshold_reference"] == "threshold-1"
     serialized = json.dumps(row, sort_keys=True)
+    # Prompt/rubric version fields are bounded provenance metadata. Only
+    # content-bearing values and private transport fields are prohibited.
     assert all(
         marker not in serialized.casefold()
-        for marker in ("prompt", "response", "content", "filename", "endpoint", "credential")
+        for marker in ("response", "content", "filename", "endpoint", "credential")
     )
 
 

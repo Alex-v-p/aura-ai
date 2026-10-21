@@ -1,0 +1,271 @@
+id: AURA-0094
+title: Add local judges and calibrated human review
+status: integrated
+change_class: repository_governance
+intent: >
+  Add Observatory-owned, local-only model judging with immutable versioned
+  definitions, bounded artifact-backed prompts and rubrics, deterministic
+  execution, owner-labelled calibration, disagreement and human-review
+  metadata, and explicit advisory qualification without allowing evaluation
+  content to escape or uncalibrated scores to gate decisions.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - The accepted architecture already assigns model-assisted evaluators calibration and human review to Observatory and authorizes local Ollama behind a narrow provider port plus Garage PostgreSQL and ClickHouse service-owned state; no new deployable product protocol or ADR is required.
+    - There are no implicit built-in judge models and no tag-only latest fallback. The judge inventory consists solely of immutable explicitly admitted local_ollama definitions with an exact model name version and SHA-256 model digest verified at execution.
+    - Cloud judges external model endpoints redirects and content egress are prohibited. The provider adapter accepts only the configured private Ollama origin and cannot select a caller-provided URL credential model endpoint or network destination.
+    - Rubric prompt calibration-label and optional human-comment content is authorized untrusted evaluation content stored only in the existing Observatory Garage bucket. PostgreSQL stores opaque artifact UUIDs digests sizes versions finite labels and authorization metadata; ClickHouse stores only bounded content-free scores.
+    - The Observatory evaluation worker may read authorized judge artifacts through a separate file-injected read-only Garage identity. The existing write identity is not broadened and no API Web Core Collector or normal worker receives the judge-read credential.
+    - Judge requests are ephemeral bounded structured operations. Inputs prompts and rubrics are loaded by opaque reference verified by digest classification authorization and byte limit then discarded; responses must match a closed score schema and free-form rationale is discarded before persistence telemetry or errors.
+    - Local judge execution is deterministic by exact model digest prompt version rubric version calibration version seed zero temperature and bounded options. A changed digest prompt rubric calibration or budget creates a new immutable version rather than mutating a definition.
+    - Initial judge outputs use a 0 through 1 finite score and finite pass fail inconclusive outcome with closed label identities. Timeout is at most 120 seconds output is at most 8192 bytes output tokens are at most 2048 input artifacts are at most 1048576 bytes and per-process judge concurrency defaults to one and cannot exceed two.
+    - Calibration requires at least 20 owner-labelled cases agreement within 0.10 on at least 80 percent of cases mean absolute error at most 0.15 and disagreement rate at most 0.20. These thresholds are versioned service-owned defaults and cannot be widened by an artifact or provider response.
+    - Judge scores are advisory by default. Passing calibration does not enable gating automatically; an explicit idempotent owner-authorized manual qualification record for the exact suite evaluator model prompt rubric and calibration versions is required. Baseline promotion remains separately manual under AURA-0096.
+    - Human review persists opaque review identity case and result references finite label and score disagreement classification rubric/calibration versions timestamps and optional authorized comment-artifact reference. Owner identity session data and raw comments never enter portable evaluation records.
+    - Ensembles are closed deterministic weighted combinations of admitted deterministic or calibrated local-judge scores with finite normalized weights and complete member provenance. Any uncalibrated missing incompatible or inconclusive member makes the ensemble advisory and cannot silently pass.
+    - This item adds no REST OpenAPI CLI SSE Angular browser baseline experiment alert external delivery cloud provider or production telemetry content capture. AURA-0095 owns public workflows and AURA-0096 owns experiments and baselines.
+    - Independent review authorizes the smallest existing evaluation-worker orchestration and entrypoint changes needed to execute admitted local-judge and calibration work durably. This does not add a deployable service public protocol Core dependency or normal-readiness dependency and requires no ADR.
+    - Evaluation-v1 is the authoritative shape for every judge calibration review qualification revocation ensemble and score record. Python models PostgreSQL columns and provider mappings must preserve every required field enum version idempotency authorization and integer-ppm weight losslessly.
+    - >-
+      Owner decision 2026-10-21: the worker egress network remains internal
+      and fail-closed even though Docker Desktop cannot currently route it to
+      host.docker.internal. Local judge execution may therefore report provider
+      unavailable in this checkpoint; this is an accepted availability
+      limitation, not a security or release blocker. No proxy sidecar
+      host-network mode privileged capability or general egress is authorized.
+      Real provider reachability remains deferred to a later explicitly
+      governed deployment decision and AURA-0098 acceptance.
+    - Material implementation choices use the repository-pinned dependencies and current official Ollama API Docker Compose PostgreSQL ClickHouse Garage and OWASP guidance, recorded in handoffs; dependency upgrades are not authorized.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-016
+  - EVA-017
+  - EVA-018
+  - EVA-019
+ownership_zones:
+  - contracts.evaluation-v1
+  - services.aura-observatory.local-judges
+  - services.aura-observatory.calibration
+  - services.aura-observatory.human-review
+  - services.aura-observatory.judge-artifact-read
+  - services.aura-observatory.judge-state
+  - services.aura-observatory.judge-score-storage
+  - deploy.observatory-local-judge
+  - deploy.observatory-judge-artifact-identity
+  - repository.module-registration
+  - evaluation.local-judge-calibration-tests
+allowed_paths:
+  - work-items/active/AURA-0094.yaml
+  - work-items/archived/AURA-0094.yaml
+  - work-items/handoffs/AURA-0094-*.yaml
+  - work-items/reviews/AURA-0094-*.yaml
+  - work-items/integration/AURA-0094.yaml
+  - contracts/evaluation/v1/evaluation.schema.json
+  - services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  - services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0007_local_judge_scores.sql
+  - services/aura-observatory/resources/component-manifests/local-judges.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-calibration.yaml
+  - services/aura-observatory/tests/test_aura0094_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+  - services/aura-observatory/tests/test_aura0089_contract.py
+  - services/aura-observatory/tests/test_aura0090_migrations.py
+  - services/aura-observatory/tests/test_aura0093_score.py
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/test_topology.py
+  - deploy/docker/garage-*.sh
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/docker/aura-observatory.Dockerfile.dockerignore
+  - deploy/tests/test_aura0094_*.py
+  - deploy/tests/test_aura0092_topology.py
+  - deploy/tests/test_aura0079_observatory_topology.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+  - contracts/events/**
+  - contracts/openapi/**
+  - services/aura-core/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/**
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0005_evaluation_scores.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+  - frontend/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: true
+  affected:
+    - evaluation-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-calibration
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.local_judges
+    - aura.observatory.calibration
+  required_metrics:
+    - observatory_local_judge_request_count
+    - observatory_local_judge_duration_ms
+    - observatory_local_judge_outcome_count
+    - observatory_local_judge_provider_failure_count
+    - observatory_judge_disagreement_count
+    - observatory_calibration_review_count
+    - observatory_calibration_qualification_count
+  required_evaluators:
+    - local_judge_contract_validation
+    - local_judge_repeatability
+    - local_judge_content_isolation
+    - local_judge_model_digest_verification
+    - calibration_agreement
+    - calibration_disagreement
+    - human_review_idempotency
+    - advisory_qualification_safety
+  capture_policy: authorized_evaluation_content
+security_privacy:
+  applicable: true
+  concerns:
+    - Judge model prompt rubric calibration label comment and case content is authorized untrusted evaluation content and cannot select URLs credentials files paths buckets subjects imports tools permissions provider options or execution authority.
+    - The provider is local Ollama only at one configured private origin with no redirects proxies cloud fallback or caller-controlled destination and its endpoint is never persisted emitted or returned.
+    - Every model invocation verifies exact model name and SHA-256 digest against the immutable definition before loading artifacts or sending content and fails closed on missing drifted or ambiguous inventory.
+    - Prompt rubric input expected output and optional review comment bytes are fetched only by internally derived opaque UUID references through a read-only judge identity after authorization classification purpose dataset digest size media and revocation checks.
+    - The current Observatory artifact write identity remains write-only and no API Web Core Collector scheduler or unrelated worker receives the judge-read secret or model network attachment.
+    - Provider requests enforce fixed system structure zero temperature exact seed no tools no streaming bounded context/output tokens bytes and timeout and treat artifact text solely as quoted data rather than instructions or configuration.
+    - Provider responses must be one closed JSON object with finite score outcome and label fields; free-form rationale unknown fields oversized data NaN infinity control characters and content echoes are rejected and discarded.
+    - PostgreSQL contains only immutable definitions opaque references hashes versions seeds budgets finite labels calibration aggregates qualification and audit metadata; ClickHouse scores remain content-free; Garage is the only content-bearing store.
+    - Logs metrics traces errors NATS SSE URLs screenshots reports and browser storage never include artifact bytes prompt rubric response rationale comment model endpoint object location filename owner identity credential or exception text.
+    - Human review uses opaque review identities finite labels and optional authorized comment-artifact references and cannot persist reviewer identity session data or raw comments.
+    - Calibration and ensemble computations are deterministic bounded idempotent and concurrency-safe and missing incompatible uncalibrated or contradictory evidence never upgrades a score or enables gating.
+    - Qualification is explicit owner-authorized exact-version state with idempotency audit and revocation and cannot promote a repository baseline or alter protected golden results.
+  data_classes:
+    - local_judge_definition_metadata
+    - authorized_evaluation_content
+    - calibration_label_metadata
+    - human_review_metadata
+    - judge_score_metadata
+    - calibration_qualification_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Evaluation-v1 gains backward-compatible closed resources for immutable local judge definition rubric prompt calibration label human review ensemble calibration result and qualification metadata with exact versions digests opaque artifact references bounded budgets finite labels and no raw content arbitrary attributes endpoints credentials or owner identity.
+  - Judge inventory has no implicit or tag-only entries; every executable definition names local_ollama exact model version and SHA-256 digest exact prompt rubric calibration versions seed fixed zero temperature and bounded timeout token byte context and concurrency limits.
+  - A forward-only idempotent PostgreSQL migration from empty and upgraded schemas creates normalized judge prompt rubric calibration label human review ensemble qualification disagreement and content-free audit state without altering migrations 0001 through 0009 or reading Core tables.
+  - Any required ClickHouse migration is forward-only after 0006 and adds only bounded advisory calibration and ensemble provenance fields to Observatory-owned score storage without content or provider configuration.
+  - An authorized artifact-read port and adapter derives object locations internally verifies authorization availability revocation dataset purpose context classification digest media type and exact byte bounds streams bounded bytes and never accepts a caller path bucket endpoint or object key.
+  - Compose and Garage bootstrap provide a separate file-injected read-only judge credential limited to the existing evaluation bucket; the write identity remains unchanged and unrelated services cannot read judge artifacts or join the private Ollama network.
+  - The local Ollama adapter verifies the exact model digest invokes one configured private origin without redirects or proxies tools or streaming uses fixed structured output and bounded zero-temperature seed options and maps timeout unavailable malformed oversized drift and resource failures to finite content-free codes.
+  - A closed judge request loads only explicitly authorized input prompt and rubric artifacts treats all text as data rejects prompt injection as configuration and discards provider rationale or echoed content before returning a finite typed score.
+  - Duplicate judge requests with the same immutable definition case artifact digests and idempotency identity return or persist the same result while conflicting reuse fails closed and concurrent execution cannot duplicate score or qualification state.
+  - Calibration stores owner-labelled finite reference scores and labels plus opaque optional comment artifacts and computes deterministic sample count agreement mean absolute error disagreement and bounded intervals for exact judge rubric prompt model and calibration versions.
+  - At least 20 valid labels agreement at least 0.80 within 0.10 mean absolute error at most 0.15 and disagreement at most 0.20 are required for eligibility; missing labels incompatible versions ambiguous evidence and drift fail closed and remain advisory.
+  - Passing calibration never enables gating automatically. Only an explicit owner-authorized idempotent manual qualification for the exact suite dataset evaluator model prompt rubric and calibration versions marks future scores calibrated-enabled; revocation returns them to advisory without deleting audit history.
+  - Human reviews are immutable idempotent versioned finite score and label records with opaque review and comment-artifact identities and explicit disagreement classifications and never persist reviewer identity session data or raw comments.
+  - Closed deterministic ensembles validate exact member provenance normalized finite weights and missing inconclusive or advisory members and remain advisory unless every required judge member is calibrated-enabled for the exact suite versions.
+  - Judge scores persist content-free evaluator model prompt rubric calibration seed budget advisory qualification uncertainty disagreement and reproducibility metadata through existing score ports while artifacts and provider output remain outside PostgreSQL ClickHouse telemetry and transport.
+  - Local judge and calibration components emit bounded invocation duration outcome provider-failure disagreement review and qualification measurements plus dependency spans with finite labels and no high-cardinality definition case job artifact digest model endpoint or content values.
+  - Ollama Garage PostgreSQL and ClickHouse timeout unavailability malformed response oversized output digest drift revoked artifact duplicate review concurrent qualification and restart paths fail safely without affecting Core normal activity Observatory telemetry ingestion API readiness or deterministic evaluators.
+  - Contract unit property migration concurrency provider privacy artifact-read calibration disagreement ensemble observability topology and project-scoped Docker Desktop tests cover positive negative boundary and recovery behavior; existing AURA-0090 through AURA-0093 suites remain passing.
+  - No public API CLI SSE browser cloud judge external content egress new deployable service Core change dependency upgrade protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0094.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0094.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0094.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0094.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0094.yaml
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - cd /home/alexa/Documents/Projects/aura-ai && uv run pytest tooling/architecture/tests/test_observability.py deploy/tests/test_aura0094_*.py
+  - python3 -m unittest deploy.compose.test_topology
+  - docker compose --env-file .env --profile observatory config --quiet
+  - bash -n deploy/compose/local-http.sh deploy/docker/garage-*.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - The accepted provider-unavailable limitation may be revisited by a later deployment work item, but AURA-0094 does not authorize changing the current fail-closed trust boundary.
+  - AURA-0095 owns owner-facing judge definition calibration review qualification artifact and progress REST CLI SSE and browser workflows plus transport-only generated clients.
+  - AURA-0096 owns experiment cohorts immutable baselines regression decisions attribution and explicit baseline promotion; protected repository baselines remain unchanged.
+  - AURA-0097 owns dashboard alert annotation and incident behavior and external delivery remains deferred.
+  - AURA-0098 owns full-stack real-model browser acceptance and individual Ollama Garage database broker and Collector outage matrices.

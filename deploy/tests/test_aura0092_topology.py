@@ -50,12 +50,20 @@ def test_worker_has_dispatch_bus_but_scheduler_is_database_only() -> None:
     worker_networks = set(worker["networks"])
     scheduler_networks = set(scheduler["networks"])
 
-    assert worker_networks == {"observatory-db", "aura-evaluation-bus", "observatory-ingest"}
+    assert worker_networks == {
+        "observatory-db",
+        "aura-evaluation-bus",
+        "observatory-ingest",
+        "observatory-object-storage",
+        "observatory-judge-egress",
+    }
     assert scheduler_networks == {"observatory-db", "observatory-ingest"}
     assert set(worker["secrets"]) == {
         "observatory-database-password",
         "aura-nats-dispatch-password",
         "observatory-ingest-credential",
+        "observatory-judge-garage-access-key",
+        "observatory-judge-garage-secret-key",
     }
     assert scheduler["secrets"] == [
         "observatory-database-password",
@@ -194,7 +202,10 @@ def test_local_http_overlay_keeps_new_services_private() -> None:
     local_http = (ROOT / "deploy/compose/local-http.yaml").read_text(encoding="utf-8")
     assert "  observatory-evaluation-worker:\n" in local_http
     assert "  observatory-evaluation-scheduler:\n" in local_http
-    assert "networks: [observatory-db, aura-evaluation-bus, observatory-ingest]" in local_http
+    assert (
+        "networks: [observatory-db, aura-evaluation-bus, observatory-ingest, "
+        "observatory-object-storage, observatory-judge-egress]"
+    ) in local_http
     assert "networks: [observatory-db, observatory-ingest]" in local_http
 
 

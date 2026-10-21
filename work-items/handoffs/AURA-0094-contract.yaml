@@ -1,0 +1,286 @@
+agent: contract_steward
+work_item: AURA-0094
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura0094_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/evaluation/v1/evaluation.schema.json
+  - work-items/handoffs/AURA-0094-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for
+    evaluation-v1 during this ownership slice. The evaluation runner transport,
+    lifecycle event, OpenAPI, production telemetry, and generated-client
+    contracts were explicitly excluded and remain unchanged.
+  compatibility: backward_compatible
+  definitions:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      changes:
+        - >-
+          Added closed reusable definitions for local judge artifacts,
+          immutable local judge definitions, calibration definitions and
+          results, owner-labelled calibration records, human reviews, explicit
+          qualification and revocation records, deterministic ensembles, and
+          content-free local judge score provenance.
+        - >-
+          Added the eight new immutable record definitions to the evaluation-v1
+          root oneOf union so ordinary root validation and resource dispatch
+          accept judge artifacts, local judge definitions, calibration
+          definitions and labels, human reviews, calibration results,
+          qualification or revocation records, and judge ensembles.
+        - >-
+          Declared the evaluation-v1 shapes for all eight AURA-0094 resources
+          authoritative across producers and consumers. Service models,
+          persistence, adapters, and tests must preserve the contract's exact
+          required identities, versions, idempotency and authorization records,
+          finite labels, advisory dispositions, qualification conditionals, and
+          integer parts-per-million ensemble weights.
+        - >-
+          Restricted every portable judge model identity to provider
+          local_ollama, an exact bounded model name and version, and a required
+          lowercase SHA-256 model digest. No provider endpoint, URL, credential,
+          fallback, arbitrary provider options, registry path, or cloud provider
+          can be represented.
+        - >-
+          Added exact-version prompt, rubric, calibration, judge-definition,
+          and qualification references using opaque UUIDs and SHA-256 digests.
+          Prompt, rubric, label, and review-comment bytes remain outside the
+          contract behind authorized opaque artifact metadata.
+        - >-
+          Added a fixed zero-temperature local judge budget bounded to 120
+          seconds, 1 MiB input, 8192 output bytes, 2048 output tokens, 16384
+          context tokens, and concurrency at most two, with an exact seed and
+          closed structured-output contract.
+        - >-
+          Added immutable calibration definitions with service-owned gates of
+          at least 20 cases, agreement tolerance 0.10, agreement rate at least
+          0.80, mean absolute error at most 0.15, and disagreement rate at most
+          0.20. CalibrationResult conditionals reject eligible results outside
+          those gates and reject ineligible results that satisfy every gate.
+        - >-
+          Added finite calibration and human-review scores, outcomes, labels,
+          disagreement classes, opaque authorization records, and optional
+          exact review-comment artifact references without reviewer, owner, or
+          session identity and without free-form comments.
+        - >-
+          Added explicit idempotent manual qualification and revocation records
+          bound to exact dataset, suite, evaluator, judge, model, prompt, rubric,
+          calibration, and calibration-result versions. Qualified records alone
+          use calibrated_enabled; revoked records return to advisory_only while
+          retaining their content-free audit provenance.
+        - >-
+          Added deterministic weighted ensemble metadata with integer
+          parts-per-million weights, exact member provenance, mandatory
+          qualifications for local-judge members, and fail-closed advisory
+          dispositions for missing or inconclusive members.
+        - >-
+          Added optional Score.localJudge metadata carrying exact content-free
+          judge, model, prompt, rubric, calibration, seed, budget,
+          qualification, ensemble, disposition, and disagreement provenance.
+          When present it is valid only for a local_judge evaluator and bounds
+          the score value to zero through one.
+  compatibility_notes:
+    - >-
+      The established eleven root resource variants are preserved byte-for-byte
+      in their original order, followed by eight additive AURA-0094 variants;
+      no existing required property, enum member, bound, conditional branch, or
+      resource variant was removed or narrowed. All prior AURA-0089 and
+      AURA-0093 representatives continue to validate without transformation.
+    - >-
+      AURA-0094 records are exposed as named closed JSON Schema definitions and
+      additive root-union variants, while Score.localJudge is an additive
+      optional property. Older producers continue emitting the settled v1
+      resources; consumers must use resourceType dispatch and roll out support
+      before admitting the new resource types.
+    - >-
+      The local-judge context ceiling is 16384 tokens. This is a correction to
+      the new, not-yet-integrated AURA-0094 definition and does not narrow any
+      resource admitted before AURA-0094; all other work-item maxima remain
+      timeout 120000 milliseconds, input 1048576 bytes, output 8192 bytes,
+      output 2048 tokens, and concurrency two.
+    - >-
+      JSON Schema enforces closed shape, local-only provider identity, exact
+      digest presence, fixed budgets, calibration numeric gates, manual action
+      shape, and advisory-state conditionals. Cross-record reference existence,
+      digest-byte correspondence, immutable-version conflicts, calibration
+      result lookup, normalized ensemble weight totals, artifact authorization,
+      and revocation freshness remain fail-closed consumer checks.
+    - >-
+      evaluation-runner-transport-v1, evaluation-events-v1, OpenAPI contracts,
+      production metadata telemetry, protected repository baselines, and
+      generated clients are unchanged.
+  producers:
+    - >-
+      Aura Observatory local-judge and calibration application services
+      authorized by AURA-0094, producing immutable definitions and content-free
+      execution, calibration, review, ensemble, and qualification records.
+    - >-
+      The later owner-facing AURA-0095 workflows, after their separately
+      authorized OpenAPI boundary validates the same closed resources.
+  consumers:
+    - >-
+      Aura Observatory local Ollama adapter, evaluation worker, calibration and
+      human-review services, PostgreSQL metadata persistence, and ClickHouse
+      score persistence authorized by AURA-0094.
+    - >-
+      AURA-0094 contract, provider, privacy, calibration, ensemble,
+      qualification, and persistence tests.
+    - >-
+      Later AURA-0095 public workflows and AURA-0096 experiment and baseline
+      analysis after their own authorized contracts are introduced.
+  rollout:
+    - >-
+      Deploy the additive schema and strict exact-version dispatch before
+      admitting any local judge definition or judge artifact metadata.
+    - >-
+      Apply the Observatory-owned metadata migrations and register only reviewed
+      immutable local_ollama definitions whose model digest and bounded artifact
+      metadata resolve and verify through service-owned ports.
+    - >-
+      Keep all scores advisory until a passing exact CalibrationResult is
+      followed by a distinct idempotent manual JudgeQualification. Treat missing,
+      incompatible, revoked, inconclusive, or drifted evidence as advisory.
+    - >-
+      Enable deterministic ensembles only after consumer validation confirms
+      unique members, exactly one million total weight parts, and current exact
+      qualifications for every local-judge member.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0094.yaml
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - >-
+      AJV 8.20 strict JSON Schema 2020-12 compilation with strictRequired
+      disabled for the repository's established conditional-required convention,
+      including the local evaluation-failure-codes-v1 reference and every new
+      AURA-0094 named definition.
+    - >-
+      AJV root-union dispatch accepted representative judge artifact, local
+      judge definition, calibration definition, calibration label, human review,
+      calibration result, manual qualification, and deterministic ensemble
+      resources through the evaluation-v1 root schema.
+    - >-
+      AJV representative positive and negative probes for local-only provider,
+      exact model digest, URL-shaped model rejection, budget bounds,
+      judge-artifact closure and byte bounds, fixed calibration thresholds,
+      calibration-label score bounds and owner-field rejection, calibration
+      eligibility boundaries, advisory calibration, manual qualification and
+      revocation, ensemble member qualification, closed human review shape,
+      raw-comment rejection, and calibrated score provenance.
+    - >-
+      AJV LocalJudgeBudget boundary probes accepted the exact work-item maxima
+      and rejected timeout 120001 milliseconds, input 1048577 bytes, output
+      8193 bytes, output 2049 tokens, context 16385 tokens, concurrency three,
+      and non-zero temperature; LocalJudgeDefinition accepted pinned seed
+      2147483647 and rejected 2147483648.
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run
+      pytest tests/test_aura0089_contract.py tests/test_aura0093_contract.py
+      tests/test_aura0094_contract.py -q (81 passed)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0094.yaml (skipped successfully; no protected
+      baseline or threshold paths changed)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0094.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0094.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      The test_evaluation_engineer should persist boundary cases accepting
+      maxContextTokens 16384 and rejecting 16385, accepting a non-zero pinned
+      integer seed within 0 through 2147483647, rejecting an out-of-range seed,
+      and rejecting every non-zero temperature. Contract review intentionally
+      did not edit the test worker's files.
+    - >-
+      Observatory implementation tests, migrations, provider and artifact-read
+      checks, lint, typing, the complete Observatory suite, observability and
+      topology validation, Docker Desktop acceptance, specialized reviews, and
+      aggregate integration checks depend on other AURA-0094 ownership zones and
+      remain required before integration.
+decisions:
+  - >-
+    Preserved evaluation-v1 and every established root resource while adding
+    eight disjoint resourceType-identified variants to the root oneOf. New
+    immutable record schemas are also addressable named definitions, and the
+    only property added to an existing envelope is optional Score.localJudge
+    metadata, so all older valid instances remain valid.
+  - >-
+    Kept evaluation-v1 authoritative instead of conforming the contract to
+    narrower Python shortcuts. Accepted, rejected, and needs_review labels;
+    required IDs, versions, idempotency and authorization metadata; advisory and
+    qualification conditionals; and integer parts-per-million weights remain
+    unchanged. Production implementations must adapt to these portable shapes.
+  - >-
+    Used a provider const of local_ollama plus an exact SHA-256 model digest and
+    a bounded Ollama name-with-optional-tag grammar. Registry paths, URLs,
+    endpoints, credentials, arbitrary provider options, and cloud fallback are
+    structurally unrepresentable.
+  - >-
+    Represented prompts, rubrics, calibration labels, and optional human comments
+    only through opaque UUID, version, purpose, digest, size, media, capture,
+    authorization, and retention metadata. Raw content and free-form rationale
+    or comments are absent.
+  - >-
+    Kept calibration eligibility and manual qualification distinct. A passing
+    result is always advisory_only; only a separate exact-version manual owner
+    action can create calibrated_enabled state, and revocation returns the state
+    to advisory_only without erasing audit history.
+  - >-
+    Used integer parts-per-million ensemble weights to avoid floating-point
+    normalization ambiguity. JSON Schema bounds each weight while the consumer
+    must atomically enforce unique members and an exact one-million total.
+  - >-
+    Did not modify EvaluatorReference kinds: a weighted ensemble is a reviewed
+    deterministic evaluator, so expanding the settled enum and old-consumer
+    dispatch was unnecessary.
+  - >-
+    Did not edit runner transport or event schemas because raw judge content,
+    provider configuration, qualification commands, and score rationale must
+    not cross those boundaries. Public REST, SSE, CLI, and generated Angular
+    contracts remain assigned to AURA-0095.
+  - >-
+    Applied the repository-pinned JSON Schema 2020-12 dialect and installed AJV
+    8.20 validator. No external dependency-version verification or upgrade was
+    needed, so no online documentation access was used.
+risks:
+  - >-
+    JSON Schema cannot dereference service-owned records, prove stored artifact
+    bytes match their digests, verify a referenced calibration result is current,
+    detect revoked qualifications not embedded in a score, or enforce immutable
+    insert conflicts. Service admission and persistence must fail closed on all
+    of those checks.
+  - >-
+    JSON Schema cannot sum ensemble weights or prove member identities are
+    semantically unique. The consumer must require an exact one-million
+    parts-per-million total, unique exact member provenance, and current
+    qualification for every local-judge member.
+  - >-
+    Syntactically opaque UUIDs and bounded model identifiers cannot prove values
+    were not derived from private content. Producers must generate identifiers
+    internally and keep content, owner identity, endpoints, credentials, and
+    provider response text out of persistence and telemetry.
+unresolved: []

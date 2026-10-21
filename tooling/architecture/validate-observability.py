@@ -25,6 +25,8 @@ OBSERVATORY_TYPED_COMPONENTS = frozenset(
         "aura.observatory.evaluation_scheduler",
         "aura.observatory.evaluation_definitions",
         "aura.observatory.deterministic_evaluators",
+        "aura.observatory.local_judges",
+        "aura.observatory.calibration",
     }
 )
 TYPED_COMPONENTS = OBSERVATORY_TYPED_COMPONENTS | {"aura.evaluation.runner"}
@@ -239,8 +241,16 @@ def _typed_observatory_errors(path: Path, manifest: dict[str, Any]) -> list[str]
     evaluators = manifest.get("evaluators")
     if not _nonempty_string_list(evaluators):
         errors.append(f"{location}: typed Observatory manifests require bounded evaluators")
-    if manifest.get("capture_policy") != "metadata_only":
-        errors.append(f"{location}: capture_policy must be metadata_only")
+    allowed_capture = (
+        {"metadata_only", "authorized_evaluation_content"}
+        if component.get("id") in {"aura.observatory.local_judges", "aura.observatory.calibration"}
+        else {"metadata_only"}
+    )
+    if manifest.get("capture_policy") not in allowed_capture:
+        errors.append(
+            f"{location}: capture_policy must be metadata_only "
+            "(authorized_evaluation_content is allowed for evaluation components)"
+        )
     if manifest.get("retention") != "manual_owner_delete_only":
         errors.append(f"{location}: retention must be manual_owner_delete_only")
 

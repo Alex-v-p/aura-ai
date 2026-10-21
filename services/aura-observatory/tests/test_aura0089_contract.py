@@ -446,12 +446,12 @@ def _resources() -> dict[str, dict[str, Any]]:
     }
 
 
-def test_schema_meta_contract_is_versioned_closed_and_has_exactly_eleven_resources() -> None:
+def test_schema_meta_contract_is_versioned_closed_and_preserves_additive_resources() -> None:
     schema = _schema()
     assert schema["$schema"].endswith("/draft/2020-12/schema")
     assert schema["$id"].endswith("/contracts/evaluation/v1/evaluation.schema.json")
     refs = [entry["$ref"] for entry in schema["oneOf"]]
-    assert refs == [
+    original_refs = [
         f"#/$defs/{name.title()}"
         for name in (
             "dataset",
@@ -467,7 +467,19 @@ def test_schema_meta_contract_is_versioned_closed_and_has_exactly_eleven_resourc
             "replay",
         )
     ]
-    assert len(refs) == len(set(refs)) == 11
+    additive_refs = {
+        "#/$defs/JudgeArtifact",
+        "#/$defs/LocalJudgeDefinition",
+        "#/$defs/CalibrationDefinition",
+        "#/$defs/CalibrationLabel",
+        "#/$defs/HumanReview",
+        "#/$defs/CalibrationResult",
+        "#/$defs/JudgeQualification",
+        "#/$defs/JudgeEnsemble",
+    }
+    assert [reference for reference in refs if reference in original_refs] == original_refs
+    assert set(refs) == set(original_refs) | additive_refs
+    assert len(refs) == len(set(refs)) == len(original_refs) + len(additive_refs)
     for name in refs:
         definition = schema["$defs"][name.removeprefix("#/$defs/")]
         assert definition["type"] == "object"
