@@ -10,6 +10,7 @@ export interface ObservatoryTransport {
   execute<K extends ObservatoryOperationId>(
     operation: (typeof OBSERVATORY_API_OPERATIONS)[K],
     input: ObservatoryOperationInput<K>,
+    signal?: AbortSignal,
   ): Promise<ObservatoryApiOperations[K]['response']>;
 }
 
@@ -20,7 +21,10 @@ export class ObservatoryApiClient {
   execute<K extends ObservatoryOperationId>(
     operationId: K,
     input: ObservatoryOperationInput<K>,
+    signal?: AbortSignal,
   ): Promise<ObservatoryOperationResponse<K>> {
-    return this.transport.execute(OBSERVATORY_API_OPERATIONS[operationId], input);
+    return signal === undefined
+      ? this.transport.execute(OBSERVATORY_API_OPERATIONS[operationId], input)
+      : this.transport.execute(OBSERVATORY_API_OPERATIONS[operationId], input, signal);
   }
 }

@@ -160,6 +160,7 @@ evaluators:
   - evaluation_orchestration_retry_recovery
   - evaluation_orchestration_cancellation_deadlines
   - evaluation_orchestration_transport_privacy
+  - evaluation_sse_metadata_isolation
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

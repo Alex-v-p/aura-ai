@@ -1,4 +1,4 @@
-"""Opt-in live ClickHouse coverage for AURA-0094 migration 0007.
+"""Opt-in live ClickHouse coverage for AURA-0094/0095 migrations 0007/0008.
 
 The test uses a generated ClickHouse database and the repository's migration
 splitter.  It is skipped unless a project-scoped ClickHouse URL is supplied;
@@ -142,6 +142,33 @@ def _score() -> EvaluationScore:
         evaluator_kind="local_judge",
         component_id="aura.core.evaluation",
         component_version="1.0.0",
+        code_revision="commit-20261021",
+        image_digest="d" * 64,
+        configuration_revision="config-20261021",
+        provenance_component="aura.core.evaluation",
+        provenance_version="1.0.0",
+        provenance_digest="e" * 64,
+        execution_provenance={
+            "dataset": {"resourceId": str(uuid4()), "resourceVersion": "1.0.0"},
+            "suite": {"resourceId": str(uuid4()), "resourceVersion": "1.0.0"},
+            "evaluators": [
+                {
+                    "evaluatorId": str(uuid4()),
+                    "evaluatorVersion": "1.0.0",
+                    "kind": "local_judge",
+                }
+            ],
+            "components": [
+                {
+                    "componentId": "aura.core.evaluation",
+                    "componentVersion": "1.0.0",
+                    "codeRevision": "commit-20261021",
+                    "imageDigest": "d" * 64,
+                    "configurationRevision": "config-20261021",
+                }
+            ],
+            "reproducibility": "deterministic-v1",
+        },
         capture_classification="metadata_only",
         evidence_status="observed",
         value=0.75,
@@ -208,7 +235,7 @@ def test_local_judge_score_validation_rejects_invalid_enum_null_and_bounds(
 
 
 @pytest.mark.asyncio
-async def test_clickhouse_0007_fresh_rerun_score_round_trip_and_privacy() -> None:
+async def test_clickhouse_0008_fresh_upgrade_rerun_score_round_trip_and_privacy() -> None:
     endpoint, user, password = _endpoint_config()
     with _isolated_database(endpoint, user, password) as settings:
         _apply_all_migrations(settings)
@@ -216,7 +243,7 @@ async def test_clickhouse_0007_fresh_rerun_score_round_trip_and_privacy() -> Non
             settings,
             "SELECT version FROM observatory_migration_ledger ORDER BY version",
         ).splitlines()
-        assert {item.split("_")[0] for item in applied} >= {f"000{i}" for i in range(1, 8)}
+        assert {item.split("_")[0] for item in applied} >= {f"000{i}" for i in range(1, 9)}
 
         # A second runner pass must consult the ledger and leave the schema
         # usable.  This catches partial migration markers and 0007 drift.
@@ -244,6 +271,13 @@ async def test_clickhouse_0007_fresh_rerun_score_round_trip_and_privacy() -> Non
             "qualification_id",
             "uncertainty",
             "disagreement",
+            "code_revision",
+            "image_digest",
+            "configuration_revision",
+            "provenance_component",
+            "provenance_version",
+            "provenance_digest",
+            "execution_provenance_json",
         }
         assert expected <= columns
         assert FORBIDDEN_SCORE_COLUMNS.isdisjoint(columns)
@@ -264,7 +298,9 @@ async def test_clickhouse_0007_fresh_rerun_score_round_trip_and_privacy() -> Non
             "judge_definition_version, model_name, model_digest, prompt_version, "
             "rubric_version, calibration_version, judge_seed, "
             "judge_budget_timeout_ms, score_disposition, toString(qualification_id), "
-            "qualification_version, uncertainty, disagreement "
+            "qualification_version, uncertainty, disagreement, "
+            "code_revision, image_digest, configuration_revision, provenance_component, "
+            "provenance_version, provenance_digest, execution_provenance_json "
             "FROM evaluation_scores FINAL "
             f"WHERE score_id = '{score.score_id}'",
             output_format="JSONEachRow",
@@ -286,5 +322,14 @@ async def test_clickhouse_0007_fresh_rerun_score_round_trip_and_privacy() -> Non
             "qualification_version": score.qualification_version,
             "uncertainty": score.uncertainty,
             "disagreement": score.disagreement,
+            "code_revision": score.code_revision,
+            "image_digest": score.image_digest,
+            "configuration_revision": score.configuration_revision,
+            "provenance_component": score.provenance_component,
+            "provenance_version": score.provenance_version,
+            "provenance_digest": score.provenance_digest,
+            "execution_provenance_json": json.dumps(
+                score.execution_provenance, sort_keys=True, separators=(",", ":")
+            ),
         }
         assert FORBIDDEN_SCORE_COLUMNS.isdisjoint(row)

@@ -20,6 +20,16 @@ function localRef(ref) {
   return schema;
 }
 
+function localResponse(response) {
+  if (!response?.$ref) return response;
+  const prefix = '#/components/responses/';
+  assert(response.$ref.startsWith(prefix), `Unsupported response reference: ${response.$ref}`);
+  const name = response.$ref.slice(prefix.length);
+  const resolved = document.components.responses?.[name];
+  assert(resolved, `Missing response reference: ${name}`);
+  return resolved;
+}
+
 assert(document.openapi === '3.1.0', 'Observatory contract must remain OpenAPI 3.1.0');
 assert(document.info?.['x-contract-id'] === 'observatory-v1', 'Contract id drifted');
 assert(document.info?.version === '1.0.0', 'Contract version drifted');
@@ -83,7 +93,7 @@ for (const [path, pathItem] of Object.entries(document.paths)) {
     if (!operation) continue;
     for (const [status, response] of Object.entries(operation.responses)) {
       if (!/^2/.test(status)) continue;
-      for (const media of Object.values(response.content ?? {})) {
+      for (const media of Object.values(localResponse(response).content ?? {})) {
         if (media.schema?.$ref) localRef(media.schema.$ref);
       }
     }

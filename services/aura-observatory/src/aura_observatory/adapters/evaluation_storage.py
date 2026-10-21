@@ -4,6 +4,9 @@ Every statement names Observatory-owned tables explicitly.  No adapter accepts
 provider keys, paths, raw bytes, arbitrary attributes, or owner identity.
 """
 
+# Provider SQL is kept visually aligned with the service-owned schema.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -392,8 +395,9 @@ class PostgresEvaluationArtifactRepository:
             where, params = _selector_sql(selector)
             await connection.execute(
                 f"""INSERT INTO observatory_evaluation_deletion_targets(
-                command_id, artifact_reference_id)
-                SELECT %s, artifact_reference_id FROM observatory_evaluation_artifacts
+                command_id, artifact_reference_id, artifact_id, job_id, dataset_id, suite_id)
+                SELECT %s, artifact_reference_id, artifact_id, job_id, dataset_id, suite_id
+                FROM observatory_evaluation_artifacts
                 WHERE status = 'available' AND {where}
                 ON CONFLICT DO NOTHING""",
                 (command.command_id, *params),
@@ -611,7 +615,8 @@ class PostgresEvaluationArtifactRepository:
                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
                     deleted_count = %s, updated_at = CURRENT_TIMESTAMP,
                     lease_token = NULL, lease_expires_at = NULL
-                    WHERE command_id = %s""",
+                    WHERE command_id = %s AND status <> 'completed'
+                    RETURNING deleted_count""",
                     (max(0, deleted_count), command_id),
                 )
             else:
@@ -633,13 +638,226 @@ class PostgresEvaluationArtifactRepository:
                 )
             row = await result.fetchone()
             if not _updated(result) and row is None:
-                return None
+                terminal = await connection.execute(
+                    """SELECT status, deleted_count
+                    FROM observatory_evaluation_deletion_commands
+                    WHERE command_id = %s""",
+                    (command_id,),
+                )
+                terminal_row = await terminal.fetchone()
+                if terminal_row is None or str(_row_value(terminal_row, 0, "status")) != "completed":
+                    return None
+                # A completed command is immutable. Recovery/retry callers
+                # receive its authoritative count without appending another
+                # audit or repeating notification deletion.
+                return int(_row_value(terminal_row, 1, "deleted_count"))
             persisted_count = int(row[0]) if row is not None else max(0, deleted_count)
             await connection.execute(
                 """INSERT INTO observatory_evaluation_deletion_audits(
                 audit_id, command_id, outcome, failure_code, deleted_count)
-                VALUES (%s, %s, 'completed', NULL, %s)""",
+                VALUES (%s, %s, 'completed', NULL, %s)
+                ON CONFLICT (command_id) WHERE outcome = 'completed' DO NOTHING""",
                 (str(uuid4()), command_id, persisted_count),
+            )
+            # Ordinary notification rows are projections and may be removed
+            # with the same authorized selector. Content-free deletion audit
+            # evidence is preserved in its dedicated table and live rows.
+            await connection.execute(
+                """DELETE FROM observatory_evaluation_live_events AS live
+                WHERE resource_type <> 'evaluation_deletion'
+                  AND EXISTS (
+                    SELECT 1 FROM observatory_evaluation_deletion_commands AS command
+                    WHERE command.command_id = %s
+                      AND (
+                        command.selector_kind = 'purge_all'
+                        OR (command.selector_kind = 'cutoff'
+                            AND occurred_at < command.selector_value::timestamptz)
+                        OR (command.selector_kind = 'job'
+                            AND (
+                                (resource_type = 'evaluation_job'
+                                 AND resource_id = command.selector_value)
+                                OR (resource_type = 'evaluation_attempt'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_attempts AS attempt
+                                        WHERE attempt.attempt_id::text = live.resource_id
+                                          AND attempt.job_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_result'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_result_receipts AS result
+                                        WHERE result.result_id::text = live.resource_id
+                                          AND result.job_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_artifacts AS artifact
+                                        WHERE artifact.artifact_id::text = live.resource_id
+                                          AND artifact.job_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_deletion_targets AS target
+                                        WHERE target.command_id = command.command_id
+                                          AND target.artifact_id::text = live.resource_id
+                                          AND target.job_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_review'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM observatory_local_judge_reviews AS review
+                                        JOIN observatory_evaluation_result_receipts AS result
+                                          ON result.result_id = review.result_id
+                                        WHERE review.review_id::text = live.resource_id
+                                          AND result.job_id::text = command.selector_value
+                                    ))
+                            ))
+                        OR (command.selector_kind = 'dataset'
+                            AND (
+                                (resource_type = 'evaluation_dataset'
+                                 AND resource_id = command.selector_value)
+                                OR (resource_type = 'evaluation_case'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_cases AS case_row
+                                        WHERE case_row.case_id::text = live.resource_id
+                                          AND case_row.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_suite'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_suites AS suite
+                                        WHERE suite.suite_id::text = live.resource_id
+                                          AND suite.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_job'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_jobs AS job
+                                        WHERE job.job_id::text = live.resource_id
+                                          AND job.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_attempt'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_attempts AS attempt
+                                        JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = attempt.job_id
+                                        WHERE attempt.attempt_id::text = live.resource_id
+                                          AND job.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_result'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_result_receipts AS result
+                                        JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = result.job_id
+                                        WHERE result.result_id::text = live.resource_id
+                                          AND job.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_artifacts AS artifact
+                                        WHERE artifact.artifact_id::text = live.resource_id
+                                          AND artifact.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_deletion_targets AS target
+                                        WHERE target.command_id = command.command_id
+                                          AND target.artifact_id::text = live.resource_id
+                                          AND target.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_calibration'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_local_judge_calibration_definitions AS calibration
+                                        WHERE calibration.calibration_id::text = live.resource_id
+                                          AND calibration.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_qualification'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_local_judge_qualifications AS qualification
+                                        WHERE qualification.qualification_id::text = live.resource_id
+                                          AND qualification.dataset_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_review'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM observatory_local_judge_reviews AS review
+                                        LEFT JOIN observatory_evaluation_result_receipts AS result
+                                          ON result.result_id = review.result_id
+                                        LEFT JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = result.job_id
+                                        LEFT JOIN observatory_local_judge_calibration_definitions AS calibration
+                                          ON calibration.calibration_id = review.calibration_id
+                                        WHERE review.review_id::text = live.resource_id
+                                          AND (job.dataset_id::text = command.selector_value
+                                               OR calibration.dataset_id::text = command.selector_value)
+                                    ))
+                            ))
+                        OR (command.selector_kind = 'suite'
+                            AND (
+                                (resource_type = 'evaluation_suite'
+                                 AND resource_id = command.selector_value)
+                                OR (resource_type = 'evaluation_job'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_jobs AS job
+                                        WHERE job.job_id::text = live.resource_id
+                                          AND job.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_attempt'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_attempts AS attempt
+                                        JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = attempt.job_id
+                                        WHERE attempt.attempt_id::text = live.resource_id
+                                          AND job.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_result'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_result_receipts AS result
+                                        JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = result.job_id
+                                        WHERE result.result_id::text = live.resource_id
+                                          AND job.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_artifacts AS artifact
+                                        WHERE artifact.artifact_id::text = live.resource_id
+                                          AND artifact.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_artifact'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_evaluation_deletion_targets AS target
+                                        WHERE target.command_id = command.command_id
+                                          AND target.artifact_id::text = live.resource_id
+                                          AND target.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_calibration'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_local_judge_calibration_definitions AS calibration
+                                        WHERE calibration.calibration_id::text = live.resource_id
+                                          AND calibration.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_qualification'
+                                    AND EXISTS (
+                                        SELECT 1 FROM observatory_local_judge_qualifications AS qualification
+                                        WHERE qualification.qualification_id::text = live.resource_id
+                                          AND qualification.suite_id::text = command.selector_value
+                                    ))
+                                OR (resource_type = 'evaluation_review'
+                                    AND EXISTS (
+                                        SELECT 1
+                                        FROM observatory_local_judge_reviews AS review
+                                        LEFT JOIN observatory_evaluation_result_receipts AS result
+                                          ON result.result_id = review.result_id
+                                        LEFT JOIN observatory_evaluation_jobs AS job
+                                          ON job.job_id = result.job_id
+                                        LEFT JOIN observatory_local_judge_calibration_definitions AS calibration
+                                          ON calibration.calibration_id = review.calibration_id
+                                        WHERE review.review_id::text = live.resource_id
+                                          AND (job.suite_id::text = command.selector_value
+                                               OR calibration.suite_id::text = command.selector_value)
+                                    ))
+                            ))
+                      )
+                  )""",
+                (command_id,),
             )
             return persisted_count
 
@@ -725,6 +943,17 @@ class ClickHouseEvaluationScoreStore:
             "evaluator_kind": score.evaluator_kind,
             "component_id": score.component_id,
             "component_version": score.component_version,
+            "code_revision": score.code_revision,
+            "image_digest": score.image_digest,
+            "configuration_revision": score.configuration_revision,
+            "provenance_component": score.provenance_component,
+            "provenance_version": score.provenance_version,
+            "provenance_digest": score.provenance_digest,
+            "execution_provenance_json": (
+                json.dumps(score.execution_provenance, sort_keys=True, separators=(",", ":"))
+                if score.execution_provenance is not None
+                else None
+            ),
             "capture_classification": score.capture_classification,
             "evidence_status": score.evidence_status,
             "score_value": score.value,

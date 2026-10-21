@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from aura_observatory.adapters.evaluation_definitions import (
@@ -62,6 +62,187 @@ async def test_definition_service_admits_exact_references_and_is_idempotent() ->
     assert suite.manual_thresholds[0].evaluator.evaluator_id == IDS["evaluator"]
     assert await service.admit_dataset(_dataset()) is dataset
     assert await service.admit_case(_case()) is case
+
+
+@pytest.mark.asyncio
+async def test_execution_bindings_require_authoritative_definitions() -> None:
+    repository = InMemoryEvaluationDefinitionRepository()
+    repository.add_component("aura.core.runner", "1.0.0")
+    service = EvaluationDefinitionService(repository)
+    await service.admit_dataset(_dataset())
+    await service.admit_case(_case())
+    await service.admit_evaluator(_evaluator())
+    suite = await service.admit_suite(_suite())
+    component = suite.components[0].to_payload()
+    provenance = {
+        "dataset": {"id": suite.dataset.resource_id, "version": suite.dataset.version},
+        "suite": {"id": suite.resource_id, "version": suite.version},
+        "evaluators": [
+            {
+                "evaluatorId": IDS["evaluator"],
+                "evaluatorVersion": "1.0.0",
+                "kind": "deterministic",
+            }
+        ],
+        "components": [component],
+    }
+    await service.validate_execution_bindings(
+        dataset_id=IDS["dataset"],
+        dataset_version="1.0.0",
+        suite_id=IDS["suite"],
+        suite_version="1.0.0",
+        evaluator_id=IDS["evaluator"],
+        evaluator_version="1.0.0",
+        provenance=provenance,
+        target_component=component,
+        case_ids=(IDS["case"],),
+        execution_limits=suite.limits.to_payload(),
+        max_attempts=1,
+    )
+    mismatched = dict(provenance)
+    mismatched["components"] = [
+        {
+            "componentId": "aura.fake.runner",
+            "componentVersion": component["componentVersion"],
+            "codeRevision": component["codeRevision"],
+            "imageDigest": component["imageDigest"],
+            "configurationRevision": component["configurationRevision"],
+        }
+    ]
+    with pytest.raises(DefinitionValidationError, match="component binding"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"],
+            dataset_version="1.0.0",
+            suite_id=IDS["suite"],
+            suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"],
+            evaluator_version="1.0.0",
+            provenance=mismatched,
+            target_component=mismatched["components"][0],
+            case_ids=(IDS["case"],),
+            execution_limits=suite.limits.to_payload(),
+            max_attempts=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_execution_case_selection_and_limits_are_bounded_by_suite() -> None:
+    repository = InMemoryEvaluationDefinitionRepository()
+    repository.add_component("aura.core.runner", "1.0.0")
+    service = EvaluationDefinitionService(repository)
+    second_case_id = "00000000-0000-0000-0000-000000000099"
+    dataset = _dataset()
+    dataset["caseIds"] = [IDS["case"], second_case_id]
+    await service.admit_dataset(dataset)
+    await service.admit_case(_case())
+    second_case = _case()
+    second_case["caseId"] = second_case_id
+    await service.admit_case(second_case)
+    await service.admit_evaluator(_evaluator())
+    suite = await service.admit_suite(_suite())
+    component = suite.components[0].to_payload()
+    provenance = {
+        "dataset": {"id": IDS["dataset"], "version": "1.0.0"},
+        "suite": {"id": IDS["suite"], "version": "1.0.0"},
+        "evaluators": [{
+            "evaluatorId": IDS["evaluator"],
+            "evaluatorVersion": "1.0.0",
+            "kind": "deterministic",
+        }],
+        "components": [component],
+    }
+    full_case_ids = (IDS["case"], second_case_id)
+    await service.validate_execution_bindings(
+        dataset_id=IDS["dataset"], dataset_version="1.0.0",
+        suite_id=IDS["suite"], suite_version="1.0.0",
+        evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+        provenance=provenance, target_component=component,
+        case_ids=full_case_ids, execution_limits=suite.limits.to_payload(), max_attempts=2,
+    )
+    restricted_limits = suite.limits.to_payload()
+    restricted_limits["maxCases"] = 1
+    restricted_limits["maxAttempts"] = 1
+    await service.validate_execution_bindings(
+        dataset_id=IDS["dataset"], dataset_version="1.0.0",
+        suite_id=IDS["suite"], suite_version="1.0.0",
+        evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+        provenance=provenance, target_component=component,
+        case_ids=(IDS["case"],), execution_limits=restricted_limits, max_attempts=1,
+    )
+    with pytest.raises(DefinitionValidationError, match="case"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=provenance, target_component=component,
+            case_ids=("00000000-0000-0000-0000-000000000098",),
+            execution_limits=restricted_limits, max_attempts=1,
+        )
+    with pytest.raises(DefinitionValidationError, match="case limit"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=provenance, target_component=component,
+            case_ids=full_case_ids, execution_limits=restricted_limits, max_attempts=1,
+        )
+    broadened_limits = suite.limits.to_payload()
+    broadened_limits["timeoutMs"] += 1
+    with pytest.raises(DefinitionValidationError, match="broaden"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=provenance, target_component=component,
+            case_ids=(IDS["case"],), execution_limits=broadened_limits, max_attempts=1,
+        )
+
+    extra_component = dict(component)
+    extra_component["private"] = "rejected"
+    invalid_provenance = dict(provenance)
+    invalid_provenance["components"] = [extra_component]
+    with pytest.raises(DefinitionValidationError, match="component binding"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=invalid_provenance, target_component=component,
+            case_ids=(IDS["case"],), execution_limits=suite.limits.to_payload(), max_attempts=1,
+        )
+
+    duplicate_provenance = dict(provenance)
+    duplicate_provenance["components"] = [component, component]
+    with pytest.raises(DefinitionValidationError, match="component binding"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=duplicate_provenance, target_component=component,
+            case_ids=(IDS["case"],), execution_limits=suite.limits.to_payload(), max_attempts=1,
+        )
+
+    missing_target_field = dict(component)
+    missing_target_field.pop("imageDigest")
+    with pytest.raises(DefinitionValidationError, match="target component binding"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=provenance, target_component=missing_target_field,
+            case_ids=(IDS["case"],), execution_limits=suite.limits.to_payload(), max_attempts=1,
+        )
+
+    extra_evaluator = dict(provenance)
+    evaluator_bindings = cast(list[dict[str, Any]], provenance["evaluators"])
+    extra_evaluator["evaluators"] = evaluator_bindings + [dict(evaluator_bindings[0])]
+    with pytest.raises(DefinitionValidationError, match="evaluator binding"):
+        await service.validate_execution_bindings(
+            dataset_id=IDS["dataset"], dataset_version="1.0.0",
+            suite_id=IDS["suite"], suite_version="1.0.0",
+            evaluator_id=IDS["evaluator"], evaluator_version="1.0.0",
+            provenance=extra_evaluator, target_component=component,
+            case_ids=(IDS["case"],), execution_limits=suite.limits.to_payload(), max_attempts=1,
+        )
 
 
 @pytest.mark.asyncio

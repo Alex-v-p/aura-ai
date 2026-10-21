@@ -1,11 +1,18 @@
 """Observatory migration and diagnostics CLI."""
 
+# Typer returns dynamically typed command values; command output is narrowed
+# to bounded metadata before serialization.
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportArgumentType=false
+
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
+import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import psycopg
@@ -13,9 +20,13 @@ import typer
 
 from aura_observatory.adapters.postgres import PostgresSyncCatalogueAdapter
 from aura_observatory.catalogue import load_component_manifests
+from aura_observatory.composition import build_evaluation_api_service
 from aura_observatory.settings import Settings
 
 app = typer.Typer(no_args_is_help=True)
+evaluation_app = typer.Typer(no_args_is_help=True)
+app.add_typer(evaluation_app, name="evaluation")
+
 
 @app.command()
 def migrate(revision: str = "head") -> None:
@@ -81,6 +92,79 @@ def sync_manifests() -> None:
     typer.echo(f"aura-observatory component manifests synchronized ({len(definitions)})")
 
 
+@evaluation_app.command("list")
+def evaluation_list(
+    kind: str = typer.Argument(
+        ...,
+        help=(
+            "One of datasets, suites, evaluators, jobs, results, artifacts, "
+            "reviews, calibrations, qualifications."
+        ),
+    ),
+    limit: int = typer.Option(50, min=1, max=200),
+    cursor: str | None = typer.Option(None),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Print bounded content-free evaluation metadata.
+
+    The command intentionally uses the same application/query DTO boundary as
+    the HTTP entrypoint.  It never accepts an object key, provider endpoint,
+    credential, or content selector.
+    """
+
+    _require_local_operator()
+    try:
+        service = build_evaluation_api_service(Settings())
+        result = asyncio.run(
+            service.list_collection(kind, cursor=cursor, limit=limit)
+        )
+    except Exception as exc:
+        # A CLI operator gets a finite, content-free failure.  Provider
+        # diagnostics and response bodies never cross this boundary.
+        raise typer.Exit(code=3) from exc
+    if json_output:
+        typer.echo(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return
+    items = result.get("items", [])
+    typer.echo(f"{kind}: {len(items)} item(s)")
+    for item in items:
+        if isinstance(item, dict):
+            identifier = (
+                item.get("datasetId")
+                or item.get("suiteId")
+                or item.get("jobId")
+                or item.get("resultId")
+                or item.get("artifactId")
+                or item.get("reviewId")
+                or item.get("calibrationId")
+                or item.get("qualificationId")
+                or item.get("evaluatorId")
+            )
+            typer.echo(str(identifier))
+
+
+@evaluation_app.command("history")
+def evaluation_history(
+    limit: int = typer.Option(50, min=1, max=200),
+    cursor: str | None = typer.Option(None),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Print bounded content-free evaluation history."""
+
+    _require_local_operator()
+    try:
+        result = asyncio.run(
+            build_evaluation_api_service(Settings()).list_history(cursor=cursor, limit=limit)
+        )
+    except Exception as exc:
+        raise typer.Exit(code=3) from exc
+    typer.echo(
+        json.dumps(result, sort_keys=True, separators=(",", ":"))
+        if json_output
+        else f"history: {len(cast(list[object], result['items']))} item(s)"
+    )
+
+
 def main() -> None:
     # The migration image invokes this module without a subcommand.  Typer's
     # default no-argument behavior is help/exit-2 for multi-command apps, so
@@ -92,13 +176,26 @@ def main() -> None:
     app()
 
 
+def _require_local_operator() -> None:
+    """Require the explicitly enabled local operator boundary for CLI reads.
+
+    The CLI has no browser session to present.  The deployment therefore
+    enables it explicitly for a local operator process; absence is a finite
+    denial and the marker itself is never emitted in output.
+    """
+
+    if os.environ.get("AURA_OBSERVATORY_LOCAL_OPERATOR") != "1":
+        typer.echo("local operator authorization required", err=True)
+        raise typer.Exit(code=3)
+
+
 __all__ = ["app", "main"]
 
 
 def _supports_parameterized_execute(connection: Any) -> bool:
     try:
         return len(inspect.signature(connection.execute).parameters) >= 2
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return True
 
 

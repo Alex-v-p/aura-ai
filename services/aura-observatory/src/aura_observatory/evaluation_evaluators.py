@@ -372,6 +372,13 @@ class ScoreContext:
     component_id: str
     component_version: str
     observed_at: datetime
+    code_revision: str | None = None
+    image_digest: str | None = None
+    configuration_revision: str | None = None
+    provenance_component: str | None = None
+    provenance_version: str | None = None
+    provenance_digest: str | None = None
+    execution_provenance: Mapping[str, object] | None = None
     artifact_reference_id: str | None = None
     case_id: str | None = None
     threshold_applicable: bool | None = None
@@ -406,6 +413,13 @@ def to_evaluation_score(
         evaluator_kind="deterministic",
         component_id=context.component_id,
         component_version=context.component_version,
+        code_revision=context.code_revision,
+        image_digest=context.image_digest,
+        configuration_revision=context.configuration_revision,
+        provenance_component=context.provenance_component,
+        provenance_version=context.provenance_version,
+        provenance_digest=context.provenance_digest,
+        execution_provenance=context.execution_provenance,
         capture_classification=capture_classification,
         evidence_status=measurement.evidence_status.value,
         value=measurement.value,

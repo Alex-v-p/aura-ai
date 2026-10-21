@@ -22,7 +22,13 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from aura_observatory.adapters.memory import MemoryObservatoryStore
 from aura_observatory.adapters.query import StorageUnavailableError
 from aura_observatory.auth import ObservatoryAuth, sanitize_return_to
-from aura_observatory.composition import build_auth, build_health_projector, build_ingest_service
+from aura_observatory.composition import (
+    build_auth,
+    build_evaluation_api_service,
+    build_health_projector,
+    build_ingest_service,
+)
+from aura_observatory.evaluation_api import register_evaluation_routes
 from aura_observatory.ingest import IngestPayloadError, InvalidCredential, TelemetryIngestService
 from aura_observatory.otlp import OtlpPayloadError, metrics_to_observations, traces_to_observations
 from aura_observatory.query import (
@@ -56,6 +62,25 @@ _AUTH_RECOVERY_QUERY = "auth_recovery"
 _AUTH_RECOVERY_MARKERS = frozenset(
     {"state_missing", "state_invalid", "code_missing", "provider_denied", "callback_failed"}
 )
+
+
+def _request_trace_id(request: Request) -> str:
+    """Return the bounded request trace propagated to Problems and spans."""
+
+    existing = getattr(request.state, "trace_id", None)
+    if isinstance(existing, str) and _TRACE_ID_RE.fullmatch(existing):
+        return existing
+
+    candidate = request.headers.get("x-trace-id")
+    if candidate is None:
+        traceparent = request.headers.get("traceparent", "")
+        parts = traceparent.split("-")
+        candidate = parts[1] if len(parts) == 4 else None
+    if candidate is not None and _TRACE_ID_RE.fullmatch(candidate):
+        request.state.trace_id = candidate
+        return candidate
+    request.state.trace_id = uuid4().hex
+    return request.state.trace_id
 
 
 def _otlp_rejection_class(exc: BaseException) -> str:
@@ -163,6 +188,16 @@ def create_app(
     app.state.ingest = service
     app.state.auth = auth_service
 
+    @app.middleware("http")
+    async def request_trace_context(request: Request, call_next: Any) -> Response:
+        metrics = getattr(getattr(request.app.state, "query", None), "metrics", None)
+        trace_context = getattr(metrics, "trace_context", None)
+        if callable(trace_context):
+            context_manager = cast(Any, trace_context)(_request_trace_id(request))
+            with context_manager:
+                return await call_next(request)
+        return await call_next(request)
+
     @app.exception_handler(HTTPException)
     async def problem_response(request: Request, exc: HTTPException) -> JSONResponse:
         if request.url.path.startswith("/api/v1/"):
@@ -188,7 +223,7 @@ def create_app(
                     "code": code,
                     "message": detail,
                     "retryable": exc.status_code >= 500,
-                    "traceId": uuid4().hex,
+                    "traceId": _request_trace_id(request),
                 },
             )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -204,7 +239,7 @@ def create_app(
                     "code": "service_unavailable",
                     "message": "service unavailable",
                     "retryable": True,
-                    "traceId": uuid4().hex,
+                    "traceId": _request_trace_id(request),
                 },
             )
         return JSONResponse(status_code=503, content={"detail": "service unavailable"})
@@ -237,7 +272,7 @@ def create_app(
                             "code": "unauthorized",
                             "message": "authentication required",
                             "retryable": False,
-                            "traceId": uuid4().hex,
+                            "traceId": _request_trace_id(request),
                         },
                     )
                 if resolved.owner_subject and session.principal.subject != resolved.owner_subject:
@@ -247,7 +282,7 @@ def create_app(
                             "code": "forbidden",
                             "message": "owner authorization required",
                             "retryable": False,
-                            "traceId": uuid4().hex,
+                            "traceId": _request_trace_id(request),
                         },
                     )
             return JSONResponse(
@@ -256,7 +291,7 @@ def create_app(
                     "code": "invalid_request",
                     "message": "request validation failed",
                     "retryable": False,
-                    "traceId": uuid4().hex,
+                    "traceId": _request_trace_id(request),
                 },
             )
         return JSONResponse(status_code=422, content={"detail": "request validation failed"})
@@ -281,6 +316,7 @@ def create_app(
         else build_health_projector(resolved)
     )
     app.state.background_tasks_enabled = not testing
+    app.state.testing = testing
     app.state.health_projector_stop = None
     app.state.health_projector_task = None
 
@@ -441,6 +477,22 @@ def create_app(
         if resolved.owner_subject and session.principal.subject != resolved.owner_subject:
             raise HTTPException(status_code=403, detail="owner authorization required")
         return session
+
+    # Evaluation resources are registered after the owner-session closure is
+    # available so every route reuses the same BFF authorization and CSRF
+    # boundary.  The application service remains replaceable for production
+    # composition and deterministic test fixtures.
+    # Production always uses the durable PostgreSQL/ClickHouse query port.
+    # Missing optional object-store credentials disable artifact commands at
+    # the application boundary; they must never select an in-memory read model.
+    evaluation_service = build_evaluation_api_service(resolved) if not testing else None
+    register_evaluation_routes(
+        app,
+        owner_session=owner_session,
+        auth_service=auth_service,
+        service=evaluation_service,
+        resolved=resolved,
+    )
 
     @app.get("/api/v1/overview")
     async def overview(request: Request) -> JSONResponse:

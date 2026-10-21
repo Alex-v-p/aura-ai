@@ -1,0 +1,74 @@
+agent: integration_maintainer
+work_item: AURA-0095
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0095-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0095-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0095-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0095-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0095-test-evaluation.yaml (PASS; test_evaluation_engineer)
+  - work-items/reviews/AURA-0095-ux-ui.yaml (PASS; aura_ux_ui_reviewer)
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+checks:
+  passed:
+    - >-
+      Work-item schema, semantic validation, and changed-path validation passed
+      before archival; all 65 implementation and governance paths were within
+      the AURA-0095 allowlist.
+    - >-
+      All four implementation handoffs and all six review verdicts validated
+      against their repository schemas; every handoff is complete with no
+      unresolved items.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0095.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0095.yaml completed with the expected no-change
+      skip.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0095.yaml passed.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests passed.
+    - uv run pyright services/aura-observatory passed with zero diagnostics.
+    - >-
+      uv run pytest services/aura-observatory/tests contracts/tests -q passed:
+      1152 passed, 25 skipped, and 2 warnings.
+    - pnpm --dir frontend nx lint observatory-web passed.
+    - pnpm --dir frontend nx test observatory passed: 39 tests.
+    - pnpm --dir frontend nx test observatory-api-client passed: 4 tests.
+    - pnpm --dir frontend nx build observatory-web --configuration=production passed.
+    - pnpm --dir frontend nx build storybook --configuration=production passed.
+    - pnpm --dir frontend exec nx run observatory-api-client:generate passed.
+    - pnpm --dir frontend exec nx run observatory-api-client:validate-contract passed.
+    - pnpm --dir frontend exec nx run observatory-api-client:check-generated passed.
+    - >-
+      pnpm --dir frontend nx e2e observatory-web-e2e passed: 249 tests across
+      desktop, tablet, and mobile with zero skips.
+    - >-
+      Focused PostgreSQL migration/restart/Last-Event-ID and ClickHouse
+      provenance checks passed where configured; the full backend suite also
+      passed its provider-independent coverage.
+    - git diff --check passed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The parent delivery lead has not yet created the focused Conventional
+    Commit or pushed anything; this integration report intentionally leaves the
+    reviewed worktree available for that checkpoint.
+  - >-
+    Real Ollama reachability remains intentionally unproven and is accepted as
+    the provider-unavailable limitation for AURA-0095; live provider and
+    complete cross-service acceptance remain assigned to AURA-0098.
+  - >-
+    Repository-scoped live database checks that require external endpoint
+    configuration remain opt-in; the cached PostgreSQL and ClickHouse runs
+    recorded by the handoffs passed, and provider-independent tests passed.

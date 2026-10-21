@@ -497,5 +497,10 @@ def test_migration_is_forward_only_content_free_and_rerunnable() -> None:
             "*.sql"
         )
     )
-    assert versions[-1] == 10
+    assert versions[-1] == 11
     assert versions.count(10) == 1
+    assert (
+        ROOT
+        / "services/aura-observatory/migrations/postgresql/versions/"
+        "0010_local_judges_calibration.sql"
+    ).exists()

@@ -44,12 +44,26 @@ class DefinitionStorageError(RuntimeError):
     """A provider failure crossing the definition repository boundary."""
 
 
+class DefinitionCommandPendingError(RuntimeError):
+    """Another request currently owns a durable definition command claim."""
+
+
 class DefinitionConflictError(DefinitionValidationError):
     """An immutable identifier/version was reused with a different payload."""
 
 
 class DefinitionNotFoundError(DefinitionValidationError):
     """A required versioned definition or component does not exist."""
+
+
+@dataclass(frozen=True, slots=True)
+class DefinitionCommandClaim:
+    """Durable command claim state returned by the definition repository."""
+
+    replay: Mapping[str, object] | None
+    claimed: bool
+    claim_token: str | None = None
+    claim_phase: str = "definition_claim"
 
 
 class SourceKind(StrEnum):
@@ -958,6 +972,7 @@ class DatasetDefinition(_DefinitionBase):
                     "scopes",
                     "captureAuthorization",
                     "caseIds",
+                    "caseCount",
                     "retentionMode",
                     "provenance",
                     "createdAt",
@@ -973,6 +988,9 @@ class DatasetDefinition(_DefinitionBase):
         case_ids = tuple(_uuid(item, "caseId") for item in cast(Sequence[Any], data.get("caseIds")))
         if not case_ids or len(case_ids) > 100_000 or len(set(case_ids)) != len(case_ids):
             raise DefinitionValidationError("dataset caseIds are invalid")
+        case_count = data.get("caseCount", len(case_ids))
+        if type(case_count) is not int or case_count != len(case_ids):
+            raise DefinitionValidationError("dataset caseCount is invalid")
         authorization = CaptureAuthorization.from_payload(
             cast(Mapping[str, Any], data.get("captureAuthorization"))
         )
@@ -996,6 +1014,9 @@ class DatasetDefinition(_DefinitionBase):
             "datasetId": self.resource_id,
             "datasetVersion": self.version,
             "caseIds": list(self.case_ids),
+            # Persist the projection count as an authoritative bounded fact;
+            # readers must not reconstruct it from legacy payloads.
+            "caseCount": len(self.case_ids),
         }
 
 
@@ -1394,6 +1415,215 @@ class EvaluationDefinitionService:
         self._artifact_repository = artifact_repository
         self._metrics = metrics
         self._evaluator_compatibility = evaluator_compatibility or _default_evaluator_compatibility
+
+    async def begin_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_id: str,
+        resource_version: str,
+    ) -> DefinitionCommandClaim:
+        return await self._repository.begin_definition_command(
+            operation,
+            idempotency_key,
+            request_fingerprint,
+            resource_id,
+            resource_version,
+        )
+
+    async def complete_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        response: Mapping[str, object],
+        claim_token: str,
+    ) -> dict[str, object]:
+        if not claim_token:
+            raise DefinitionCommandPendingError("definition command claim token is required")
+        return await self._repository.complete_definition_command(
+            operation, idempotency_key, request_fingerprint, response, claim_token
+        )
+
+    async def renew_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        claim_token: str,
+    ) -> None:
+        renewed = await self._repository.renew_definition_command(
+            operation, idempotency_key, request_fingerprint, claim_token
+        )
+        if renewed is False:
+            raise DefinitionCommandPendingError("definition command lease is no longer owned")
+
+    async def validate_execution_bindings(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        suite_id: str,
+        suite_version: str,
+        evaluator_id: str,
+        evaluator_version: str,
+        provenance: Mapping[str, Any],
+        target_component: Mapping[str, Any],
+        case_ids: Sequence[str],
+        execution_limits: Mapping[str, Any],
+        max_attempts: int,
+    ) -> None:
+        """Require an admitted job to use exact persisted definition bindings."""
+
+        suite = await self._repository.get_suite(suite_id, suite_version)
+        if suite is None:
+            raise DefinitionNotFoundError("suite version does not exist")
+        dataset = await self._repository.get_dataset(dataset_id, dataset_version)
+        if dataset is None:
+            raise DefinitionNotFoundError("dataset version does not exist")
+        if (
+            suite.dataset.resource_id != dataset.resource_id
+            or suite.dataset.version != dataset_version
+        ):
+            raise DefinitionValidationError("job dataset does not match suite dataset binding")
+        if not case_ids or len(set(case_ids)) != len(case_ids):
+            raise DefinitionValidationError("job case selection is invalid")
+        dataset_case_ids = set(dataset.case_ids)
+        selected_case_ids = set(case_ids)
+        selection_mode = "complete" if selected_case_ids == dataset_case_ids else "subset"
+        if selection_mode not in {"complete", "subset"}:
+            raise DefinitionValidationError("job case selection semantics are invalid")
+        if selection_mode == "complete" and not await (
+            self._repository.dataset_case_membership_complete(dataset_id, dataset_version)
+        ):
+            raise DefinitionValidationError("complete job case selection is unavailable")
+        if len(case_ids) > suite.limits.max_cases:
+            raise DefinitionValidationError("job case selection exceeds suite case budget")
+        if not await self._repository.case_selection_is_valid(
+            dataset_id, dataset_version, tuple(case_ids)
+        ):
+            raise DefinitionValidationError("job case is not bound to dataset version")
+        if max_attempts < 1 or max_attempts > suite.limits.max_attempts:
+            raise DefinitionValidationError("job attempts exceed suite execution limit")
+        expected_limits = suite.limits.to_payload()
+        if set(execution_limits) != set(expected_limits):
+            raise DefinitionValidationError("job execution limits are invalid")
+        for name, requested in execution_limits.items():
+            if type(requested) is not int or requested < 0:
+                raise DefinitionValidationError("job execution limits are invalid")
+            if requested > expected_limits[name]:
+                raise DefinitionValidationError("job execution limits broaden suite limits")
+        if execution_limits["maxCases"] < len(case_ids):
+            raise DefinitionValidationError("job execution case limit is too small")
+        evaluator = await self._repository.get_evaluator(evaluator_id, evaluator_version)
+        if evaluator is None:
+            raise DefinitionNotFoundError("evaluator version does not exist")
+        suite_evaluators = tuple(
+            (reference.evaluator_id, reference.evaluator_version, reference.kind)
+            for reference in suite.evaluators
+        )
+        selected_evaluator = (evaluator_id, evaluator_version, evaluator.kind)
+        if selected_evaluator not in suite_evaluators:
+            raise DefinitionValidationError("job evaluator is not bound to suite")
+        provenance_dataset = provenance.get("dataset")
+        provenance_suite = provenance.get("suite")
+        if (
+            not isinstance(provenance_dataset, Mapping)
+            or not isinstance(provenance_suite, Mapping)
+            or set(provenance_dataset) != {"id", "version"}
+            or set(provenance_suite) != {"id", "version"}
+        ):
+            raise DefinitionValidationError("runner provenance bindings are invalid")
+        provenance_dataset = cast(Mapping[str, Any], provenance_dataset)
+        provenance_suite = cast(Mapping[str, Any], provenance_suite)
+        if (
+            provenance_dataset.get("id") != dataset_id
+            or provenance_dataset.get("version") != dataset_version
+            or provenance_suite.get("id") != suite_id
+            or provenance_suite.get("version") != suite_version
+        ):
+            raise DefinitionValidationError("runner provenance definition binding mismatch")
+        provenance_evaluators = provenance.get("evaluators")
+        if not isinstance(provenance_evaluators, list) or len(provenance_evaluators) != 1:
+            raise DefinitionValidationError("runner provenance evaluator binding mismatch")
+        evaluator_item = provenance_evaluators[0]
+        if not isinstance(evaluator_item, Mapping) or set(evaluator_item) != {
+            "evaluatorId", "evaluatorVersion", "kind"
+        }:
+            raise DefinitionValidationError("runner provenance evaluator binding mismatch")
+        typed_evaluator = cast(Mapping[str, Any], evaluator_item)
+        if (
+            typed_evaluator.get("evaluatorId"),
+            typed_evaluator.get("evaluatorVersion"),
+            typed_evaluator.get("kind"),
+        ) != selected_evaluator:
+            raise DefinitionValidationError("runner provenance evaluator binding mismatch")
+        suite_components = {
+            (
+                binding.component_id,
+                binding.component_version,
+                binding.code_revision,
+                binding.image_digest,
+                binding.configuration_revision,
+            )
+            for binding in suite.components
+        }
+        provenance_components = provenance.get("components")
+        if not isinstance(provenance_components, list):
+            raise DefinitionValidationError("runner provenance component binding mismatch")
+        provenance_component_values: list[tuple[str, str, str, str, str]] = []
+        for item in provenance_components:
+            if not isinstance(item, Mapping) or set(item) != {
+                "componentId",
+                "componentVersion",
+                "codeRevision",
+                "imageDigest",
+                "configurationRevision",
+            }:
+                raise DefinitionValidationError("runner provenance component binding mismatch")
+            try:
+                binding = ComponentBinding.from_payload(cast(Mapping[str, Any], item))
+            except DefinitionValidationError as exc:
+                raise DefinitionValidationError(
+                    "runner provenance component binding mismatch"
+                ) from exc
+            provenance_component_values.append(
+                (
+                    binding.component_id,
+                    binding.component_version,
+                    binding.code_revision,
+                    binding.image_digest,
+                    binding.configuration_revision,
+                )
+            )
+        if len(set(provenance_component_values)) != len(provenance_component_values):
+            raise DefinitionValidationError("runner provenance component binding mismatch")
+        if set(provenance_component_values) != suite_components:
+            raise DefinitionValidationError("runner provenance component binding mismatch")
+        if set(target_component) != {
+            "componentId",
+            "componentVersion",
+            "codeRevision",
+            "imageDigest",
+            "configurationRevision",
+        }:
+            raise DefinitionValidationError("runner target component binding mismatch")
+        try:
+            target = ComponentBinding.from_payload(target_component)
+        except DefinitionValidationError as exc:
+            raise DefinitionValidationError("runner target component binding mismatch") from exc
+        target_value = (
+            target.component_id,
+            target.component_version,
+            target.code_revision,
+            target.image_digest,
+            target.configuration_revision,
+        )
+        if (
+            target_value not in suite_components
+        ):
+            raise DefinitionValidationError("runner target component is not bound to suite")
 
     async def admit_dataset(self, payload: Mapping[str, Any]) -> DatasetDefinition:
         started = monotonic()

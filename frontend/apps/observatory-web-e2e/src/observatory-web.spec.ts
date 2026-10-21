@@ -649,6 +649,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       'observatory-components': 'none',
       'observatory-analytics': 'none',
       'observatory-retention': 'none',
+      'observatory-evaluation-workspace': 'none',
     } as const;
     expect(panelDisplays).toHaveLength(Object.keys(expectedPanelDisplays).length);
     for (const panel of panelDisplays) {

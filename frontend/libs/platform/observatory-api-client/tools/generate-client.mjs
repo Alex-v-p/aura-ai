@@ -46,8 +46,20 @@ function resolveParameter(parameter) {
   return document.components.parameters[refName(parameter.$ref)];
 }
 
+function resolveResponse(response) {
+  if (!response?.$ref) return response;
+  const prefix = '#/components/responses/';
+  if (!response.$ref.startsWith(prefix)) {
+    throw new Error(`Unsupported response reference: ${response.$ref}`);
+  }
+  const resolved = document.components.responses?.[refName(response.$ref)];
+  if (!resolved) throw new Error(`Missing response reference: ${response.$ref}`);
+  return resolved;
+}
+
 function successResponse(operation) {
-  return Object.entries(operation.responses).find(([status]) => /^2/.test(status))?.[1];
+  const response = Object.entries(operation.responses).find(([status]) => /^2/.test(status))?.[1];
+  return resolveResponse(response);
 }
 
 function assertSupportedContent(content, allowed, context) {

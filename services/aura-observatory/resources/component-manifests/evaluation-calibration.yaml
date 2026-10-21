@@ -61,6 +61,9 @@ evaluators:
   - human_review_idempotency
   - advisory_qualification_safety
   - calibration_version_compatibility
+  - evaluation_browser_accessibility
+  - evaluation_browser_persistence_isolation
+  - evaluation_browser_recovery
 capture_policy: authorized_evaluation_content
 retention: manual_owner_delete_only
 cardinality:

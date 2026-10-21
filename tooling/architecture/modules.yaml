@@ -139,6 +139,50 @@ modules:
   dependencies:
   - aura-observatory.ports
   - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-query
+  root: services/aura-observatory/src/aura_observatory/evaluation_query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_query.py
+  python_modules:
+  - aura_observatory.evaluation_query
+  dependencies:
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-live
+  root: services/aura-observatory/src/aura_observatory/evaluation_live.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_live.py
+  python_modules:
+  - aura_observatory.evaluation_live
+  dependencies:
+  - aura-observatory.metrics
+- id: aura-observatory.evaluation-api
+  root: services/aura-observatory/src/aura_observatory/evaluation_api.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_api.py
+  python_modules:
+  - aura_observatory.evaluation_api
+  dependencies:
+  - aura-observatory.evaluation-query
+  - aura-observatory.evaluation-live
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-storage
+  - aura-observatory.calibration
+- id: aura-observatory.adapters.evaluation-query
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_query
+  dependencies:
+  - aura-observatory.evaluation-query
+- id: aura-observatory.adapters.evaluation-live
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_live
+  dependencies:
+  - aura-observatory.evaluation-live
 - id: aura-observatory.evaluation-definitions
   root: services/aura-observatory/src/aura_observatory/evaluation_definitions.py
   kind: python
@@ -222,7 +266,12 @@ modules:
   - aura-observatory.adapters.postgres
   - aura-observatory.adapters.query
   - aura-observatory.adapters.evaluation-orchestration
+  - aura-observatory.adapters.evaluation-live
+  - aura-observatory.adapters.evaluation-query
   - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-api
+  - aura-observatory.evaluation-query
+  - aura-observatory.evaluation-live
   - aura-observatory.metrics
   - aura-observatory.ports
   - aura-observatory.evaluation-storage
@@ -267,6 +316,7 @@ modules:
   - aura-observatory.adapters.memory
   - aura-observatory.auth
   - aura-observatory.composition
+  - aura-observatory.evaluation-api
   - aura-observatory.ingest
   - aura-observatory.otlp
   - aura-observatory.settings

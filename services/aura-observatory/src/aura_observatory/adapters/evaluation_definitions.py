@@ -12,7 +12,7 @@ bytes remain behind the existing artifact port.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from time import monotonic
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
@@ -20,8 +20,11 @@ from uuid import uuid4
 from aura_observatory.evaluation_definitions import (
     CaseDefinition,
     DatasetDefinition,
+    DefinitionCommandClaim,
+    DefinitionCommandPendingError,
     DefinitionConflictError,
     DefinitionStorageError,
+    DefinitionValidationError,
     EvaluatorDefinition,
     SuiteDefinition,
 )
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
     from aura_observatory.metrics import ObservatoryMetrics
 
 T = TypeVar("T", DatasetDefinition, CaseDefinition, EvaluatorDefinition, SuiteDefinition)
+DEFINITION_COMMAND_LEASE_SECONDS = 120
 
 
 class InMemoryEvaluationDefinitionRepository:
@@ -42,6 +46,7 @@ class InMemoryEvaluationDefinitionRepository:
         self.suites: dict[tuple[str, str], SuiteDefinition] = {}
         self.components: set[tuple[str, str]] = set()
         self.definition_audits: list[dict[str, str]] = []
+        self._definition_command_claims: dict[tuple[str, str, str, str, str], str] = {}
 
     def add_component(self, component_id: str, version: str) -> None:
         self.components.add((component_id, version))
@@ -98,6 +103,48 @@ class InMemoryEvaluationDefinitionRepository:
                 raise KeyError("component version does not exist")
         return self._put(self.suites, definition)
 
+    async def begin_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_id: str,
+        resource_version: str,
+    ) -> DefinitionCommandClaim:
+        claim_key = (operation, idempotency_key, request_fingerprint, resource_id, resource_version)
+        claim_token = uuid4().hex
+        self._definition_command_claims[claim_key] = claim_token
+        return DefinitionCommandClaim(
+            replay=None,
+            claimed=True,
+            claim_token=claim_token,
+            claim_phase="definition_claim",
+        )
+
+    async def complete_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        response: Mapping[str, object],
+        claim_token: str,
+    ) -> dict[str, object]:
+        if not claim_token:
+            raise DefinitionCommandPendingError("definition command claim token is required")
+        claim_key = (operation, idempotency_key, request_fingerprint, "", "")
+        matching_key = next(
+            (
+                key
+                for key, token in self._definition_command_claims.items()
+                if key[:3] == claim_key[:3] and token == claim_token
+            ),
+            None,
+        )
+        if matching_key is None:
+            raise DefinitionCommandPendingError("definition command claim is not owned")
+        del self._definition_command_claims[matching_key]
+        return dict(response)
+
     async def get_dataset(self, resource_id: str, version: str) -> DatasetDefinition | None:
         return self.datasets.get((resource_id, version))
 
@@ -129,6 +176,22 @@ class InMemoryEvaluationDefinitionRepository:
                 for case in self.cases.values()
             )
             for case_id in dataset.case_ids
+        )
+
+    async def case_selection_is_valid(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> bool:
+        dataset = self.datasets.get((dataset_id, version))
+        if dataset is None or not set(case_ids) <= set(dataset.case_ids):
+            return False
+        return all(
+            any(
+                case.case_id == case_id
+                and case.dataset.resource_id == dataset_id
+                and case.dataset.version == version
+                for case in self.cases.values()
+            )
+            for case_id in case_ids
         )
 
     def _put(self, store: dict[tuple[str, str], T], definition: T) -> T:
@@ -209,6 +272,211 @@ class PostgresEvaluationDefinitionRepository:
                 raise KeyError("component version does not exist")
         return await self._create(definition)
 
+    async def begin_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_id: str,
+        resource_version: str,
+    ) -> DefinitionCommandClaim:
+        if operation not in {"create_dataset", "create_suite"}:
+            raise DefinitionValidationError("definition command operation is invalid")
+        claim_token = uuid4().hex
+        claim_phase = "definition_claim"
+        try:
+            async with self._connection_factory() as connection:
+                inserted_result = await connection.execute(
+                    """INSERT INTO observatory_evaluation_definition_commands(
+                    idempotency_key, operation, request_fingerprint,
+                    resource_id, resource_version, status, claim_token, claimed_at,
+                    claim_expires_at)
+                    VALUES (%s, %s, %s, %s, %s, 'pending', %s, CURRENT_TIMESTAMP,
+                            CURRENT_TIMESTAMP + INTERVAL '120 seconds')
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING operation, request_fingerprint, resource_id,
+                    resource_version, status, replay_json, claim_token""",
+                    (
+                        idempotency_key,
+                        operation,
+                        request_fingerprint,
+                        resource_id,
+                        resource_version,
+                        claim_token,
+                    ),
+                )
+                inserted = await inserted_result.fetchone()
+                claimed = inserted is not None
+                if not claimed:
+                    takeover_result = await connection.execute(
+                        """UPDATE observatory_evaluation_definition_commands
+                        SET claim_token = %s, claimed_at = CURRENT_TIMESTAMP,
+                            claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '120 seconds',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE idempotency_key = %s AND operation = %s
+                          AND request_fingerprint = %s AND resource_id = %s
+                          AND resource_version = %s AND status = 'pending'
+                          AND (claim_expires_at IS NULL OR claim_expires_at <= CURRENT_TIMESTAMP)
+                        RETURNING claim_token""",
+                        (
+                            claim_token,
+                            idempotency_key,
+                            operation,
+                            request_fingerprint,
+                            resource_id,
+                            resource_version,
+                        ),
+                    )
+                    takeover = await takeover_result.fetchone()
+                    claimed = takeover is not None
+                    if takeover is not None:
+                        claim_phase = "definition_takeover"
+                result = await connection.execute(
+                    """SELECT operation, request_fingerprint, resource_id,
+                    resource_version, status, replay_json, claim_token, claim_expires_at
+                    FROM observatory_evaluation_definition_commands
+                    WHERE idempotency_key = %s""",
+                    (idempotency_key,),
+                )
+                row = await result.fetchone()
+        except Exception:
+            raise DefinitionStorageError("definition command storage failure") from None
+        if row is None:
+            raise DefinitionStorageError("definition command disappeared")
+        values = row if isinstance(row, Mapping) else None
+        existing_operation = values["operation"] if values is not None else row[0]
+        existing_fingerprint = values["request_fingerprint"] if values is not None else row[1]
+        existing_resource_id = values["resource_id"] if values is not None else row[2]
+        existing_resource_version = values["resource_version"] if values is not None else row[3]
+        if (
+            str(existing_operation) != operation
+            or str(existing_fingerprint) != request_fingerprint
+            or str(existing_resource_id) != resource_id
+            or str(existing_resource_version) != resource_version
+        ):
+            raise DefinitionConflictError(
+                "definition idempotency key conflicts with existing state"
+            )
+        status = values["status"] if values is not None else row[4]
+        response = values["replay_json"] if values is not None else row[5]
+        if str(status) != "completed":
+            if not claimed:
+                raise DefinitionCommandPendingError("definition command is already in progress")
+            return DefinitionCommandClaim(
+                replay=None,
+                claimed=True,
+                claim_token=claim_token,
+                claim_phase=claim_phase,
+            )
+        if response is None:
+            raise DefinitionStorageError("definition command replay is unavailable")
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except (TypeError, ValueError) as exc:
+                raise DefinitionStorageError(
+                    "definition command replay is unavailable"
+                ) from exc
+        if not isinstance(response, Mapping):
+            raise DefinitionStorageError("definition command response is unavailable")
+        return DefinitionCommandClaim(
+            replay=dict(cast(Mapping[str, object], response)),
+            claimed=False,
+            claim_phase="definition_replay",
+        )
+
+    async def complete_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        response: Mapping[str, object],
+        claim_token: str,
+    ) -> dict[str, object]:
+        if not claim_token:
+            raise DefinitionCommandPendingError("definition command claim token is required")
+        payload = json.dumps(dict(response), sort_keys=True, separators=(",", ":"))
+        claim_condition = ""
+        claim_parameters: tuple[object, ...] = ()
+        claim_condition = " AND claim_token = %s"
+        claim_parameters = (claim_token,)
+        try:
+            async with self._connection_factory() as connection:
+                updated = await connection.execute(
+                    """UPDATE observatory_evaluation_definition_commands
+                    SET status = 'completed', replay_json = %s::jsonb,
+                        claim_token = NULL, claimed_at = NULL, claim_expires_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE idempotency_key = %s AND operation = %s
+                      AND request_fingerprint = %s AND status = 'pending'"""
+                    + claim_condition
+                    + " RETURNING replay_json",
+                    (payload, idempotency_key, operation, request_fingerprint)
+                    + claim_parameters,
+                )
+                row = await updated.fetchone()
+                if row is not None:
+                    return dict(response)
+                existing = await connection.execute(
+                    """SELECT operation, request_fingerprint, status, replay_json, claim_token
+                    FROM observatory_evaluation_definition_commands
+                    WHERE idempotency_key = %s""",
+                    (idempotency_key,),
+                )
+                existing_row = await existing.fetchone()
+        except Exception:
+            raise DefinitionStorageError("definition command storage failure") from None
+        if existing_row is None:
+            raise DefinitionStorageError("definition command disappeared")
+        values = existing_row if isinstance(existing_row, Mapping) else None
+        if (
+            str(values["operation"] if values is not None else existing_row[0]) != operation
+            or str(values["request_fingerprint"] if values is not None else existing_row[1])
+            != request_fingerprint
+        ):
+            raise DefinitionConflictError(
+                "definition idempotency key conflicts with existing state"
+            )
+        existing_status = values["status"] if values is not None else existing_row[2]
+        existing_claim = values["claim_token"] if values is not None else existing_row[4]
+        if (
+            str(existing_status) == "pending"
+            and existing_claim != claim_token
+        ):
+            raise DefinitionCommandPendingError(
+                "definition command is owned by another request"
+            )
+        stored = values["replay_json"] if values is not None else existing_row[3]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        if not isinstance(stored, Mapping):
+            raise DefinitionStorageError("definition command response is unavailable")
+        return dict(cast(Mapping[str, object], stored))
+
+    async def renew_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        claim_token: str,
+    ) -> bool:
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    """UPDATE observatory_evaluation_definition_commands
+                    SET claimed_at = CURRENT_TIMESTAMP,
+                        claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '120 seconds',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE idempotency_key = %s AND operation = %s
+                      AND request_fingerprint = %s AND status = 'pending'
+                      AND claim_token = %s
+                    RETURNING idempotency_key""",
+                    (idempotency_key, operation, request_fingerprint, claim_token),
+                )
+                return await result.fetchone() is not None
+        except Exception:
+            raise DefinitionStorageError("definition command storage failure") from None
+
     async def get_dataset(self, resource_id: str, version: str) -> DatasetDefinition | None:
         return await self._get(DatasetDefinition, resource_id, version)
 
@@ -269,6 +537,35 @@ class PostgresEvaluationDefinitionRepository:
                 )
                 row = await result.fetchone()
                 value = bool(row and row[0])
+        except Exception:
+            self._record_dependency("read", "failure", started, "database_failure")
+            raise DefinitionStorageError("definition storage failure") from None
+        self._record_dependency("read", "success", started)
+        return value
+
+    async def case_selection_is_valid(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> bool:
+        if not case_ids:
+            return False
+        placeholders = ",".join("%s" for _ in case_ids)
+        started = monotonic()
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    f"""SELECT COUNT(*) FROM observatory_evaluation_dataset_cases AS membership
+                    JOIN observatory_evaluation_cases AS case_definition
+                      ON case_definition.case_id = membership.case_id
+                     AND case_definition.case_version = membership.case_version
+                    WHERE membership.dataset_id = %s
+                      AND membership.dataset_version = %s
+                      AND membership.case_id IN ({placeholders})
+                      AND case_definition.dataset_id = %s
+                      AND case_definition.dataset_version = %s""",
+                    (dataset_id, version, *case_ids, dataset_id, version),
+                )
+                row = await result.fetchone()
+                value = bool(row and int(row[0]) == len(set(case_ids)))
         except Exception:
             self._record_dependency("read", "failure", started, "database_failure")
             raise DefinitionStorageError("definition storage failure") from None

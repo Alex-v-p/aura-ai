@@ -1,7 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { type ComponentHealth, type LiveEvent, type ObservatoryOperationInput, type RunStatus } from '@aura/observatory-api-client';
+import { type ComponentHealth, type EvaluationLiveEvent } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
 import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { parseEvaluationLiveEvent } from './features/evaluation/evaluation-dto-adapter';
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -18,6 +19,7 @@ export class ObservatoryStore {
   readonly authState = signal<ObservatoryAuthState>('checking');
   readonly sessionRequired = signal(false);
   readonly liveDisconnected = signal(false);
+  readonly evaluationLiveDisconnected = signal(false);
   readonly componentHealthById = signal<Record<string, ComponentHealth>>({});
   readonly componentHealthErrors = signal<Record<string, string>>({});
   readonly componentHealthLoading = signal<Record<string, boolean>>({});
@@ -25,6 +27,9 @@ export class ObservatoryStore {
   readonly analytics = signal<AnalyticsResource>({ catalogue: null, snapshot: null, state: 'loading', error: null });
   readonly analyticsFilters = signal<AnalyticsFilters>(DEFAULT_ANALYTICS_FILTERS);
   readonly comparison = signal<ObservatoryComparison>({ leftRunId: null, rightRunId: null, result: null, state: 'idle', error: null, updatedAt: null });
+  /** Monotonic in-memory invalidation for evaluation workspaces sharing the authenticated SSE. */
+  readonly evaluationRevision = signal(0);
+  readonly evaluationChange = signal<EvaluationLiveEvent | null>(null);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
@@ -58,6 +63,7 @@ export class ObservatoryStore {
     if (this.authState() === 'authenticated' && !this.sessionRequired()) {
       await this.loadHealthHistory();
       this.connectLive();
+      this.connectEvaluationLive();
       this.queueCatalogRefresh();
       this.queueAnalyticsRefresh();
     }
@@ -126,8 +132,13 @@ export class ObservatoryStore {
     this.liveDisconnected.set(false);
     this.gateway.connectLive(this.handleLiveOpen, this.handleLiveMessage, this.handleLiveError);
   }
+  connectEvaluationLive(): void {
+    this.evaluationLiveDisconnected.set(false);
+    this.gateway.connectEvaluationLive(this.handleEvaluationLiveOpen, this.handleEvaluationLiveMessage, this.handleEvaluationLiveError);
+  }
   reconnectLive(): void { this.liveDisconnected.set(true); this.gateway.reconnectLive(this.handleLiveOpen, this.handleLiveMessage, this.handleLiveError); }
-  disconnectLive(): void { this.gateway.disconnectLive(); this.liveDisconnected.set(false); }
+  reconnectEvaluationLive(): void { this.evaluationLiveDisconnected.set(true); this.gateway.reconnectEvaluationLive(this.handleEvaluationLiveOpen, this.handleEvaluationLiveMessage, this.handleEvaluationLiveError); }
+  disconnectLive(): void { this.gateway.disconnectLive(); this.gateway.disconnectEvaluationLive(); this.liveDisconnected.set(false); this.evaluationLiveDisconnected.set(false); }
   async openRun(runId: string): Promise<void> {
     const sequence = ++this.openRunSequence;
     this.selectedRunId.set(runId);
@@ -237,6 +248,15 @@ export class ObservatoryStore {
     if (event.type === 'health.changed') this.queueHealthHistory();
     if (this.analytics().catalogue || this.analytics().snapshot) this.queueAnalyticsRefresh();
     if (isComparisonInvalidationEvent(event.type) && this.comparison().state !== 'loading' && this.comparison().leftRunId && this.comparison().rightRunId) this.queueComparisonRefresh();
+  };
+  private readonly handleEvaluationLiveOpen = (): void => { this.evaluationLiveDisconnected.set(false); };
+  private readonly handleEvaluationLiveError = (): void => { this.evaluationLiveDisconnected.set(true); };
+  private readonly handleEvaluationLiveMessage = (event: Event): void => {
+    const parsed = parseEvaluationLiveEvent((event as MessageEvent<string>).data);
+    if (parsed) {
+      this.evaluationChange.set(parsed);
+      this.evaluationRevision.update((value) => value + 1);
+    }
   };
   private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); if (this.analytics().state === 'disconnected') { this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null })); this.queueAnalyticsRefresh(); } if (this.comparison().state === 'disconnected') { this.comparison.update((value) => ({ ...value, state: value.result ? 'refreshing' : 'loading', error: null })); this.queueComparisonRefresh(); } };
   private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); if (this.comparison().result) this.comparison.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last comparison until refresh.' })); this.queueLiveRefresh(); };

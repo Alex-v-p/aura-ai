@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from aura_observatory.evaluation_definitions import (
         CaseDefinition,
         DatasetDefinition,
+        DefinitionCommandClaim,
         EvaluatorDefinition,
         SuiteDefinition,
     )
@@ -483,6 +484,32 @@ class EvaluationDefinitionRepository(Protocol):
 
     async def create_suite(self, definition: SuiteDefinition) -> SuiteDefinition: ...
 
+    async def begin_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_id: str,
+        resource_version: str,
+    ) -> DefinitionCommandClaim: ...
+
+    async def complete_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        response: Mapping[str, object],
+        claim_token: str,
+    ) -> dict[str, object]: ...
+
+    async def renew_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        claim_token: str,
+    ) -> bool: ...
+
     async def get_dataset(self, resource_id: str, version: str) -> DatasetDefinition | None: ...
 
     async def get_case(self, resource_id: str, version: str) -> CaseDefinition | None: ...
@@ -496,6 +523,10 @@ class EvaluationDefinitionRepository(Protocol):
     async def dataset_case_membership_complete(self, dataset_id: str, version: str) -> bool: ...
 
     async def case_declared(self, dataset_id: str, version: str, case_id: str) -> bool: ...
+
+    async def case_selection_is_valid(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> bool: ...
 
 
 class EvaluationOrchestrationPort(Protocol):

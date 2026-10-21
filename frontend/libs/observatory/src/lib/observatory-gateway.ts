@@ -8,12 +8,15 @@ export type ObservatoryLiveHandler = (event: Event) => void;
 export type ObservatoryLogoutResult = 'confirmed' | 'already_absent';
 
 export interface ObservatoryGatewayPort {
-  execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>): Promise<ObservatoryOperationResponse<K>>;
+  execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>, signal?: AbortSignal): Promise<ObservatoryOperationResponse<K>>;
   ensureSession(): Promise<void>;
   logout(): Promise<ObservatoryLogoutResult>;
   connectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   reconnectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   disconnectLive(): void;
+  connectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
+  reconnectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
+  disconnectEvaluationLive(): void;
 }
 export const OBSERVATORY_GATEWAY = new InjectionToken<ObservatoryGatewayPort>('OBSERVATORY_GATEWAY');
 
@@ -32,12 +35,13 @@ export { extractSessionCsrf } from './observatory-session';
 export class FetchObservatoryTransport implements ObservatoryGatewayPort {
   private readonly baseUrl = inject(OBSERVATORY_API_BASE_URL);
   private readonly csrf = inject(OBSERVATORY_CSRF_TOKEN);
-  private readonly client = new ObservatoryApiClient({ execute: (operation, input) => this.request(operation, input) });
+  private readonly client = new ObservatoryApiClient({ execute: (operation, input, signal) => this.request(operation, input, signal) });
   private sessionCsrf: string | null = null;
   private source: EventSource | null = null;
+  private evaluationSource: EventSource | null = null;
 
-  execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>): Promise<ObservatoryOperationResponse<K>> {
-    return this.client.execute(operation, input);
+  execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>, signal?: AbortSignal): Promise<ObservatoryOperationResponse<K>> {
+    return this.client.execute(operation, input, signal);
   }
 
   async ensureSession(): Promise<void> {
@@ -74,13 +78,33 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
   }
 
   reconnectLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {
-    this.disconnectLive();
+    // Keep the native EventSource instance alive so its automatic reconnect
+    // carries Last-Event-ID. A new source would lose the browser-managed
+    // catch-up cursor and cannot set a custom header.
+    if (this.source) return;
     this.connectLive(onOpen, onMessage, onError);
   }
 
   disconnectLive(): void { this.source?.close(); this.source = null; }
 
-  private async request<K extends ObservatoryOperationId>(operation: typeof OBSERVATORY_API_OPERATIONS[K], input: ObservatoryOperationInput<K>): Promise<ObservatoryOperationResponse<K>> {
+  connectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {
+    if (typeof EventSource === 'undefined' || this.evaluationSource) return;
+    this.evaluationSource = new EventSource(`${this.baseUrl}${OBSERVATORY_API_OPERATIONS.streamEvaluationEvents.pathTemplate}`, { withCredentials: true });
+    this.evaluationSource.onopen = onOpen;
+    this.evaluationSource.onmessage = onMessage;
+    this.evaluationSource.addEventListener('evaluation.changed', onMessage);
+    this.evaluationSource.onerror = onError;
+  }
+
+  reconnectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {
+    // Preserve the native EventSource so the browser sends Last-Event-ID on reconnect.
+    if (this.evaluationSource) return;
+    this.connectEvaluationLive(onOpen, onMessage, onError);
+  }
+
+  disconnectEvaluationLive(): void { this.evaluationSource?.close(); this.evaluationSource = null; }
+
+  private async request<K extends ObservatoryOperationId>(operation: typeof OBSERVATORY_API_OPERATIONS[K], input: ObservatoryOperationInput<K>, signal?: AbortSignal): Promise<ObservatoryOperationResponse<K>> {
     const path = operation.pathTemplate.replace(/\{([^}]+)\}/g, (_, key: string) => encodeURIComponent(String(input.path[key as keyof typeof input.path])));
     const query = Object.entries(input.query).filter((entry): entry is [string, string | number] => entry[1] !== undefined).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join('&');
     const headers: Record<string, string> = { Accept: 'application/json', ...input.headers };
@@ -91,9 +115,18 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
       cache: 'no-store',
       headers: { ...headers, ...(operation.requestMode === 'json' ? { 'Content-Type': 'application/json' } : {}) },
       body: operation.requestMode === 'json' ? JSON.stringify(input.body) : undefined,
+      signal,
     });
     if (response.status === 401) { this.sessionCsrf = null; throw new ObservatorySessionRequiredError(); }
-    if (!response.ok) throw new Error(`Observatory request failed (${response.status})`);
+    if (!response.ok) {
+      let category = '';
+      try {
+        const detail = await response.clone().json() as { readonly code?: unknown };
+        if (typeof detail.code === 'string') category = detail.code;
+      } catch { /* Keep transport errors bounded and content-free. */ }
+      if (category === 'provider_unavailable' || category === 'local_judge_unavailable') throw new Error('local judge provider unavailable');
+      throw new Error(`Observatory request failed (${response.status})`);
+    }
     if (operation.responseMode === 'none') return undefined as ObservatoryOperationResponse<K>;
     return (await response.json()) as ObservatoryOperationResponse<K>;
   }

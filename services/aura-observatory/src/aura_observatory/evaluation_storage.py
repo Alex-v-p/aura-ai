@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import logging
 import math
 import re
@@ -339,6 +340,13 @@ class EvaluationScore:
     value: float | None
     outcome: str | None
     observed_at: datetime
+    code_revision: str | None = None
+    image_digest: str | None = None
+    configuration_revision: str | None = None
+    provenance_component: str | None = None
+    provenance_version: str | None = None
+    provenance_digest: str | None = None
+    execution_provenance: Mapping[str, object] | None = None
     artifact_reference_id: str | None = None
     case_id: str | None = None
     metric: str = "evaluation.score"
@@ -425,6 +433,24 @@ class EvaluationScore:
         for value in (self.prompt_artifact_digest, self.rubric_artifact_digest):
             if value is not None and not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise ArtifactStorageError("score_invalid")
+        for value in (self.code_revision, self.configuration_revision, self.provenance_version):
+            if value is not None and (
+                not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", value)
+                or any(
+                    marker in value.casefold()
+                    for marker in ("owner", "identity", "credential", "token", "secret", "content")
+                )
+            ):
+                raise ArtifactStorageError("score_invalid")
+        for value in (self.image_digest, self.provenance_digest):
+            if value is not None and not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ArtifactStorageError("score_invalid")
+        if self.provenance_component is not None and not re.fullmatch(
+            r"aura\.[a-z][a-z0-9_.-]{0,90}", self.provenance_component
+        ):
+            raise ArtifactStorageError("score_invalid")
+        if self.execution_provenance is not None:
+            _validate_execution_provenance(self.execution_provenance)
         if self.seed is not None and (
             isinstance(self.seed, bool) or not 0 <= self.seed <= 2_147_483_647
         ):
@@ -610,6 +636,200 @@ class EvaluationScore:
         return value
 
 
+def _validate_execution_provenance(value: Mapping[str, object]) -> None:
+    """Validate the closed, content-free execution provenance envelope."""
+
+    # AURA-0094 rows may still carry the original bounded reproducibility
+    # marker.  Keep accepting that legacy value at the write boundary so an
+    # upgrade does not make old deterministic evaluators unusable; the
+    # AURA-0095 query adapter deliberately treats such rows as partial.  New
+    # authoritative score rows use the complete structured shape below.
+    if isinstance(value, str):
+        if not _VERSION_RE.fullmatch(value) or len(value) > 128:
+            raise ArtifactStorageError("score_invalid")
+        return
+
+    allowed = {
+        "dataset",
+        "suite",
+        "evaluators",
+        "components",
+        "model",
+        "deploymentRevision",
+        "reproducibility",
+    }
+    bounded_value = value
+    if {str(key) for key in bounded_value} - allowed:
+        raise ArtifactStorageError("score_invalid")
+    for reference_name in ("dataset", "suite"):
+        reference = bounded_value.get(reference_name)
+        if not isinstance(reference, Mapping) or {
+            str(key) for key in cast(Mapping[str, object], reference)
+        } != {
+            "resourceId",
+            "resourceVersion",
+        }:
+            raise ArtifactStorageError("score_invalid")
+    for collection_name in ("evaluators", "components"):
+        collection = bounded_value.get(collection_name)
+        if not isinstance(collection, list) or not 1 <= len(cast(list[object], collection)) <= 32:
+            raise ArtifactStorageError("score_invalid")
+    legacy_reproducibility = bounded_value.get("reproducibility")
+    if isinstance(legacy_reproducibility, str):
+        if not _VERSION_RE.fullmatch(legacy_reproducibility) or len(legacy_reproducibility) > 128:
+            raise ArtifactStorageError("score_invalid")
+        return
+    evaluators = cast(list[object], bounded_value["evaluators"])
+    for evaluator in evaluators:
+        if not isinstance(evaluator, Mapping):
+            raise ArtifactStorageError("score_invalid")
+        evaluator_mapping = cast(Mapping[str, object], evaluator)
+        if set(evaluator_mapping) != {
+            "evaluatorId",
+            "evaluatorVersion",
+            "kind",
+        }:
+            raise ArtifactStorageError("score_invalid")
+        evaluator_id = evaluator_mapping.get("evaluatorId")
+        evaluator_version = evaluator_mapping.get("evaluatorVersion")
+        if not isinstance(evaluator_id, str) or not isinstance(evaluator_version, str):
+            raise ArtifactStorageError("score_invalid")
+        _require_uuid(evaluator_id, "provenance.evaluatorId")
+        if not _VERSION_RE.fullmatch(evaluator_version):
+            raise ArtifactStorageError("score_invalid")
+        if evaluator_mapping.get("kind") not in {"deterministic", "local_judge", "human_review"}:
+            raise ArtifactStorageError("score_invalid")
+    components = cast(list[object], bounded_value["components"])
+    for component in components:
+        if not isinstance(component, Mapping):
+            raise ArtifactStorageError("score_invalid")
+        component_mapping = cast(Mapping[str, object], component)
+        if set(component_mapping) != {
+            "componentId",
+            "componentVersion",
+            "codeRevision",
+            "imageDigest",
+            "configurationRevision",
+        }:
+            raise ArtifactStorageError("score_invalid")
+        component_id = component_mapping.get("componentId")
+        component_version = component_mapping.get("componentVersion")
+        code_revision = component_mapping.get("codeRevision")
+        image_digest = component_mapping.get("imageDigest")
+        configuration_revision = component_mapping.get("configurationRevision")
+        if not all(
+            isinstance(item, str)
+            for item in (
+                component_id,
+                component_version,
+                code_revision,
+                image_digest,
+                configuration_revision,
+            )
+        ):
+            raise ArtifactStorageError("score_invalid")
+        _require_component_id(cast(str, component_id))
+        if not _VERSION_RE.fullmatch(cast(str, component_version)):
+            raise ArtifactStorageError("score_invalid")
+        for revision in (code_revision, configuration_revision):
+            if (
+                not 1 <= len(cast(str, revision)) <= 128
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]*", cast(str, revision)) is None
+                or any(
+                    marker in cast(str, revision).casefold()
+                    for marker in ("owner", "identity", "credential", "token", "secret", "content")
+                )
+            ):
+                raise ArtifactStorageError("score_invalid")
+        if not _is_sha256(cast(str, image_digest)):
+            raise ArtifactStorageError("score_invalid")
+    model = bounded_value.get("model")
+    if not isinstance(model, Mapping):
+        raise ArtifactStorageError("score_invalid")
+    model_mapping = cast(Mapping[str, object], model)
+    if set(model_mapping) != {"modelId", "modelVersion", "modelDigest"}:
+        raise ArtifactStorageError("score_invalid")
+    model_id = model_mapping.get("modelId")
+    model_version = model_mapping.get("modelVersion")
+    model_digest = model_mapping.get("modelDigest")
+    if (
+        not isinstance(model_id, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9._+-]{0,127}(?::[a-z0-9._+-]+)?", model_id) is None
+        or any(
+            marker in model_id.casefold()
+            for marker in (
+                "owner",
+                "identity",
+                "credential",
+                "bearer",
+                "token",
+                "secret",
+                "password",
+                "private",
+                "content",
+                "hash",
+                "digest",
+                "endpoint",
+            )
+        )
+        or not isinstance(model_version, str)
+        or not _VERSION_RE.fullmatch(model_version)
+        or not isinstance(model_digest, str)
+        or not _is_sha256(model_digest)
+    ):
+        raise ArtifactStorageError("score_invalid")
+    deployment_revision = bounded_value.get("deploymentRevision")
+    if (
+        not isinstance(deployment_revision, str)
+        or not 1 <= len(deployment_revision) <= 128
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]*", deployment_revision) is None
+    ):
+        raise ArtifactStorageError("score_invalid")
+    reproducibility = bounded_value.get("reproducibility")
+    if not isinstance(reproducibility, Mapping):
+        raise ArtifactStorageError("score_invalid")
+    reproducibility_mapping = cast(Mapping[str, object], reproducibility)
+    if set(reproducibility_mapping) != {
+        "seed",
+        "clockMode",
+        "timeZone",
+        "locale",
+        "fixtureRevision",
+        "promptRevision",
+        "policyRevision",
+    }:
+        raise ArtifactStorageError("score_invalid")
+    seed = reproducibility_mapping.get("seed")
+    locale = reproducibility_mapping.get("locale")
+    if (
+        type(seed) is not int
+        or not 0 <= seed <= 2_147_483_647
+        or reproducibility_mapping.get("clockMode") not in {"fixed", "recorded"}
+        or reproducibility_mapping.get("timeZone") != "UTC"
+        or not isinstance(locale, str)
+        or re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", locale) is None
+    ):
+        raise ArtifactStorageError("score_invalid")
+    for revision_name in ("fixtureRevision", "promptRevision", "policyRevision"):
+        revision = reproducibility_mapping.get(revision_name)
+        if (
+            not isinstance(revision, str)
+            or not 1 <= len(revision) <= 128
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]*", revision) is None
+            or any(
+                marker in revision.casefold()
+                for marker in ("owner", "identity", "credential", "token", "secret", "content")
+            )
+        ):
+            raise ArtifactStorageError("score_invalid")
+    encoded = json.dumps(bounded_value, sort_keys=True, separators=(",", ":"))
+    if len(encoded) > 16_384 or any(
+        marker in encoded.casefold()
+        for marker in ("response", "content", "credential", "endpoint", "token", "owner")
+    ):
+        raise ArtifactStorageError("score_invalid")
+
+
 class EvaluationMetrics:
     """Bounded runtime metric sink for the worker-owned storage paths."""
 
@@ -649,12 +869,19 @@ class ArtifactStorageService:
     """Stream, verify, and publish one explicitly authorized artifact."""
 
     def __init__(
-        self, repository: Any, object_store: Any, *, max_bytes: int, metrics: Any | None = None
+        self,
+        repository: Any,
+        object_store: Any,
+        *,
+        max_bytes: int,
+        metrics: Any | None = None,
+        event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
     ) -> None:
         self.repository = repository
         self.object_store = object_store
         self.max_bytes = max_bytes
         self.metrics = metrics or EvaluationMetrics()
+        self.event_publisher = event_publisher
 
     async def store(self, request: ArtifactUpload, stream: AsyncIterable[bytes]) -> ArtifactRecord:
         started = _monotonic()
@@ -772,7 +999,18 @@ class ArtifactStorageService:
             _elapsed_ms(started),
             {"operation": "store"},
         )
+        await self._publish_live("evaluation_artifact", record.artifact_id, "created", "available")
         return record
+
+    async def _publish_live(
+        self, resource_type: str, resource_id: str, change: str, state: str
+    ) -> None:
+        if self.event_publisher is None:
+            return
+        try:
+            await self.event_publisher(resource_type, resource_id, change, state)
+        except Exception:
+            _LOGGER.debug("evaluation artifact live notification unavailable")
 
     async def _mark_artifact_failed(self, reference: str, failure_code: str) -> None:
         """Persist a bounded failure without replacing it with DB diagnostics."""
@@ -813,11 +1051,13 @@ class EvaluationDeletionService:
         object_store: EvaluationObjectStore | _ObjectStoreFixture,
         score_store: EvaluationScoreStore | _ScoreStoreFixture,
         metrics: Any | None = None,
+        event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
     ) -> None:
         self.repository = repository
         self.object_store = object_store
         self.score_store = score_store
         self.metrics = metrics or EvaluationMetrics()
+        self.event_publisher = event_publisher
 
     async def create_command(self, command: DeletionCommand) -> DeletionCommand:
         """Capture immutable artifact and score targets before queueing work."""
@@ -832,7 +1072,11 @@ class EvaluationDeletionService:
         create = getattr(self.repository, "create_deletion_command", None)
         if not callable(create):
             raise ArtifactStorageError("database_failure")
-        return await cast(Any, create)(command, score_ids=tuple(score_ids))
+        created = await cast(Any, create)(command, score_ids=tuple(score_ids))
+        await self._publish_live(
+            "evaluation_deletion", command.command_id, "deletion_requested", "queued"
+        )
+        return created
 
     async def resume_pending(self, *, page_size: int = 100, limit: int = 16) -> int:
         """Resume persisted deletion commands without exposing repository state."""
@@ -965,6 +1209,9 @@ class EvaluationDeletionService:
                             "outcome": "succeeded",
                         },
                     )
+                    await self._publish_live(
+                        "evaluation_deletion", command.command_id, "deleted", "succeeded"
+                    )
                     return completed
                 for target in targets:
                     reference = _target_reference(target)
@@ -1026,6 +1273,16 @@ class EvaluationDeletionService:
             labels={"phase": "worker", "failure_code": failure_code},
         )
         _LOGGER.error("evaluation deletion worker failure code=%s", failure_code)
+
+    async def _publish_live(
+        self, resource_type: str, resource_id: str, change: str, state: str
+    ) -> None:
+        if self.event_publisher is None:
+            return
+        try:
+            await self.event_publisher(resource_type, resource_id, change, state)
+        except Exception:
+            _LOGGER.debug("evaluation deletion live notification unavailable")
 
     def _metric(
         self, name: str, value: float = 1.0, labels: Mapping[str, str] | None = None

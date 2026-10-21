@@ -626,7 +626,7 @@ class EvaluationOrchestrationRepository(Protocol):
     ) -> None: ...
 
     async def request_cancellation(
-        self, job_id: str, *, reason: str, now: datetime
+        self, job_id: str, *, reason: str, idempotency_key: str, now: datetime
     ) -> EvaluationOutboxEntry | None: ...
 
     async def apply_result(
@@ -779,6 +779,7 @@ class EvaluationOrchestrationService:
         retry_base_seconds: int = 10,
         retry_max_seconds: int = 3600,
         max_attempts: int = MAX_ATTEMPTS,
+        event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
     ) -> None:
         if not 1 <= batch_size <= 1000:
             raise ValueError("batch_size out of bounds")
@@ -797,6 +798,20 @@ class EvaluationOrchestrationService:
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
         self.max_attempts = max_attempts
+        self.event_publisher = event_publisher
+
+    async def _publish_live(
+        self, resource_type: str, resource_id: str, change: str, state: str
+    ) -> None:
+        if self.event_publisher is None:
+            return
+        try:
+            await self.event_publisher(resource_type, resource_id, change, state)
+        except Exception:
+            # Live notifications are a durable observability side effect; a
+            # provider outage must never roll back or delay Core evaluation
+            # admission/result settlement.
+            _LOGGER.debug("evaluation live notification unavailable")
 
     async def claim_local_work(self) -> LocalWorkItem | None:
         """Claim one durable local evaluation item, if the queue has work."""
@@ -900,6 +915,7 @@ class EvaluationOrchestrationService:
         # persisted definitions.  No caller-supplied kind, payload, or
         # authorization flag crosses this boundary.
         await self.enqueue_admitted_local_work(job.job_id)
+        await self._publish_live("evaluation_job", job.job_id, "created", "queued")
         self._metric("observatory_evaluation_job_admission_count", labels={"outcome": "accepted"})
         return job
 
@@ -1053,14 +1069,30 @@ class EvaluationOrchestrationService:
         return snapshot
 
     async def cancel(
-        self, job_id: str, *, reason: str = "OWNER_REQUESTED", now: datetime | None = None
+        self,
+        job_id: str,
+        *,
+        reason: str = "OWNER_REQUESTED",
+        idempotency_key: str | None = None,
+        now: datetime | None = None,
     ) -> bool:
         if reason not in {"OWNER_REQUESTED", "SUPERSEDED"}:
             raise OrchestrationError("cancellation_reason_invalid")
         at = (now or datetime.now(UTC)).astimezone(UTC)
-        entry = await self.repository.request_cancellation(job_id, reason=reason, now=at)
+        if idempotency_key is None:
+            # Direct worker callers predate the HTTP command header.  Keep a
+            # deterministic compatibility key; API callers always supply the
+            # explicit caller key and are durably fenced by the repository.
+            idempotency_key = f"legacy-cancel:{job_id}"
+        entry = await self.repository.request_cancellation(
+            job_id, reason=reason, idempotency_key=idempotency_key, now=at
+        )
         if entry is None:
-            return False
+            if idempotency_key.startswith("legacy-cancel:"):
+                return False
+            current = await self.repository.get_job(job_id)
+            return current is not None and current.state is JobState.CANCELLED
+        await self._publish_live("evaluation_job", job_id, "cancel_requested", "cancelled")
         self._metric("observatory_evaluation_cancellation_count", labels={"outcome": "accepted"})
         self._metric("observatory_evaluation_terminal_count", labels={"outcome": "cancelled"})
         return True
@@ -1112,10 +1144,20 @@ class EvaluationOrchestrationService:
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
         if acknowledge is not None:
             await acknowledge()
+        message_type = str(validated["messageType"])
+        if disposition == "applied":
+            result_id = str(validated.get("resultId") or validated.get("jobId"))
+            terminal_state = {
+                "evaluation.runner.completed": "succeeded",
+                "evaluation.runner.cancelled": "cancelled",
+                "evaluation.runner.failed": "failed",
+            }.get(message_type, "updated")
+            await self._publish_live(
+                "evaluation_result", result_id, "state_changed", terminal_state
+            )
         if application.terminal_transition == "deadline":
             self._metric("observatory_evaluation_deadline_count", labels={"outcome": "deadline"})
             self._metric("observatory_evaluation_terminal_count", labels={"outcome": "deadline"})
-        message_type = str(validated["messageType"])
         data = cast(Mapping[str, object], validated["data"])
         retry_scheduled = False
         if disposition == "applied" and message_type.endswith("failed"):
@@ -1297,6 +1339,7 @@ class InMemoryEvaluationOrchestrationRepository:
         self.audits: list[dict[str, str]] = []
         self.schedules: dict[str, EvaluationSchedule] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
+        self._cancellation_idempotency: dict[str, tuple[str, str]] = {}
         self.local_work: dict[str, LocalWorkItem] = {}
         self._local_idempotency: dict[str, tuple[str, str]] = {}
         self._lock = asyncio.Lock()
@@ -1522,9 +1565,18 @@ class InMemoryEvaluationOrchestrationRepository:
             )
 
     async def request_cancellation(
-        self, job_id: str, *, reason: str, now: datetime
+        self, job_id: str, *, reason: str, idempotency_key: str, now: datetime
     ) -> EvaluationOutboxEntry | None:
         async with self._lock:
+            prior = self._cancellation_idempotency.get(idempotency_key)
+            fingerprint = f"{job_id}:{reason}"
+            if prior is not None:
+                if prior != (job_id, fingerprint):
+                    raise OrchestrationError("idempotency_conflict")
+                return None
+            for _prior_key, prior_value in self._cancellation_idempotency.items():
+                if prior_value[0] == job_id and prior_value[1] != fingerprint:
+                    raise OrchestrationError("idempotency_conflict")
             job = self.jobs.get(job_id)
             if job is None:
                 raise OrchestrationError("job_not_found")
@@ -1556,6 +1608,7 @@ class InMemoryEvaluationOrchestrationRepository:
             )
             if event_id not in self.outbox:
                 self.outbox[event_id] = entry
+                self._cancellation_idempotency[idempotency_key] = (job_id, fingerprint)
                 self.audits.append({"job_id": job_id, "event": "cancelled", "outcome": "accepted"})
                 return entry
             return None

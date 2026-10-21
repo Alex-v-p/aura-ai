@@ -13,11 +13,13 @@ from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
 from aura_observatory.adapters.evaluation_definitions import (
     PostgresEvaluationDefinitionRepository,
 )
+from aura_observatory.adapters.evaluation_live import PostgresEvaluationLiveEventStore
 from aura_observatory.adapters.evaluation_orchestration import (
     OtlpComponentSpanExporter,
     PostgresEvaluationMetricStore,
     PostgresEvaluationOrchestrationRepository,
 )
+from aura_observatory.adapters.evaluation_query import PostgresEvaluationQueryBackend
 from aura_observatory.adapters.evaluation_storage import (
     ClickHouseEvaluationScoreStore,
     PostgresEvaluationArtifactRepository,
@@ -32,6 +34,9 @@ from aura_observatory.auth import (
     ObservatoryAuth,
     RedisLoginStateBackend,
     RedisSessionBackend,
+)
+from aura_observatory.evaluation_api import (
+    EvaluationApplicationService as EvaluationApiApplicationService,
 )
 from aura_observatory.evaluation_calibration import (
     CalibrationService,
@@ -51,6 +56,9 @@ from aura_observatory.evaluation_judges import (
 from aura_observatory.evaluation_orchestration import (
     EvaluationOrchestrationService,
     EvaluationSchedulerService,
+)
+from aura_observatory.evaluation_query import (
+    EvaluationQueryService,
 )
 from aura_observatory.evaluation_storage import (
     ArtifactStorageService,
@@ -100,6 +108,21 @@ async def postgres_connection(database_url: str) -> AsyncGenerator[Any]:
 
     async with await psycopg.AsyncConnection.connect(database_url) as connection:
         yield connection
+
+
+def _evaluation_live_publisher(settings: Settings) -> Any:
+    """Return the shared durable metadata-event boundary for worker services."""
+
+    live_store = PostgresEvaluationLiveEventStore(
+        lambda: postgres_connection(settings.database_url)
+    )
+
+    async def publish(
+        resource_type: str, resource_id: str, change: str, state: str
+    ) -> object:
+        return await live_store.publish(resource_type, resource_id, change, state)
+
+    return publish
 
 
 def build_ingest_service(settings: Settings) -> TelemetryIngestService:
@@ -209,6 +232,7 @@ def build_evaluation_artifact_storage(settings: Settings) -> ArtifactStorageServ
         object_store,
         max_bytes=settings.evaluation_artifact_max_bytes,
         metrics=_production_metrics(settings, metrics_store),
+        event_publisher=_evaluation_live_publisher(settings),
     )
 
 
@@ -235,7 +259,11 @@ def build_evaluation_deletion(settings: Settings) -> EvaluationDeletionService:
         password=settings.clickhouse_password,
     )
     return EvaluationDeletionService(
-        repository, object_store, score_store, metrics=_production_metrics(settings, metrics_store)
+        repository,
+        object_store,
+        score_store,
+        metrics=_production_metrics(settings, metrics_store),
+        event_publisher=_evaluation_live_publisher(settings),
     )
 
 
@@ -243,6 +271,7 @@ def build_evaluation_orchestration(
     settings: Settings,
     *,
     transport: EvaluationTransportPort | None = None,
+    event_publisher: Any | None = None,
 ) -> EvaluationOrchestrationService:
     """Compose the dedicated evaluation worker's durable orchestration port."""
 
@@ -254,6 +283,18 @@ def build_evaluation_orchestration(
     metrics_store = PostgresEvaluationMetricStore(
         lambda: postgres_connection(settings.database_url)
     )
+    if event_publisher is None:
+        live_store = PostgresEvaluationLiveEventStore(
+            lambda: postgres_connection(settings.database_url)
+        )
+
+        async def publisher(
+            resource_type: str, resource_id: str, change: str, state: str
+        ) -> object:
+            return await live_store.publish(resource_type, resource_id, change, state)
+
+        event_publisher = publisher
+
     return EvaluationOrchestrationService(
         repository,
         transport,
@@ -264,6 +305,7 @@ def build_evaluation_orchestration(
         retry_base_seconds=settings.evaluation_retry_base_seconds,
         retry_max_seconds=settings.evaluation_retry_max_seconds,
         max_attempts=settings.evaluation_max_attempts,
+        event_publisher=event_publisher,
     )
 
 
@@ -425,6 +467,49 @@ def build_calibration_service(
     return CalibrationService(
         PostgresCalibrationRepository(lambda: postgres_connection(settings.database_url)),
         metrics=metrics or _production_metrics(settings),
+        event_publisher=_evaluation_live_publisher(settings),
+    )
+
+
+def build_evaluation_api_service(settings: Settings) -> EvaluationApiApplicationService:
+    """Compose the owner API over existing Observatory application ports.
+
+    The API never constructs Core adapters or opens provider connections at
+    import time.  Each supplied service retains its own service-owned storage
+    boundary; the transport projection remains in ``evaluation_api``.
+    """
+
+    api_metrics = _production_metrics(settings)
+    query = EvaluationQueryService(
+        backend=PostgresEvaluationQueryBackend(
+            lambda: postgres_connection(settings.database_url),
+            clickhouse_url=settings.clickhouse_url,
+            clickhouse_database=settings.clickhouse_database,
+            clickhouse_user=settings.clickhouse_user,
+            clickhouse_password=settings.clickhouse_password,
+        )
+    )
+    live_store = PostgresEvaluationLiveEventStore(
+        lambda: postgres_connection(settings.database_url)
+    )
+
+    async def publish_live(
+        resource_type: str, resource_id: str, change: str, state: str
+    ) -> object:
+        return await live_store.publish(resource_type, resource_id, change, state)
+
+    deletion_service = None
+    if settings.evaluation_object_access_key and settings.evaluation_object_secret_key:
+        deletion_service = build_evaluation_deletion(settings)
+    calibration_service = build_calibration_service(settings)
+    return EvaluationApiApplicationService(
+        query=query,
+        live=live_store,
+        definition_service=build_evaluation_definition_service(settings),
+        orchestration=build_evaluation_orchestration(settings, event_publisher=publish_live),
+        calibration_service=calibration_service,
+        deletion_service=deletion_service,
+        metrics=api_metrics,
     )
 
 
@@ -443,5 +528,6 @@ __all__ = [
     "build_evaluation_application_service",
     "build_local_judge_service",
     "build_calibration_service",
+    "build_evaluation_api_service",
     "postgres_connection",
 ]

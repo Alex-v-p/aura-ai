@@ -40,6 +40,10 @@ evaluators:
   - evaluation_definition_contract_validation
   - evaluation_definition_immutability
   - evaluation_suite_binding_validation
+  - evaluation_api_contract_compatibility
+  - evaluation_api_authorization
+  - evaluation_api_csrf_idempotency
+  - evaluation_query_pagination_bounds
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

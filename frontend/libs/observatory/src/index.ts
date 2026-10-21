@@ -9,3 +9,6 @@ export * from './lib/features/components/components.component';
 export * from './lib/features/retention/retention.component';
 export * from './lib/features/analytics/analytics.component';
 export * from './lib/features/comparison/comparison.component';
+export * from './lib/features/evaluation/evaluation-workspace.component';
+export * from './lib/features/evaluation/evaluation-workspace.store';
+export * from './lib/features/evaluation/evaluation-dto-adapter';

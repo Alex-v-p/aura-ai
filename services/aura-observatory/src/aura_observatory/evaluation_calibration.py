@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -24,6 +25,8 @@ from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from aura_observatory.evaluation_judges import JudgeAdvisoryState, JudgeOutcome
+
+_LOGGER = logging.getLogger(__name__)
 
 MIN_CALIBRATION_LABELS = 20
 MIN_AGREEMENT = 0.80
@@ -167,6 +170,22 @@ def _qualification_fingerprint(item: Qualification) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _revocation_fingerprint(
+    qualification_id: str, authorization_record_id: str, revoked_at: datetime
+) -> str:
+    """Fingerprint the complete, content-free revocation request."""
+
+    value = "|".join(
+        (
+            "revoke_qualification",
+            qualification_id,
+            authorization_record_id,
+            _utc_timestamp(revoked_at),
+        )
+    )
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 class DisagreementClass(StrEnum):
@@ -543,6 +562,11 @@ class HumanReview:
     review_label: str | None = None
     comment_artifact_version: str | None = None
     comment_artifact_digest: str | None = None
+    # Exact owner-supplied review provenance. Durable query projections do not
+    # borrow calibration provenance when these fields are absent.
+    provenance_component: str | None = None
+    provenance_version: str | None = None
+    provenance_digest: str | None = None
 
     def validate(self, *, strict: bool = False) -> None:
         for value in (self.review_id, self.case_id, self.result_id, self.judge_id):
@@ -939,6 +963,7 @@ class InMemoryCalibrationRepository:
         self.qualifications: dict[str, Qualification] = {}
         self.calibration_claims: dict[tuple[str, str], CalibrationExecutionClaim] = {}
         self.calibration_results: dict[str, CalibrationReport] = {}
+        self.revocation_idempotency: dict[str, tuple[str, str]] = {}
         self.audits: list[dict[str, str]] = []
 
     async def put_label(self, label: CalibrationLabel) -> CalibrationLabel:
@@ -1067,10 +1092,19 @@ class InMemoryCalibrationRepository:
         *,
         revoked_at: datetime,
         authorization_record_id: str,
+        idempotency_key: str | None = None,
     ) -> Qualification | None:
         current = self.qualifications.get(qualification_id)
         if current is None:
             return None
+        fingerprint = _revocation_fingerprint(
+            qualification_id, authorization_record_id, revoked_at
+        )
+        prior = self.revocation_idempotency.get(qualification_id)
+        if prior is not None:
+            if idempotency_key != prior[0] or fingerprint != prior[1]:
+                raise CalibrationError("idempotency_conflict")
+            return current
         if current.state == "revoked":
             if current.revocation_record_id == authorization_record_id:
                 self.audits.append({"kind": "qualification", "outcome": "duplicate"})
@@ -1087,6 +1121,8 @@ class InMemoryCalibrationRepository:
             revocation_record_id=authorization_record_id,
         )
         self.qualifications[qualification_id] = updated
+        if idempotency_key is not None:
+            self.revocation_idempotency[qualification_id] = (idempotency_key, fingerprint)
         self.audits.append({"kind": "qualification", "outcome": "revoked"})
         return updated
 
@@ -1120,6 +1156,7 @@ class CalibrationRepositoryPort(Protocol):
         *,
         revoked_at: datetime,
         authorization_record_id: str,
+        idempotency_key: str | None = None,
     ) -> Qualification | None: ...
 
     async def claim_calibration(
@@ -1752,8 +1789,10 @@ class PostgresCalibrationRepository:
                     comment_artifact_version, comment_artifact_digest, created_at,
                     review_version, idempotency_key, authorization_record_id,
                     retention_mode, provenance, calibration_id, score_id, review_label,
-                    record_fingerprint)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    record_fingerprint, review_provenance_component,
+                    review_provenance_version, review_provenance_digest)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (review_id) DO NOTHING
                 RETURNING review_id""",
                 (
@@ -1782,6 +1821,9 @@ class PostgresCalibrationRepository:
                     item.score_id,
                     item.review_label or item.label,
                     _record_fingerprint(item),
+                    item.provenance_component,
+                    item.provenance_version,
+                    item.provenance_digest,
                 ),
             )
             if await inserted.fetchone() is None:
@@ -1888,9 +1930,14 @@ class PostgresCalibrationRepository:
         *,
         revoked_at: datetime,
         authorization_record_id: str,
+        idempotency_key: str | None = None,
     ) -> Qualification | None:
         _uuid(qualification_id)
         _uuid(authorization_record_id)
+        effective_key = idempotency_key or f"legacy-revoke:{qualification_id}"
+        fingerprint = _revocation_fingerprint(
+            qualification_id, authorization_record_id, revoked_at
+        )
         async with self.connection_factory() as connection:
             current = await connection.execute(
                 """SELECT state, revocation_record_id FROM
@@ -1901,6 +1948,17 @@ class PostgresCalibrationRepository:
             current_row = await current.fetchone()
             if current_row is None:
                 raise CalibrationError("not_found")
+            replay = await connection.execute(
+                """SELECT idempotency_key, request_fingerprint
+                FROM observatory_evaluation_qualification_revocations
+                WHERE qualification_id=%s FOR UPDATE""",
+                (qualification_id,),
+            )
+            replay_row = await replay.fetchone()
+            if replay_row is not None:
+                if effective_key != str(replay_row[0]) or fingerprint != str(replay_row[1]):
+                    raise CalibrationError("idempotency_conflict")
+                return await self.get_qualification(qualification_id)
             if str(current_row[0]) == "revoked":
                 if str(current_row[1]) == authorization_record_id:
                     return await self.get_qualification(qualification_id)
@@ -1911,10 +1969,27 @@ class PostgresCalibrationRepository:
                     state='revoked', score_disposition='advisory_only',
                     revocation_record_id=%s
                 WHERE qualification_id=%s AND qualified=TRUE AND state='qualified'""",
-                (revoked_at, authorization_record_id, qualification_id),
+                (
+                    revoked_at,
+                    authorization_record_id,
+                    qualification_id,
+                ),
             )
             if int(getattr(result, "rowcount", 0) or 0) != 1:
                 raise CalibrationError("authorization_conflict")
+            await connection.execute(
+                """INSERT INTO observatory_evaluation_qualification_revocations(
+                    qualification_id, idempotency_key, request_fingerprint,
+                    authorization_record_id, revoked_at)
+                VALUES (%s,%s,%s,%s,%s)""",
+                (
+                    qualification_id,
+                    effective_key,
+                    fingerprint,
+                    authorization_record_id,
+                    revoked_at,
+                ),
+            )
             await connection.execute(
                 """INSERT INTO observatory_local_judge_audits(
                     audit_id, resource_type, resource_id, operation, outcome,
@@ -1927,10 +2002,62 @@ class PostgresCalibrationRepository:
 
 class CalibrationService:
     def __init__(
-        self, repository: CalibrationRepositoryPort | None = None, *, metrics: Any | None = None
+        self,
+        repository: CalibrationRepositoryPort | None = None,
+        *,
+        metrics: Any | None = None,
+        event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
     ) -> None:
         self.repository = repository or InMemoryCalibrationRepository()
         self.metrics = metrics
+        self.event_publisher = event_publisher
+
+    async def get_calibration_result(self, result_id: str) -> CalibrationReport | None:
+        """Read the authoritative calibration result through the service port."""
+
+        try:
+            return await self.repository.get_calibration_result(_uuid(result_id))
+        except CalibrationError:
+            raise
+        except Exception:
+            raise CalibrationError("database_failure") from None
+
+    async def is_authorized(
+        self,
+        authorization_record_id: str,
+        purpose: str,
+        *,
+        resource_id: str | None = None,
+        scope_fingerprint: str | None = None,
+    ) -> bool:
+        """Expose the narrow authorization lookup owned by calibration."""
+
+        checker = getattr(self.repository, "is_authorized", None)
+        if not callable(checker):
+            return isinstance(self.repository, InMemoryCalibrationRepository)
+        try:
+            return bool(
+                await checker(
+                    _uuid(authorization_record_id),
+                    purpose,
+                    resource_id=_uuid(resource_id) if resource_id is not None else None,
+                    scope_fingerprint=scope_fingerprint,
+                )
+            )
+        except CalibrationError:
+            raise
+        except Exception:
+            raise CalibrationError("database_failure") from None
+
+    async def _publish_live(
+        self, resource_type: str, resource_id: str, change: str, state: str
+    ) -> None:
+        if self.event_publisher is None:
+            return
+        try:
+            await self.event_publisher(resource_type, resource_id, change, state)
+        except Exception:
+            _LOGGER.debug("calibration live notification unavailable")
 
     async def label(self, item: CalibrationLabel) -> CalibrationLabel:
         started = monotonic()
@@ -2070,6 +2197,7 @@ class CalibrationService:
             raise CalibrationError("database_failure") from None
         self._metric("observatory_calibration_review_count", {"outcome": "accepted"})
         self._operation_span("review", started, "success")
+        await self._publish_live("evaluation_review", result.review_id, "created", "completed")
         return result
 
     async def _require_action_authorization(
@@ -2372,6 +2500,13 @@ class CalibrationService:
                     )
             raise CalibrationError("database_failure") from None
         self._operation_span("calibrate", started, "success" if report.eligible else "insufficient")
+        if report.calibration_result_id is not None:
+            await self._publish_live(
+                "evaluation_calibration",
+                report.calibration_result_id,
+                "state_changed",
+                "eligible" if report.eligible else "inconclusive",
+            )
         return report
 
     async def _persist_report(self, report: CalibrationReport) -> None:
@@ -2555,6 +2690,9 @@ class CalibrationService:
             raise CalibrationError("database_failure") from None
         self._metric("observatory_calibration_qualification_count", {"outcome": "qualified"})
         self._operation_span("qualify", started, "success")
+        await self._publish_live(
+            "evaluation_qualification", result.qualification_id, "created", "qualified"
+        )
         return result
 
     async def revoke(
@@ -2563,6 +2701,7 @@ class CalibrationService:
         *,
         at: datetime | None = None,
         authorization_record_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Qualification:
         started = monotonic()
         try:
@@ -2638,6 +2777,7 @@ class CalibrationService:
                     qualification_id,
                     revoked_at=revoked_at,
                     authorization_record_id=authorization_record_id,
+                    idempotency_key=idempotency_key,
                 )
             except CalibrationError as error:
                 self._operation_span("revoke", started, "failure", error_code=error.code)
@@ -2650,6 +2790,9 @@ class CalibrationService:
                 raise CalibrationError("not_found")
             self._metric("observatory_calibration_qualification_count", {"outcome": "revoked"})
             self._operation_span("revoke", started, "success")
+            await self._publish_live(
+                "evaluation_qualification", updated.qualification_id, "revoked", "revoked"
+            )
             return updated
         updated = Qualification(
             qualification_id=current.qualification_id,

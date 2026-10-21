@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import re
@@ -521,7 +522,11 @@ class PostgresEvaluationOrchestrationRepository(EvaluationOrchestrationRepositor
     async def claim_due_attempts(
         self, *, now: datetime, limit: int, lease_seconds: int, worker_id: str
     ) -> Sequence[EvaluationAttempt]:
-        del worker_id
+        # The public contract exposes a configured component identity, not a
+        # transient lease/process identifier.  Keep worker_id for lease
+        # ownership at the orchestration boundary while persisting the stable
+        # service component for query projections.
+        worker_component_id = "aura.observatory.evaluation_runner"
         attempts: list[EvaluationAttempt] = []
         async with self._connection_factory() as connection:
             async with connection.transaction():
@@ -544,8 +549,9 @@ class PostgresEvaluationOrchestrationRepository(EvaluationOrchestrationRepositor
                     updated = await connection.execute(
                         """UPDATE observatory_evaluation_attempts SET state='running',
                         lease_token=%s, lease_expires_at=%s, started_at=COALESCE(started_at, %s),
-                        updated_at=%s WHERE attempt_id=%s AND state='queued'""",
-                        (token, expiry, now, now, row[0]),
+                        worker_component_id=%s, updated_at=%s
+                        WHERE attempt_id=%s AND state='queued'""",
+                        (token, expiry, now, worker_component_id, now, row[0]),
                     )
                     if getattr(updated, "rowcount", 1) != 1:
                         continue
@@ -658,7 +664,7 @@ class PostgresEvaluationOrchestrationRepository(EvaluationOrchestrationRepositor
             )
 
     async def request_cancellation(
-        self, job_id: str, *, reason: str, now: datetime
+        self, job_id: str, *, reason: str, idempotency_key: str, now: datetime
     ) -> EvaluationOutboxEntry | None:
         async with self._connection_factory() as connection:
             async with connection.transaction():
@@ -675,6 +681,25 @@ class PostgresEvaluationOrchestrationRepository(EvaluationOrchestrationRepositor
                 if row is None:
                     raise OrchestrationError("job_not_found")
                 job = _job_from_full_row(row)
+                fingerprint = hashlib.sha256(f"{job_id}:{reason}".encode()).hexdigest()
+                command = await connection.execute(
+                    """INSERT INTO observatory_evaluation_cancellation_commands(
+                    idempotency_key, job_id, request_fingerprint)
+                    VALUES (%s,%s,%s) ON CONFLICT DO NOTHING
+                    RETURNING idempotency_key""",
+                    (idempotency_key, job_id, fingerprint),
+                )
+                if await command.fetchone() is None:
+                    existing = await connection.execute(
+                        "SELECT job_id, request_fingerprint FROM "
+                        "observatory_evaluation_cancellation_commands "
+                        "WHERE idempotency_key=%s OR job_id=%s",
+                        (idempotency_key, job_id),
+                    )
+                    existing_row = await existing.fetchone()
+                    if existing_row is None or str(existing_row[1]) != fingerprint:
+                        raise OrchestrationError("idempotency_conflict")
+                    return None
                 if job.state in {
                     JobState.SUCCEEDED,
                     JobState.FAILED,

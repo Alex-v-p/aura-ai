@@ -27,6 +27,10 @@ _TRACE_CONTEXT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 COMPONENT_SPAN_COMPONENTS = frozenset(
     {
+        "aura.observatory.evaluation_api",
+        "aura.observatory.evaluation_artifact_storage",
+        "aura.observatory.evaluation_deletion",
+        "aura.observatory.live_updates",
         "aura.observatory.evaluation_orchestration",
         "aura.observatory.evaluation_scheduler",
         "aura.observatory.evaluation_definitions",
@@ -62,6 +66,26 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "execution_claim",
         "execution_complete",
         "execution_fail",
+        "query",
+        "collection",
+        "history",
+        "live_publish",
+        "live_page",
+        "live_replay",
+        "live",
+        "live_poll",
+        "live_wait",
+        "live_heartbeat",
+        "live_disconnect",
+        "artifact",
+        "deletion",
+        "cli",
+        "definition_claim",
+        "definition_takeover",
+        "definition_renewal",
+        "definition_replay",
+        "definition_completion",
+        "definition_binding_validation",
     }
 )
 COMPONENT_SPAN_DEPENDENCIES = frozenset(
@@ -72,6 +96,9 @@ COMPONENT_SPAN_DEPENDENCIES = frozenset(
         "evaluation_nats",
         "ollama",
         "garage",
+        "session_store",
+        "oidc_provider",
+        "evaluation_live",
     }
 )
 COMPONENT_SPAN_OUTCOMES = frozenset({"success", "failure", "duplicate", "timeout", "unavailable"})
@@ -101,10 +128,12 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "qualification_denied",
         "authorization_required",
         "artifact_limit",
+        "conflict",
         "duplicate",
         "insufficient",
         "rejected",
         "not_found",
+        "lease_lost",
     }
 )
 MAX_LAG_MS = 604_800_000.0
@@ -459,6 +488,7 @@ class ObservatoryMetrics:
             "observatory_evaluation_deletion_duration_ms",
             "observatory_evaluation_result_lag_seconds",
             "observatory_evaluation_operation_duration_ms",
+            "observatory_evaluation_live_replay_lag_seconds",
             "observatory_evaluator_duration_ms",
             "observatory_local_judge_duration_ms",
         }
@@ -510,6 +540,9 @@ class ObservatoryMetrics:
         "observatory_evaluation_scheduler_occurrence_count",
         "observatory_evaluation_result_lag_seconds",
         "observatory_evaluation_operation_duration_ms",
+        "observatory_evaluation_api_operation_count",
+        "observatory_evaluation_live_event_count",
+        "observatory_evaluation_live_replay_lag_seconds",
         "observatory_evaluation_definition_operation_count",
         "observatory_evaluation_definition_validation_count",
         "observatory_evaluator_execution_count",
@@ -558,7 +591,12 @@ class ObservatoryMetrics:
         "observatory_evaluation_attempt_transition_count": {"outcome"},
         "observatory_evaluation_retry_scheduled_count": {"outcome"},
         "observatory_evaluation_terminal_count": {"outcome"},
-        "observatory_evaluation_dependency_outcome_count": {"operation", "outcome"},
+        "observatory_evaluation_dependency_outcome_count": {
+            "operation",
+            "phase",
+            "outcome",
+            "failure_code",
+        },
         "observatory_evaluation_cancellation_count": {"outcome"},
         "observatory_evaluation_deadline_count": {"outcome"},
         "observatory_evaluation_outbox_pending_count": set(),
@@ -571,6 +609,9 @@ class ObservatoryMetrics:
         "observatory_evaluation_scheduler_occurrence_count": {"outcome"},
         "observatory_evaluation_result_lag_seconds": set(),
         "observatory_evaluation_operation_duration_ms": {"operation"},
+        "observatory_evaluation_api_operation_count": {"operation", "outcome"},
+        "observatory_evaluation_live_event_count": {"operation", "outcome"},
+        "observatory_evaluation_live_replay_lag_seconds": set(),
         "observatory_evaluation_definition_operation_count": {"resource_type", "outcome"},
         "observatory_evaluation_definition_validation_count": {
             "resource_type",
@@ -669,8 +710,19 @@ class ObservatoryMetrics:
             "execution_complete",
             "execution_fail",
             "label",
+            "replay",
+            "poll",
+            "live",
+            "wait",
+            "disconnect",
+            "definition_claim",
+            "definition_takeover",
+            "definition_renewal",
+            "definition_replay",
+            "definition_completion",
+            "definition_binding_validation",
         },
-        "resource_type": {"dataset", "case", "suite", "evaluator"},
+        "resource_type": {"dataset", "case", "suite", "evaluator", "job"},
         "evaluator_kind": {"deterministic", "local_judge", "human_review"},
         "evidence_status": {"observed", "not_observed", "not_applicable"},
         "disagreement": {
@@ -684,7 +736,19 @@ class ObservatoryMetrics:
             "insufficient_evidence",
         },
         "selector": {"job", "dataset", "suite", "cutoff", "purge_all"},
-        "phase": {"started", "scores", "objects", "complete", "worker"},
+        "phase": {
+            "started",
+            "scores",
+            "objects",
+            "complete",
+            "worker",
+            "definition_claim",
+            "definition_takeover",
+            "definition_renewal",
+            "definition_replay",
+            "definition_completion",
+            "definition_binding_validation",
+        },
         "event_type": {
             "stream",
             "connection",
@@ -723,6 +787,7 @@ class ObservatoryMetrics:
             "definition_storage_failure",
             "execution_storage_failure",
             "qualification_denied",
+            "not_found",
         },
         "stage": {
             "callback",
