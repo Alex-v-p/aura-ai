@@ -74,9 +74,9 @@ def test_postgres_migrations_are_fresh_apply_ordered_and_contiguous() -> None:
         for path in MIGRATION_ROOT.glob("*.sql")
     )
     assert versions == list(range(1, len(versions) + 1))
-    assert versions[-1] == 11
+    assert versions[-1] == 13
     assert (MIGRATION_ROOT / "0010_local_judges_calibration.sql").exists()
-    assert [path.name[:4] for path in sorted(MIGRATION_ROOT.glob("*.sql"))][-2] == "0010"
+    assert [path.name[:4] for path in sorted(MIGRATION_ROOT.glob("*.sql"))][-2] == "0012"
 
 
 @contextmanager

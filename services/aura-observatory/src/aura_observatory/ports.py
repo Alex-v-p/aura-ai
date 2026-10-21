@@ -131,6 +131,7 @@ class ObservatoryCatalog(Protocol):
     async def last_ingest_at(self) -> datetime | None: ...
 
 
+
 class ObservatoryHealthPort(Protocol):
     """Explicit narrow port for durable self-monitoring state and events."""
 
@@ -473,6 +474,16 @@ class EvaluationScoreStore(Protocol):
     async def delete_scores_for_ids(self, score_ids: Sequence[str]) -> None: ...
 
 
+
+class ExperimentRegressionFactStore(Protocol):
+    """Owner port for deleting derived regression facts by identity."""
+
+    async def delete_regression_facts(
+        self, regression_ids: Sequence[str],
+        *, regression_keys: Sequence[tuple[str, str]] = (),
+    ) -> None: ...
+
+
 class EvaluationDefinitionRepository(Protocol):
     """Immutable Observatory-owned definitions and exact-version references."""
 
@@ -527,6 +538,83 @@ class EvaluationDefinitionRepository(Protocol):
     async def case_selection_is_valid(
         self, dataset_id: str, version: str, case_ids: tuple[str, ...]
     ) -> bool: ...
+
+
+class EvaluationResultReferencePort(Protocol):
+    """Read-only result envelope boundary for experiment validation."""
+
+    async def get_result_envelopes(
+        self, result_ids: Sequence[str]
+    ) -> list[tuple[str, Mapping[str, object]]]: ...
+
+    async def result_ids_for_selector(self, selector: DeletionSelector) -> list[str]: ...
+
+
+class EvaluationDeletionReferencePort(Protocol):
+    """Read-only evaluation deletion scope owned by the artifact module."""
+
+    async def result_ids_for_selector(self, selector: DeletionSelector) -> list[str]: ...
+
+
+class EvaluationScoreReferencePort(Protocol):
+    """Read-only score metadata boundary for comparison projections."""
+
+    async def metric_values(
+        self,
+        result_ids: Sequence[str],
+        metric: str,
+        *,
+        case_ids: Sequence[str] = (),
+    ) -> tuple[float, ...] | None: ...
+
+    async def score_metadata(
+        self,
+        result_ids: Sequence[str],
+        metric: str,
+        *,
+        case_ids: Sequence[str] = (),
+    ) -> list[Mapping[str, object]]: ...
+
+
+class ExperimentRetentionPort(Protocol):
+    """Public owner boundary for deleting experiment projections."""
+
+    async def regression_projection_ids(
+        self, selector: DeletionSelector, *, snapshot_at: datetime | None = None
+    ) -> list[str]: ...
+
+    async def fence_projection_deletion(self, selector: DeletionSelector) -> None: ...
+
+    async def delete_for_selector(self, selector: DeletionSelector) -> int: ...
+
+    async def delete_for_retention(
+        self, *, cutoff: datetime | None, purge_all: bool,
+        plan: ExperimentRetentionPlan | None = None,
+    ) -> int: ...
+
+    async def retention_projection_ids(
+        self, *, cutoff: datetime | None, purge_all: bool
+    ) -> list[str]: ...
+
+    async def prepare_for_retention(
+        self, *, cutoff: datetime | None, purge_all: bool
+    ) -> ExperimentRetentionPlan: ...
+
+    async def fence_projection_ids(self, regression_ids: Sequence[str]) -> None: ...
+
+    async def fence_projection_keys(self, regression_keys: Sequence[tuple[str, str]]) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentRetentionPlan:
+    """Snapshot-stable identities carried through the multi-store delete."""
+
+    cutoff: datetime | None
+    purge_all: bool
+    regression_keys: tuple[tuple[str, str], ...]
+    baseline_keys: tuple[tuple[str, str], ...]
+    experiment_keys: tuple[tuple[str, str], ...]
+    attribution_keys: tuple[tuple[str, str], ...] = ()
 
 
 class EvaluationOrchestrationPort(Protocol):
@@ -596,7 +684,12 @@ __all__ = [
     "EvaluationArtifactRepository",
     "EvaluationObjectStore",
     "EvaluationScoreStore",
+    "ExperimentRegressionFactStore",
     "EvaluationDefinitionRepository",
+    "EvaluationResultReferencePort",
+    "EvaluationScoreReferencePort",
+    "ExperimentRetentionPort",
+    "ExperimentRetentionPlan",
     "EvaluationOrchestrationPort",
     "LocalJudgePort",
     "JudgeArtifactReadPort",

@@ -13,6 +13,8 @@ import {
   ObservatoryComparisonComponent,
   EvaluationWorkspaceComponent,
   EvaluationWorkspaceStore,
+  ExperimentWorkspaceComponent,
+  ExperimentWorkspaceStore,
   authCopyForState,
   consumeAuthRecoveryMarker,
   ownerLoginHref,
@@ -21,8 +23,8 @@ import {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent, ObservatoryAnalyticsComponent, ObservatoryComparisonComponent, EvaluationWorkspaceComponent],
-  providers: [FetchObservatoryTransport, ObservatoryStore, EvaluationWorkspaceStore, { provide: OBSERVATORY_GATEWAY, useExisting: FetchObservatoryTransport }],
+  imports: [ObservatoryOverviewComponent, ObservatoryRunsComponent, ObservatoryTraceComponent, ObservatoryComponentsComponent, ObservatoryRetentionComponent, ObservatoryAnalyticsComponent, ObservatoryComparisonComponent, EvaluationWorkspaceComponent, ExperimentWorkspaceComponent],
+  providers: [FetchObservatoryTransport, ObservatoryStore, EvaluationWorkspaceStore, ExperimentWorkspaceStore, { provide: OBSERVATORY_GATEWAY, useExisting: FetchObservatoryTransport }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <a class="skip-link" href="#observatory-main">Skip to Observatory content</a>
@@ -33,8 +35,8 @@ import {
     @if (store.authState() === 'checking') {
       <main id="observatory-main" tabindex="-1" class="signed-out" aria-busy="true"><h2>Checking your Observatory session</h2><p role="status">Your owner session is being checked.</p></main>
     } @else if (store.authState() === 'authenticated') {
-      <nav class="tabs" aria-label="Observatory sections"><button type="button" [class.active]="tab() === 'overview'" [attr.aria-current]="tab() === 'overview' ? 'page' : null" (click)="tab.set('overview')">Overview</button><button type="button" [class.active]="tab() === 'runs'" [attr.aria-current]="tab() === 'runs' ? 'page' : null" (click)="tab.set('runs')">Runs</button><button type="button" [class.active]="tab() === 'trace'" [attr.aria-current]="tab() === 'trace' ? 'page' : null" (click)="tab.set('trace')">Trace</button><button type="button" [class.active]="tab() === 'comparison'" [attr.aria-current]="tab() === 'comparison' ? 'page' : null" (click)="showComparison()">Compare</button><button type="button" [class.active]="tab() === 'components'" [attr.aria-current]="tab() === 'components' ? 'page' : null" (click)="showComponents()">Components</button><button type="button" [class.active]="tab() === 'analytics'" [attr.aria-current]="tab() === 'analytics' ? 'page' : null" (click)="tab.set('analytics')">Analytics</button><button type="button" [class.active]="tab() === 'retention'" [attr.aria-current]="tab() === 'retention' ? 'page' : null" (click)="tab.set('retention')">Retention</button><button type="button" [class.active]="tab() === 'evaluation'" [attr.aria-current]="tab() === 'evaluation' ? 'page' : null" (click)="tab.set('evaluation')">Evaluations</button></nav>
-      <main id="observatory-main" tabindex="-1"><observatory-overview [hidden]="tab() !== 'overview'" [style.display]="tab() === 'overview' ? 'block' : 'none'" /><observatory-runs [hidden]="tab() !== 'runs'" [style.display]="tab() === 'runs' ? 'block' : 'none'" (runSelected)="showTrace()" /><observatory-trace [hidden]="tab() !== 'trace'" [style.display]="tab() === 'trace' ? 'block' : 'none'" /><observatory-comparison [hidden]="tab() !== 'comparison'" [style.display]="tab() === 'comparison' ? 'block' : 'none'" /><observatory-components [hidden]="tab() !== 'components'" [style.display]="tab() === 'components' ? 'block' : 'none'" /><observatory-analytics [hidden]="tab() !== 'analytics'" [style.display]="tab() === 'analytics' ? 'block' : 'none'" /><observatory-retention [hidden]="tab() !== 'retention'" [style.display]="tab() === 'retention' ? 'block' : 'none'" /><observatory-evaluation-workspace [hidden]="tab() !== 'evaluation'" [style.display]="tab() === 'evaluation' ? 'block' : 'none'" /></main>
+      <nav class="tabs" aria-label="Observatory sections"><button type="button" [class.active]="tab() === 'overview'" [attr.aria-current]="tab() === 'overview' ? 'page' : null" (click)="tab.set('overview')">Overview</button><button type="button" [class.active]="tab() === 'runs'" [attr.aria-current]="tab() === 'runs' ? 'page' : null" (click)="tab.set('runs')">Runs</button><button type="button" [class.active]="tab() === 'trace'" [attr.aria-current]="tab() === 'trace' ? 'page' : null" (click)="tab.set('trace')">Trace</button><button type="button" [class.active]="tab() === 'comparison'" [attr.aria-current]="tab() === 'comparison' ? 'page' : null" (click)="showComparison()">Compare</button><button type="button" [class.active]="tab() === 'components'" [attr.aria-current]="tab() === 'components' ? 'page' : null" (click)="showComponents()">Components</button><button type="button" [class.active]="tab() === 'analytics'" [attr.aria-current]="tab() === 'analytics' ? 'page' : null" (click)="tab.set('analytics')">Analytics</button><button type="button" [class.active]="tab() === 'retention'" [attr.aria-current]="tab() === 'retention' ? 'page' : null" (click)="tab.set('retention')">Retention</button><button type="button" [class.active]="tab() === 'evaluation'" [attr.aria-current]="tab() === 'evaluation' ? 'page' : null" (click)="tab.set('evaluation')">Evaluations</button><button type="button" [class.active]="tab() === 'experiments'" [attr.aria-current]="tab() === 'experiments' ? 'page' : null" (click)="showExperiments()">Experiments</button></nav>
+      <main id="observatory-main" tabindex="-1"><observatory-overview [hidden]="tab() !== 'overview'" [style.display]="tab() === 'overview' ? 'block' : 'none'" /><observatory-runs [hidden]="tab() !== 'runs'" [style.display]="tab() === 'runs' ? 'block' : 'none'" (runSelected)="showTrace()" /><observatory-trace [hidden]="tab() !== 'trace'" [style.display]="tab() === 'trace' ? 'block' : 'none'" /><observatory-comparison [hidden]="tab() !== 'comparison'" [style.display]="tab() === 'comparison' ? 'block' : 'none'" /><observatory-components [hidden]="tab() !== 'components'" [style.display]="tab() === 'components' ? 'block' : 'none'" /><observatory-analytics [hidden]="tab() !== 'analytics'" [style.display]="tab() === 'analytics' ? 'block' : 'none'" /><observatory-retention [hidden]="tab() !== 'retention'" [style.display]="tab() === 'retention' ? 'block' : 'none'" /><observatory-evaluation-workspace [hidden]="tab() !== 'evaluation'" [style.display]="tab() === 'evaluation' ? 'block' : 'none'" /><observatory-experiment-workspace [hidden]="tab() !== 'experiments'" [style.display]="tab() === 'experiments' ? 'block' : 'none'" /></main>
     } @else {
       <main id="observatory-main" tabindex="-1" class="signed-out" aria-labelledby="auth-recovery-title"><div class="sr-only" role="status" aria-live="polite">{{ authCopy().announcement }}</div><h2 #authHeading id="auth-recovery-title" tabindex="-1">{{ authCopy().title }}</h2><p>{{ authCopy().message }}</p><div class="recovery-actions">@if (authCopy().retryAction === 'logout') { <button class="primary-action" type="button" (click)="retryLogout()">{{ authCopy().action }}</button><a class="secondary-action" [href]="ownerLoginHref('', returnPath())">Sign in as owner</a> } @else if (authCopy().retryAction === 'session') { <button class="primary-action" type="button" (click)="retryAuthentication()">{{ authCopy().action }}</button><a class="secondary-action" [href]="ownerLoginHref('', returnPath())">Sign in as owner</a> } @else { <a class="primary-action" [href]="ownerLoginHref('', returnPath())">{{ authCopy().action }}</a> }</div></main>
     }
@@ -58,7 +60,7 @@ class AppComponent {
   readonly store = inject(ObservatoryStore);
   readonly authCopy = () => authCopyForState(this.store.authState());
   readonly ownerLoginHref = ownerLoginHref;
-  readonly tab = signal<'overview' | 'runs' | 'trace' | 'comparison' | 'components' | 'analytics' | 'retention' | 'evaluation'>('overview');
+  readonly tab = signal<'overview' | 'runs' | 'trace' | 'comparison' | 'components' | 'analytics' | 'retention' | 'evaluation' | 'experiments'>('overview');
   @ViewChild('authHeading') private authHeading?: ElementRef<HTMLHeadingElement>;
   private lastFocusedAuthState = 'checking';
   private focusAuthenticatedLandmark = false;
@@ -86,6 +88,7 @@ class AppComponent {
   showTrace(): void { this.tab.set('trace'); setTimeout(() => document.getElementById('trace-title')?.focus(), 0); }
   showComponents(): void { if (this.tab() !== 'components') this.store.refreshCatalog(); this.tab.set('components'); }
   showComparison(): void { this.tab.set('comparison'); setTimeout(() => document.getElementById('comparison-title')?.focus(), 0); }
+  showExperiments(): void { this.tab.set('experiments'); setTimeout(() => document.getElementById('experiment-title')?.focus(), 0); }
   signOut(): void { this.tab.set('overview'); void this.store.logout(); }
   retryAuthentication(): void { this.store.retryAuthentication(); }
   retryLogout(): void { void this.store.logout(); }

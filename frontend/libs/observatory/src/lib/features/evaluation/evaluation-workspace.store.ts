@@ -299,7 +299,8 @@ export class EvaluationWorkspaceStore {
   }
 
   async refreshResource(resourceType: EvaluationLiveEvent['resourceType']): Promise<void> {
-    if (resourceType === 'evaluation_case' || resourceType === 'evaluation_attempt' || resourceType === 'evaluation_deletion') { await this.load(); return; }
+    const resource = resourceType as string;
+    if (resource === 'evaluation_case' || resource === 'evaluation_attempt' || resource === 'evaluation_deletion' || resource === 'evaluation_experiment' || resource === 'evaluation_baseline' || resource === 'evaluation_regression' || resource === 'evaluation_attribution') { await this.load(); return; }
     const pageSize = 50;
     const { generation, signal } = this.beginRequest();
     try {
@@ -312,7 +313,7 @@ export class EvaluationWorkspaceStore {
       else if (resourceType === 'evaluation_review') { const raw = await this.gateway.execute('listEvaluationReviews', { ...blankInput('listEvaluationReviews'), query: { page_size: pageSize } }, signal); const reviews = this.requirePage(raw, parseEvaluationReviewPage, 'Evaluation review'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, reviews })); }
       else if (resourceType === 'evaluation_calibration') { const raw = await this.gateway.execute('listEvaluationCalibrations', { ...blankInput('listEvaluationCalibrations'), query: { page_size: pageSize } }, signal); const calibrations = this.requirePage(raw, parseEvaluationCalibrationPage, 'Evaluation calibration'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, calibrations })); }
       else if (resourceType === 'evaluation_qualification') { const raw = await this.gateway.execute('listEvaluationQualifications', { ...blankInput('listEvaluationQualifications'), query: { page_size: pageSize } }, signal); const qualifications = this.requirePage(raw, parseEvaluationQualificationPage, 'Evaluation qualification'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, qualifications })); }
-      else if (resourceType === 'evaluation_history') { const raw = await this.gateway.execute('listEvaluationHistory', { ...blankInput('listEvaluationHistory'), query: { page_size: pageSize } }, signal); const history = this.requirePage(raw, parseEvaluationHistoryPage, 'Evaluation history'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, history })); }
+      else if (resource === 'evaluation_history') { const raw = await this.gateway.execute('listEvaluationHistory', { ...blankInput('listEvaluationHistory'), query: { page_size: pageSize } }, signal); const history = this.requirePage(raw, parseEvaluationHistoryPage, 'Evaluation history'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, history })); }
       else await this.load();
       if (this.current(generation, signal)) this.lastUpdatedAt.set(new Date().toISOString());
     } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause) === 'provider-unavailable' ? 'provider-unavailable' : this.hasData() ? 'stale' : 'error'); this.notice.set('A live evaluation update could not be reconciled. Refresh to retry.'); } }

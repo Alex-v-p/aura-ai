@@ -28,6 +28,9 @@ _TRACE_CONTEXT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 COMPONENT_SPAN_COMPONENTS = frozenset(
     {
         "aura.observatory.evaluation_api",
+        "aura.observatory.evaluation_experiments",
+        "aura.observatory.evaluation_baselines",
+        "aura.observatory.evaluation_regressions",
         "aura.observatory.evaluation_artifact_storage",
         "aura.observatory.evaluation_deletion",
         "aura.observatory.live_updates",
@@ -86,6 +89,9 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "definition_replay",
         "definition_completion",
         "definition_binding_validation",
+        "evidence_read",
+        "evidence_reference_read",
+        "fact_projection_write",
     }
 )
 COMPONENT_SPAN_DEPENDENCIES = frozenset(
@@ -489,6 +495,7 @@ class ObservatoryMetrics:
             "observatory_evaluation_result_lag_seconds",
             "observatory_evaluation_operation_duration_ms",
             "observatory_evaluation_live_replay_lag_seconds",
+            "observatory_evaluation_regression_duration_ms",
             "observatory_evaluator_duration_ms",
             "observatory_local_judge_duration_ms",
         }
@@ -557,6 +564,12 @@ class ObservatoryMetrics:
         "observatory_calibration_review_count",
         "observatory_calibration_qualification_count",
         "observatory_calibration_duration_ms",
+        "observatory_evaluation_experiment_operation_count",
+        "observatory_evaluation_baseline_operation_count",
+        "observatory_evaluation_regression_operation_count",
+        "observatory_evaluation_regression_duration_ms",
+        "observatory_evaluation_regression_outcome_count",
+        "observatory_evaluation_attribution_outcome_count",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -630,6 +643,12 @@ class ObservatoryMetrics:
         "observatory_calibration_review_count": {"outcome"},
         "observatory_calibration_qualification_count": {"outcome"},
         "observatory_calibration_duration_ms": {"operation", "outcome"},
+        "observatory_evaluation_experiment_operation_count": {"operation", "outcome"},
+        "observatory_evaluation_baseline_operation_count": {"operation", "outcome"},
+        "observatory_evaluation_regression_operation_count": {"operation", "outcome"},
+        "observatory_evaluation_regression_duration_ms": set(),
+        "observatory_evaluation_regression_outcome_count": {"outcome"},
+        "observatory_evaluation_attribution_outcome_count": {"outcome"},
     }
     LABEL_VALUES = {
         "reason": set(REJECTION_REASONS),
@@ -677,6 +696,14 @@ class ObservatoryMetrics:
             "inconclusive",
             "qualified",
             "revoked",
+            "candidate_created",
+            "promoted",
+            "completed",
+            "regressed",
+            "unchanged",
+            "incompatible",
+            "available",
+            "insufficient_evidence",
         },
         "operation": {
             "store",
@@ -721,6 +748,9 @@ class ObservatoryMetrics:
             "definition_replay",
             "definition_completion",
             "definition_binding_validation",
+            "evidence_read",
+            "evidence_reference_read",
+            "fact_projection_write",
         },
         "resource_type": {"dataset", "case", "suite", "evaluator", "job"},
         "evaluator_kind": {"deterministic", "local_judge", "human_review"},

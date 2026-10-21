@@ -11,4 +11,7 @@ export * from './lib/features/analytics/analytics.component';
 export * from './lib/features/comparison/comparison.component';
 export * from './lib/features/evaluation/evaluation-workspace.component';
 export * from './lib/features/evaluation/evaluation-workspace.store';
+export * from './lib/features/experiments/experiment-workspace.component';
+export * from './lib/features/experiments/experiment-workspace.store';
+export * from './lib/features/experiments/experiment-contract-guards';
 export * from './lib/features/evaluation/evaluation-dto-adapter';

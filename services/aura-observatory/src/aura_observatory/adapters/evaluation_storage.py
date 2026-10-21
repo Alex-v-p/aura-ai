@@ -4,6 +4,10 @@ Every statement names Observatory-owned tables explicitly.  No adapter accepts
 provider keys, paths, raw bytes, arbitrary attributes, or owner identity.
 """
 
+# Provider cursors expose dynamically typed JSON rows; all values are closed
+# and validated at the application boundary.
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
+
 # Provider SQL is kept visually aligned with the service-owned schema.
 # ruff: noqa: E501
 
@@ -11,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -39,8 +44,15 @@ if TYPE_CHECKING:
 class PostgresEvaluationArtifactRepository:
     """Transactional metadata repository for artifact lifecycle and deletion."""
 
-    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+    def __init__(self, connection_factory: Callable[[], Any], *, result_reference: Any | None = None) -> None:
         self._connection_factory = connection_factory
+        self._result_reference = result_reference
+
+    async def result_ids_for_selector(self, selector: DeletionSelector) -> list[str]:
+        """Resolve evaluation deletion scope through the authoritative job port."""
+        if self._result_reference is not None:
+            return [str(value) for value in await self._result_reference.result_ids_for_selector(selector)]
+        raise ArtifactStorageError("result_reference_unavailable")
 
     async def lookup_artifact_metadata(
         self, artifact_reference_id: str
@@ -903,6 +915,92 @@ class PostgresEvaluationArtifactRepository:
             return True
 
 
+class PostgresEvaluationResultReferencePort:
+    """Narrow read-only envelope adapter used by experiment validation."""
+
+    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+        self._connection_factory = connection_factory
+
+    async def result_ids_for_selector(self, selector: DeletionSelector) -> list[str]:
+        selector.validate()
+        kind = selector.kind.value
+        if kind == "purge_all":
+            predicate, params = "TRUE", ()
+        elif kind == "cutoff":
+            predicate, params = "r.received_at < %s", (selector.value,)
+        else:
+            column = {"job": "j.job_id", "dataset": "j.dataset_id", "suite": "j.suite_id"}.get(kind)
+            if column is None:
+                raise ArtifactStorageError("deletion_selector_invalid")
+            predicate, params = f"{column} = %s", (selector.value,)
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                "SELECT r.result_id::text FROM observatory_evaluation_result_receipts AS r "
+                "JOIN observatory_evaluation_jobs AS j ON j.job_id = r.job_id WHERE "
+                + predicate + " AND r.disposition = 'applied' ORDER BY r.received_at, r.result_id LIMIT 100001",
+                params,
+            )
+            rows = await result.fetchall()
+        if len(rows) > 100_000:
+            raise ArtifactStorageError("target_limit_exceeded")
+        return [str(row[0]) for row in rows if row and row[0] is not None]
+
+    async def get_result_envelopes(
+        self, result_ids: Sequence[str]
+    ) -> list[tuple[str, Mapping[str, object]]]:
+        async with self._connection_factory() as connection:
+            result = await connection.execute(
+                """SELECT r.result_id, r.result_digest, r.envelope_json, r.status, r.disposition,
+                r.received_at, r.job_id, r.attempt_id,
+                j.state, j.created_at, j.updated_at, j.suite_id, j.suite_version,
+                j.evaluator_id, j.evaluator_version, j.capture_classification,
+                j.envelope_json
+                FROM observatory_evaluation_result_receipts AS r
+                JOIN observatory_evaluation_jobs AS j ON j.job_id = r.job_id
+                WHERE r.result_id = ANY(%s::uuid[])""",
+                (list(result_ids),),
+            )
+            rows = await result.fetchall()
+        envelopes: list[tuple[str, Mapping[str, object]]] = []
+        for row in rows:
+            value = row[2] if isinstance(row[2], Mapping) else json.loads(str(row[2]))
+            if isinstance(value, Mapping):
+                job_value = row[16]
+                job_envelope = (
+                    job_value
+                    if isinstance(job_value, Mapping)
+                    else json.loads(str(job_value))
+                )
+                job_data = (
+                    job_envelope.get("data")
+                    if isinstance(job_envelope, Mapping)
+                    else None
+                )
+                if not isinstance(job_data, Mapping):
+                    raise ValueError("admitted evaluation request metadata is unavailable")
+                # Keep the persisted receipt byte-for-byte opaque.  The
+                # private projection metadata is assembled from the joined,
+                # authoritative job/receipt rows and is never written back.
+                enriched = dict(value)
+                enriched["__receiptMetadata"] = {
+                    "resultDigest": str(row[1]) if row[1] is not None else "",
+                    "status": str(row[3]),
+                    "disposition": str(row[4]),
+                    "receivedAt": row[5],
+                    "jobId": str(row[6]),
+                    "attemptId": str(row[7]),
+                    "jobState": str(row[8]),
+                    "jobCreatedAt": row[9],
+                    "jobUpdatedAt": row[10],
+                    "suite": {"id": str(row[11]), "version": str(row[12])},
+                    "evaluator": {"id": str(row[13]), "version": str(row[14])},
+                    "captureClassification": str(row[15]),
+                    "requestData": dict(job_data),
+                }
+                envelopes.append((str(row[0]), cast(Mapping[str, object], enriched)))
+        return envelopes
+
+
 class ClickHouseEvaluationScoreStore:
     """ClickHouse score storage with bounded immutable deletion snapshots."""
 
@@ -1071,6 +1169,90 @@ class ClickHouseEvaluationScoreStore:
             except httpx.HTTPStatusError as exc:
                 raise ArtifactStorageError("database_failure") from exc
 
+    async def metric_values(
+        self, result_ids: Sequence[str], metric: str, *, case_ids: Sequence[str] = ()
+    ) -> tuple[float, ...] | None:
+        ids = tuple(str(UUID(str(value))) for value in result_ids)
+        cases = tuple(str(UUID(str(value))) for value in case_ids)
+        if not ids or len(ids) > 100_000:
+            raise ArtifactStorageError("target_limit_exceeded")
+        if len(metric) > 128:
+            raise ArtifactStorageError("target_invalid")
+        result_literals = ",".join(f"toUUID('{value}')" for value in ids)
+        case_clause = (
+            " AND case_id IN (" + ",".join(f"toUUID('{value}')" for value in cases) + ")"
+            if cases
+            else ""
+        )
+        query = (
+            "SELECT score_value FROM evaluation_scores WHERE result_id IN ("
+            + result_literals
+            + ") AND metric = {metric:String}"
+            + case_clause
+            + " AND score_value IS NOT NULL ORDER BY result_id, score_id LIMIT 100001 FORMAT JSON"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                response = await client.post(
+                    self.endpoint,
+                    params={"database": self.database, "param_metric": metric},
+                    auth=(self.user, self.password),
+                    content=query,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            rows = payload.get("data", []) if isinstance(payload, Mapping) else []
+            values = tuple(
+                float(row["score_value"])
+                for row in rows
+                if isinstance(row, Mapping) and row.get("score_value") is not None
+            )
+            if len(values) > 100_000 or any(not math.isfinite(value) for value in values):
+                raise ArtifactStorageError("target_limit_exceeded")
+            return values or None
+        except ArtifactStorageError:
+            raise
+        except Exception as exc:
+            raise ArtifactStorageError("database_failure") from exc
+
+    async def score_metadata(
+        self, result_ids: Sequence[str], metric: str, *, case_ids: Sequence[str] = ()
+    ) -> list[Mapping[str, object]]:
+        ids = tuple(str(UUID(str(value))) for value in result_ids)
+        cases = tuple(str(UUID(str(value))) for value in case_ids)
+        if not ids or len(ids) > 100_000:
+            raise ArtifactStorageError("target_limit_exceeded")
+        result_literals = ",".join(f"toUUID('{value}')" for value in ids)
+        case_clause = (
+            " AND case_id IN (" + ",".join(f"toUUID('{value}')" for value in cases) + ")"
+            if cases
+            else ""
+        )
+        query = (
+            "SELECT result_id, evaluator_id, evaluator_version, component_id, component_version, "
+            "case_id, capture_classification, evidence_status, execution_provenance_json "
+            "FROM evaluation_scores WHERE result_id IN (" + result_literals + ") "
+            "AND metric = {metric:String} " + case_clause + " LIMIT 100001 FORMAT JSON"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                response = await client.post(
+                    self.endpoint,
+                    params={"database": self.database, "param_metric": metric},
+                    auth=(self.user, self.password),
+                    content=query,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            rows = payload.get("data", []) if isinstance(payload, Mapping) else []
+            if not isinstance(rows, list) or len(rows) > 100_000:
+                raise ArtifactStorageError("target_limit_exceeded")
+            return [row for row in rows if isinstance(row, Mapping)]
+        except ArtifactStorageError:
+            raise
+        except Exception as exc:
+            raise ArtifactStorageError("database_failure") from exc
+
     async def delete_scores_for_selector(
         self, selector: DeletionSelector, *, snapshot_at: datetime | None = None
     ) -> None:
@@ -1099,6 +1281,42 @@ class ClickHouseEvaluationScoreStore:
                 response.raise_for_status()
             except httpx.TimeoutException as exc:
                 raise ArtifactStorageError("storage_timeout") from exc
+            except httpx.HTTPStatusError as exc:
+                raise ArtifactStorageError("database_failure") from exc
+
+    async def delete_regression_facts(
+        self, regression_ids: Sequence[str], *, regression_keys: Sequence[tuple[str, str]] = ()
+    ) -> None:
+        """Delete only PG-selected regression identities from ClickHouse."""
+
+        normalized = tuple(dict.fromkeys(str(value) for value in regression_ids))
+        keys = tuple(dict.fromkeys((str(identifier), str(version)) for identifier, version in regression_keys))
+        if not normalized and not keys:
+            return
+        if len(normalized) > 100_000 or len(keys) > 100_000:
+            raise ArtifactStorageError("target_limit_exceeded")
+        if keys:
+            literals = ", ".join(
+                "(toUUID('" + identifier.replace("'", "''") + "'), '" + version.replace("'", "''") + "')"
+                for identifier, version in keys
+            )
+            predicate = f"(regression_id, regression_version) IN ({literals})"
+        else:
+            literals = ", ".join("toUUID('" + value.replace("'", "''") + "')" for value in normalized)
+            predicate = f"regression_id IN ({literals})"
+        query = (
+            "ALTER TABLE evaluation_regression_metric_facts DELETE "
+            f"WHERE {predicate}"
+        )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.post(
+                self.endpoint,
+                params={"database": self.database, "mutations_sync": "2"},
+                auth=(self.user, self.password),
+                content=query,
+            )
+            try:
+                response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise ArtifactStorageError("database_failure") from exc
 

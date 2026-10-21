@@ -27,6 +27,8 @@ import psycopg
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.ports import (
     AnalyticsRequest,
+    ExperimentRegressionFactStore,
+    ExperimentRetentionPort,
     NullObservatoryHealthPort,
     ObservatoryHealthPort,
 )
@@ -459,6 +461,9 @@ class _RetentionPersistenceAdapter:
         user: str,
         password: str,
         health_port: ObservatoryHealthPort | None = None,
+        experiment_projections_enabled: bool = False,
+        experiment_retention_port: ExperimentRetentionPort | None = None,
+        experiment_regression_fact_store: ExperimentRegressionFactStore | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self._endpoint = clickhouse_url.rstrip("/")
@@ -466,6 +471,13 @@ class _RetentionPersistenceAdapter:
         self._user = user
         self._password = password
         self._health_port = health_port or NullObservatoryHealthPort()
+        # The production composition opts into the AURA-0096 projection phase
+        # after its forward migration has been applied.  Keeping the default
+        # disabled preserves compatibility for isolated legacy adapter users
+        # that intentionally run against pre-0096 schemas.
+        self._experiment_projections_enabled = experiment_projections_enabled
+        self._experiment_retention_port = experiment_retention_port
+        self._experiment_regression_fact_store = experiment_regression_fact_store
         # PostgreSQL is authoritative for retention state and idempotency.
         # Keep only the currently attached action needed while its guarded
         # multi-store deletion is in progress; never retain a process-lifetime
@@ -1394,9 +1406,61 @@ class _RetentionPersistenceAdapter:
                     )
                     last_receipt = next_receipt
                 await _commit_connection(connection)
+                # Keep the durable phase at projection_deleted until every
+                # cross-store experiment projection has been fenced and
+                # deleted.  If ClickHouse is unavailable, recovery repeats
+                # this phase instead of treating receipts_deleted as final.
+                if self._experiment_projections_enabled:
+                    async with httpx.AsyncClient(timeout=10.0) as projection_client:
+                        await self._delete_experiment_projections(
+                            connection, self._active_retention_action, projection_client
+                        )
                 self._retention_phase = "retention_phase_update"
                 await self._persist_retention_phase(connection, "receipts_deleted")
+            elif phase == "receipts_deleted" and self._experiment_projections_enabled:
+                # A prior process may have committed receipt deletion before
+                # failing the Observatory projection phase.  Retry the
+                # projection owner port without replaying receipt deletes.
+                async with httpx.AsyncClient(timeout=10.0) as projection_client:
+                    await self._delete_experiment_projections(
+                        connection, self._active_retention_action, projection_client
+                    )
             return DeletionResult(observations, receipts, runs)
+
+    async def _delete_experiment_projections(
+        self,
+        connection: Any,
+        action: RetentionAction | None,
+        client: httpx.AsyncClient,
+    ) -> None:
+        """Delete AURA-0096 projections in the same fenced retention run.
+
+        Promotion audits and lifecycle history intentionally survive. Command
+        replay payloads and derived experiment/regression projections follow
+        the manual cutoff or purge selector.
+        """
+
+        del connection
+        if action is None or self._experiment_retention_port is None:
+            return
+        cutoff = action.cutoff
+        plan = await self._experiment_retention_port.prepare_for_retention(
+            cutoff=cutoff, purge_all=cutoff is None
+        )
+        regression_ids = [identifier for identifier, _version in plan.regression_keys]
+        if regression_ids and self._experiment_regression_fact_store is not None:
+            # Delete derived ClickHouse facts before PostgreSQL removes the
+            # identity selection.  A provider outage therefore leaves the
+            # durable PG targets available for a restart-safe retry.
+            del client
+            for offset in range(0, len(regression_ids), 1000):
+                await self._experiment_regression_fact_store.delete_regression_facts(
+                    regression_ids[offset : offset + 1000],
+                    regression_keys=plan.regression_keys[offset : offset + 1000],
+                )
+        await self._experiment_retention_port.delete_for_retention(
+            cutoff=cutoff, purge_all=cutoff is None, plan=plan
+        )
 
     async def delete_observations(self, cutoff: datetime | None) -> DeletionResult:
         selected = await self.list_observations()

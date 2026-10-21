@@ -1,0 +1,272 @@
+id: AURA-0096
+title: Add experiments immutable baselines and deterministic regressions
+status: integrated
+change_class: repository_governance
+intent: >
+  Add Observatory-owned immutable experiment definitions, bounded variants and
+  cohorts, explicit owner promotion into database-backed baselines, and
+  reproducible deterministic absolute and relative regression comparisons with
+  attribution, evidence links, deployment correlation, history, and accessible
+  owner Web workflows without changing protected repository baselines or
+  coupling Core to Observatory.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0089 owns the versioned Experiment Variant Cohort Threshold Baseline and Replay contracts plus the decisions that baselines are immutable database records promoted only by an explicit owner action.
+    - AURA-0095 owns the owner BFF REST CLI metadata-only SSE generated-client and accessible Observatory evaluation workspace boundaries that this item extends additively.
+    - Experiment variants compare exact immutable component model configuration prompt policy and deployment revisions. Cohorts select only bounded explicit case identities from the experiment suite and cannot carry arbitrary dimensions owner identity or content.
+    - PostgreSQL is authoritative for experiment definitions immutable baseline records manual promotion authorization regression decisions attribution evidence references and history. ClickHouse stores bounded high-cardinality score and distribution comparison projections only.
+    - Candidate creation and baseline promotion are separate idempotent owner-authorized commands. Promotion requires CSRF an exact destructive confirmation an opaque authorization record and immutable source result identities. Automatic promotion mutation and demotion are prohibited.
+    - Protected repository golden results and repository baseline files are never created modified promoted or deleted. baseline_changes_allowed remains false.
+    - Initial regression decisions are deterministic absolute and relative comparisons over finite persisted metrics with explicit minimum samples missing-evidence behavior and cohort scope. Statistical inference automatic change-point claims and probabilistic confidence are not implemented or implied.
+    - Attribution is evidence-backed and content-free. It may rank exact changed component model deployment prompt policy and configuration revisions only when persisted comparison evidence supports them; unavailable attribution is explicit and never synthesized.
+    - Regression evidence links use opaque run result score trace deployment and artifact-reference identities plus hashes and versions. They never include raw artifacts prompts responses comments filenames endpoints credentials owner identity or arbitrary attributes.
+    - REST snapshots remain authoritative. Additive experiment baseline and regression notifications reuse the dedicated authenticated same-origin evaluation SSE ledger and carry metadata-only resource change notifications.
+    - Authenticated experiment baseline and regression data remains memory-only in the browser and is excluded from Workbox Cache Storage localStorage sessionStorage IndexedDB URLs logs screenshots and analytics.
+    - Existing Core evaluation runner NATS deployment authentication storage and service boundaries remain unchanged. No normal Core request depends on experiments baselines regressions or Observatory availability.
+    - Existing architecture authorizes this Observatory-owned scope. Return ADR_REQUIRED if implementation requires a new deployable service shared Core storage altered runner protocol automatic or protected-baseline mutation cloud judges or a new cross-product dependency.
+    - Material implementation choices use repository-pinned dependencies and current official PostgreSQL ClickHouse OpenAPI Angular accessibility and OWASP guidance without dependency upgrades.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - EVA-025
+  - EVA-026
+  - EVA-027
+  - EVA-028
+  - EVA-029
+  - EVA-030
+  - EVA-031
+  - EVA-032
+  - EVA-033
+  - EVA-034
+  - EVA-035
+  - EVA-036
+  - EVA-037
+  - EVA-038
+ownership_zones:
+  - contracts.evaluation-v1
+  - contracts.observatory-v1
+  - services.aura-observatory.experiments
+  - services.aura-observatory.baselines
+  - services.aura-observatory.regressions
+  - services.aura-observatory.experiment-query-api
+  - services.aura-observatory.experiment-live-events
+  - frontend.platform.observatory-api-client
+  - frontend.observatory.experiment-workspaces
+  - frontend.observatory.experiment-browser-acceptance
+  - repository.module-registration
+  - evaluation.aura0096-tests
+allowed_paths:
+  - work-items/active/AURA-0096.yaml
+  - work-items/archived/AURA-0096.yaml
+  - work-items/handoffs/AURA-0096-*.yaml
+  - work-items/reviews/AURA-0096-*.yaml
+  - work-items/integration/AURA-0096.yaml
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - contracts/tests/test_aura0096_*.py
+  - services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/migrations/postgresql/versions/0012_evaluation_experiments.sql
+  - services/aura-observatory/migrations/postgresql/versions/0013_evaluation_experiment_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0009_evaluation_regressions.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-experiments.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-baselines.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-regressions.yaml
+  - services/aura-observatory/tests/test_aura0096_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0089_contract.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - frontend/libs/platform/observatory-api-client/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/**
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - contracts/events/**
+  - contracts/openapi/core-v1.yaml
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0011_evaluation_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0005_evaluation_scores.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0007_local_judge_scores.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0008_evaluation_api_provenance.sql
+  - deploy/**
+  - infra/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - evaluation-v1
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-experiments
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.evaluation_experiments
+    - aura.observatory.evaluation_baselines
+    - aura.observatory.evaluation_regressions
+    - aura.observatory.evaluation_api
+    - aura.observatory.live_updates
+  required_metrics:
+    - observatory_evaluation_experiment_operation_count
+    - observatory_evaluation_baseline_operation_count
+    - observatory_evaluation_regression_operation_count
+    - observatory_evaluation_regression_duration_ms
+    - observatory_evaluation_regression_outcome_count
+    - observatory_evaluation_attribution_outcome_count
+  required_evaluators:
+    - evaluation_experiment_contract_compatibility
+    - evaluation_experiment_authorization
+    - evaluation_baseline_manual_promotion
+    - evaluation_baseline_immutability
+    - evaluation_regression_determinism
+    - evaluation_regression_cohort_bounds
+    - evaluation_regression_attribution_evidence
+    - evaluation_experiment_browser_accessibility
+    - evaluation_experiment_browser_persistence_isolation
+  capture_policy: authorized_evaluation_content
+security_privacy:
+  applicable: true
+  concerns:
+    - Every experiment baseline promotion and regression route and CLI action is owner-authorized and state changes require CSRF idempotency and closed confirmation where destructive or irreversible.
+    - Promotion accepts only persisted immutable source results from the exact suite and capture boundary and stores an opaque authorization record without owner or session identity.
+    - Regression and attribution outputs expose only bounded finite metrics exact versions opaque evidence identities and content-free hashes; raw evaluation content artifacts comments endpoints credentials and arbitrary attributes are prohibited.
+    - Cohorts are explicit bounded case sets and cannot encode private owner agent workspace free text or unbounded caller-defined dimensions.
+    - Browser state is memory-only and authenticated experiment baseline regression and evidence data is excluded from persistence URLs logs screenshots and analytics.
+    - Missing partial late incompatible or insufficient evidence yields explicit unavailable or inconclusive state and cannot silently pass promote or attribute.
+  data_classes:
+    - experiment_definition_metadata
+    - cohort_definition_metadata
+    - immutable_baseline_metadata
+    - manual_promotion_audit_metadata
+    - regression_decision_metadata
+    - attribution_evidence_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - evaluation-v1 and observatory-v1 add backward-compatible closed bounded resources for experiments variants cohorts baseline candidates manual promotion immutable baselines deterministic comparisons regressions attribution evidence and history with stable IDs UTC timestamps exact versions provenance and finite values.
+  - Experiment creation validates exact existing suite dataset evaluator component model deployment prompt policy and configuration bindings and bounded explicit cohorts before immutable persistence; no caller-supplied arbitrary attributes or execution destinations are accepted.
+  - Baseline candidates reference a non-empty exact persisted result set from one compatible suite and reproducibility boundary. Manual promotion is owner-authorized CSRF-protected idempotent explicitly confirmed audited and immutable; automatic promotion mutation demotion and protected repository baseline changes are impossible.
+  - Regression evaluation is deterministic and reproducible for absolute and relative thresholds with explicit direction minimum sample cohort missing-evidence partial and incompatible states. Statistical and change-point claims remain unavailable rather than approximated.
+  - Comparisons preserve operational and quality metric separation use bounded snapshot-stable pagination and expose exact baseline experiment cohort variant component model deployment policy prompt configuration and evaluator versions.
+  - Attribution ranks only evidence-supported changed bindings and presents affected and unaffected cohorts plus opaque representative run trace result score and artifact references; missing evidence is explicit and no content is returned.
+  - PostgreSQL and ClickHouse migrations are forward-only idempotent from empty and upgraded AURA-0095 state and preserve existing evaluation data. No automatic TTL or scheduled purge is added.
+  - REST CLI and dedicated evaluation SSE remain owner-authorized bounded metadata-only and backward-compatible. Commands have durable restart-safe idempotency deterministic 409 422 503 and terminal behavior.
+  - Generated Angular output is reproducible and transport-only. Observatory Web provides responsive keyboard-accessible experiment composition comparison baseline promotion regression evidence attribution cohort and history workflows without importing Aura product features.
+  - Baseline promotion shows exact source suite result range thresholds capture classification and irreversible immutability consequence; requires typed confirmation prevents duplicate submission announces progress restores focus and refreshes every affected view.
+  - Browser views distinguish loading empty partial stale disconnected rejected unauthorized unavailable incompatible insufficient-evidence inconclusive promoted regressed unchanged and recovered states with non-colour indicators accessible tables and reduced motion.
+  - Authenticated data remains memory-only and logout auth-generation change and retention completion clear or refresh all affected experiment baseline regression and evidence views.
+  - Real-browser acceptance covers experiment creation variant and cohort comparison candidate creation manual promotion history regression affected/unaffected cohorts attribution evidence responsive keyboard workflows failure recovery and protected-baseline non-mutation.
+  - Core remains usable with Observatory stopped and no Core source migration runner protocol normal request readiness or scheduling dependency changes.
+  - Python lint type and full tests contract compatibility generated-client parity Angular lint unit production and Storybook builds browser accessibility Playwright architecture validators baseline protection migration checks and diff checks pass.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0096.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml
+  - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests
+  - uv run pyright services/aura-observatory
+  - uv run pytest services/aura-observatory/tests contracts/tests
+  - pnpm --dir frontend nx lint observatory-web
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - pnpm --dir frontend nx build storybook --configuration=production
+  - pnpm --dir frontend nx e2e observatory-web-e2e
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Deterministic absolute and relative regression thresholds are the only automated comparison decisions in this item. Statistical significance probabilistic confidence and automatic change-point detection remain explicitly unavailable until a later governed item.
+  - Baselines are database-backed immutable Observatory records only. Protected repository baselines golden results and evaluation thresholds remain unchanged.
+  - AURA-0097 consumes regression and attribution outputs for dashboards alerts annotations and incidents but does not broaden this item into alert delivery.
+  - AURA-0098 owns complete composed-stack outage and local-provider browser acceptance.

@@ -26,6 +26,10 @@ _RESOURCE_TYPES = frozenset(
         "evaluation_calibration",
         "evaluation_qualification",
         "evaluation_deletion",
+        "evaluation_experiment",
+        "evaluation_baseline",
+        "evaluation_regression",
+        "evaluation_attribution",
     }
 )
 _CHANGES = frozenset(
@@ -38,6 +42,10 @@ _CHANGES = frozenset(
         "revoked",
         "deletion_requested",
         "deleted",
+        "candidate_created",
+        "promoted",
+        "comparison_completed",
+        "attribution_completed",
     }
 )
 
@@ -50,6 +58,7 @@ class EvaluationLiveEvent:
     change: str
     state: str
     occurred_at: str
+    resource_version: str | None = None
 
     def as_sse(self) -> dict[str, object]:
         return {
@@ -73,7 +82,8 @@ class EvaluationLiveEventStore:
     _wake: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def publish(
-        self, resource_type: str, resource_id: str, change: str, state: str
+        self, resource_type: str, resource_id: str, change: str, state: str,
+        resource_version: str | None = None,
     ) -> EvaluationLiveEvent:
         # Normalize historical worker vocabulary at the application boundary;
         # persisted events use only the versioned closed change set.
@@ -92,6 +102,7 @@ class EvaluationLiveEventStore:
             change=change,
             state=state,
             occurred_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            resource_version=resource_version,
         )
         self.events.append(event)
         del self.events[:-10_000]
@@ -121,7 +132,8 @@ class EvaluationLiveEventStore:
 
 class EvaluationLiveEventPort(Protocol):
     async def publish(
-        self, resource_type: str, resource_id: str, change: str, state: str
+        self, resource_type: str, resource_id: str, change: str, state: str,
+        resource_version: str | None = None,
     ) -> EvaluationLiveEvent: ...
 
     async def after(

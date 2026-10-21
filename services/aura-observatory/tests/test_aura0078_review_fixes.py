@@ -920,6 +920,9 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.local_judges",
             "aura.observatory.calibration",
             "aura.observatory.evaluation_api",
+            "aura.observatory.evaluation_experiments",
+            "aura.observatory.evaluation_baselines",
+            "aura.observatory.evaluation_regressions",
         }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -1044,6 +1047,21 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                     "observatory_evaluation_live_replay_lag_seconds",
                     "observatory_evaluation_operation_duration_ms",
                 }
+        elif manifest_id == "aura.observatory.evaluation_experiments":
+            expected_metrics = {
+                "observatory_evaluation_experiment_operation_count",
+            }
+        elif manifest_id == "aura.observatory.evaluation_baselines":
+            expected_metrics = {
+                "observatory_evaluation_baseline_operation_count",
+            }
+        elif manifest_id == "aura.observatory.evaluation_regressions":
+            expected_metrics = {
+                "observatory_evaluation_regression_operation_count",
+                "observatory_evaluation_regression_duration_ms",
+                "observatory_evaluation_regression_outcome_count",
+                "observatory_evaluation_attribution_outcome_count",
+            }
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {
             "aura.observatory.evaluation_artifact_storage",

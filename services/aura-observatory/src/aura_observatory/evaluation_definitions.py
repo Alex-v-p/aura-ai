@@ -484,6 +484,75 @@ class ComponentBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class VariantBinding:
+    """Authoritative, content-free provenance admitted by a suite."""
+
+    variant_id: str
+    components: tuple[ComponentBinding, ...]
+    model: Mapping[str, str]
+    configuration_revision: str
+    prompt_revision: str
+    policy_revision: str
+    deployment_revision: str
+
+    @classmethod
+    def from_payload(cls, value: Mapping[str, Any]) -> VariantBinding:
+        data = _closed_map(
+            value,
+            "variantBinding",
+            frozenset(
+                {
+                    "variantId",
+                    "components",
+                    "model",
+                    "configurationRevision",
+                    "promptRevision",
+                    "policyRevision",
+                    "deploymentRevision",
+                }
+            ),
+        )
+        components_data = data.get("components")
+        if (
+            not isinstance(components_data, Sequence)
+            or isinstance(components_data, (str, bytes))
+            or not 1 <= len(components_data) <= 32
+        ):
+            raise DefinitionValidationError("variant components are invalid")
+        model_data = _closed_map(
+            cast(Mapping[str, Any], data.get("model")),
+            "variant model",
+            frozenset({"modelId", "modelVersion", "modelDigest"}),
+        )
+        model_id = _identifier(model_data.get("modelId"), "modelId")
+        model_version = _version(model_data.get("modelVersion"), "modelVersion")
+        model_digest = _digest(model_data.get("modelDigest"), "modelDigest")
+        return cls(
+            _identifier(data.get("variantId"), "variantId"),
+            tuple(
+                ComponentBinding.from_payload(cast(Mapping[str, Any], item))
+                for item in components_data
+            ),
+            {"modelId": model_id, "modelVersion": model_version, "modelDigest": model_digest},
+            _identifier(data.get("configurationRevision"), "configurationRevision"),
+            _identifier(data.get("promptRevision"), "promptRevision"),
+            _identifier(data.get("policyRevision"), "policyRevision"),
+            _identifier(data.get("deploymentRevision"), "deploymentRevision"),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "variantId": self.variant_id,
+            "components": [item.to_payload() for item in self.components],
+            "model": dict(self.model),
+            "configurationRevision": self.configuration_revision,
+            "promptRevision": self.prompt_revision,
+            "policyRevision": self.policy_revision,
+            "deploymentRevision": self.deployment_revision,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionLimits:
     timeout_ms: int
     max_concurrency: int
@@ -1278,6 +1347,7 @@ class SuiteDefinition(_DefinitionBase):
     components: tuple[ComponentBinding, ...] = field(default_factory=tuple)
     limits: ExecutionLimits = field(default_factory=lambda: ExecutionLimits(100, 1, 1, 1, 0, 0, 0))
     manual_thresholds: tuple[ManualThreshold, ...] = field(default_factory=tuple)
+    variant_bindings: tuple[VariantBinding, ...] = field(default_factory=tuple)
 
     @property
     def suite_id(self) -> str:
@@ -1303,6 +1373,7 @@ class SuiteDefinition(_DefinitionBase):
                     "components",
                     "limits",
                     "manualThresholds",
+                    "variantBindings",
                     "retentionMode",
                     "provenance",
                     "createdAt",
@@ -1345,6 +1416,19 @@ class SuiteDefinition(_DefinitionBase):
         thresholds = tuple(
             ManualThreshold.from_payload(cast(Mapping[str, Any], item)) for item in thresholds_data
         )
+        variant_data = data.get("variantBindings", [])
+        if (
+            not isinstance(variant_data, Sequence)
+            or isinstance(variant_data, (str, bytes))
+            or len(variant_data) > 16
+        ):
+            raise DefinitionValidationError("variant bindings are bounded")
+        variant_bindings = tuple(
+            VariantBinding.from_payload(cast(Mapping[str, Any], item))
+            for item in variant_data
+        )
+        if len({item.variant_id for item in variant_bindings}) != len(variant_bindings):
+            raise DefinitionValidationError("variant identifiers must be unique")
         if len(
             {
                 (item.evaluator.evaluator_id, item.evaluator.evaluator_version, item.metric)
@@ -1380,6 +1464,7 @@ class SuiteDefinition(_DefinitionBase):
             components,
             ExecutionLimits.from_payload(cast(Mapping[str, Any], data.get("limits"))),
             thresholds,
+            variant_bindings,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -1398,6 +1483,8 @@ class SuiteDefinition(_DefinitionBase):
         }
         if self.manual_thresholds:
             data["manualThresholds"] = [item.to_payload() for item in self.manual_thresholds]
+        if self.variant_bindings:
+            data["variantBindings"] = [item.to_payload() for item in self.variant_bindings]
         return data
 
 

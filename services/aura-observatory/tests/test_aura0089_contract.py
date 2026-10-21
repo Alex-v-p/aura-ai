@@ -476,6 +476,8 @@ def test_schema_meta_contract_is_versioned_closed_and_preserves_additive_resourc
         "#/$defs/CalibrationResult",
         "#/$defs/JudgeQualification",
         "#/$defs/JudgeEnsemble",
+        "#/$defs/RegressionDecision",
+        "#/$defs/AttributionReport",
     }
     assert [reference for reference in refs if reference in original_refs] == original_refs
     assert set(refs) == set(original_refs) | additive_refs

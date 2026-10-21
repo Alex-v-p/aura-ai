@@ -1,0 +1,62 @@
+agent: test_evaluation_engineer
+work_item: AURA-0096
+verdict: PASS
+checked:
+  - >-
+    Re-ran AURA-0096 work-item and changed-path validation for the current 52
+    changed paths; both passed, as did git diff --check.
+  - >-
+    Re-ran Ruff and Pyright over the Observatory and contract scopes. Ruff
+    passed and Pyright reported zero errors, warnings, or informations after
+    the prior test formatting and receipt-metadata narrowing corrections.
+  - >-
+    Re-ran the aggregate Observatory and contract suite after the latest
+    crash-recovery, projection-outbox, retention, evaluation-definition, and
+    migration and live-event resource-version/attribution-retention changes:
+    1179 passed, 27
+    explicitly gated integration tests skipped, with only existing Authlib and
+    httpx deprecation warnings.
+  - >-
+    Re-ran generated API-client tests (5 passed), generated-sync validation,
+    Observatory Web lint, and the production Observatory Web build; all
+    passed. The prior Observatory unit and Storybook production builds remain
+    green from the same corrected tree.
+  - >-
+    Re-ran the focused experiment browser matrix across desktop, tablet, and
+    mobile: 21 passed. Coverage includes candidate creation, typed immutable
+    promotion, idempotent retry, deterministic comparison, attribution,
+    history, retention refresh, privacy markers, owner recovery, responsive
+    keyboard flow, and metadata-only evaluation SSE reconnect/catch-up.
+  - >-
+    Re-ran the complete 264-test Playwright matrix split by browser project to
+    avoid the long-lived Angular dev-server failure seen in a combined run:
+    desktop 88 passed, tablet 88 passed, mobile 88 passed. The prior privacy
+    assertion, missing template symbols, and retention failure are resolved.
+  - >-
+    Confirmed the current frontend production build compiles the regression
+    binding details and candidate binding summary symbols.
+  - >-
+    Confirmed the new AURA-0096 worker recovery tests execute bounded
+    projection-outbox draining and survive provider failures without taking
+    down the worker loop; these are included in the aggregate result.
+  - >-
+    Confirmed the current AURA-0096 tests cover immutable candidate/baseline
+    conflict behavior, concurrent promotion, deterministic absolute/relative
+    regression decisions, attribution/cohorts/evidence/history, bounded
+    migrations, privacy, idempotency, retention, and worker behavior.
+  - >-
+    Confirmed the latest live-event resource-version and attribution-retention
+    changes remain covered by the aggregate contract and worker suite.
+findings: []
+risks:
+  - >-
+    Live PostgreSQL 17 and ClickHouse 25.8 execution remains unavailable in
+    the shared Docker Desktop state: both project containers are unhealthy;
+    pg_isready returns no response and ClickHouse exec fails at the runtime
+    namespace boundary. Static migration checks and all non-live coverage
+    passed. This is an external environment constraint, not an AURA-0096 code
+    finding.
+  - >-
+    Local Ollama/provider reachability remains the explicitly accepted,
+    non-blocking availability limitation.
+unresolved: []

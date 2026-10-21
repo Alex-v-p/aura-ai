@@ -37,17 +37,18 @@ class PostgresEvaluationLiveEventStore:
 
     @_provider_boundary
     async def publish(
-        self, resource_type: str, resource_id: str, change: str, state: str
+        self, resource_type: str, resource_id: str, change: str, state: str,
+        resource_version: str | None = None,
     ) -> EvaluationLiveEvent:
         event_id = str(uuid4())
         async with self._connection_factory() as connection:
             result = await connection.execute(
                 """INSERT INTO observatory_evaluation_live_events(
-                event_id, resource_type, resource_id, change, state)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING event_id, resource_type, resource_id, change, state,
+                event_id, resource_type, resource_id, resource_version, change, state)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING event_id, resource_type, resource_id, resource_version, change, state,
                           occurred_at""",
-                (event_id, resource_type, resource_id, change, state),
+                (event_id, resource_type, resource_id, resource_version, change, state),
             )
             row = await result.fetchone()
         if row is None:
@@ -71,7 +72,8 @@ class PostgresEvaluationLiveEventStore:
             params = (last_event_id, bounded_limit)
         async with self._connection_factory() as connection:
             result = await connection.execute(
-                "SELECT event_id, resource_type, resource_id, change, state, occurred_at "
+                "SELECT event_id, resource_type, resource_id, resource_version, change, state, "
+                "occurred_at "
                 "FROM observatory_evaluation_live_events"
                 + where
                 + " ORDER BY sequence ASC LIMIT %s",
@@ -88,7 +90,8 @@ class PostgresEvaluationLiveEventStore:
 
 
 def _event_from_row(row: Any) -> EvaluationLiveEvent:
-    occurred = row[5]
+    legacy = len(row) == 6
+    occurred = row[5] if legacy else row[6]
     if isinstance(occurred, datetime):
         occurred_at = occurred.astimezone(UTC).isoformat().replace("+00:00", "Z")
     else:
@@ -97,9 +100,10 @@ def _event_from_row(row: Any) -> EvaluationLiveEvent:
         event_id=str(row[0]),
         resource_type=str(row[1]),
         resource_id=str(row[2]),
-        change=str(row[3]),
-        state=str(row[4]),
+        change=str(row[3] if legacy else row[4]),
+        state=str(row[4] if legacy else row[5]),
         occurred_at=occurred_at,
+        resource_version=None if legacy else (str(row[3]) if row[3] is not None else None),
     )
 
 __all__ = ["PostgresEvaluationLiveEventStore"]

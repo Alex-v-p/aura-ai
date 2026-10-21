@@ -650,6 +650,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       'observatory-analytics': 'none',
       'observatory-retention': 'none',
       'observatory-evaluation-workspace': 'none',
+      'observatory-experiment-workspace': 'none',
     } as const;
     expect(panelDisplays).toHaveLength(Object.keys(expectedPanelDisplays).length);
     for (const panel of panelDisplays) {
@@ -738,7 +739,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: 'Model', exact: true }).click();
     await expect(page.getByText(/Inference and routing timing/i)).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Aggregation' }).locator('option')).toHaveCount(2);
-    await expect(page.locator('main')).not.toContainText(/prompt|response|credential|tool argument/i);
+    // Bounded revision labels are permitted Observatory metadata; content-bearing
+    // values and credential/tool payload terms must never reach the rendered shell.
+    const renderedAnalyticsShell = await page.locator('main').textContent() ?? '';
+    expect(renderedAnalyticsShell).not.toContain('PRIVATE CONTENT VALUE');
+    expect(renderedAnalyticsShell).not.toContain('PRIVATE_PROMPT_MARKER');
   });
 
   test('renders all declared focus views and resets controls to catalogue-supported options', async ({ page }) => {

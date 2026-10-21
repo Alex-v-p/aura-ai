@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 from redis.asyncio import Redis
@@ -13,6 +13,7 @@ from aura_observatory.adapters.clickhouse import ClickHouseObservationStore
 from aura_observatory.adapters.evaluation_definitions import (
     PostgresEvaluationDefinitionRepository,
 )
+from aura_observatory.adapters.evaluation_experiments import PostgresExperimentRepository
 from aura_observatory.adapters.evaluation_live import PostgresEvaluationLiveEventStore
 from aura_observatory.adapters.evaluation_orchestration import (
     OtlpComponentSpanExporter,
@@ -23,6 +24,7 @@ from aura_observatory.adapters.evaluation_query import PostgresEvaluationQueryBa
 from aura_observatory.adapters.evaluation_storage import (
     ClickHouseEvaluationScoreStore,
     PostgresEvaluationArtifactRepository,
+    PostgresEvaluationResultReferencePort,
 )
 from aura_observatory.adapters.local_ollama import LocalOllamaAdapter
 from aura_observatory.adapters.object_storage import GarageEvaluationObjectStore
@@ -47,6 +49,7 @@ from aura_observatory.evaluation_evaluators import (
     DeterministicEvaluatorRegistry,
     EvaluationApplicationService,
 )
+from aura_observatory.evaluation_experiments import EvaluationExperimentService
 from aura_observatory.evaluation_judges import (
     AuthorizedArtifactReader,
     LocalJudgeService,
@@ -66,7 +69,7 @@ from aura_observatory.evaluation_storage import (
 )
 from aura_observatory.ingest import TelemetryIngestService
 from aura_observatory.metrics import ObservatoryMetrics
-from aura_observatory.ports import EvaluationTransportPort
+from aura_observatory.ports import EvaluationTransportPort, ObservatoryQueryPort
 from aura_observatory.query import ObservatoryHealthProjector, ObservatoryQueryService
 from aura_observatory.settings import Settings
 
@@ -176,6 +179,21 @@ def build_query_service(settings: Settings) -> ObservatoryQueryService:
     """Compose the independent PostgreSQL/ClickHouse query boundary."""
 
     catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
+    result_reference = PostgresEvaluationResultReferencePort(
+        lambda: postgres_connection(settings.database_url)
+    )
+    definition_repository = build_evaluation_definition_repository(settings)
+    experiment_retention_port = PostgresExperimentRepository(
+        lambda: postgres_connection(settings.database_url),
+        definition_repository=definition_repository,
+        deletion_reference=result_reference,
+    )
+    experiment_regression_fact_store = ClickHouseEvaluationScoreStore(
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
     store = ProductionObservatoryStore(
         lambda: postgres_connection(settings.database_url),
         settings.clickhouse_url,
@@ -183,6 +201,9 @@ def build_query_service(settings: Settings) -> ObservatoryQueryService:
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
         health_port=catalog,
+        experiment_projections_enabled=True,
+        experiment_retention_port=experiment_retention_port,
+        experiment_regression_fact_store=experiment_regression_fact_store,
     )
     return ObservatoryQueryService(
         store,
@@ -217,7 +238,10 @@ def build_evaluation_artifact_storage(settings: Settings) -> ArtifactStorageServ
     def connection_factory() -> Any:
         return postgres_connection(settings.database_url)
 
-    repository = PostgresEvaluationArtifactRepository(connection_factory)
+    result_reference = PostgresEvaluationResultReferencePort(connection_factory)
+    repository = PostgresEvaluationArtifactRepository(
+        connection_factory, result_reference=result_reference
+    )
     metrics_store = PostgresCatalog(connection_factory)
     object_store = GarageEvaluationObjectStore(
         settings.evaluation_object_endpoint,
@@ -242,7 +266,10 @@ def build_evaluation_deletion(settings: Settings) -> EvaluationDeletionService:
     def connection_factory() -> Any:
         return postgres_connection(settings.database_url)
 
-    repository = PostgresEvaluationArtifactRepository(connection_factory)
+    result_reference = PostgresEvaluationResultReferencePort(connection_factory)
+    repository = PostgresEvaluationArtifactRepository(
+        connection_factory, result_reference=result_reference
+    )
     metrics_store = PostgresCatalog(connection_factory)
     object_store = GarageEvaluationObjectStore(
         settings.evaluation_object_endpoint,
@@ -258,12 +285,17 @@ def build_evaluation_deletion(settings: Settings) -> EvaluationDeletionService:
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
     )
+    experiment_repository = PostgresExperimentRepository(
+        connection_factory, deletion_reference=repository
+    )
     return EvaluationDeletionService(
         repository,
         object_store,
         score_store,
         metrics=_production_metrics(settings, metrics_store),
         event_publisher=_evaluation_live_publisher(settings),
+        experiment_repository=experiment_repository,
+        regression_fact_store=score_store,
     )
 
 
@@ -306,6 +338,48 @@ def build_evaluation_orchestration(
         retry_max_seconds=settings.evaluation_retry_max_seconds,
         max_attempts=settings.evaluation_max_attempts,
         event_publisher=event_publisher,
+    )
+
+
+def build_evaluation_experiment_service(
+    settings: Settings, *, metrics: ObservatoryMetrics | None = None
+) -> EvaluationExperimentService:
+    """Compose the worker-owned experiment projection recovery boundary.
+
+    The evaluation worker uses this narrow service during startup and between
+    dispatch passes to drain PostgreSQL projection outbox rows.  It reuses the
+    public result/score reference ports and never opens a Core connection or
+    reads a sibling-owned table directly.
+    """
+
+    def connection_factory() -> Any:
+        return postgres_connection(settings.database_url)
+
+    result_reference = PostgresEvaluationResultReferencePort(connection_factory)
+    definition_repository = build_evaluation_definition_repository(settings)
+    score_reference = ClickHouseEvaluationScoreStore(
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
+    shared_metrics = metrics or _production_metrics(settings)
+    repository = PostgresExperimentRepository(
+        connection_factory,
+        definition_repository=definition_repository,
+        clickhouse_url=settings.clickhouse_url,
+        clickhouse_database=settings.clickhouse_database,
+        clickhouse_user=settings.clickhouse_user,
+        clickhouse_password=settings.clickhouse_password,
+        metrics=shared_metrics,
+        result_reference=result_reference,
+        score_reference=score_reference,
+    )
+    return EvaluationExperimentService(
+        repository,
+        evidence=repository.evidence,
+        references=repository.references,
+        metrics=shared_metrics,
     )
 
 
@@ -502,14 +576,50 @@ def build_evaluation_api_service(settings: Settings) -> EvaluationApiApplication
     if settings.evaluation_object_access_key and settings.evaluation_object_secret_key:
         deletion_service = build_evaluation_deletion(settings)
     calibration_service = build_calibration_service(settings)
+    experiment_definition_repository = build_evaluation_definition_repository(settings)
+    experiment_catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
+    experiment_result_reference = PostgresEvaluationResultReferencePort(
+        lambda: postgres_connection(settings.database_url)
+    )
+    experiment_score_reference = ClickHouseEvaluationScoreStore(
+        settings.clickhouse_url,
+        database=settings.clickhouse_database,
+        user=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+    )
     return EvaluationApiApplicationService(
         query=query,
         live=live_store,
-        definition_service=build_evaluation_definition_service(settings),
+        definition_service=EvaluationDefinitionService(
+            experiment_definition_repository,
+            artifact_repository=PostgresEvaluationArtifactRepository(
+                lambda: postgres_connection(settings.database_url)
+            ),
+            metrics=api_metrics,
+            evaluator_compatibility=DeterministicEvaluatorRegistry().validate_definition,
+        ),
         orchestration=build_evaluation_orchestration(settings, event_publisher=publish_live),
         calibration_service=calibration_service,
         deletion_service=deletion_service,
         metrics=api_metrics,
+        experiment_service=EvaluationExperimentService(
+            (experiment_repository := PostgresExperimentRepository(
+                lambda: postgres_connection(settings.database_url),
+                clickhouse_url=settings.clickhouse_url,
+                clickhouse_database=settings.clickhouse_database,
+                clickhouse_user=settings.clickhouse_user,
+                clickhouse_password=settings.clickhouse_password,
+                metrics=api_metrics,
+                definition_repository=experiment_definition_repository,
+                catalog=experiment_catalog,
+                query_port=cast(ObservatoryQueryPort, build_query_service(settings).query_port),
+                result_reference=experiment_result_reference,
+                score_reference=experiment_score_reference,
+            )),
+            evidence=experiment_repository.evidence,
+            references=experiment_repository.references,
+            metrics=api_metrics,
+        ),
     )
 
 
@@ -521,6 +631,7 @@ __all__ = [
     "build_evaluation_artifact_storage",
     "build_evaluation_deletion",
     "build_evaluation_orchestration",
+    "build_evaluation_experiment_service",
     "build_evaluation_scheduler_repository",
     "build_evaluation_scheduler",
     "build_evaluation_definition_repository",

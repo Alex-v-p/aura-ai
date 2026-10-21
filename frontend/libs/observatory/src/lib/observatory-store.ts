@@ -30,6 +30,8 @@ export class ObservatoryStore {
   /** Monotonic in-memory invalidation for evaluation workspaces sharing the authenticated SSE. */
   readonly evaluationRevision = signal(0);
   readonly evaluationChange = signal<EvaluationLiveEvent | null>(null);
+  /** Monotonic session boundary observed by product feature stores. */
+  readonly authGenerationRevision = signal(0);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
@@ -233,6 +235,8 @@ export class ObservatoryStore {
   }
 
   retryAuthentication(): void { void this.runSessionLifecycle(); }
+  /** Propagate an authenticated endpoint rejection discovered by a product feature. */
+  requireSession(message = 'Owner Observatory session required.'): void { this.markSignedOut(message); }
   refreshCatalog(): void { this.queueCatalogRefresh(); }
   refreshHealthHistory(): void { this.queueHealthHistory(); }
   setAnalyticsFilters(filters: AnalyticsFilters): void {
@@ -488,6 +492,7 @@ export class ObservatoryStore {
     this.loadSequence += 1;
     this.openRunSequence += 1;
     this.authGeneration += 1;
+    this.authGenerationRevision.update((value) => value + 1);
     if (this.refreshTimer) { clearTimeout(this.refreshTimer); this.refreshTimer = null; }
     this.sessionRequired.set(true);
     this.authState.set(explicitState ?? this.pendingRecoveryState ?? (this.hadAuthenticatedSession ? 'expired' : 'initial'));
@@ -519,6 +524,11 @@ export class ObservatoryStore {
 
   private async refreshAfterRetention(): Promise<void> {
     this.authGeneration += 1;
+    // Retention is a destructive boundary for all product-owned, in-memory
+    // selections and idempotency material. Feature stores must discard their
+    // rows and command keys before taking the authoritative post-delete view.
+    this.authGenerationRevision.update((value) => value + 1);
+    this.evaluationRevision.update((value) => value + 1);
     this.openRunSequence += 1;
     this.selectedRun.set({ detail: null, trace: null });
     this.selectedRunId.set(null);

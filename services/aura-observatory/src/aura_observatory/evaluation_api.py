@@ -40,6 +40,13 @@ from aura_observatory.evaluation_definitions import (
     DefinitionStorageError,
     DefinitionValidationError,
 )
+from aura_observatory.evaluation_experiments import (
+    EvaluationExperimentService,
+    ExperimentConflict,
+    ExperimentError,
+    ExperimentNotFound,
+    ExperimentUnavailable,
+)
 from aura_observatory.evaluation_live import EvaluationLiveEventPort, EvaluationLiveEventStore
 from aura_observatory.evaluation_orchestration import EvaluationAdmission, OrchestrationError
 from aura_observatory.evaluation_query import (
@@ -74,6 +81,7 @@ _CONFIRMATIONS = frozenset(
         "delete-before",
         "purge-all",
         "DELETE_EVALUATION_ARTIFACTS",
+        "PROMOTE_IMMUTABLE_BASELINE",
     }
 )
 _RESOURCE_KINDS = frozenset(
@@ -118,6 +126,7 @@ _SUITE_FIELDS = frozenset(
         "components",
         "limits",
         "manualThresholds",
+        "variantBindings",
         "retentionMode",
         "provenance",
         "createdAt",
@@ -127,6 +136,18 @@ _REFERENCE_FIELDS = frozenset({"id", "version"})
 _EVALUATOR_FIELDS = frozenset({"evaluatorId", "evaluatorVersion", "kind"})
 _COMPONENT_FIELDS = frozenset(
     {"componentId", "componentVersion", "codeRevision", "imageDigest", "configurationRevision"}
+)
+_MODEL_FIELDS = frozenset({"modelId", "modelVersion", "modelDigest"})
+_VARIANT_FIELDS = frozenset(
+    {
+        "variantId",
+        "components",
+        "model",
+        "configurationRevision",
+        "promptRevision",
+        "policyRevision",
+        "deploymentRevision",
+    }
 )
 _LIMIT_FIELDS = frozenset(
     {
@@ -205,7 +226,6 @@ _RUNNER_LIMIT_FIELDS = frozenset({"execution", "maxQueueTimeMs", "maxModelCalls"
 _EXECUTION_LIMIT_FIELDS = _LIMIT_FIELDS
 _ARTIFACT_REF_FIELDS = frozenset({"artifactReferenceId", "mediaClassification", "mediaType", "byteCount", "integrity", "captureAuthorization"})
 _INTEGRITY_FIELDS = frozenset({"algorithm", "digest"})
-_MODEL_FIELDS = frozenset({"modelId", "modelVersion", "modelDigest"})
 _REPRODUCIBILITY_FIELDS = frozenset({"seed", "clockMode", "timeZone", "locale", "fixtureRevision", "promptRevision", "policyRevision"})
 _REVOKE_FIELDS = frozenset({"action", "authorizationRecordId", "revokedAt"})
 _CAPTURE_CLASSES = frozenset(
@@ -365,6 +385,31 @@ def _validate_definition_request(kind: str, body: Mapping[str, object]) -> None:
         raise EvaluationQueryError("components are invalid")
     for index, component in enumerate(components):
         _validate_component(component, f"components[{index}]")
+    variants = item.get("variantBindings", [])
+    if not isinstance(variants, list) or len(variants) > 16:
+        raise EvaluationQueryError("variantBindings are invalid")
+    variant_ids: set[object] = set()
+    for index, raw_variant in enumerate(variants):
+        variant = _closed_definition_object(raw_variant, _VARIANT_FIELDS, f"variantBindings[{index}]")
+        variant_id = variant.get("variantId")
+        _model_identifier(variant_id, f"variantBindings[{index}].variantId")
+        if variant_id in variant_ids:
+            raise EvaluationQueryError("variantBindings identifiers must be unique")
+        variant_ids.add(variant_id)
+        variant_components = variant.get("components")
+        if not isinstance(variant_components, list) or not 1 <= len(variant_components) <= 32:
+            raise EvaluationQueryError("variantBindings components are invalid")
+        for component_index, component in enumerate(variant_components):
+            _validate_component(component, f"variantBindings[{index}].components[{component_index}]")
+        model = _closed_definition_object(
+            variant.get("model"), _MODEL_FIELDS, f"variantBindings[{index}].model"
+        )
+        _model_identifier(model.get("modelId"), f"variantBindings[{index}].modelId")
+        _version(model.get("modelVersion"), f"variantBindings[{index}].modelVersion")
+        if not isinstance(model.get("modelDigest"), str) or _DIGEST.fullmatch(cast(str, model["modelDigest"])) is None:
+            raise EvaluationQueryError(f"variantBindings[{index}].modelDigest is invalid")
+        for field in ("configurationRevision", "promptRevision", "policyRevision", "deploymentRevision"):
+            _version(variant.get(field), f"variantBindings[{index}].{field}")
     limits = _closed_definition_object(item.get("limits"), _LIMIT_FIELDS, "limits")
     for field, value in limits.items():
         if type(value) is not int or value < 0:
@@ -754,7 +799,7 @@ def _project_definition_replay(
         if _version(replay.get(version_key), version_key) != resource_version:
             raise EvaluationUnavailable("stored definition replay binding is unavailable")
         state = replay.get("state")
-        if state not in {"active", "disabled", "archived"}:
+        if state not in {"active", "superseded", "deleted"}:
             raise EvaluationUnavailable("stored definition replay state is unavailable")
         internal = dict(replay)
         if kind == "dataset":
@@ -997,6 +1042,7 @@ class EvaluationApplicationService:
         deletion_service: Any | None = None,
         live: EvaluationLiveEventPort | None = None,
         metrics: Any | None = None,
+        experiment_service: EvaluationExperimentService | None = None,
     ) -> None:
         self.query = query or EvaluationQueryService()
         self.definition_service = definition_service
@@ -1004,16 +1050,28 @@ class EvaluationApplicationService:
         self.calibration_service = calibration_service
         self.deletion_service = deletion_service
         self.metrics = metrics
+        self.experiment_service = experiment_service or EvaluationExperimentService()
         if live is None and self.query.backend is not None:
             raise EvaluationQueryError("durable evaluation live-event port is required")
         self.live: EvaluationLiveEventPort = live or EvaluationLiveEventStore()
 
     async def _publish(
-        self, resource_type: str, resource_id: object, change: str, state: object
+        self,
+        resource_type: str,
+        resource_id: object,
+        change: str,
+        state: object,
+        resource_version: str | None = None,
     ) -> None:
         started = monotonic()
         try:
-            await self.live.publish(resource_type, str(resource_id), change, str(state))
+            await self.live.publish(
+                resource_type,
+                str(resource_id),
+                change,
+                str(state),
+                resource_version,
+            )
         except Exception:
             self._record_span(
                 operation="live_publish",
@@ -1089,6 +1147,73 @@ class EvaluationApplicationService:
             "observatory_evaluation_api_operation_count",
             labels={"operation": operation, "outcome": outcome},
         )
+
+    async def create_experiment(
+        self, body: Mapping[str, object], *, idempotency_key: str | None
+    ) -> dict[str, object]:
+        result = await self.experiment_service.create_experiment(
+            body, idempotency_key=idempotency_key
+        )
+        await self._publish(
+            "evaluation_experiment",
+            result["experimentId"],
+            "created",
+            str(result["state"]),
+            str(result["experimentVersion"]),
+        )
+        return result
+
+    async def create_baseline(
+        self, body: Mapping[str, object], *, idempotency_key: str | None
+    ) -> dict[str, object]:
+        result = await self.experiment_service.create_baseline(
+            body, idempotency_key=idempotency_key
+        )
+        await self._publish(
+            "evaluation_baseline",
+            result["baselineId"],
+            "candidate_created",
+            str(result["state"]),
+            str(result["baselineVersion"]),
+        )
+        return result
+
+    async def promote_baseline(
+        self, baseline_id: str, body: Mapping[str, object], *, idempotency_key: str | None
+    ) -> dict[str, object]:
+        result = await self.experiment_service.promote_baseline(
+            baseline_id, body, idempotency_key=idempotency_key
+        )
+        await self._publish(
+            "evaluation_baseline",
+            baseline_id,
+            "promoted",
+            str(result["state"]),
+            str(result["baselineVersion"]),
+        )
+        return result
+
+    async def create_regression(
+        self, body: Mapping[str, object], *, idempotency_key: str | None
+    ) -> dict[str, object]:
+        result = await self.experiment_service.create_regression(
+            body, idempotency_key=idempotency_key
+        )
+        await self._publish(
+            "evaluation_regression",
+            result["regressionId"],
+            "comparison_completed",
+            str(result["decision"]),
+            str(result["regressionVersion"]),
+        )
+        attribution = result.get("attribution")
+        if isinstance(attribution, Mapping):
+            await self._publish(
+                "evaluation_attribution", attribution["attributionId"],
+                "attribution_completed", str(attribution["availability"]),
+                str(attribution["attributionVersion"]),
+            )
+        return result
 
     def record_definition_command_ledger(
         self,
@@ -1620,6 +1745,7 @@ class EvaluationApplicationService:
             "dataset": resource_ref(dataset_id, dataset_version),
             "evaluators": evaluator_projection,
             "components": [dict(cast(Mapping[str, object], item)) for item in components],
+            "variantBindings": [dict(cast(Mapping[str, object], item)) for item in body.get("variantBindings", [])],
             "limits": dict(cast(Mapping[str, object], body.get("limits", {}))),
             "manualThresholds": thresholds_payload,
             "captureAuthorization": {
@@ -3088,6 +3214,222 @@ def register_evaluation_routes(
         except EvaluationNotFound as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         except EvaluationUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return _no_store(result)
+
+    # AURA-0096 immutable experiment resources.  These routes deliberately
+    # use the same owner/CSRF/idempotency boundary as the existing evaluation
+    # commands; the service accepts only closed metadata references.
+    @app.get("/api/v1/evaluation/experiments")
+    async def list_experiments(
+        request: Request,
+        cursor: str | None = None,
+        page_size: str | None = None,
+        suite_id: str | None = None,
+        state: str | None = None,
+    ) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"cursor", "page_size", "suite_id", "state"}))
+            if suite_id is not None:
+                _uuid(suite_id, "suite_id")
+            if state is not None and state not in {"active", "superseded", "deleted"}:
+                raise EvaluationQueryError("state is invalid")
+            result = await evaluation.experiment_service.list_resources(
+                "experiments", cursor=cursor, limit=min(200, max(1, int(page_size or "50"))),
+                filters={"suite": suite_id, "state": state},
+            )
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except (ValueError, ExperimentError) as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        return _no_store(result)
+
+    @app.post("/api/v1/evaluation/experiments", status_code=201)
+    async def create_experiment(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        await command_headers(request, confirmation=None, idempotency_key=idempotency_key)
+        try:
+            result = await evaluation.create_experiment(await body(request), idempotency_key=idempotency_key)
+        except ExperimentConflict as exc:
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
+
+    @app.get("/api/v1/evaluation/experiments/{experiment_id}")
+    async def get_experiment(experiment_id: str, request: Request, version: str) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"version"}))
+            _version(version, "version")
+            result = await evaluation.experiment_service.get_resource("experiments", experiment_id, version)
+        except ExperimentNotFound as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return _no_store(result)
+
+    @app.get("/api/v1/evaluation/baselines")
+    async def list_baselines(
+        request: Request,
+        cursor: str | None = None,
+        page_size: str | None = None,
+        suite_id: str | None = None,
+        experiment_id: str | None = None,
+        state: str | None = None,
+    ) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"cursor", "page_size", "suite_id", "experiment_id", "state"}))
+            for key, value in (("suite_id", suite_id), ("experiment_id", experiment_id)):
+                if value is not None:
+                    _uuid(value, key)
+            if state is not None and state not in {"candidate", "promoted"}:
+                raise ExperimentError("state is invalid")
+            result = await evaluation.experiment_service.list_resources(
+                "baselines", cursor=cursor, limit=min(200, max(1, int(page_size or "50"))),
+                filters={"suite": suite_id, "experiment": experiment_id, "state": state},
+            )
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except (ValueError, ExperimentError) as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        return _no_store(result)
+
+    @app.post("/api/v1/evaluation/baselines", status_code=201)
+    async def create_baseline(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        await command_headers(request, confirmation=None, idempotency_key=idempotency_key)
+        try:
+            result = await evaluation.create_baseline(await body(request), idempotency_key=idempotency_key)
+        except ExperimentConflict as exc:
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
+
+    @app.get("/api/v1/evaluation/baselines/{baseline_id}")
+    async def get_baseline(baseline_id: str, request: Request, version: str) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"version"}))
+            _version(version, "version")
+            result = await evaluation.experiment_service.get_resource("baselines", baseline_id, version)
+        except ExperimentNotFound as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return _no_store(result)
+
+    @app.post("/api/v1/evaluation/baselines/{baseline_id}/promotion")
+    async def promote_baseline(
+        baseline_id: str,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        confirmation: str | None = Header(default=None, alias="X-Observatory-Confirmation"),
+    ) -> JSONResponse:
+        await command_headers(request, confirmation=confirmation, idempotency_key=idempotency_key)
+        if confirmation != "PROMOTE_IMMUTABLE_BASELINE":
+            raise HTTPException(status_code=400, detail="invalid request")
+        try:
+            result = await evaluation.promote_baseline(baseline_id, await body(request), idempotency_key=idempotency_key)
+        except ExperimentNotFound as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ExperimentConflict as exc:
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return _no_store(result)
+
+    @app.get("/api/v1/evaluation/regressions")
+    async def list_regressions(
+        request: Request,
+        cursor: str | None = None,
+        page_size: str | None = None,
+        experiment_id: str | None = None,
+        baseline_id: str | None = None,
+        decision: str | None = None,
+    ) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"cursor", "page_size", "experiment_id", "baseline_id", "decision"}))
+            for key, value in (("experiment_id", experiment_id), ("baseline_id", baseline_id)):
+                if value is not None:
+                    _uuid(value, key)
+            if decision is not None and decision not in {"regressed", "unchanged", "inconclusive", "unavailable", "incompatible"}:
+                raise ExperimentError("decision is invalid")
+            result = await evaluation.experiment_service.list_resources(
+                "regressions", cursor=cursor, limit=min(200, max(1, int(page_size or "50"))),
+                filters={"experiment": experiment_id, "baseline": baseline_id, "decision": decision},
+            )
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except (ValueError, ExperimentError) as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        return _no_store(result)
+
+    @app.post("/api/v1/evaluation/regressions", status_code=201)
+    async def create_regression(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        await command_headers(request, confirmation=None, idempotency_key=idempotency_key)
+        try:
+            result = await evaluation.create_regression(await body(request), idempotency_key=idempotency_key)
+        except ExperimentConflict as exc:
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
+
+    @app.get("/api/v1/evaluation/regressions/{regression_id}")
+    async def get_regression(regression_id: str, request: Request, version: str) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"version"}))
+            _version(version, "version")
+            result = await evaluation.experiment_service.get_resource(
+                "regressions", regression_id, version
+            )
+        except ExperimentNotFound as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except ExperimentUnavailable as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return _no_store(result)
+
+    @app.get("/api/v1/evaluation/regressions/{regression_id}/attribution")
+    async def get_regression_attribution(
+        regression_id: str, request: Request, version: str
+    ) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_query_parameters(request, frozenset({"version"}))
+            _version(version, "version")
+            result = await evaluation.experiment_service.attribution(regression_id, version)
+        except ExperimentNotFound as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ExperimentError as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except ExperimentUnavailable as exc:
             raise HTTPException(status_code=503, detail="service unavailable") from exc
         return _no_store(result)
 

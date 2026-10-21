@@ -10,6 +10,10 @@ import {
   type EvaluationDatasetPage,
   type EvaluationEvaluatorPage,
   type EvaluationHistoryPage,
+  type EvaluationExperimentPage,
+  type EvaluationBaselinePage,
+  type EvaluationRegressionPage,
+  type EvaluationAttribution,
   type EvaluationJobPage,
   type EvaluationJob,
   type EvaluationQualificationPage,
@@ -18,8 +22,11 @@ import {
   type EvaluationRunnerExecutionProvenance,
   type EvaluationScorePage,
   type EvaluationSuitePage,
+  type EvaluationSuite,
+  type EvaluationExperimentVariant,
   type EvaluationQueuedAttempt,
   type ObservatoryOperationResponse,
+  type ObservatoryApiOperations,
 } from './generated/observatory-api';
 import { ObservatoryApiClient, type ObservatoryTransport } from './observatory-api-client';
 
@@ -63,6 +70,9 @@ describe('ObservatoryApiClient', () => {
       'listEvaluationCalibrations',
       'listEvaluationQualifications',
       'listEvaluationHistory',
+      'listExperiments',
+      'listBaselines',
+      'listRegressions',
     ] as const) {
       expect(OBSERVATORY_API_OPERATIONS[operation].responseMode).toBe('json');
     }
@@ -96,6 +106,9 @@ describe('ObservatoryApiClient', () => {
       'listEvaluationCalibrations',
       'listEvaluationQualifications',
       'listEvaluationHistory',
+      'listExperiments',
+      'listBaselines',
+      'listRegressions',
     ] as const;
     for (const operation of pageOperations) {
       expect(OBSERVATORY_API_OPERATIONS[operation].responseMode).toBe('json');
@@ -114,6 +127,37 @@ describe('ObservatoryApiClient', () => {
     expectTypeOf<ObservatoryOperationResponse<'listEvaluationCalibrations'>>().toEqualTypeOf<EvaluationCalibrationPage>();
     expectTypeOf<ObservatoryOperationResponse<'listEvaluationQualifications'>>().toEqualTypeOf<EvaluationQualificationPage>();
     expectTypeOf<ObservatoryOperationResponse<'listEvaluationHistory'>>().toEqualTypeOf<EvaluationHistoryPage>();
+    expectTypeOf<ObservatoryOperationResponse<'listExperiments'>>().toEqualTypeOf<EvaluationExperimentPage>();
+    expectTypeOf<ObservatoryOperationResponse<'listBaselines'>>().toEqualTypeOf<EvaluationBaselinePage>();
+    expectTypeOf<ObservatoryOperationResponse<'listRegressions'>>().toEqualTypeOf<EvaluationRegressionPage>();
+    expectTypeOf<ObservatoryOperationResponse<'getRegressionAttribution'>>().toEqualTypeOf<EvaluationAttribution>();
+  });
+
+  it('keeps experiment, promotion, and regression behavior outside the generated client', () => {
+    expect(OBSERVATORY_API_OPERATIONS.createExperiment).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/experiments',
+      requestMode: 'json',
+      responseMode: 'json',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.promoteBaseline).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/baselines/{baseline_id}/promotion',
+      requestMode: 'json',
+      responseMode: 'json',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.createRegressionComparison).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/regressions',
+      requestMode: 'json',
+      responseMode: 'json',
+    });
+    expectTypeOf<ObservatoryApiOperations['getRegression']['query']>().toEqualTypeOf<{
+      readonly version: string;
+    }>();
+    expectTypeOf<ObservatoryApiOperations['getRegressionAttribution']['query']>().toEqualTypeOf<{
+      readonly version: string;
+    }>();
   });
 
   it('types queued worker absence and admitted job provenance without fabrication', () => {
@@ -122,5 +166,11 @@ describe('ObservatoryApiClient', () => {
     >();
     expectTypeOf<EvaluationClaimedAttempt['workerComponentId']>().toEqualTypeOf<string>();
     expectTypeOf<EvaluationJob['provenance']>().toEqualTypeOf<EvaluationRunnerExecutionProvenance>();
+  });
+
+  it('keeps final suite variant bindings available in the generated transport type', () => {
+    expectTypeOf<EvaluationSuite['variantBindings']>().toEqualTypeOf<
+      ReadonlyArray<EvaluationExperimentVariant> | undefined
+    >();
   });
 });

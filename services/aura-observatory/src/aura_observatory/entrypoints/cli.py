@@ -98,7 +98,7 @@ def evaluation_list(
         ...,
         help=(
             "One of datasets, suites, evaluators, jobs, results, artifacts, "
-            "reviews, calibrations, qualifications."
+            "reviews, calibrations, qualifications, experiments, baselines, regressions."
         ),
     ),
     limit: int = typer.Option(50, min=1, max=200),
@@ -116,7 +116,9 @@ def evaluation_list(
     try:
         service = build_evaluation_api_service(Settings())
         result = asyncio.run(
-            service.list_collection(kind, cursor=cursor, limit=limit)
+            service.experiment_service.list_resources(kind, cursor=cursor, limit=limit)
+            if kind in {"experiments", "baselines", "regressions"}
+            else service.list_collection(kind, cursor=cursor, limit=limit)
         )
     except Exception as exc:
         # A CLI operator gets a finite, content-free failure.  Provider
@@ -139,6 +141,9 @@ def evaluation_list(
                 or item.get("calibrationId")
                 or item.get("qualificationId")
                 or item.get("evaluatorId")
+                or item.get("experimentId")
+                or item.get("baselineId")
+                or item.get("regressionId")
             )
             typer.echo(str(identifier))
 

@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from aura_observatory.composition import (
     build_calibration_service,
+    build_evaluation_experiment_service,
     build_evaluation_orchestration,
     build_local_judge_service,
 )
@@ -65,6 +66,8 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
     stop_event = asyncio.Event()
     stop_task = asyncio.create_task(_wait_stop(stop, stop_event)) if stop is not None else None
     service: EvaluationOrchestrationService | None = None
+    experiment_service: Any | None = None
+    projection_recovery_task: asyncio.Task[None] | None = None
     judge_service: LocalJudgeService | None = None
     calibration_service: CalibrationService | None = None
     try:
@@ -74,6 +77,22 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
                 connection, max_bytes=resolved.evaluation_max_envelope_bytes
             ),
         )
+        # Drain persisted comparison facts once before dispatch begins, then
+        # keep a single bounded recovery loop owned by this worker.  The
+        # settings guard keeps lightweight transport tests and intentionally
+        # incomplete local configurations from constructing provider adapters.
+        if getattr(resolved, "database_url", None):
+            experiment_service = build_evaluation_experiment_service(
+                resolved, metrics=getattr(service, "metrics", None)
+            )
+            await _recover_projection_outbox_once(experiment_service)
+            projection_recovery_task = asyncio.create_task(
+                _run_projection_recovery(
+                    experiment_service,
+                    stop_event,
+                    poll_seconds=resolved.evaluation_poll_seconds,
+                )
+            )
         # Compose the worker-only judge boundary in the same process. The
         # orchestration worker remains the durable job authority; no public API
         # or Core request path depends on this optional provider.
@@ -150,6 +169,9 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
                 await _bounded_wait(stop_event, resolved.evaluation_poll_seconds)
         finally:
             stop_event.set()
+            if projection_recovery_task is not None and not projection_recovery_task.done():
+                projection_recovery_task.cancel()
+                await asyncio.gather(projection_recovery_task, return_exceptions=True)
             if not result_consumer.done():
                 try:
                     await asyncio.wait_for(
@@ -170,6 +192,7 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
             getattr(service, "metrics", None),
             getattr(judge_service, "metrics", None),
             getattr(calibration_service, "metrics", None),
+            getattr(experiment_service, "metrics", None),
         ]
         seen_metrics: set[int] = set()
         for metrics in metrics_instances:
@@ -204,6 +227,29 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
 async def _wait_stop(stop: Awaitable[None], event: asyncio.Event) -> None:
     await stop
     event.set()
+
+
+async def _recover_projection_outbox_once(service: Any) -> int:
+    """Run one bounded startup drain without exposing provider diagnostics."""
+
+    recover = getattr(service, "recover_projection_outbox", None)
+    if not callable(recover):
+        return 0
+    try:
+        return int(await cast(Callable[..., Awaitable[Any]], recover)(limit=16))
+    except Exception:
+        _LOGGER.warning("evaluation projection recovery unavailable", extra={"code": "unavailable"})
+        return 0
+
+
+async def _run_projection_recovery(
+    service: Any, stop_event: asyncio.Event, *, poll_seconds: float
+) -> None:
+    """Continuously drain at most one small outbox page per poll interval."""
+
+    while not stop_event.is_set():
+        await _recover_projection_outbox_once(service)
+        await _bounded_wait(stop_event, poll_seconds)
 
 
 async def _bounded_wait(event: asyncio.Event, timeout: float) -> None:

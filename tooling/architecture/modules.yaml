@@ -167,6 +167,7 @@ modules:
   - aura-observatory.evaluation-orchestration
   - aura-observatory.evaluation-storage
   - aura-observatory.calibration
+  - aura-observatory.evaluation-experiments
 - id: aura-observatory.adapters.evaluation-query
   root: services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
   kind: provider
@@ -283,6 +284,8 @@ modules:
   - aura-observatory.adapters.local-ollama
   - aura-observatory.local-judges
   - aura-observatory.calibration
+  - aura-observatory.evaluation-experiments
+  - aura-observatory.adapters.evaluation-experiments
   - aura-observatory.auth
   - aura-observatory.ingest
   - aura-observatory.settings
@@ -2380,6 +2383,27 @@ modules:
   - aura-observatory.ports
   - aura-observatory.metrics
   - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-experiments
+  root: services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  python_modules:
+  - aura_observatory.evaluation_experiments
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-contract.evaluation-v1
+- id: aura-observatory.adapters.evaluation-experiments
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_experiments
+  dependencies:
+  - aura-observatory.evaluation-experiments
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-storage
+  - aura-observatory.ports
 - id: aura-observatory.evaluation-transport
   root: services/aura-observatory/src/aura_observatory/evaluation_transport.py
   kind: provider

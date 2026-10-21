@@ -1,0 +1,239 @@
+agent: contract_steward
+work_item: AURA-0096
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura0096_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1, contracts.observatory-v1, frontend.platform.observatory-api-client
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_aura0096_experiment_contracts.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+  - work-items/handoffs/AURA-0096-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for the
+    evaluation-v1, observatory-v1, and generated Observatory Angular transport
+    surfaces during this ownership slice. Business behavior, persistence,
+    protected repository baselines, Core contracts, and durable runner
+    protocols were not changed.
+  compatibility: backward_compatible
+  definitions:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      changes:
+        - >-
+          Added closed RegressionDecision and AttributionReport resource
+          variants to the existing atomic evaluation-v1 union. Every existing
+          resource variant remains byte-for-byte valid and distinguishable by
+          its existing resourceType.
+        - >-
+          Added deterministic absolute and relative metric comparisons with
+          separate operational and quality classifications, exact direction,
+          unit, aggregation, finite values, minimum samples, explicit missing-
+          evidence policy, sample counts, and finite outcomes.
+        - >-
+          Added content-free opaque run, trace, result, score, and artifact-
+          reference evidence identities with required digest and version.
+          Evidence cannot carry content, a locator, filename, endpoint,
+          credential, owner identity, or arbitrary attributes.
+        - >-
+          Added evidence-backed changed-binding attribution for component,
+          model, deployment, prompt, policy, and configuration revisions with
+          bounded deterministic rank and affected/unaffected cohorts. Rank is
+          explicitly not causal or probabilistic confidence.
+        - >-
+          Made unavailable, insufficient, incompatible, partial, and missing
+          evidence explicit. Unavailable attribution requires an empty
+          candidate set and cannot synthesize a cause.
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - >-
+          Added owner-session list/create/detail resources for immutable
+          experiments, bounded explicit cohorts and exact variants under
+          /api/v1/evaluation/experiments.
+        - >-
+          Added baseline candidate list/create/detail and irreversible manual
+          promotion resources under /api/v1/evaluation/baselines. Promotion
+          requires same-origin CSRF, a UUID idempotency key, the exact
+          PROMOTE_IMMUTABLE_BASELINE acknowledgement, an expected candidate
+          version, an opaque authorization record, and a UTC action time.
+          Candidate and response DTOs also preserve the exact seed, clock,
+          locale, fixture, prompt, and policy reproducibility boundary.
+        - >-
+          Added bounded deterministic comparison list/create/detail and
+          attribution resources under /api/v1/evaluation/regressions. Request
+          DTOs accept only exact persisted experiment, baseline, cohort,
+          variant, result, evaluator, and threshold metadata; callers cannot
+          submit comparison values or content.
+          Detail and attribution reads require the exact immutable regression
+          version and report malformed or missing version queries as 400.
+        - >-
+          Added snapshot-stable pages capped at 200, exact immutable references,
+          bounded variants, cohorts, thresholds, comparisons, evidence, and
+          attribution candidates, and explicit incomplete/unavailable states.
+          Late evidence is an explicit additive state and cannot silently pass.
+        - >-
+          Extended only the dedicated evaluation history and evaluation SSE
+          vocabularies with experiment, baseline, regression, attribution,
+          promotion, and comparison notifications. Evaluation SSE remains a
+          closed metadata_only resource-change notification without evidence,
+          scores, content, credentials, or URLs.
+        - >-
+          Kept authenticated response handling under the existing no-store
+          contract policy. Raw artifacts, prompts, responses, comments,
+          rationale, filenames, endpoints, credentials, owner identity, and
+          arbitrary attributes remain structurally absent.
+  compatibility_notes:
+    - >-
+      evaluation-v1 keeps schemaVersion 1 and adds two resourceType-disjoint
+      union members; no existing resource definition, required field, bound,
+      or enum is narrowed. The additive late evidence-state value belongs only
+      to the new unreleased RegressionDecision resource.
+    - >-
+      observatory-v1 keeps version 1.0.0, root security, every existing path,
+      operationId, request and response schema, and operational SSE contract.
+      All HTTP operations and schemas are additive. Exact regression version
+      queries refine new unreleased AURA-0096 detail operations and do not alter
+      any pre-AURA-0096 consumer.
+    - >-
+      The existing generic evaluation history and dedicated evaluation SSE
+      enums are widened only for newly persisted AURA-0096 resources. Existing
+      payload values remain valid and new values are emitted only after the
+      corresponding additive producer is deployed.
+    - >-
+      Generated client exports and descriptors are additive. The client remains
+      a transport-only facade and contains no authorization, validation,
+      promotion, comparison, retry, persistence, or state-reconciliation logic.
+  producers:
+    - >-
+      Aura Observatory experiment, immutable-baseline, deterministic-regression,
+      attribution, history, and evaluation-live-event application boundaries
+      assigned to AURA-0096.
+    - >-
+      Existing Observatory evaluation definition, result, score, deployment,
+      trace, and artifact-reference stores, only through explicit bounded DTO
+      mapping and exact persisted identities.
+  consumers:
+    - >-
+      Generated @aura/observatory-api-client types, operation descriptors, and
+      transport-only ObservatoryApiClient facade.
+    - >-
+      Aura Observatory experiment, baseline promotion, regression, evidence,
+      attribution, cohort, and history Web workflows assigned to AURA-0096.
+    - >-
+      AURA-0097 dashboards, in-product alerts, annotations, and incident views
+      consuming persisted regression and attribution metadata.
+  rollout:
+    - >-
+      Deploy the additive Observatory producer and migrations before enabling
+      the new Web workflows. Persist authoritative state before emitting the
+      matching metadata-only evaluation SSE notification.
+    - >-
+      Create candidates and promote baselines through distinct idempotent
+      commands. Enforce exact candidate version and immutable source result
+      identities in PostgreSQL; never mutate or demote a promoted record and
+      never read or write protected repository baselines.
+    - >-
+      Resolve comparison values from persisted finite score and operational
+      projections, apply only the contracted deterministic rules, and return
+      explicit unavailable, incompatible, or inconclusive states when evidence
+      is incomplete.
+    - >-
+      Regenerate the Angular client from the checked-in OpenAPI document and
+      reject generated drift. Browser consumers keep authenticated data in
+      memory and treat REST snapshots as authoritative over SSE hints.
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0096.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - >-
+      AJV 8.18 JSON Schema 2020-12 compilation for evaluation-v1 with the
+      evaluation-failure-codes-v1 external reference registered
+    - uv run ruff check contracts/tests
+    - uv run pytest contracts/tests -q (20 passed)
+    - pnpm --dir frontend exec nx run observatory-api-client:validate-contract
+    - pnpm --dir frontend exec nx run observatory-api-client:check-generated
+    - pnpm --dir frontend exec nx test observatory-api-client (5 passed)
+    - pnpm --dir frontend exec nx lint observatory-api-client
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Observatory persistence, API producer, migration, CLI, feature-library,
+      application, Storybook, browser, and full-stack checks belong to the
+      other AURA-0096 ownership zones and aggregate integration.
+decisions:
+  - >-
+    Kept both contract identifiers and versions stable because the changes are
+    additive and all old instances and operations remain valid.
+  - >-
+    Reused existing exact component, model, evaluator, suite, resource,
+    provenance, capture, limit, retention, digest, UUID, UTC, and revision
+    vocabulary rather than duplicating business models in transport.
+    Baseline transport reuses EvaluationReproducibility so immutable source
+    results remain tied to their exact deterministic execution boundary.
+  - >-
+    Kept experiment variants declarative and exact, cohorts as bounded explicit
+    case identity sets, and regression creation as references plus rules. No
+    request can select an executor, provider, endpoint, storage location, or
+    caller-defined dimension.
+  - >-
+    Represented absolute and relative comparison outputs separately and made
+    statistical significance, probabilistic confidence, and automatic change-
+    point claims structurally unavailable. Preserved late-arriving evidence as
+    an explicit state rather than folding it into complete, partial, or missing.
+  - >-
+    Used a dedicated irreversible promotion confirmation rather than widening
+    the existing generic evaluation confirmation enum, preserving existing
+    command consumers and making the destructive intent explicit.
+  - >-
+    Added regression and attribution to the dedicated evaluation stream only;
+    the operational /api/v1/events stream and SsePayload remain unchanged.
+  - >-
+    Did not consult external documentation because dependency-version
+    verification was not assigned; repository ADR-0016 and the checked-in
+    generator define the authorized protocol and client behavior.
+risks:
+  - >-
+    OpenAPI and JSON Schema cannot prove referenced record existence, timestamp
+    ordering, digest correctness, cohort membership in the exact suite,
+    capture-boundary compatibility, idempotent command ownership, or promoted-
+    record immutability. Producers must enforce these invariants transactionally.
+  - >-
+    Enum widening is backward compatible for payload validation but consumers
+    that implement exhaustive source-language switches must regenerate before
+    the producer emits new evaluation history or SSE values; rollout ordering
+    explicitly requires that sequence.
+  - >-
+    Attribution rank communicates deterministic evidence order only. Product
+    copy and downstream alerts must not describe it as causation, probability,
+    confidence, or statistical significance.
+unresolved: []

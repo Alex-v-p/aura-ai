@@ -29,6 +29,8 @@ from aura_observatory.ports import (
     EvaluationArtifactRepository,
     EvaluationObjectStore,
     EvaluationScoreStore,
+    ExperimentRegressionFactStore,
+    ExperimentRetentionPort,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1052,12 +1054,16 @@ class EvaluationDeletionService:
         score_store: EvaluationScoreStore | _ScoreStoreFixture,
         metrics: Any | None = None,
         event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
+        experiment_repository: ExperimentRetentionPort | None = None,
+        regression_fact_store: ExperimentRegressionFactStore | None = None,
     ) -> None:
         self.repository = repository
         self.object_store = object_store
         self.score_store = score_store
         self.metrics = metrics or EvaluationMetrics()
         self.event_publisher = event_publisher
+        self.experiment_repository = experiment_repository
+        self.regression_fact_store = regression_fact_store
 
     async def create_command(self, command: DeletionCommand) -> DeletionCommand:
         """Capture immutable artifact and score targets before queueing work."""
@@ -1180,6 +1186,15 @@ class EvaluationDeletionService:
                             await self.score_store.delete_scores_for_artifact(
                                 _target_reference(target)
                             )
+                if self.experiment_repository is not None:
+                    if self.regression_fact_store is None:
+                        raise DeletionFailure("storage_failure")
+                    regression_ids = await self.experiment_repository.regression_projection_ids(
+                        command.selector, snapshot_at=command.requested_at
+                    )
+                    await self.experiment_repository.fence_projection_deletion(command.selector)
+                    await self.regression_fact_store.delete_regression_facts(regression_ids)
+                    await self.experiment_repository.delete_for_selector(command.selector)
                 await lease.ensure()
                 await _fenced_phase(self.repository, command.command_id, "objects", lease.token)
             except Exception as exc:

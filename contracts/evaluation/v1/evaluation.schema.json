@@ -22,6 +22,8 @@
     { "$ref": "#/$defs/JudgeEnsemble" },
     { "$ref": "#/$defs/Experiment" },
     { "$ref": "#/$defs/Baseline" },
+    { "$ref": "#/$defs/RegressionDecision" },
+    { "$ref": "#/$defs/AttributionReport" },
     { "$ref": "#/$defs/Replay" }
   ],
   "$defs": {
@@ -143,7 +145,7 @@
       "additionalProperties": false,
       "required": ["id", "version"],
       "properties": {
-        "id": { "$ref": "#/$defs/Uuid" },
+        "id": { "$ref": "#/$defs/SafeIdentifier" },
         "version": { "$ref": "#/$defs/Version" }
       }
     },
@@ -930,6 +932,7 @@
         "dataset": { "$ref": "#/$defs/ResourceReference" },
         "evaluators": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/EvaluatorReference" } },
         "components": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ComponentBinding" } },
+        "variantBindings": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/ExperimentVariant" } },
         "limits": { "$ref": "#/$defs/ExecutionLimits" },
         "manualThresholds": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/ManualThreshold" } },
         "retentionMode": { "$ref": "#/$defs/RetentionMode" },
@@ -1193,6 +1196,118 @@
         }
       ],
       "description": "Immutable database-owned evaluation baseline. This contract does not authorize mutation of protected repository baselines or automatic promotion."
+    },
+    "ComparisonEvidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "digest", "version"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["run", "trace", "result", "score", "artifact_reference"] },
+        "id": { "$ref": "#/$defs/Uuid" },
+        "digest": { "$ref": "#/$defs/Sha256" },
+        "version": { "$ref": "#/$defs/Version" }
+      },
+      "description": "Opaque content-free evidence identity. It is never an artifact locator, filename, endpoint, credential, owner identity, or raw evaluation content."
+    },
+    "RegressionMetricComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "metricClass", "unit", "aggregation", "direction", "comparisonMode", "baselineValue", "candidateValue", "thresholdValue", "minimumSampleSize", "baselineSampleSize", "candidateSampleSize", "missingEvidencePolicy", "outcome"],
+      "properties": {
+        "metric": { "$ref": "#/$defs/SafeIdentifier" },
+        "metricClass": { "type": "string", "enum": ["operational", "quality"] },
+        "unit": { "type": "string", "enum": ["ratio", "count", "milliseconds", "bytes", "tokens", "operations", "per_second", "score"] },
+        "aggregation": { "type": "string", "enum": ["minimum", "maximum", "mean", "p50", "p95", "p99", "total"] },
+        "direction": { "type": "string", "enum": ["higher_is_better", "lower_is_better"] },
+        "comparisonMode": { "type": "string", "enum": ["absolute", "relative"] },
+        "baselineValue": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "candidateValue": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "difference": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "relativeChange": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+        "thresholdValue": { "type": "number", "minimum": 0, "maximum": 1000000000000000 },
+        "minimumSampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "baselineSampleSize": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "candidateSampleSize": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "missingEvidencePolicy": { "type": "string", "enum": ["regressed", "inconclusive", "not_applicable"] },
+        "outcome": { "type": "string", "enum": ["regressed", "unchanged", "inconclusive", "unavailable", "incompatible"] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "comparisonMode": { "const": "absolute" } }, "required": ["comparisonMode"] },
+          "then": { "type": "object", "required": ["difference"], "not": { "type": "object", "required": ["relativeChange"] } },
+          "else": { "type": "object", "required": ["relativeChange"], "not": { "type": "object", "required": ["difference"] } }
+        }
+      ],
+      "description": "One deterministic finite comparison. It makes no statistical-significance, probability, confidence, or change-point claim."
+    },
+    "AttributionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "bindingKind", "beforeRevision", "afterRevision", "affectedCohortIds", "unaffectedCohortIds", "evidence"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "bindingKind": { "type": "string", "enum": ["component", "model", "deployment", "prompt", "policy", "configuration"] },
+        "componentId": { "$ref": "#/$defs/ComponentId" },
+        "beforeRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "afterRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "affectedCohortIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "unaffectedCohortIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "evidence": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/ComparisonEvidenceReference" } }
+      },
+      "description": "Evidence-backed content-free correlation only. Rank is deterministic ordering, not probability or causal confidence."
+    },
+    "RegressionDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "regressionId", "regressionVersion", "idempotencyKey", "experiment", "baseline", "variantId", "cohortIds", "baselineResultIds", "candidateResultIds", "comparisons", "decision", "evidenceState", "evidence", "captureClassification", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "regression_decision" },
+        "regressionId": { "$ref": "#/$defs/Uuid" },
+        "regressionVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "experiment": { "$ref": "#/$defs/ResourceReference" },
+        "baseline": { "$ref": "#/$defs/ResourceReference" },
+        "variantId": { "$ref": "#/$defs/SafeIdentifier" },
+        "cohortIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "baselineResultIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "candidateResultIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "comparisons": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/RegressionMetricComparison" } },
+        "decision": { "type": "string", "enum": ["regressed", "unchanged", "inconclusive", "unavailable", "incompatible"] },
+        "evidenceState": { "type": "string", "enum": ["complete", "partial", "insufficient", "missing", "incompatible", "late"] },
+        "evidence": { "type": "array", "maxItems": 512, "uniqueItems": true, "items": { "$ref": "#/$defs/ComparisonEvidenceReference" } },
+        "captureClassification": { "const": "metadata_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Persisted deterministic absolute or relative comparison. Missing, partial, late, incompatible, or insufficient evidence remains explicit and cannot silently pass."
+    },
+    "AttributionReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "attributionId", "attributionVersion", "regression", "availability", "candidates", "captureClassification", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "attribution_report" },
+        "attributionId": { "$ref": "#/$defs/Uuid" },
+        "attributionVersion": { "$ref": "#/$defs/Version" },
+        "regression": { "$ref": "#/$defs/ResourceReference" },
+        "availability": { "type": "string", "enum": ["available", "unavailable", "insufficient_evidence", "incompatible"] },
+        "candidates": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/AttributionCandidate" } },
+        "captureClassification": { "const": "metadata_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "availability": { "const": "available" } }, "required": ["availability"] },
+          "then": { "type": "object", "properties": { "candidates": { "type": "array", "minItems": 1 } } },
+          "else": { "type": "object", "properties": { "candidates": { "type": "array", "maxItems": 0 } } }
+        }
+      ],
+      "description": "Content-free evidence-backed attribution. An unavailable report never synthesizes a cause."
     },
     "Replay": {
       "type": "object",

@@ -487,6 +487,8 @@ class PostgresEvaluationQueryBackend:
             " UNION ALL SELECT audit_id, resource_type, resource_id::text, NULL, "
             " CASE WHEN operation = 'qualify' THEN 'qualified' WHEN operation = 'revoke' THEN 'revoked' "
             " ELSE 'state_changed' END, outcome, occurred_at FROM observatory_local_judge_audits"
+            " UNION ALL SELECT history_id, resource_type, resource_id, resource_version, change, state, occurred_at "
+            "FROM observatory_evaluation_experiment_history"
             ") AS evaluation_history"
             + where
             + " ORDER BY occurred_at DESC, history_id DESC LIMIT %s"
