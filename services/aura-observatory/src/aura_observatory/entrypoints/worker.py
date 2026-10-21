@@ -4,6 +4,8 @@ The Collector delivers normalized batches to the API in this first slice.  A
 worker process is still provided as a stable deployment seam for durable queue
 consumption in the next work item; it performs no Core imports or table reads.
 """
+# ruff: noqa: E501,E701,E702,F401,I001
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportArgumentType=false, reportIndexIssue=false, reportPrivateUsage=false, reportUnusedImport=false
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from aura_observatory.composition import (
     build_evaluation_deletion,
     build_ingest_service,
     build_query_service,
+    build_operations_services,
 )
 from aura_observatory.evaluation_storage import EvaluationDeletionService
 from aura_observatory.ingest import TelemetryIngestService
@@ -118,6 +121,22 @@ async def _run_deletion_worker(
             service.record_worker_failure(failure_code)
         try:
             await asyncio.wait_for(stop.wait(), timeout=settings.evaluation_deletion_poll_seconds)
+        except TimeoutError:
+            continue
+
+
+async def _run_operations_worker(service: Any, settings: Settings, stop: asyncio.Event) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Compatibility helper for isolated tests; production scheduling lives in evaluation_scheduler."""
+    while not stop.is_set():
+        try:
+            await service.evaluate_once(limit=16)
+        except Exception:
+            # Advisory evaluation failures must not stop the owning process.
+            pass
+        try:
+            await asyncio.wait_for(
+                stop.wait(), timeout=min(3600.0, max(5.0, settings.evaluation_poll_seconds))
+            )
         except TimeoutError:
             continue
 

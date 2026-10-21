@@ -17,6 +17,9 @@ export interface ObservatoryGatewayPort {
   connectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   reconnectEvaluationLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
   disconnectEvaluationLive(): void;
+  connectOperationsLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
+  reconnectOperationsLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void;
+  disconnectOperationsLive(): void;
 }
 export const OBSERVATORY_GATEWAY = new InjectionToken<ObservatoryGatewayPort>('OBSERVATORY_GATEWAY');
 
@@ -39,6 +42,7 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
   private sessionCsrf: string | null = null;
   private source: EventSource | null = null;
   private evaluationSource: EventSource | null = null;
+  private operationsSource: EventSource | null = null;
 
   execute<K extends ObservatoryOperationId>(operation: K, input: ObservatoryOperationInput<K>, signal?: AbortSignal): Promise<ObservatoryOperationResponse<K>> {
     return this.client.execute(operation, input, signal);
@@ -103,6 +107,22 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
   }
 
   disconnectEvaluationLive(): void { this.evaluationSource?.close(); this.evaluationSource = null; }
+
+  connectOperationsLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {
+    if (typeof EventSource === 'undefined' || this.operationsSource) return;
+    this.operationsSource = new EventSource(`${this.baseUrl}${OBSERVATORY_API_OPERATIONS.streamOperationsEvents.pathTemplate}`, { withCredentials: true });
+    this.operationsSource.onopen = onOpen;
+    this.operationsSource.onmessage = onMessage;
+    this.operationsSource.addEventListener('operations.changed', onMessage);
+    this.operationsSource.onerror = onError;
+  }
+
+  reconnectOperationsLive(onOpen: () => void, onMessage: ObservatoryLiveHandler, onError: () => void): void {
+    if (this.operationsSource) return;
+    this.connectOperationsLive(onOpen, onMessage, onError);
+  }
+
+  disconnectOperationsLive(): void { this.operationsSource?.close(); this.operationsSource = null; }
 
   private async request<K extends ObservatoryOperationId>(operation: typeof OBSERVATORY_API_OPERATIONS[K], input: ObservatoryOperationInput<K>, signal?: AbortSignal): Promise<ObservatoryOperationResponse<K>> {
     const path = operation.pathTemplate.replace(/\{([^}]+)\}/g, (_, key: string) => encodeURIComponent(String(input.path[key as keyof typeof input.path])));

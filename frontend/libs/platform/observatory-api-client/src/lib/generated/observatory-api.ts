@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 05792ba96ee03a2fb7029ce2d28cc2b9476c32926468f0e015214e07392c7c3f
+// Contract SHA-256: 3b271a5dd45000b353cca42d91b173e51c8a76bc2cd7682601cdb0ca3475c17a
 
 export type Uuid = string;
 
@@ -228,6 +228,182 @@ export type CreateEvaluationDeletionRequest = DeleteEvaluationJobRequest | Delet
 export type EvaluationDeletionStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type EvaluationDeletionAction = { readonly "actionId": Uuid; readonly "scope": EvaluationDeletionScope; readonly "resourceId": string | null; readonly "resourceVersion": EvaluationVersion | null; readonly "cutoff": UtcInstant | null; readonly "status": EvaluationDeletionStatus; readonly "deletedArtifactCount": number; readonly "deletedMetadataCount": number; readonly "failureCode": EvaluationIdentifier | null; readonly "createdAt": UtcInstant; readonly "startedAt": UtcInstant | null; readonly "finishedAt": UtcInstant | null; };
+
+export type OperationalVersion = string;
+
+export type OperationalResourceId = string;
+
+export type OperationalResourceType = "dashboard" | "saved_query" | "alert_rule" | "alert_group" | "alert_instance" | "alert_suppression" | "alert_acknowledgement" | "incident" | "annotation";
+
+export type OperationalResourceReference = { readonly "resourceType": OperationalResourceType; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type AlertRuleReference = { readonly "resourceType": "alert_rule"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type AlertInstanceReference = { readonly "resourceType": "alert_instance"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type OperationalPageMetadata = { readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type OperationalQueryKind = "analytics" | "run_search" | "trace_search" | "run_comparison" | "regression_search" | "component_health";
+
+export type OperationalWindow = "fifteen_minutes" | "one_hour" | "six_hours" | "twenty_four_hours" | "seven_days" | "thirty_one_days";
+
+export type OperationalFacetName = "component" | "component_version" | "operation" | "deployment" | "environment" | "host" | "service_role" | "provider" | "outcome" | "error_class" | "status" | "retrieval_stage" | "model" | "regression_outcome";
+
+export type OperationalFacet = { readonly "name": OperationalFacetName; readonly "value": DimensionValue; };
+
+export type AnalyticsSavedQuery = { readonly "kind": "analytics"; readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "aggregation": AnalyticsAggregation; readonly "window": OperationalWindow; readonly "bucket": AnalyticsBucket; readonly "groupBy": AnalyticsGroupBy; readonly "focus": AnalyticsFocus; readonly "facets": ReadonlyArray<OperationalFacet>; readonly "seriesLimit": number; readonly "pointLimit": number; };
+
+export type RunSearchSavedQuery = { readonly "kind": "run_search"; readonly "window": OperationalWindow; readonly "statuses": ReadonlyArray<RunStatus>; readonly "components": ReadonlyArray<ComponentId>; readonly "deployments": ReadonlyArray<SafeLabel>; readonly "models": ReadonlyArray<ModelIdentifier>; readonly "pageSize": number; };
+
+export type TraceSearchSavedQuery = { readonly "kind": "trace_search"; readonly "window": OperationalWindow; readonly "components": ReadonlyArray<ComponentId>; readonly "outcomes": ReadonlyArray<Outcome>; readonly "pageSize": number; };
+
+export type RunComparisonSavedQuery = { readonly "kind": "run_comparison"; readonly "baselineRunId": Uuid; readonly "candidateRunId": Uuid; };
+
+export type RegressionSearchSavedQuery = { readonly "kind": "regression_search"; readonly "window": OperationalWindow; readonly "outcomes": ReadonlyArray<EvaluationRegressionOutcome>; readonly "experimentReferences": ReadonlyArray<EvaluationResourceReference>; readonly "pageSize": number; };
+
+export type ComponentHealthSavedQuery = { readonly "kind": "component_health"; readonly "componentId": ComponentId; readonly "componentVersion": SafeLabel; readonly "window": OperationalWindow; readonly "pointLimit": number; };
+
+export type SavedQueryDefinition = AnalyticsSavedQuery | RunSearchSavedQuery | TraceSearchSavedQuery | RunComparisonSavedQuery | RegressionSearchSavedQuery | ComponentHealthSavedQuery;
+
+export type CreateSavedQueryRequest = { readonly "name": string; readonly "definition": SavedQueryDefinition; readonly "createdAt": UtcInstant; };
+
+export type SavedQuery = { readonly "queryId": Uuid; readonly "queryVersion": OperationalVersion; readonly "name": string; readonly "definition": SavedQueryDefinition; readonly "createdAt": UtcInstant; };
+
+export type SavedQueryPage = { readonly "items": ReadonlyArray<SavedQuery>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type SavedQueryReference = { readonly "queryId": Uuid; readonly "queryVersion": OperationalVersion; };
+
+export type SavedQueryExecutionState = "complete" | "partial" | "unavailable" | "incompatible";
+
+export type SavedQueryFreshnessState = "fresh" | "stale" | "unavailable";
+
+export type SavedQueryExecutionFreshness = { readonly "state": SavedQueryFreshnessState; readonly "measuredAt": UtcInstant | null; readonly "lagMs": number | null; };
+
+export type AnalyticsSavedQueryExecution = { readonly "kind": "analytics"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": OperationalAnalyticsSnapshot | null; };
+
+export type RunSearchSavedQueryExecution = { readonly "kind": "run_search"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": RunPage | null; readonly "nextCursor": Cursor | null; };
+
+export type TraceSearchSavedQueryExecution = { readonly "kind": "trace_search"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": RunPage | null; readonly "nextCursor": Cursor | null; };
+
+export type RunComparisonSavedQueryExecution = { readonly "kind": "run_comparison"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": RunComparison | null; };
+
+export type RegressionSearchSavedQueryExecution = { readonly "kind": "regression_search"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": EvaluationRegressionPage | null; readonly "nextCursor": Cursor | null; };
+
+export type ComponentHealthSavedQueryExecution = { readonly "kind": "component_health"; readonly "query": SavedQueryReference; readonly "state": SavedQueryExecutionState; readonly "partial": boolean; readonly "snapshotAt": UtcInstant; readonly "freshness": SavedQueryExecutionFreshness; readonly "result": ComponentHealth | null; };
+
+export type SavedQueryExecutionResult = AnalyticsSavedQueryExecution | RunSearchSavedQueryExecution | TraceSearchSavedQueryExecution | RunComparisonSavedQueryExecution | RegressionSearchSavedQueryExecution | ComponentHealthSavedQueryExecution;
+
+export type DashboardVisualization = "line" | "area" | "bar" | "stat" | "table" | "trace" | "comparison" | "regression";
+
+export type DashboardPanelSize = "small" | "medium" | "large" | "full_width";
+
+export type DashboardPanel = { readonly "panelId": Uuid; readonly "title": string; readonly "query": SavedQueryReference; readonly "visualization": DashboardVisualization; readonly "size": DashboardPanelSize; readonly "position": number; };
+
+export type DashboardPresetKind = "system" | "agent" | "module" | "model" | "regression";
+
+export type DashboardPresetPanel = { readonly "panelId": Uuid; readonly "title": string; readonly "query": SavedQueryDefinition; readonly "visualization": DashboardVisualization; readonly "size": DashboardPanelSize; readonly "position": number; };
+
+export type DashboardPreset = { readonly "presetId": DefinitionIdentifier; readonly "presetVersion": OperationalVersion; readonly "kind": DashboardPresetKind; readonly "name": string; readonly "panels": ReadonlyArray<DashboardPresetPanel>; readonly "immutable": true; };
+
+export type DashboardPresetPage = { readonly "items": ReadonlyArray<DashboardPreset>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type CreateDashboardRequest = { readonly "name": string; readonly "description": string; readonly "panels": ReadonlyArray<DashboardPanel>; readonly "createdAt": UtcInstant; };
+
+export type Dashboard = { readonly "dashboardId": Uuid; readonly "dashboardVersion": OperationalVersion; readonly "name": string; readonly "description": string; readonly "panels": ReadonlyArray<DashboardPanel>; readonly "createdAt": UtcInstant; };
+
+export type DashboardPage = { readonly "items": ReadonlyArray<Dashboard>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type DeleteOperationalResourceRequest = { readonly "expectedVersion": OperationalVersion; readonly "requestedAt": UtcInstant; };
+
+export type OperationalSeverity = "info" | "warning" | "error" | "critical";
+
+export type AlertSignal = "latency" | "error" | "saturation" | "quality" | "availability" | "privacy" | "freshness";
+
+export type AlertThresholdOperator = "greater_than" | "greater_than_or_equal" | "less_than" | "less_than_or_equal" | "equal" | "not_equal";
+
+export type AlertMissingEvidencePolicy = "no_data" | "inconclusive" | "firing";
+
+export type AlertCondition = { readonly "signal": AlertSignal; readonly "query": SavedQueryReference; readonly "operator": AlertThresholdOperator; readonly "threshold": number; readonly "unit": AnalyticsUnit; readonly "window": OperationalWindow; readonly "minimumSampleSize": number; readonly "missingEvidencePolicy": AlertMissingEvidencePolicy; readonly "staleAfterSeconds": number; readonly "groupBy": ReadonlyArray<OperationalFacetName>; };
+
+export type AlertRuleState = "enabled" | "disabled";
+
+export type AlertCadence = "one_minute" | "five_minutes" | "fifteen_minutes" | "one_hour";
+
+export type CreateAlertRuleRequest = { readonly "name": string; readonly "severity": OperationalSeverity; readonly "condition": AlertCondition; readonly "cadence": AlertCadence; readonly "state": AlertRuleState; readonly "createdAt": UtcInstant; };
+
+export type AlertRule = { readonly "ruleId": Uuid; readonly "ruleVersion": OperationalVersion; readonly "name": string; readonly "severity": OperationalSeverity; readonly "condition": AlertCondition; readonly "cadence": AlertCadence; readonly "state": AlertRuleState; readonly "createdAt": UtcInstant; readonly "updatedAt": UtcInstant; };
+
+export type AlertRulePage = { readonly "items": ReadonlyArray<AlertRule>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type ChangeAlertRuleStateRequest = { readonly "expectedVersion": OperationalVersion; readonly "state": AlertRuleState; readonly "requestedAt": UtcInstant; };
+
+export type AlertInstanceState = "firing" | "recovered" | "stale" | "partial" | "no_data" | "inconclusive";
+
+export type AlertEvidenceState = "complete" | "partial" | "missing" | "stale" | "incompatible" | "unavailable";
+
+export type AlertEvidenceReference = { readonly "resourceType": "run" | "deployment" | "experiment" | "regression" | "analytics_snapshot" | "component_health"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; readonly "observedAt": UtcInstant; };
+
+export type AlertInstance = { readonly "instanceId": Uuid; readonly "instanceVersion": OperationalVersion; readonly "rule": AlertRuleReference; readonly "groupingId": Uuid; readonly "groupingFacets": ReadonlyArray<OperationalFacet>; readonly "severity": OperationalSeverity; readonly "state": AlertInstanceState; readonly "evidenceState": AlertEvidenceState; readonly "observedValue": number | null; readonly "unit": AnalyticsUnit; readonly "sampleSize": number; readonly "evidence": ReadonlyArray<AlertEvidenceReference>; readonly "firstObservedAt": UtcInstant; readonly "lastObservedAt": UtcInstant; readonly "occurrenceCount": number; readonly "suppressed": boolean; readonly "acknowledged": boolean; };
+
+export type AlertInstancePage = { readonly "items": ReadonlyArray<AlertInstance>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type AlertAcknowledgementReason = "investigating" | "known_issue" | "accepted_risk" | "false_positive";
+
+export type CreateAlertAcknowledgementRequest = { readonly "instanceVersion": OperationalVersion; readonly "reason": AlertAcknowledgementReason; readonly "acknowledgedAt": UtcInstant; };
+
+export type AlertAcknowledgement = { readonly "acknowledgementId": Uuid; readonly "acknowledgementVersion": OperationalVersion; readonly "instance": AlertInstanceReference; readonly "reason": AlertAcknowledgementReason; readonly "acknowledgedAt": UtcInstant; };
+
+export type AlertSuppressionScope = "rule" | "group" | "instance";
+
+export type AlertSuppressionRuleTarget = { readonly "resourceType": "alert_rule"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type AlertSuppressionGroupTarget = { readonly "resourceType": "alert_group"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type AlertSuppressionInstanceTarget = { readonly "resourceType": "alert_instance"; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; };
+
+export type AlertSuppressionTarget = AlertSuppressionRuleTarget | AlertSuppressionGroupTarget | AlertSuppressionInstanceTarget;
+
+export type AlertSuppressionState = "scheduled" | "active" | "expired" | "cleared";
+
+export type CreateAlertSuppressionRequest = { readonly "scope": AlertSuppressionScope; readonly "target": AlertSuppressionTarget; readonly "startsAt": UtcInstant; readonly "endsAt": UtcInstant | null; readonly "reason": "maintenance" | "known_issue" | "testing" | "noise_reduction"; };
+
+export type AlertSuppression = { readonly "suppressionId": Uuid; readonly "suppressionVersion": OperationalVersion; readonly "scope": AlertSuppressionScope; readonly "target": AlertSuppressionTarget; readonly "startsAt": UtcInstant; readonly "endsAt": UtcInstant | null; readonly "state": AlertSuppressionState; readonly "reason": "maintenance" | "known_issue" | "testing" | "noise_reduction"; readonly "createdAt": UtcInstant; readonly "clearedAt": UtcInstant | null; };
+
+export type AlertSuppressionPage = { readonly "items": ReadonlyArray<AlertSuppression>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type ClearAlertSuppressionRequest = { readonly "expectedVersion": OperationalVersion; readonly "clearedAt": UtcInstant; };
+
+export type IncidentState = "open" | "investigating" | "mitigated" | "resolved" | "closed";
+
+export type IncidentImpact = "none" | "limited" | "degraded" | "major" | "critical";
+
+export type CreateIncidentRequest = { readonly "title": string; readonly "severity": OperationalSeverity; readonly "impact": IncidentImpact; readonly "relatedAlerts": ReadonlyArray<AlertInstanceReference>; readonly "evidence": ReadonlyArray<AlertEvidenceReference>; readonly "createdAt": UtcInstant; };
+
+export type Incident = { readonly "incidentId": Uuid; readonly "incidentVersion": OperationalVersion; readonly "title": string; readonly "state": IncidentState; readonly "severity": OperationalSeverity; readonly "impact": IncidentImpact; readonly "relatedAlerts": ReadonlyArray<AlertInstanceReference>; readonly "evidence": ReadonlyArray<AlertEvidenceReference>; readonly "resolutionNote": string | null; readonly "createdAt": UtcInstant; readonly "updatedAt": UtcInstant; };
+
+export type IncidentPage = { readonly "items": ReadonlyArray<Incident>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type TransitionIncidentRequest = { readonly "expectedVersion": OperationalVersion; readonly "targetState": IncidentState; readonly "impact": IncidentImpact; readonly "resolutionNote": string | null; readonly "transitionedAt": UtcInstant; };
+
+export type AnnotationTargetType = "run" | "deployment" | "experiment" | "regression" | "incident";
+
+export type AnnotationTargetReference = { readonly "targetType": AnnotationTargetType; readonly "targetId": OperationalResourceId; readonly "targetVersion": OperationalVersion; };
+
+export type AnnotationText = string;
+
+export type CreateAnnotationRequest = { readonly "target": AnnotationTargetReference; readonly "text": AnnotationText; readonly "createdAt": UtcInstant; };
+
+export type Annotation = { readonly "annotationId": Uuid; readonly "annotationVersion": OperationalVersion; readonly "target": AnnotationTargetReference; readonly "text": AnnotationText; readonly "createdAt": UtcInstant; readonly "updatedAt": UtcInstant; };
+
+export type AnnotationPage = { readonly "items": ReadonlyArray<Annotation>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type OperationsHistoryChange = "created" | "updated" | "state_changed" | "evaluated" | "firing" | "recovered" | "suppressed" | "suppression_cleared" | "acknowledged" | "transitioned" | "deleted";
+
+export type OperationsHistoryEntry = { readonly "historyId": Uuid; readonly "resourceType": OperationalResourceType; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; readonly "change": OperationsHistoryChange; readonly "state": DefinitionIdentifier; readonly "occurredAt": UtcInstant; };
+
+export type OperationsHistoryPage = { readonly "items": ReadonlyArray<OperationsHistoryEntry>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
+
+export type OperationalLiveEvent = { readonly "schemaVersion": 1; readonly "eventId": Uuid; readonly "eventType": "operations.changed"; readonly "occurredAt": UtcInstant; readonly "resourceType": OperationalResourceType; readonly "resourceId": OperationalResourceId; readonly "resourceVersion": OperationalVersion; readonly "change": OperationsHistoryChange; readonly "state": DefinitionIdentifier; readonly "capturePolicy": "metadata_only"; };
 
 export type TraceId = string;
 
@@ -489,6 +665,36 @@ export interface ObservatoryApiOperations {
   readonly createEvaluationDeletionAction: { readonly response: EvaluationDeletionAction; readonly body: CreateEvaluationDeletionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
   readonly getEvaluationDeletionAction: { readonly response: EvaluationDeletionAction; readonly body: never; readonly path: { readonly "action_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly streamEvaluationEvents: { readonly response: EvaluationLiveEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly listDashboardPresets: { readonly response: DashboardPresetPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly listDashboards: { readonly response: DashboardPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createDashboard: { readonly response: Dashboard; readonly body: CreateDashboardRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly getDashboard: { readonly response: Dashboard; readonly body: never; readonly path: { readonly "dashboard_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteDashboard: { readonly response: void; readonly body: DeleteOperationalResourceRequest; readonly path: { readonly "dashboard_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listSavedQueries: { readonly response: SavedQueryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "kind"?: OperationalQueryKind; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createSavedQuery: { readonly response: SavedQuery; readonly body: CreateSavedQueryRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly getSavedQuery: { readonly response: SavedQuery; readonly body: never; readonly path: { readonly "query_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly executeSavedQuery: { readonly response: SavedQueryExecutionResult; readonly body: never; readonly path: { readonly "query_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: { readonly "cursor"?: Cursor; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteSavedQuery: { readonly response: void; readonly body: DeleteOperationalResourceRequest; readonly path: { readonly "query_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listAlertRules: { readonly response: AlertRulePage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "state"?: AlertRuleState; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createAlertRule: { readonly response: AlertRule; readonly body: CreateAlertRuleRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly getAlertRule: { readonly response: AlertRule; readonly body: never; readonly path: { readonly "rule_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly changeAlertRuleState: { readonly response: AlertRule; readonly body: ChangeAlertRuleStateRequest; readonly path: { readonly "rule_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listAlertInstances: { readonly response: AlertInstancePage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "state"?: AlertInstanceState; readonly "severity"?: OperationalSeverity; readonly "rule_id"?: Uuid; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getAlertInstance: { readonly response: AlertInstance; readonly body: never; readonly path: { readonly "instance_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly acknowledgeAlertInstance: { readonly response: AlertAcknowledgement; readonly body: CreateAlertAcknowledgementRequest; readonly path: { readonly "instance_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly listAlertSuppressions: { readonly response: AlertSuppressionPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "state"?: AlertSuppressionState; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createAlertSuppression: { readonly response: AlertSuppression; readonly body: CreateAlertSuppressionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly clearAlertSuppression: { readonly response: AlertSuppression; readonly body: ClearAlertSuppressionRequest; readonly path: { readonly "suppression_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listIncidents: { readonly response: IncidentPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "state"?: IncidentState; readonly "severity"?: OperationalSeverity; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createIncident: { readonly response: Incident; readonly body: CreateIncidentRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly getIncident: { readonly response: Incident; readonly body: never; readonly path: { readonly "incident_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly transitionIncident: { readonly response: Incident; readonly body: TransitionIncidentRequest; readonly path: { readonly "incident_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listAnnotations: { readonly response: AnnotationPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "target_type"?: AnnotationTargetType; readonly "target_id"?: OperationalResourceId; readonly "target_version"?: OperationalVersion; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createAnnotation: { readonly response: Annotation; readonly body: CreateAnnotationRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly getAnnotation: { readonly response: Annotation; readonly body: never; readonly path: { readonly "annotation_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteAnnotation: { readonly response: void; readonly body: DeleteOperationalResourceRequest; readonly path: { readonly "annotation_id": Uuid; readonly "resource_version": OperationalVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
+  readonly listOperationsHistory: { readonly response: OperationsHistoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "resource_type"?: OperationalResourceType; readonly "resource_id"?: OperationalResourceId; readonly "resource_version"?: OperationalVersion; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly streamOperationsEvents: { readonly response: OperationalLiveEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly listDeployments: { readonly response: DeploymentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly streamEvents: { readonly response: SsePayload; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly createRetentionAction: { readonly response: RetentionAction; readonly body: CreateRetentionActionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
@@ -567,6 +773,36 @@ export const OBSERVATORY_API_OPERATIONS = {
   createEvaluationDeletionAction: { method: 'POST', pathTemplate: '/api/v1/evaluation/deletion-actions', requestMode: 'json', responseMode: 'json' },
   getEvaluationDeletionAction: { method: 'GET', pathTemplate: '/api/v1/evaluation/deletion-actions/{action_id}', requestMode: 'none', responseMode: 'json' },
   streamEvaluationEvents: { method: 'GET', pathTemplate: '/api/v1/evaluation/events', requestMode: 'none', responseMode: 'event-stream' },
+  listDashboardPresets: { method: 'GET', pathTemplate: '/api/v1/dashboard-presets', requestMode: 'none', responseMode: 'json' },
+  listDashboards: { method: 'GET', pathTemplate: '/api/v1/dashboards', requestMode: 'none', responseMode: 'json' },
+  createDashboard: { method: 'POST', pathTemplate: '/api/v1/dashboards', requestMode: 'json', responseMode: 'json' },
+  getDashboard: { method: 'GET', pathTemplate: '/api/v1/dashboards/{dashboard_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
+  deleteDashboard: { method: 'POST', pathTemplate: '/api/v1/dashboards/{dashboard_id}/versions/{resource_version}/delete', requestMode: 'json', responseMode: 'none' },
+  listSavedQueries: { method: 'GET', pathTemplate: '/api/v1/saved-queries', requestMode: 'none', responseMode: 'json' },
+  createSavedQuery: { method: 'POST', pathTemplate: '/api/v1/saved-queries', requestMode: 'json', responseMode: 'json' },
+  getSavedQuery: { method: 'GET', pathTemplate: '/api/v1/saved-queries/{query_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
+  executeSavedQuery: { method: 'GET', pathTemplate: '/api/v1/saved-queries/{query_id}/versions/{resource_version}/execute', requestMode: 'none', responseMode: 'json' },
+  deleteSavedQuery: { method: 'POST', pathTemplate: '/api/v1/saved-queries/{query_id}/versions/{resource_version}/delete', requestMode: 'json', responseMode: 'none' },
+  listAlertRules: { method: 'GET', pathTemplate: '/api/v1/alert-rules', requestMode: 'none', responseMode: 'json' },
+  createAlertRule: { method: 'POST', pathTemplate: '/api/v1/alert-rules', requestMode: 'json', responseMode: 'json' },
+  getAlertRule: { method: 'GET', pathTemplate: '/api/v1/alert-rules/{rule_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
+  changeAlertRuleState: { method: 'POST', pathTemplate: '/api/v1/alert-rules/{rule_id}/versions/{resource_version}/state', requestMode: 'json', responseMode: 'json' },
+  listAlertInstances: { method: 'GET', pathTemplate: '/api/v1/alert-instances', requestMode: 'none', responseMode: 'json' },
+  getAlertInstance: { method: 'GET', pathTemplate: '/api/v1/alert-instances/{instance_id}', requestMode: 'none', responseMode: 'json' },
+  acknowledgeAlertInstance: { method: 'POST', pathTemplate: '/api/v1/alert-instances/{instance_id}/acknowledgements', requestMode: 'json', responseMode: 'json' },
+  listAlertSuppressions: { method: 'GET', pathTemplate: '/api/v1/alert-suppressions', requestMode: 'none', responseMode: 'json' },
+  createAlertSuppression: { method: 'POST', pathTemplate: '/api/v1/alert-suppressions', requestMode: 'json', responseMode: 'json' },
+  clearAlertSuppression: { method: 'POST', pathTemplate: '/api/v1/alert-suppressions/{suppression_id}/clear', requestMode: 'json', responseMode: 'json' },
+  listIncidents: { method: 'GET', pathTemplate: '/api/v1/incidents', requestMode: 'none', responseMode: 'json' },
+  createIncident: { method: 'POST', pathTemplate: '/api/v1/incidents', requestMode: 'json', responseMode: 'json' },
+  getIncident: { method: 'GET', pathTemplate: '/api/v1/incidents/{incident_id}', requestMode: 'none', responseMode: 'json' },
+  transitionIncident: { method: 'POST', pathTemplate: '/api/v1/incidents/{incident_id}/transitions', requestMode: 'json', responseMode: 'json' },
+  listAnnotations: { method: 'GET', pathTemplate: '/api/v1/annotations', requestMode: 'none', responseMode: 'json' },
+  createAnnotation: { method: 'POST', pathTemplate: '/api/v1/annotations', requestMode: 'json', responseMode: 'json' },
+  getAnnotation: { method: 'GET', pathTemplate: '/api/v1/annotations/{annotation_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
+  deleteAnnotation: { method: 'POST', pathTemplate: '/api/v1/annotations/{annotation_id}/versions/{resource_version}/delete', requestMode: 'json', responseMode: 'none' },
+  listOperationsHistory: { method: 'GET', pathTemplate: '/api/v1/operations/history', requestMode: 'none', responseMode: 'json' },
+  streamOperationsEvents: { method: 'GET', pathTemplate: '/api/v1/operations/events', requestMode: 'none', responseMode: 'event-stream' },
   listDeployments: { method: 'GET', pathTemplate: '/api/v1/deployments', requestMode: 'none', responseMode: 'json' },
   streamEvents: { method: 'GET', pathTemplate: '/api/v1/events', requestMode: 'none', responseMode: 'event-stream' },
   createRetentionAction: { method: 'POST', pathTemplate: '/api/v1/retention/actions', requestMode: 'json', responseMode: 'json' },

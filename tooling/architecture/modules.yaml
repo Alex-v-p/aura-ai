@@ -290,6 +290,8 @@ modules:
   - aura-observatory.ingest
   - aura-observatory.settings
   - aura-observatory.query
+  - aura-observatory.operations
+  - aura-observatory.adapters.operations
 - id: aura-observatory.entrypoints
   root: services/aura-observatory/src/aura_observatory/entrypoints
   kind: package
@@ -309,6 +311,7 @@ modules:
   - services/aura-observatory/src/aura_observatory/entrypoints/api/__init__.py
   dependencies:
   - aura-observatory.composition
+  - aura-observatory.operations
 - id: aura-observatory.entrypoints.api.app
   root: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
   kind: entrypoint
@@ -324,6 +327,7 @@ modules:
   - aura-observatory.otlp
   - aura-observatory.settings
   - aura-observatory.query
+  - aura-observatory.operations
 - id: aura-observatory.entrypoints.worker
   root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
   kind: entrypoint
@@ -336,6 +340,7 @@ modules:
   - aura-observatory.settings
   - aura-observatory.query
   - aura-observatory.evaluation-storage
+  - aura-observatory.operations
 - id: aura-observatory.entrypoints.cli
   root: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
   kind: entrypoint
@@ -344,6 +349,8 @@ modules:
   - aura_observatory.entrypoints.cli
   dependencies:
   - aura-observatory.settings
+  - aura-observatory.composition
+  - aura-observatory.operations
 - id: aura-contract.telemetry-observation
   root: contracts/telemetry/v1
   kind: event-contract
@@ -2444,3 +2451,35 @@ modules:
   dependencies:
   - aura-observatory.composition
   - aura-observatory.settings
+  - aura-observatory.operations
+- id: aura-observatory.operations
+  root: services/aura-observatory/src/aura_observatory/dashboards.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/dashboards.py
+  python_modules:
+  - aura_observatory.dashboards
+  - aura_observatory.saved_queries
+  - aura_observatory.alerting
+  - aura_observatory.incidents
+  - aura_observatory.annotations
+  - aura_observatory.operational_live
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-observatory.query
+  - aura-observatory.evaluation-query
+  - aura-contract.observatory-openapi
+- id: aura-observatory.adapters.operations
+  root: services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  python_modules:
+  - aura_observatory.adapters.dashboards
+  - aura_observatory.adapters.saved_queries
+  - aura_observatory.adapters.alerting
+  - aura_observatory.adapters.incidents
+  - aura_observatory.adapters.annotations
+  - aura_observatory.adapters.operational_live
+  dependencies:
+  - aura-observatory.operations
+  - aura-observatory.ports

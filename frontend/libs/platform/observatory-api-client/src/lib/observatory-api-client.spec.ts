@@ -27,6 +27,7 @@ import {
   type EvaluationQueuedAttempt,
   type ObservatoryOperationResponse,
   type ObservatoryApiOperations,
+  type SavedQueryExecutionResult,
 } from './generated/observatory-api';
 import { ObservatoryApiClient, type ObservatoryTransport } from './observatory-api-client';
 
@@ -89,6 +90,17 @@ describe('ObservatoryApiClient', () => {
       requestMode: 'none',
       responseMode: 'event-stream',
     });
+  });
+
+  it('exposes exact-version saved-query execution as a transport-only closed union', () => {
+    expect(OBSERVATORY_API_OPERATIONS.executeSavedQuery).toEqual({
+      method: 'GET',
+      pathTemplate: '/api/v1/saved-queries/{query_id}/versions/{resource_version}/execute',
+      requestMode: 'none',
+      responseMode: 'json',
+    });
+    expectTypeOf<ObservatoryOperationResponse<'executeSavedQuery'>>().toEqualTypeOf<SavedQueryExecutionResult>();
+    expectTypeOf<ObservatoryApiOperations['executeSavedQuery']['query']>().toEqualTypeOf<{ readonly cursor?: string }>();
   });
 
   it('preserves JSON response parity for every evaluation page operation', () => {

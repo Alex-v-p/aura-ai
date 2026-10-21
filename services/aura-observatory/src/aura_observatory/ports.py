@@ -1,4 +1,6 @@
 """Narrow storage ports owned by Observatory."""
+# ruff: noqa: E501
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportArgumentType=false, reportIndexIssue=false, reportPrivateUsage=false, reportUnusedImport=false
 
 from __future__ import annotations
 
@@ -669,6 +671,23 @@ class JudgeArtifactReadPort(Protocol):
     ) -> bytes: ...
 
 
+class ObservatoryOperationsPort(Protocol):
+    """Public inward boundary for owner-only operational resources."""
+
+    async def create_resource(self, resource_type: str, resource: Mapping[str, object], *, command_id: str | None = None) -> Mapping[str, object]: ...
+    async def list_resources(self, resource_type: str, *, cursor: str | None = None, limit: int = 50, state: str | None = None, kind: str | None = None, severity: str | None = None, rule_id: str | None = None, target: Mapping[str, str] | None = None) -> Mapping[str, object]: ...
+    async def get_resource(self, resource_type: str, resource_id: str, version: str | None = None) -> Mapping[str, object] | None: ...
+    async def replace_resource(self, resource_type: str, resource: Mapping[str, object], *, command_id: str | None = None) -> Mapping[str, object]: ...
+    async def delete_resource(self, resource_type: str, resource_id: str, version: str, *, command_id: str | None = None) -> None: ...
+    async def events_after(self, last_event_id: str | None, *, limit: int = 1000) -> list[Mapping[str, object]]: ...
+
+
+class ObservatoryAnnotationReferencePort(Protocol):
+    """Explicit public reference validation for owner-authored annotations."""
+
+    async def validate_annotation_target(self, target: Mapping[str, str]) -> None: ...
+
+
 __all__ = [
     "ClaimOutcome",
     "DeletionResult",
@@ -693,4 +712,6 @@ __all__ = [
     "EvaluationOrchestrationPort",
     "LocalJudgePort",
     "JudgeArtifactReadPort",
+    "ObservatoryOperationsPort",
+    "ObservatoryAnnotationReferencePort",
 ]

@@ -40,6 +40,26 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
         "aura.observatory.deterministic_evaluators",
         "aura.observatory.local_judges",
         "aura.observatory.calibration",
+        "aura.observatory.dashboards",
+        "aura.observatory.saved_queries",
+        "aura.observatory.alerting",
+        "aura.observatory.incidents",
+        "aura.observatory.annotations",
+    }
+)
+# The legacy duration metric is an evaluation-specific compatibility surface.
+# Keep it for evaluation workers while ensuring operational spans cannot be
+# rejected by its narrower label vocabulary or accidentally appear as judge
+# measurements.
+EVALUATION_SPAN_COMPONENTS = frozenset(
+    component
+    for component in COMPONENT_SPAN_COMPONENTS
+    if component.startswith("aura.observatory.evaluation")
+    or component
+    in {
+        "aura.observatory.local_judges",
+        "aura.observatory.deterministic_evaluators",
+        "aura.observatory.calibration",
     }
 )
 COMPONENT_SPAN_OPERATIONS = frozenset(
@@ -60,11 +80,13 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "revoke",
         "read",
         "write",
+        "validate",
         "verify_model",
         "read_artifacts",
         "generate",
         "write_score",
         "definition_get",
+        "definition_read",
         "execution_get",
         "execution_claim",
         "execution_complete",
@@ -107,7 +129,12 @@ COMPONENT_SPAN_DEPENDENCIES = frozenset(
         "evaluation_live",
     }
 )
-COMPONENT_SPAN_OUTCOMES = frozenset({"success", "failure", "duplicate", "timeout", "unavailable"})
+COMPONENT_SPAN_OUTCOMES = frozenset(
+    {
+        "success", "complete", "partial", "stale", "incompatible", "no_data",
+        "failure", "duplicate", "timeout", "unavailable",
+    }
+)
 COMPONENT_SPAN_ERRORS = frozenset(
     {
         "database_failure",
@@ -118,6 +145,9 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "provider_failure",
         "provider_timeout",
         "provider_unavailable",
+        "database_timeout",
+        "database_unavailable",
+        "malformed_evidence",
         "provider_redirect",
         "provider_resource_limit",
         "model_not_found",
@@ -139,6 +169,7 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "insufficient",
         "rejected",
         "not_found",
+        "incompatible",
         "lease_lost",
     }
 )
@@ -498,6 +529,7 @@ class ObservatoryMetrics:
             "observatory_evaluation_regression_duration_ms",
             "observatory_evaluator_duration_ms",
             "observatory_local_judge_duration_ms",
+            "observatory_alert_evaluation_duration_ms",
         }
     )
 
@@ -519,6 +551,9 @@ class ObservatoryMetrics:
         "observatory_sse_connection_count",
         "observatory_sse_active",
         "observatory_sse_replay_count",
+        "observatory_sse_replay_lag_ms",
+        "observatory_sse_disconnect_count",
+        "observatory_sse_failure_count",
         "observatory_retention_action_count",
         "observatory_retention_deleted_count",
         "observatory_retention_failure_count",
@@ -570,6 +605,20 @@ class ObservatoryMetrics:
         "observatory_evaluation_regression_duration_ms",
         "observatory_evaluation_regression_outcome_count",
         "observatory_evaluation_attribution_outcome_count",
+        "observatory_dashboard_operation_count",
+        "observatory_saved_query_operation_count",
+        "observatory_alert_evaluation_count",
+        "observatory_alert_evaluation_duration_ms",
+        "observatory_alert_operation_count",
+        "observatory_alert_instance_transition_count",
+        "observatory_alert_suppression_count",
+        "observatory_alert_acknowledgement_count",
+        "observatory_incident_transition_count",
+        "observatory_annotation_operation_count",
+        "observatory_operations_recovery_count",
+        "observatory_operations_backlog_count",
+        "observatory_operations_oldest_due_lag_ms",
+        "observatory_operations_lease_outcome_count",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -584,11 +633,28 @@ class ObservatoryMetrics:
         "observatory_query_outcome": {"resource", "outcome"},
         "observatory_comparison_duration_ms": set(),
         "observatory_comparison_outcome": {"outcome"},
+        "observatory_dashboard_operation_count": {"operation", "outcome"},
+        "observatory_saved_query_operation_count": {"operation", "outcome"},
+        "observatory_alert_evaluation_count": {"outcome"},
+        "observatory_alert_evaluation_duration_ms": {"outcome"},
+        "observatory_alert_operation_count": {"operation", "outcome"},
+        "observatory_alert_instance_transition_count": {"state", "outcome"},
+        "observatory_alert_suppression_count": {"operation", "outcome"},
+        "observatory_alert_acknowledgement_count": {"outcome"},
+        "observatory_incident_transition_count": {"state", "outcome"},
+        "observatory_annotation_operation_count": {"operation", "outcome"},
+        "observatory_operations_recovery_count": {"operation", "outcome"},
+        "observatory_operations_backlog_count": set(),
+        "observatory_operations_oldest_due_lag_ms": set(),
+        "observatory_operations_lease_outcome_count": {"outcome"},
         "observatory_comparison_partial_count": set(),
         "observatory_comparison_unavailable_marker_count": set(),
         "observatory_sse_connection_count": {"event_type"},
         "observatory_sse_active": {"event_type"},
         "observatory_sse_replay_count": {"event_type"},
+        "observatory_sse_replay_lag_ms": {"event_type"},
+        "observatory_sse_disconnect_count": {"event_type"},
+        "observatory_sse_failure_count": {"event_type"},
         "observatory_retention_action_count": {"action", "status"},
         "observatory_retention_deleted_count": {"action"},
         "observatory_retention_failure_count": {"action", "failure_code"},
@@ -704,6 +770,10 @@ class ObservatoryMetrics:
             "incompatible",
             "available",
             "insufficient_evidence",
+            "conflict",
+            "complete",
+            "stale",
+            "no_data",
         },
         "operation": {
             "store",
@@ -712,11 +782,21 @@ class ObservatoryMetrics:
             "publish",
             "recover",
             "heartbeat",
+            "replay_lag",
+            "failure",
+            "reauth",
+            "live_disconnect",
+            "lease_expired",
+            "complete",
             "schedule_materialize",
             "postgresql",
             "evaluation_nats",
             "admit",
             "evaluate",
+            "query",
+            "acknowledge",
+            "suppress",
+            "clear",
             "judge",
             "calibrate",
             "qualify",
@@ -724,6 +804,7 @@ class ObservatoryMetrics:
             "revoke",
             "read",
             "write",
+            "validate",
             "clickhouse",
             "evaluation_definition_state",
             "local_judge",
@@ -732,6 +813,7 @@ class ObservatoryMetrics:
             "generate",
             "write_score",
             "definition_get",
+            "definition_read",
             "execution_get",
             "execution_claim",
             "execution_complete",
@@ -751,6 +833,10 @@ class ObservatoryMetrics:
             "evidence_read",
             "evidence_reference_read",
             "fact_projection_write",
+        },
+        "state": {
+            "firing", "recovered", "stale", "partial", "no_data", "inconclusive",
+            "open", "investigating", "mitigated", "resolved", "closed",
         },
         "resource_type": {"dataset", "case", "suite", "evaluator", "job"},
         "evaluator_kind": {"deterministic", "local_judge", "human_review"},
@@ -782,9 +868,15 @@ class ObservatoryMetrics:
         "event_type": {
             "stream",
             "connection",
+            "disconnect",
             "observation.changed",
+            "operations.changed",
             "health.changed",
             "heartbeat",
+            "reauth",
+            "failure",
+            "live_disconnect",
+            "replay_lag",
         },
         "action": {"delete_before", "purge_all"},
         "status": {"queued", "running", "succeeded", "failed"},
@@ -891,6 +983,7 @@ class ObservatoryMetrics:
         duration = bounded_latency_ms(duration_ms)
         if duration is None:
             raise ValueError("component span duration is invalid")
+        duration = max(0.001, duration)
         span = ComponentSpan(
             component_id=component_id,
             component_version=component_version,
@@ -906,11 +999,12 @@ class ObservatoryMetrics:
         self._component_spans.append(span)
         if self.span_exporter is not None:
             self.span_exporter.submit(span)
-        self.record(
-            "observatory_evaluation_operation_duration_ms",
-            duration,
-            {"operation": operation},
-        )
+        if component_id in EVALUATION_SPAN_COMPONENTS:
+            self.record(
+                "observatory_evaluation_operation_duration_ms",
+                duration,
+                {"operation": operation},
+            )
 
     @contextmanager
     def trace_context(self, trace_id: str | None = None) -> Generator[str]:
@@ -1250,6 +1344,9 @@ class ObservatoryMetrics:
                     "observatory_evaluation_outbox_oldest_age_seconds",
                     "observatory_evaluation_worker_heartbeat_age_seconds",
                     "observatory_evaluation_scheduler_heartbeat_age_seconds",
+                    "observatory_operations_backlog_count",
+                    "observatory_operations_oldest_due_lag_ms",
+                    "observatory_sse_replay_lag_ms",
                 }
                 else "counter"
             )

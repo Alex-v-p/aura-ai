@@ -1,0 +1,288 @@
+agent: test_evaluation_engineer
+work_item: AURA-0097
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0097_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0097-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0097_test_evaluation.py
+  - services/aura-observatory/tests/test_aura0097_postgres_integration.py
+  - frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - work-items/handoffs/AURA-0097-test-evaluation-engineer.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Updated the four stale inventory/ceiling test expectations to recognize
+      the five authorized AURA-0097 operation manifests and contiguous
+      PostgreSQL migration 0014; all protected invariants remain asserted.
+    - >-
+      Added deterministic backend coverage for closed query bounds and private
+      fields, concurrent command idempotency, alert grouping and occurrence
+      counting, acknowledgement separation/idempotency, suppression clearing,
+      content-free operational SSE catch-up, scheduler retry recovery, and
+      forward-only migration rerun declarations.
+    - >-
+      Added incident stale-version and ordered-transition assertions and
+      annotation target/content-isolation assertions as blocking acceptance
+      tests for the owning producer boundary.
+    - >-
+      Added desktop/tablet/mobile Playwright coverage for keyboard operation
+      workspace navigation, responsive rendering, and memory-only browser
+      persistence.
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0097.yaml
+    - uv run ruff check on all changed Python test and contract-test files
+    - uv run pyright services/aura-observatory/tests/test_aura0097_test_evaluation.py
+    - uv run pytest stale inventory/integration assertions (107 passed, 13 skipped)
+    - >-
+      Re-review focused AURA-0097 tests now passes all 13 independent tests,
+      including suppression interval ordering/expiry/clear, incident first
+      transition and stale-version recovery, and exact incident annotation
+      target validation with content-free live history.
+    - >-
+      Composite annotation reference coverage passes for run, deployment,
+      experiment, regression, and incident targets; wrong exact versions are
+      rejected and unavailable providers surface the bounded unavailable path.
+    - >-
+      Static composition review confirms annotation lookups use the public
+      Observatory and evaluation reference providers, with no Core imports,
+      sibling storage table names, or SQL in the operations composition.
+    - >-
+      Current focused AURA-0097 run passes 27 tests with one warning; the
+      PostgreSQL integration cases remain skipped without their opt-in URL.
+    - >-
+      Re-review verifies the exact observedAt incident evidence path,
+      scheduler recovery audit/metric path, and SSE re-auth/disconnect metric
+      and span paths after the owning worker fixes.
+    - >-
+      Current full Observatory and contract suite passes: 1214 passed, 30
+      skipped, 2 warnings.
+    - >-
+      Strict targeted backend regression set passes 205 tests, including
+      atomic acknowledgement preservation, gauge replacement semantics,
+      actual-only lease recovery, single SSE terminal outcomes, truthful
+      component spans, history projection mappings, and component-manifest
+      ownership parity.
+    - >-
+      Corrected the stale manifest expectation so the four operations
+      recovery/backlog/lease metrics are owned by alerting and annotations
+      declares only its annotation operation metric; strict set equality
+      remains enforced.
+    - >-
+      Added opt-in live PostgreSQL coverage for atomic acknowledgement commit,
+      exact replay and changed-intent no-op conflicts, injected mid-transaction
+      rollback and command reuse, and evaluator-versus-owner-ack concurrency.
+      Without AURA_AURA0097_POSTGRES_URL, all seven scoped integration cases
+      skip through the existing gate.
+    - >-
+      Full Observatory and contract validation after the PostgreSQL test slice
+      passes 1214 tests with 34 provider-gated skips and 2 warnings; Ruff,
+      Pyright, architecture validators, contract classification, and diff
+      checks pass.
+    - >-
+      Corrected the accidental continuation indentation in the unavailable
+      deployment annotation-provider test without changing its assertion or
+      runtime behavior. Focused Observatory tests pass 9 tests; the aggregate
+      backend and contract suite passes 1215 tests with 34 provider-gated
+      skips and 2 warnings.
+    - >-
+      Added independent producer-conformance coverage for all six closed
+      SavedQueryDefinition variants, exact keys/enums, multi-value filters,
+      regression references, and all six executeSavedQuery result branches.
+    - >-
+      Added dashboard orphan/mixed-reference rejection, multi-series alert
+      grouping with facet values, minimum-sample and exact stale-boundary
+      handling, partial/unavailable states, and suppression clear/expiry
+      assertions that preserve acknowledgement and occurrence history.
+    - >-
+      Added memory and opt-in PostgreSQL cursor traversal checks covering
+      snapshot stability through insert, version replacement, deletion, and
+      exhaustion. Focused AURA-0097 coverage passes 36 tests with 8 gated
+      skips; the full backend and contract suite passes 1226 tests with 35
+      gated skips and 2 warnings.
+    - >-
+      Added execution filter/window/facet propagation and cursor replay
+      coverage, strict closed-result and adversarial privacy rejection,
+      regression-outcome grouping compatibility, truthful best-effort
+      instrumentation, and no-data/inconclusive alert evidence mapping;
+      the focused execution/evidence set passes.
+    - >-
+      Updated the memory and opt-in PostgreSQL snapshot traversal assertions
+      to require an explicit snapshot-invalid conflict after post-snapshot
+      version replacement or deletion, while retaining insert stability and
+      exhausted traversal checks.
+    - >-
+      Re-verified the producer repair: the memory snapshot replacement
+      regression now raises the explicit snapshot-invalid conflict, and the
+      full Observatory and contract suite passes 1230 tests with 35 gated
+      skips and 2 warnings.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests
+    - uv run pyright services/aura-observatory
+    - >-
+      Current full pyright services/aura-observatory completed with 0 errors,
+      0 warnings, and 0 informations after the new PostgreSQL tests.
+    - pnpm --dir frontend exec nx test observatory (41 passed)
+    - pnpm --dir frontend exec nx lint observatory-web
+    - >-
+      Playwright operations acceptance passed on desktop, tablet, and mobile
+      (6 tests), including keyboard navigation and browser-storage checks.
+    - >-
+      Frontend verification passes generated-client drift checking, API-client
+      tests (7 tests), Observatory library tests (47 tests), Observatory Web
+      tests, Observatory Web lint and production build, and Storybook build.
+    - >-
+      Full mocked Observatory browser acceptance passes 302 of 303 scenarios
+      across desktop, tablet, and mobile; the one tablet SSE reconnect timing
+      miss passed on an isolated rerun, including operations workflows,
+      responsive layouts, keyboard flows, browser-storage isolation, and axe
+      checks.
+    - >-
+      The repaired producer path and complete validation tree were rechecked
+      without changing product code in this test/evaluation handoff.
+    - >-
+      Reconciled obsolete test fixtures with the strict observatory-v1 result
+      envelopes: analytics, run, trace, regression, component-health, and
+      alert measurement fixtures now carry closed metadata fields; provider
+      cursors satisfy bounds; and alert fixtures use compatible one-facet
+      grouping. Focused AURA-0097 coverage passes 26 tests before the single
+      remaining producer blocker.
+    - >-
+      Strict projection, bounded call/window/cursor/version propagation,
+      one-facet grouping/privacy, PostgreSQL snapshot coverage, CLI facade
+      coverage, and real-sink telemetry assertions remain present and strict;
+      no negative assertion or threshold was weakened.
+    - >-
+      Full validation after fixture reconciliation records 1229 passed, 35
+      gated skips, 1 producer failure, and 2 warnings; Ruff, Pyright, all
+      architecture validators, generated-sync validation, and git diff checks
+      pass.
+    - git diff --check
+    - >-
+      Re-verified the narrow promptBundleRevision producer fix: the strict
+      closed RunComparison projection is now accepted, all six executeSavedQuery
+      result branches pass, and the focused AURA-0097 suite passes 51 tests with
+      8 PostgreSQL-gated skips.
+    - >-
+      Final aggregate Observatory and contract validation passes 1230 tests with
+      35 environment-gated skips and 2 warnings; strict projection privacy,
+      bounded execution semantics, one-facet grouping, snapshot invalidation,
+      CLI facade behavior, and real-sink telemetry coverage remain green.
+    - >-
+      Final frontend validation passes generated-client synchronization, API
+      client tests (7), Observatory library tests (47), Observatory Web tests,
+      lint, production build, and Storybook build.
+    - >-
+      Final browser acceptance passes all 303 desktop/tablet/mobile scenarios,
+      including selected-dashboard Axe checks, loading and rejected-state Axe
+      checks, keyboard flows, root reflow at narrow and zoomed viewports,
+      reduced-motion and high-contrast states, SSE recovery, and memory-only
+      browser persistence.
+    - >-
+      Reconciled the demonstrated stale comparison fixture with the current
+      OpenAPI contract by supplying the required non-empty complete integrity
+      state for both missing-trace sides; strict projection assertions remain
+      unchanged. Focused coverage remains 51 passed with 8 gated skips, and
+      aggregate backend/contract coverage remains 1230 passed with 35 skips.
+    - >-
+      Final exact-tree validation passes work-item, changed-paths,
+      repository-shape, module-registry, service-isolation, observability,
+      contract-change, generated-sync, frontend-boundary, Python-import,
+      Ruff, Pyright, and diff checks; baseline protection reports no protected
+      baseline or threshold changes. Final frontend/browser reruns remain green
+      with 303 of 303 scenarios passed.
+    - >-
+      Updated the strict AURA-0078 component-manifest inventory expectation for
+      the production-declared bounded observatory_alert_operation_count metric;
+      exact manifest equality remains enforced. Focused regression, strict
+      scalar, real-sink telemetry, and AURA-0097 backend coverage passes 286
+      tests with 10 environment-gated skips. The held-writer and concurrent
+      first-version PostgreSQL cases are present and skip only without the
+      configured AURA_AURA0097_POSTGRES_URL.
+    - >-
+      Final post-inventory full backend and contract validation passes 1233
+      tests with 37 gated skips and 2 warnings. Ruff, Pyright, every applicable
+      architecture/work-item/baseline/observability/contract validator, and
+      git diff checks pass; no protected baseline or threshold changed.
+    - >-
+      Final exact-tree backend/contracts collection includes the latest
+      regression-query and scalar probes and passes 1237 tests with 37 gated
+      skips and 2 warnings. The full browser matrix completed 302 of 303
+      scenarios before one known mobile SSE reconnect timing assertion; the
+      isolated mobile rerun passed, restoring 303 of 303 effective acceptance
+      scenarios including Axe, responsive reflow, keyboard, SSE, and privacy
+      coverage.
+    - >-
+      Re-verified the ev2 cursor tree after the latest producer change: bounded
+      regression cursor replay, same-timestamp/version ordering, max-length and
+      legacy-prefix compatibility, malformed/overlong rejection, memory
+      snapshot stability, and PostgreSQL-gated snapshot cases pass. Focused
+      cursor coverage passes 22 tests with 10 gated PostgreSQL skips; the final
+      full backend/contracts suite passes 1239 tests with 37 gated skips and 2
+      warnings. All applicable validators and git diff checks remain green.
+    - >-
+      Final cursor-hardening validation passes the adversarial cursor suite
+      (13 passed), the full backend/contracts suite (1243 passed with 37
+      gated skips and 2 warnings), all frontend client/test/lint/build/
+      Storybook checks, and the 39-case operations browser matrix across
+      desktop, tablet, and mobile. Ruff, Pyright, all applicable validators,
+      generated sync, and diff checks remain green; no protected baseline or
+      threshold changes were detected.
+    - >-
+      Re-verified the final legacy-ev1 history-only restriction: the focused
+      adversarial cursor suite passes all 13 tests, including accepted legacy
+      history replay and rejection from non-history collections. The exact
+      current backend/contracts tree remains green at 1243 passed, 37 gated
+      skips, and 2 warnings; Ruff, Pyright, all applicable architecture,
+      contract, boundary, generated-sync, and diff checks also pass.
+  failed: []
+  not_run:
+    - >-
+      Optional PostgreSQL/ClickHouse execution was not enabled; the scoped
+      integration tests skip when their AURA-specific URLs are absent, and the
+      aggregate backend/contract run recorded 35 such gated skips.
+    - >-
+      Live full-stack Observatory deployment acceptance was not run in this
+      isolated test pass; browser acceptance used the repository's deterministic
+      local fixtures and a local Angular server.
+decisions:
+  - >-
+    Kept the new assertions in test-only paths and did not weaken acceptance
+    expectations to accommodate incomplete producer behavior.
+  - >-
+    Used in-memory repositories and provider-free deterministic fixtures so
+    tests do not require network access, external notifications, or Ollama;
+    provider reachability remains the explicitly accepted environment risk.
+  - >-
+    Kept existing stale inventory tests strict while extending their expected
+    manifest and migration inventories only for the authorized AURA-0097
+    additions.
+risks:
+  - >-
+    The earlier producer findings and annotation composition gap are closed;
+    strict follow-up verifies exact evidence parsing, recovery metric
+    vocabulary, SSE metric vocabulary, execution propagation, and closed
+    result privacy without weakening assertions.
+  - >-
+    Local PostgreSQL/ClickHouse/provider-backed execution remains environment
+    gated by the absent AURA-specific URLs.
+  - >-
+    Local provider/Ollama reachability was not exercised; this is the
+    user-accepted non-blocking environment risk for deterministic tests.
+unresolved: []

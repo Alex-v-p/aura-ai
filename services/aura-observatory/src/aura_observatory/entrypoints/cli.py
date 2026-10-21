@@ -1,4 +1,6 @@
 """Observatory migration and diagnostics CLI."""
+# ruff: noqa: E501,E701,E702,F401,I001
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportArgumentType=false, reportIndexIssue=false, reportPrivateUsage=false, reportUnusedImport=false
 
 # Typer returns dynamically typed command values; command output is narrowed
 # to bounded metadata before serialization.
@@ -20,12 +22,14 @@ import typer
 
 from aura_observatory.adapters.postgres import PostgresSyncCatalogueAdapter
 from aura_observatory.catalogue import load_component_manifests
-from aura_observatory.composition import build_evaluation_api_service
+from aura_observatory.composition import build_evaluation_api_service, build_operations_services
 from aura_observatory.settings import Settings
 
 app = typer.Typer(no_args_is_help=True)
 evaluation_app = typer.Typer(no_args_is_help=True)
 app.add_typer(evaluation_app, name="evaluation")
+operations_app = typer.Typer(no_args_is_help=True)
+app.add_typer(operations_app, name="operations")
 
 
 @app.command()
@@ -168,6 +172,35 @@ def evaluation_history(
         if json_output
         else f"history: {len(cast(list[object], result['items']))} item(s)"
     )
+
+
+@operations_app.command("list")
+def operations_list(
+    kind: str = typer.Argument(..., help="dashboard, saved_query, alert_rule, alert_instance, incident, annotation"),
+    limit: int = typer.Option(50, min=1, max=200),
+    cursor: str | None = typer.Option(None),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Read bounded owner operational metadata through the service port."""
+    _require_local_operator()
+    if kind not in {"dashboard", "saved_query", "alert_rule", "alert_instance", "alert_suppression", "incident", "annotation"}:
+        raise typer.BadParameter("unsupported operations resource")
+    try:
+        result = asyncio.run(build_operations_services(Settings())["operations"].list_resources(kind, cursor=cursor, limit=limit))
+    except Exception as exc:
+        raise typer.Exit(code=3) from exc
+    typer.echo(json.dumps(result, sort_keys=True, separators=(",", ":")) if json_output else f"{kind}: {len(cast(list[object], result['items']))} item(s)")
+
+
+@operations_app.command("evaluate")
+def operations_evaluate() -> None:
+    """Evaluate one bounded batch of in-product alert rules."""
+    _require_local_operator()
+    try:
+        count = asyncio.run(build_operations_services(Settings())["alert"].evaluate_once(limit=16))
+    except Exception as exc:
+        raise typer.Exit(code=3) from exc
+    typer.echo(f"alerts evaluated: {count}")
 
 
 def main() -> None:

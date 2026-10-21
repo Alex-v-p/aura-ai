@@ -1,0 +1,102 @@
+component:
+  id: aura.observatory.alerting
+  version: 1.0.0
+  owner: observatory.operations
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1
+dependencies: [postgresql, clickhouse]
+metrics:
+  - observatory_alert_evaluation_count
+  - observatory_alert_evaluation_duration_ms
+  - observatory_alert_operation_count
+  - observatory_alert_instance_transition_count
+  - observatory_alert_suppression_count
+  - observatory_alert_acknowledgement_count
+  - observatory_operations_recovery_count
+  - observatory_operations_backlog_count
+  - observatory_operations_oldest_due_lag_ms
+  - observatory_operations_lease_outcome_count
+metric_semantics:
+  observatory_alert_evaluation_count: Bounded deterministic alert batches evaluated.
+  observatory_alert_evaluation_duration_ms: Duration of one bounded alert batch.
+  observatory_alert_operation_count: Bounded alert definition, validation, read, write, and command outcomes.
+  observatory_alert_instance_transition_count: Metadata-only alert state transitions.
+  observatory_alert_suppression_count: In-product suppression operations.
+  observatory_alert_acknowledgement_count: Durable alert acknowledgements.
+  observatory_operations_recovery_count: Restart, lease, and bounded recovery outcomes.
+  observatory_operations_backlog_count: Number of due alert rules awaiting evaluation.
+  observatory_operations_oldest_due_lag_ms: Bounded age of the oldest due alert rule.
+  observatory_operations_lease_outcome_count: Lease acquisition and fencing outcomes.
+metric_definitions:
+  observatory_alert_evaluation_count:
+    type: counter
+    labels: [outcome]
+    trace: alert_evaluation
+    correlation: service
+    export: prometheus
+  observatory_alert_evaluation_duration_ms:
+    type: histogram
+    labels: [outcome]
+    trace: alert_evaluation
+    correlation: service
+    export: prometheus
+  observatory_alert_operation_count:
+    type: counter
+    labels: [operation, outcome]
+    bounded_outcomes: [complete, success, partial, stale, unavailable, incompatible, failure, conflict, missing, no_data, inconclusive]
+    trace: alert_operation
+    correlation: service
+    export: prometheus
+  observatory_alert_instance_transition_count:
+    type: counter
+    labels: [state, outcome]
+    trace: alert_evaluation
+    correlation: service
+    export: prometheus
+  observatory_alert_suppression_count:
+    type: counter
+    labels: [operation, outcome]
+    trace: alert_evaluation
+    correlation: service
+    export: prometheus
+  observatory_alert_acknowledgement_count:
+    type: counter
+    labels: [outcome]
+    trace: alert_evaluation
+    correlation: service
+    export: prometheus
+  observatory_operations_recovery_count:
+    type: counter
+    labels: [operation, outcome]
+    bounded_outcomes: [complete, failed, conflict, recovered]
+    trace: alert_recovery
+    correlation: service
+    export: prometheus
+  observatory_operations_backlog_count:
+    type: gauge
+    labels: []
+    trace: alert_recovery
+    correlation: service
+    export: prometheus
+  observatory_operations_oldest_due_lag_ms:
+    type: gauge
+    labels: []
+    trace: alert_recovery
+    correlation: service
+    export: prometheus
+  observatory_operations_lease_outcome_count:
+    type: counter
+    labels: [outcome]
+    trace: alert_recovery
+    correlation: service
+    export: prometheus
+cardinality:
+  bounded_labels: [state, operation, outcome]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]
+evaluators: [alert_rule_determinism, alert_grouping_and_suppression, operations_owner_authorization]
+capture_policy: metadata_only
+retention: manual_owner_delete_only

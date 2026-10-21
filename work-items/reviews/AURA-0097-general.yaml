@@ -1,0 +1,43 @@
+agent: general_reviewer
+work_item: AURA-0097
+verdict: PASS
+checked:
+  - >-
+    Re-read the validated work item, current OpenAPI Cursor and
+    EvaluationVersion schemas, and the exact current storage, history,
+    saved-query listing, and saved-query execution cursor paths. Re-probed all
+    previously closed correctness findings without modifying implementation
+    code.
+  - >-
+    Confirmed a contract-valid 64-character regressionVersion produces a
+    308-character `ev2_` cursor, remains within the public 1024-character
+    maximum and URL-safe character grammar, decodes successfully, and carries
+    the exact resource kind, regression identity, timestamp, and version for
+    the three-key descending PostgreSQL continuation.
+  - >-
+    Confirmed page-two replay applies the exact regression_version continuation
+    predicate. Exact-shape `ev2_` cursors are bound to their resource kind;
+    jobs/history cross-use is rejected. Bounded canonical legacy `ev1.` history
+    cursors remain readable while malformed, extra-key, duplicate-key,
+    noncanonical, forbidden-character, and over-1024 values are rejected.
+  - >-
+    Confirmed `sq2_` saved-query execution cursors are exact-shape,
+    query/version/kind-bound, URL-safe, canonical, and bounded by the public
+    1024-character Cursor contract. A maximum actual 308-character regression
+    provider cursor nested with 64-character resource versions produces a
+    valid 651-character execution cursor. Bounded canonical `sq1.` compatibility
+    remains available only through its closed legacy shape.
+  - >-
+    Direct adversarial probes confirm both `ev2_` and `sq2_` reject trailing
+    dots and alternate noncanonical Base64 encodings. The execute route now
+    enforces the bounded current-or-legacy execution-cursor grammar before
+    dispatch, and the decoders independently enforce canonical payloads.
+  - >-
+    Re-ran the focused AURA-0097 production-adapter, backend, contract, and
+    PostgreSQL suite on the current tree: 64 passed and 10 opt-in live
+    PostgreSQL cases skipped. Re-ran all Observatory and contract tests: 1243
+    passed and 37 provider-gated tests skipped. This retained coverage for the
+    previously closed bounded execution, multi-filter, exact experiment
+    reference, projection, scalar validation, grouping, suppression,
+    pagination, concurrency, API parity, and frontend-facing contract findings.
+findings: []

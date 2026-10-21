@@ -1,0 +1,31 @@
+agent: architecture_guardian
+work_item: AURA-0097
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the validated AURA-0097 scope and current Observatory
+    implementation against the architecture handover, accepted ADRs,
+    service-owned migration boundary, module registry, and frontend product
+    boundaries.
+  - >-
+    Confirmed the operations resources remain Observatory-owned, use typed
+    public query and evaluation ports, and do not import Core, access Core
+    tables, or add a normal Core dependency. The formerly noted alert
+    grouping contract mismatch is resolved: the current contract, generated
+    client, and producer all agree on zero or one allowlisted facet.
+  - >-
+    Confirmed the PostgreSQL migration is service-owned and forward-only, the
+    generated Angular client remains transport-only, the operational SSE is
+    additive and metadata-only, and the module dependency graph declares the
+    operations and query/evaluation edges explicitly.
+  - >-
+    Re-ran repository shape, module registry, service isolation, changed-path,
+    contract, observability, baseline, generated-sync, and frontend boundary
+    validation; all applicable checks passed and no protected baseline changed.
+findings: []
+risks:
+  - >-
+    Opt-in live PostgreSQL and ClickHouse execution remains gated when the
+    AURA-specific connection URLs are absent; the scoped integration tests
+    document those skips and all static and non-live checks pass.
+unresolved: []

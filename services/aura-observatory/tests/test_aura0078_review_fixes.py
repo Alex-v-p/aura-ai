@@ -923,7 +923,12 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
             "aura.observatory.evaluation_experiments",
             "aura.observatory.evaluation_baselines",
             "aura.observatory.evaluation_regressions",
-        }
+        "aura.observatory.dashboards",
+        "aura.observatory.saved_queries",
+        "aura.observatory.alerting",
+        "aura.observatory.incidents",
+        "aura.observatory.annotations",
+    }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
         "telemetry_ingest_rejected_count",
@@ -1041,12 +1046,12 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_calibration_duration_ms",
             }
         elif manifest_id == "aura.observatory.evaluation_api":
-                expected_metrics = {
-                    "observatory_evaluation_api_operation_count",
-                    "observatory_evaluation_live_event_count",
-                    "observatory_evaluation_live_replay_lag_seconds",
-                    "observatory_evaluation_operation_duration_ms",
-                }
+            expected_metrics = {
+                "observatory_evaluation_api_operation_count",
+                "observatory_evaluation_live_event_count",
+                "observatory_evaluation_live_replay_lag_seconds",
+                "observatory_evaluation_operation_duration_ms",
+            }
         elif manifest_id == "aura.observatory.evaluation_experiments":
             expected_metrics = {
                 "observatory_evaluation_experiment_operation_count",
@@ -1062,6 +1067,27 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_evaluation_regression_outcome_count",
                 "observatory_evaluation_attribution_outcome_count",
             }
+        elif manifest_id == "aura.observatory.dashboards":
+            expected_metrics = {"observatory_dashboard_operation_count"}
+        elif manifest_id == "aura.observatory.saved_queries":
+            expected_metrics = {"observatory_saved_query_operation_count"}
+        elif manifest_id == "aura.observatory.alerting":
+            expected_metrics = {
+                "observatory_alert_operation_count",
+                "observatory_alert_evaluation_count",
+                "observatory_alert_evaluation_duration_ms",
+                "observatory_alert_instance_transition_count",
+                "observatory_alert_suppression_count",
+                "observatory_alert_acknowledgement_count",
+                "observatory_operations_recovery_count",
+                "observatory_operations_backlog_count",
+                "observatory_operations_oldest_due_lag_ms",
+                "observatory_operations_lease_outcome_count",
+            }
+        elif manifest_id == "aura.observatory.incidents":
+            expected_metrics = {"observatory_incident_transition_count"}
+        elif manifest_id == "aura.observatory.annotations":
+            expected_metrics = {"observatory_annotation_operation_count"}
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {
             "aura.observatory.evaluation_artifact_storage",

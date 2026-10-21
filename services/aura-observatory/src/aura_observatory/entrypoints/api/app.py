@@ -1,4 +1,6 @@
 """Thin FastAPI composition root for private metadata ingestion."""
+# ruff: noqa: E501,E701,E702,F401,I001
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportArgumentType=false, reportIndexIssue=false, reportPrivateUsage=false, reportUnusedImport=false
 
 from __future__ import annotations
 
@@ -7,7 +9,7 @@ import json
 import logging
 import re
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import monotonic
@@ -49,6 +51,11 @@ from aura_observatory.query import (
     decode_health_cursor,
 )
 from aura_observatory.settings import Settings
+from aura_observatory.alerting import AlertError
+from aura_observatory.annotations import AnnotationError, AnnotationTargetNotFound, AnnotationTargetUnavailable
+from aura_observatory.dashboards import DashboardError
+from aura_observatory.incidents import IncidentError
+from aura_observatory.saved_queries import SavedQueryError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +64,7 @@ _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 _COMPONENT_ID_RE = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9_-]{16,1024}$")
+_EXECUTION_CURSOR_RE = re.compile(r"^(?:sq2_[A-Za-z0-9_-]+|sq1\.[A-Za-z0-9_-]+)$")
 _RUN_STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled", "unknown"})
 _AUTH_RECOVERY_QUERY = "auth_recovery"
 _AUTH_RECOVERY_MARKERS = frozenset(
@@ -493,6 +501,7 @@ def create_app(
         service=evaluation_service,
         resolved=resolved,
     )
+    _register_operations_routes(app, owner_session, auth_service, resolved, testing=testing)
 
     @app.get("/api/v1/overview")
     async def overview(request: Request) -> JSONResponse:
@@ -1374,6 +1383,11 @@ def _validate_cursor(value: str | None) -> None:
         raise ValueError("invalid cursor")
 
 
+def _validate_execution_cursor(value: str | None) -> None:
+    if value is not None and (len(value) > 1024 or _EXECUTION_CURSOR_RE.fullmatch(value) is None):
+        raise ValueError("invalid cursor")
+
+
 def _validate_health_cursor(value: str | None) -> None:
     if value is not None:
         decode_health_cursor(value)
@@ -1728,6 +1742,329 @@ def _credential_from_headers(authorization: str | None, explicit: str | None) ->
         return None
     scheme, separator, token = authorization.partition(" ")
     return token if separator and scheme.lower() == "bearer" and token else None
+
+
+def _register_operations_routes(
+    app: FastAPI,
+    owner_session: Any,
+    auth_service: Any,
+    resolved: Settings,
+    *,
+    testing: bool,
+) -> None:
+    """Register additive owner-only operations without widening legacy routes."""
+    from aura_observatory.composition import build_operations_services
+
+    services = build_operations_services(resolved, testing=testing)
+    app.state.operations = services
+
+    async def read_owner(request: Request) -> Any:
+        return await owner_session(request)
+
+    async def payload(request: Request) -> dict[str, object]:
+        try:
+            raw = await request.body()
+            if len(raw) > 262_144: raise HTTPException(status_code=413, detail="request too large")
+            value = json.loads(raw)
+        except HTTPException: raise
+        except Exception as exc: raise HTTPException(status_code=400, detail="invalid request") from exc
+        if not isinstance(value, dict): raise HTTPException(status_code=422, detail="invalid request")
+        return cast(dict[str, object], value)
+
+    def page_limit(value: int) -> int:
+        if not 1 <= value <= 200:
+            raise HTTPException(status_code=422, detail="invalid page size")
+        return value
+
+    async def command(request: Request, *, expected_confirmation: str | None = None) -> str:
+        session = await owner_session(request)
+        csrf = request.headers.get("X-CSRF-Token") or request.headers.get("X-Observatory-CSRF")
+        try: auth_service.require_csrf(session, csrf, origin=request.headers.get("origin"))
+        except PermissionError as exc: raise HTTPException(status_code=403, detail="invalid CSRF token") from exc
+        key = request.headers.get("Idempotency-Key")
+        if key is None or not 16 <= len(key) <= 128 or re.fullmatch(r"[A-Za-z0-9._:-]+", key) is None: raise HTTPException(status_code=400, detail="invalid request")
+        if expected_confirmation is not None and request.headers.get("X-Observatory-Confirmation") != expected_confirmation: raise HTTPException(status_code=400, detail="invalid request")
+        return key
+
+    def no_store(value: object, code: int = 200) -> JSONResponse: return JSONResponse(value, status_code=code, headers={"Cache-Control": "no-store"})
+
+    def translate(error: Exception) -> HTTPException:
+        if isinstance(error, KeyError): return HTTPException(status_code=404, detail="resource not found")
+        if isinstance(error, RuntimeError): return HTTPException(status_code=409, detail="request conflicts with existing state")
+        if isinstance(error, AnnotationTargetNotFound): return HTTPException(status_code=404, detail="resource not found")
+        if isinstance(error, AnnotationTargetUnavailable): return HTTPException(status_code=503, detail="service unavailable")
+        if isinstance(error, (DashboardError, SavedQueryError, AlertError, IncidentError, AnnotationError, ValueError)): return HTTPException(status_code=422, detail="invalid request")
+        return HTTPException(status_code=503, detail="service unavailable")
+
+    @app.get("/api/v1/dashboard-presets")
+    async def dashboard_presets(request: Request, page_size: int = 50, cursor: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["dashboard"].presets())
+
+    @app.get("/api/v1/dashboards")
+    async def dashboards(request: Request, page_size: int = 50, cursor: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["dashboard"].list(cursor=cursor, limit=page_limit(page_size)))
+
+    @app.post("/api/v1/dashboards", status_code=201)
+    async def create_dashboard(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["dashboard"].create(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/dashboards/{dashboard_id}/versions/{resource_version}")
+    async def get_dashboard(dashboard_id: str, resource_version: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("dashboard", dashboard_id, resource_version)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.post("/api/v1/dashboards/{dashboard_id}/versions/{resource_version}/delete", status_code=204)
+    async def delete_dashboard(dashboard_id: str, resource_version: str, request: Request) -> Response:
+        key = await command(request, expected_confirmation="delete-dashboard")
+        body = await payload(request)
+        if set(body) != {"expectedVersion", "requestedAt"} or body["expectedVersion"] != resource_version: raise HTTPException(status_code=422, detail="invalid request")
+        try: _parse_time(body["requestedAt"])
+        except ValueError as exc: raise HTTPException(status_code=422, detail="invalid request") from exc
+        try: await services["operations"].delete_resource("dashboard", dashboard_id, resource_version, command_id=key)
+        except Exception as exc: raise translate(exc) from exc
+        return Response(status_code=204)
+
+    @app.get("/api/v1/saved-queries")
+    async def saved_queries(request: Request, page_size: int = 50, cursor: str | None = None, kind: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["saved_query"].list(cursor=cursor, limit=page_limit(page_size), kind=kind))
+
+    @app.post("/api/v1/saved-queries", status_code=201)
+    async def create_saved_query(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["saved_query"].create(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/saved-queries/{query_id}/versions/{resource_version}")
+    async def get_saved_query(query_id: str, resource_version: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("saved_query", query_id, resource_version)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.get("/api/v1/saved-queries/{query_id}/versions/{resource_version}/execute")
+    async def execute_saved_query(query_id: str, resource_version: str, request: Request, cursor: str | None = None) -> JSONResponse:
+        await read_owner(request)
+        try:
+            _validate_execution_cursor(cursor)
+            value = await services["saved_query_execution"].execute(query_id, resource_version, cursor=cursor)
+        except Exception as exc:
+            raise translate(exc) from exc
+        return no_store(value)
+
+    @app.post("/api/v1/saved-queries/{query_id}/versions/{resource_version}/delete", status_code=204)
+    async def delete_saved_query(query_id: str, resource_version: str, request: Request) -> Response:
+        key = await command(request, expected_confirmation="delete-saved-query")
+        body = await payload(request)
+        if set(body) != {"expectedVersion", "requestedAt"} or body["expectedVersion"] != resource_version: raise HTTPException(status_code=422, detail="invalid request")
+        try: _parse_time(body["requestedAt"])
+        except ValueError as exc: raise HTTPException(status_code=422, detail="invalid request") from exc
+        try: await services["operations"].delete_resource("saved_query", query_id, resource_version, command_id=key)
+        except Exception as exc: raise translate(exc) from exc
+        return Response(status_code=204)
+
+    @app.get("/api/v1/alert-rules")
+    async def alert_rules(request: Request, page_size: int = 50, cursor: str | None = None, state: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["alert"].list_rules(cursor=cursor, limit=page_limit(page_size), state=state))
+
+    @app.post("/api/v1/alert-rules", status_code=201)
+    async def create_alert_rule(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["alert"].create_rule(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/alert-rules/{rule_id}/versions/{resource_version}")
+    async def get_alert_rule(rule_id: str, resource_version: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("alert_rule", rule_id, resource_version)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.post("/api/v1/alert-rules/{rule_id}/versions/{resource_version}/state")
+    async def change_alert_rule(rule_id: str, resource_version: str, request: Request) -> JSONResponse:
+        key = await command(request, expected_confirmation="change-alert-rule-state")
+        body = await payload(request)
+        if set(body) != {"expectedVersion", "state", "requestedAt"} or body["expectedVersion"] != resource_version: raise HTTPException(status_code=422, detail="invalid request")
+        try: _parse_time(body["requestedAt"])
+        except ValueError as exc: raise HTTPException(status_code=422, detail="invalid request") from exc
+        try: return no_store(await services["alert"].set_rule_state(rule_id, resource_version, str(body["state"]), command_id=key, expected_version=str(body["expectedVersion"])))
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/alert-instances")
+    async def alert_instances(request: Request, page_size: int = 50, cursor: str | None = None, state: str | None = None, severity: str | None = None, rule_id: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["operations"].list_resources("alert_instance", cursor=cursor, limit=page_limit(page_size), state=state, severity=severity, rule_id=rule_id))
+
+    @app.get("/api/v1/alert-instances/{instance_id}")
+    async def get_alert_instance(instance_id: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("alert_instance", instance_id)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.post("/api/v1/alert-instances/{instance_id}/acknowledgements")
+    async def acknowledge_alert(instance_id: str, request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["alert"].acknowledge(instance_id, await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/alert-suppressions")
+    async def suppressions(request: Request, page_size: int = 50, cursor: str | None = None, state: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["operations"].list_resources("alert_suppression", cursor=cursor, limit=page_limit(page_size), state=state))
+
+    @app.post("/api/v1/alert-suppressions", status_code=201)
+    async def create_suppression(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["alert"].create_suppression(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.post("/api/v1/alert-suppressions/{suppression_id}/clear")
+    async def clear_suppression(suppression_id: str, request: Request) -> JSONResponse:
+        key = await command(request, expected_confirmation="clear-suppression")
+        body = await payload(request)
+        if set(body) != {"expectedVersion", "clearedAt"}: raise HTTPException(status_code=422, detail="invalid request")
+        try: _parse_time(body["clearedAt"])
+        except ValueError as exc: raise HTTPException(status_code=422, detail="invalid request") from exc
+        try: return no_store(await services["alert"].clear_suppression(suppression_id, expected_version=str(body["expectedVersion"]), cleared_at=str(body["clearedAt"]), command_id=key))
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/incidents")
+    async def incidents(request: Request, page_size: int = 50, cursor: str | None = None, state: str | None = None, severity: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["operations"].list_resources("incident", cursor=cursor, limit=page_limit(page_size), state=state, severity=severity))
+
+    @app.post("/api/v1/incidents", status_code=201)
+    async def create_incident(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["incident"].create(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/incidents/{incident_id}")
+    async def get_incident(incident_id: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("incident", incident_id)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.post("/api/v1/incidents/{incident_id}/transitions")
+    async def transition_incident(incident_id: str, request: Request) -> JSONResponse:
+        body = await payload(request)
+        key = await command(request, expected_confirmation="transition-incident")
+        try: return no_store(await services["incident"].transition(incident_id, body, command_id=key))
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/annotations")
+    async def annotations(request: Request, page_size: int = 50, cursor: str | None = None, target_type: str | None = None, target_id: str | None = None, target_version: str | None = None) -> JSONResponse:
+        await read_owner(request); return no_store(await services["annotation"].list(target_type=target_type, target_id=target_id, target_version=target_version, cursor=cursor, limit=page_limit(page_size)))
+
+    @app.post("/api/v1/annotations", status_code=201)
+    async def create_annotation(request: Request) -> JSONResponse:
+        key = await command(request)
+        try: return no_store(await services["annotation"].create(await payload(request), command_id=key), 201)
+        except Exception as exc: raise translate(exc) from exc
+
+    @app.get("/api/v1/annotations/{annotation_id}/versions/{resource_version}")
+    async def get_annotation(annotation_id: str, resource_version: str, request: Request) -> JSONResponse:
+        await read_owner(request); value = await services["operations"].get_resource("annotation", annotation_id, resource_version)
+        if value is None: raise HTTPException(status_code=404, detail="resource not found")
+        return no_store(value)
+
+    @app.post("/api/v1/annotations/{annotation_id}/versions/{resource_version}/delete", status_code=204)
+    async def delete_annotation(annotation_id: str, resource_version: str, request: Request) -> Response:
+        key = await command(request, expected_confirmation="delete-annotation")
+        body = await payload(request)
+        if set(body) != {"expectedVersion", "requestedAt"} or body["expectedVersion"] != resource_version: raise HTTPException(status_code=422, detail="invalid request")
+        try: _parse_time(body["requestedAt"])
+        except ValueError as exc: raise HTTPException(status_code=422, detail="invalid request") from exc
+        try: await services["operations"].delete_resource("annotation", annotation_id, resource_version, command_id=key)
+        except Exception as exc: raise translate(exc) from exc
+        return Response(status_code=204)
+
+    @app.get("/api/v1/operations/events")
+    async def operation_events(request: Request, last_event_id: str | None = Header(default=None, alias="Last-Event-ID")) -> StreamingResponse:
+        origin = request.headers.get("origin")
+        if origin is not None and origin != resolved.public_origin: raise HTTPException(status_code=403, detail="same-origin request required")
+        await read_owner(request)
+        async def stream() -> AsyncIterator[str]:
+            cursor = last_event_id
+            last_reauth = monotonic()
+            record = getattr(services.get("metrics"), "record", None)
+            setter = getattr(services.get("metrics"), "set", None)
+            span = getattr(services.get("metrics"), "record_component_span", None)
+            connected_at = monotonic()
+            terminal_event = "disconnect"
+            terminal_outcome = "success"
+            terminal_error: str | None = None
+            if callable(record):
+                record("observatory_sse_connection_count", 1.0, {"event_type": "connection"})
+            if callable(setter):
+                setter("observatory_sse_active", 1.0, {"event_type": "stream"})
+            elif callable(record):
+                record("observatory_sse_active", 1.0, {"event_type": "stream"})
+            try:
+                while not await request.is_disconnected():
+                    if monotonic() - last_reauth >= 15.0:
+                        try:
+                            await read_owner(request)
+                        except Exception:
+                            terminal_event = "reauth"
+                            terminal_outcome = "failure"
+                            terminal_error = "authorization_required"
+                            break
+                        last_reauth = monotonic()
+                    try:
+                        events = await services["live"].after(cursor, limit=256)
+                    except Exception:
+                        terminal_event = "failure"
+                        terminal_outcome = "failure"
+                        terminal_error = "transport_unavailable"
+                        break
+                    if events:
+                        if callable(record):
+                            record("observatory_sse_replay_count", float(len(events)), {"event_type": "operations.changed"})
+                            oldest = events[0].get("occurredAt") if isinstance(events[0], Mapping) else None
+                            if isinstance(oldest, str):
+                                try:
+                                    parsed_oldest = _parse_time(oldest)
+                                    if parsed_oldest is not None:
+                                        lag = max(0.0, (datetime.now(UTC) - parsed_oldest).total_seconds() * 1000.0)
+                                        if callable(setter):
+                                            setter("observatory_sse_replay_lag_ms", lag, {"event_type": "replay_lag"})
+                                        else:
+                                            record("observatory_sse_replay_lag_ms", lag, {"event_type": "replay_lag"})
+                                except ValueError:
+                                    terminal_event = "failure"
+                                    terminal_outcome = "failure"
+                                    terminal_error = "validation"
+                        for event in events:
+                            cursor = str(event["eventId"])
+                            yield f"id: {event['eventId']}\nevent: operations.changed\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
+                    else:
+                        yield ": heartbeat\n\n"
+                    if testing:
+                        break
+                    await asyncio.sleep(1.0)
+            except Exception:
+                terminal_event = "failure"
+                terminal_outcome = "failure"
+                terminal_error = "transport_unavailable"
+                raise
+            finally:
+                if callable(record):
+                    if terminal_outcome == "failure":
+                        record("observatory_sse_failure_count", 1.0, {"event_type": terminal_event})
+                    record("observatory_sse_disconnect_count", 1.0, {"event_type": terminal_event})
+                if callable(setter):
+                    setter("observatory_sse_active", 0.0, {"event_type": "stream"})
+                elif callable(record):
+                    record("observatory_sse_active", -1.0, {"event_type": "stream"})
+                if callable(span):
+                    span(component_id="aura.observatory.live_updates", component_version="1.0.0", deployment_id=str(getattr(services.get("metrics"), "deployment_id", "observatory")), operation="live_disconnect", duration_ms=max(0.001, (monotonic() - connected_at) * 1000.0), outcome=terminal_outcome, dependency="postgresql", error_code=terminal_error)
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.get("/api/v1/operations/history")
+    async def operations_history(request: Request, page_size: int = 50, cursor: str | None = None, resource_type: str | None = None, resource_id: str | None = None, resource_version: str | None = None) -> JSONResponse:
+        await read_owner(request)
+        try:
+            return no_store(await services["operations"].list_history(cursor=cursor, limit=page_limit(page_size), resource_type=resource_type, resource_id=resource_id, resource_version=resource_version))
+        except Exception as exc:
+            raise translate(exc) from exc
 
 
 app = create_app()

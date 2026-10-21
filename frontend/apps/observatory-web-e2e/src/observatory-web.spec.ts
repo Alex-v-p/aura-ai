@@ -648,6 +648,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       'observatory-comparison': 'block',
       'observatory-components': 'none',
       'observatory-analytics': 'none',
+      'observatory-operations-workspace': 'none',
       'observatory-retention': 'none',
       'observatory-evaluation-workspace': 'none',
       'observatory-experiment-workspace': 'none',

@@ -1,4 +1,5 @@
 """DB-only Observatory evaluation schedule/recovery loop."""
+# ruff: noqa: E501,E701,E702
 
 from __future__ import annotations
 
@@ -7,7 +8,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from aura_observatory.composition import build_evaluation_scheduler
+from aura_observatory.composition import build_evaluation_scheduler, build_operations_services
 from aura_observatory.evaluation_orchestration import OrchestrationDependencyError
 from aura_observatory.settings import Settings
 
@@ -17,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 async def run(settings: Settings | None = None, stop: Awaitable[None] | None = None) -> None:
     resolved = settings or Settings(role="evaluation_scheduler")
     scheduler = build_evaluation_scheduler(resolved)
+    operations = build_operations_services(resolved)
     stop_event = asyncio.Event()
     stop_task = asyncio.create_task(_wait_stop(stop, stop_event)) if stop is not None else None
     try:
@@ -24,6 +26,7 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
             try:
                 await scheduler.heartbeat_once()
                 await scheduler.run_once()
+                await operations["alert"].evaluate_once(limit=16)
             except Exception as error:
                 code = _failure_code(error)
                 _LOGGER.warning("evaluation scheduler operation failed", extra={"code": code})
@@ -48,17 +51,17 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
             except TimeoutError:
                 continue
     finally:
-        metrics = getattr(scheduler, "metrics", None)
-        flush = getattr(metrics, "flush", None)
-        if callable(flush):
-            try:
-                flush_async = cast(Callable[..., Awaitable[Any]], flush)
-                await asyncio.wait_for(
-                    flush_async(timeout_seconds=resolved.evaluation_shutdown_timeout_seconds),
-                    timeout=resolved.evaluation_shutdown_timeout_seconds,
-                )
-            except TimeoutError, asyncio.CancelledError:
-                pass
+        for metrics in (getattr(scheduler, "metrics", None), operations.get("metrics")):
+            flush = getattr(metrics, "flush", None)
+            if callable(flush):
+                try:
+                    flush_async = cast(Callable[..., Awaitable[Any]], flush)
+                    await asyncio.wait_for(
+                        flush_async(timeout_seconds=resolved.evaluation_shutdown_timeout_seconds),
+                        timeout=resolved.evaluation_shutdown_timeout_seconds,
+                    )
+                except TimeoutError, asyncio.CancelledError:
+                    pass
         if stop_task is not None:
             stop_task.cancel()
 

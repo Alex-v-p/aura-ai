@@ -1,0 +1,27 @@
+component:
+  id: aura.observatory.saved_queries
+  version: 1.0.0
+  owner: observatory.operations
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1
+dependencies: [postgresql, clickhouse]
+metrics: [observatory_saved_query_operation_count]
+metric_semantics:
+  observatory_saved_query_operation_count: Bounded closed saved-query operations by outcome.
+metric_definitions:
+  observatory_saved_query_operation_count:
+    type: counter
+    labels: [operation, outcome]
+    trace: saved_query_operation
+    correlation: service
+    export: prometheus
+cardinality:
+  bounded_labels: [operation, outcome]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]
+evaluators: [saved_query_bounds, operations_contract_compatibility]
+capture_policy: metadata_only
+retention: manual_owner_delete_only

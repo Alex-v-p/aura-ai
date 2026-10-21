@@ -10,6 +10,7 @@ transport-neutral ports, projections, and validation.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -217,22 +218,78 @@ def _required_enum(value: object, allowed: set[str], name: str) -> str:
     return value
 
 
-def _decode_storage_cursor(value: str | None) -> dict[str, object]:
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, item in pairs:
+        if key in result:
+            raise ValueError("duplicate cursor key")
+        result[key] = item
+    return result
+
+
+def _decode_storage_cursor(
+    value: str | None, *, expected_kind: str | None = None
+) -> dict[str, object]:
     if value is None:
-        return {"snapshotAt": datetime.now(UTC), "timestamp": None, "identifier": None}
-    if not isinstance(value, str) or not value.startswith("ev1.") or len(value) > 256:
+        return {
+            "snapshotAt": datetime.now(UTC),
+            "timestamp": None,
+            "identifier": None,
+            "version": None,
+            "kind": expected_kind,
+        }
+    if not isinstance(value, str) or len(value) > 1024:
+        raise EvaluationQueryError("cursor is invalid")
+    if value.startswith("ev2_"):
+        prefix = "ev2_"
+        encoded_value = value[4:]
+    elif value.startswith("ev1."):
+        prefix = "ev1."
+        # Legacy cursors were emitted with a dot separator.  They remain
+        # readable so an in-flight client can finish a page traversal while
+        # all new cursors use the public Cursor character grammar.
+        encoded_value = value[4:]
+    else:
+        raise EvaluationQueryError("cursor is invalid")
+    if not encoded_value or re.fullmatch(r"[A-Za-z0-9_-]+", encoded_value) is None:
         raise EvaluationQueryError("cursor is invalid")
     try:
-        encoded = value[4:] + "=" * (-len(value[4:]) % 4)
-        decoded = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        encoded = encoded_value + "=" * (-len(encoded_value) % 4)
+        raw = base64.b64decode(encoded, altchars=b"-_", validate=True)
+        if base64.urlsafe_b64encode(raw).decode().rstrip("=") != encoded_value:
+            raise ValueError("non-canonical cursor")
+        decoded = json.loads(raw.decode(), object_pairs_hook=_strict_json_object)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
         raise EvaluationQueryError("cursor is invalid") from exc
-    if not isinstance(decoded, Mapping) or decoded.get("v") != 2:
+    if not isinstance(decoded, Mapping):
         raise EvaluationQueryError("cursor is invalid")
+    if prefix == "ev2_":
+        if set(decoded) != {"v", "kind", "snapshotAt", "timestamp", "identifier", "version"}:
+            raise EvaluationQueryError("cursor is invalid")
+        if decoded.get("v") != 2 or not isinstance(decoded.get("kind"), str):
+            raise EvaluationQueryError("cursor is invalid")
+        cursor_kind: str | None = decoded["kind"]
+        if expected_kind is not None and cursor_kind != expected_kind:
+            raise EvaluationQueryError("cursor is invalid")
+    else:
+        if set(decoded) != {"v", "snapshotAt", "timestamp", "identifier"} or decoded.get("v") != 2:
+            raise EvaluationQueryError("cursor is invalid")
+        # The legacy payload predates kind binding.  It is therefore safe to
+        # resume only the explicitly supported historical audit traversal;
+        # never infer a collection kind from an unbound legacy cursor.
+        if expected_kind != "history":
+            raise EvaluationQueryError("cursor is invalid")
+        cursor_kind = "history"
     snapshot_raw = decoded.get("snapshotAt")
     timestamp_raw = decoded.get("timestamp")
     identifier = decoded.get("identifier")
-    if not isinstance(snapshot_raw, str) or not isinstance(identifier, (str, type(None))):
+    version = decoded.get("version")
+    if (
+        not isinstance(snapshot_raw, str)
+        or not isinstance(identifier, (str, type(None)))
+        or not isinstance(version, (str, type(None)))
+        or not isinstance(cursor_kind, (str, type(None)))
+    ):
         raise EvaluationQueryError("cursor is invalid")
     try:
         snapshot = datetime.fromisoformat(snapshot_raw.replace("Z", "+00:00"))
@@ -242,11 +299,17 @@ def _decode_storage_cursor(value: str | None) -> dict[str, object]:
         raise EvaluationQueryError("cursor is invalid")
     if timestamp_raw is not None and not isinstance(timestamp_raw, str):
         raise EvaluationQueryError("cursor is invalid")
-    return {"snapshotAt": snapshot.astimezone(UTC), "timestamp": timestamp_raw, "identifier": identifier}
+    return {
+        "snapshotAt": snapshot.astimezone(UTC),
+        "timestamp": timestamp_raw,
+        "identifier": identifier,
+        "version": version,
+        "kind": cursor_kind,
+    }
 
 
 def _encode_storage_cursor(state: Mapping[str, object], row: Mapping[str, object], kind: str) -> str:
-    timestamp_key = "_cursorCreatedAt" if kind == "attempts" else {
+    timestamp_key = "_cursorCreatedAt" if kind in {"attempts", "regressions"} else {
         "deletions": "createdAt",
         "scores": "createdAt",
         "results": "createdAt",
@@ -255,9 +318,13 @@ def _encode_storage_cursor(state: Mapping[str, object], row: Mapping[str, object
     timestamp = row.get(timestamp_key)
     if timestamp is None:
         timestamp = row.get("updatedAt")
+    version = row.get("_cursorVersion") if kind == "regressions" else None
+    if version is None and kind == "regressions":
+        version = row.get("regressionVersion")
     raw = json.dumps(
         {
             "v": 2,
+            "kind": kind,
             "snapshotAt": str(state["snapshotAt"]).replace("+00:00", "Z"),
             "timestamp": str(timestamp) if timestamp is not None else None,
             "identifier": str(row.get({
@@ -266,16 +333,19 @@ def _encode_storage_cursor(state: Mapping[str, object], row: Mapping[str, object
                 "results": "resultId", "scores": "scoreId", "artifacts": "artifactId",
                 "reviews": "reviewId", "calibrations": "calibrationId",
                 "qualifications": "qualificationId", "deletions": "actionId",
+                "regressions": "regressionId",
                 "history": "historyId",
             }.get(kind, "id"))),
+            "version": str(version) if version is not None else None,
         },
         separators=(",", ":"),
     ).encode()
-    return "ev1." + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    return "ev2_" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 def _keyset_clause(
-    state: Mapping[str, object], *, column: str, identifier_column: str, descending: bool = True
+    state: Mapping[str, object], *, column: str, identifier_column: str,
+    version_column: str | None = None, descending: bool = True
 ) -> tuple[list[str], list[object]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -287,14 +357,28 @@ def _keyset_clause(
     identifier = state.get("identifier")
     if timestamp is not None and identifier is not None:
         operator = "<" if descending else ">"
-        clauses.append(f"({column} {operator} %s OR ({column} = %s AND {identifier_column} {operator} %s))")
         key_value: object = timestamp
         if base_column == "attempt_number":
             try:
                 key_value = int(timestamp)
             except ValueError as exc:
                 raise EvaluationQueryError("cursor is invalid") from exc
-        params.extend([key_value, key_value, identifier])
+        if version_column is not None:
+            version = state.get("version")
+            if not isinstance(version, str):
+                raise EvaluationQueryError("cursor is invalid")
+            clauses.append(
+                f"({column} {operator} %s OR ({column} = %s AND "
+                f"({identifier_column} {operator} %s OR "
+                f"({identifier_column} = %s AND {version_column} {operator} %s))))"
+            )
+            params.extend([key_value, key_value, identifier, identifier, version])
+        else:
+            clauses.append(
+                f"({column} {operator} %s OR ({column} = %s AND "
+                f"{identifier_column} {operator} %s))"
+            )
+            params.extend([key_value, key_value, identifier])
     return clauses, params
 
 
@@ -376,7 +460,7 @@ class PostgresEvaluationQueryBackend:
         limit: int,
         filters: Mapping[str, object] | None,
     ) -> dict[str, object]:
-        state = _decode_storage_cursor(cursor)
+        state = _decode_storage_cursor(cursor, expected_kind=kind)
         if kind == "scores":
             return await self._scores(cursor_state=state, limit=limit, filters=filters)
         if kind in self._DEFINITIONS:
@@ -397,6 +481,8 @@ class PostgresEvaluationQueryBackend:
             rows = await self._qualifications(state, limit, filters)
         elif kind == "deletions":
             rows = await self._deletions(state, limit)
+        elif kind == "regressions":
+            rows = await self._regressions(state, limit, filters)
         else:
             raise EvaluationQueryError("resource kind is invalid")
         next_cursor = (
@@ -449,7 +535,7 @@ class PostgresEvaluationQueryBackend:
         resource_type: str | None,
         resource_id: str | None,
     ) -> dict[str, object]:
-        state = _decode_storage_cursor(cursor)
+        state = _decode_storage_cursor(cursor, expected_kind="history")
         clauses: list[str] = []
         params: list[object] = []
         if resource_type is not None:
@@ -992,6 +1078,121 @@ class PostgresEvaluationQueryBackend:
             }
             for r in rows
         ]
+
+    async def _regressions(
+        self, state: Mapping[str, object], limit: int, filters: Mapping[str, object] | None
+    ) -> list[dict[str, object]]:
+        """Read regression decisions through the service-owned evaluation boundary.
+
+        Regression searches are intentionally narrowed before pagination.  In
+        particular, an experiment reference is matched only against the
+        regression's experiment identity; a baseline identity can therefore
+        never be treated as an experiment reference by this provider.
+        """
+
+        if not 1 <= limit <= 200:
+            raise EvaluationQueryError("page size is invalid")
+        clauses: list[str] = []
+        params: list[object] = []
+        if filters is None:
+            filters = {}
+
+        from_value = filters.get("from")
+        to_value = filters.get("to")
+        if from_value is None or to_value is None:
+            raise EvaluationQueryError("regression search window is required")
+        from_instant = _instant_filter(from_value, "from")
+        to_instant = _instant_filter(to_value, "to")
+        if from_instant > to_instant:
+            raise EvaluationQueryError("regression search window is invalid")
+        clauses.extend(["regression.created_at >= %s", "regression.created_at <= %s"])
+        params.extend([from_instant, to_instant])
+
+        decision = filters.get("decision")
+        outcomes = filters.get("outcomes")
+        if decision is not None:
+            if not isinstance(decision, str) or decision not in {
+                "regressed", "unchanged", "inconclusive", "unavailable", "incompatible"
+            }:
+                raise EvaluationQueryError("regression outcome is invalid")
+            clauses.append("regression.decision = %s")
+            params.append(decision)
+        elif outcomes is not None:
+            if not isinstance(outcomes, list) or not 1 <= len(outcomes) <= 6:
+                raise EvaluationQueryError("regression outcomes are invalid")
+            if (
+                any(
+                    not isinstance(item, str)
+                    or item not in {
+                        "regressed", "unchanged", "inconclusive", "unavailable", "incompatible"
+                    }
+                    for item in outcomes
+                )
+                or len(set(outcomes)) != len(outcomes)
+            ):
+                raise EvaluationQueryError("regression outcomes are invalid")
+            clauses.append("regression.decision = ANY(%s::text[])")
+            params.append(outcomes)
+
+        references = filters.get("experimentReferences")
+        if references is not None:
+            if not isinstance(references, list) or len(references) > 32:
+                raise EvaluationQueryError("experiment references are invalid")
+            reference_terms: list[str] = []
+            for reference in references:
+                if not isinstance(reference, Mapping) or set(reference) != {
+                    "resourceId", "resourceVersion"
+                }:
+                    raise EvaluationQueryError("experiment references are invalid")
+                resource_id = reference.get("resourceId")
+                resource_version = reference.get("resourceVersion")
+                if not isinstance(resource_id, str) or not isinstance(resource_version, str):
+                    raise EvaluationQueryError("experiment references are invalid")
+                _required_uuid(resource_id, "experiment reference id")
+                if _VERSION.fullmatch(resource_version) is None:
+                    raise EvaluationQueryError("experiment references are invalid")
+                # The predicates are deliberately on experiment_id/version,
+                # never baseline_id/version.  They are also grouped as exact
+                # pairs so a version cannot cross-match another experiment.
+                reference_terms.append(
+                    "(regression.experiment_id = %s AND regression.experiment_version = %s)"
+                )
+                params.extend([resource_id, resource_version])
+            if reference_terms:
+                clauses.append("(" + " OR ".join(reference_terms) + ")")
+
+        key_clauses, key_params = _keyset_clause(
+            state,
+            column="regression.created_at",
+            identifier_column="regression.regression_id",
+            version_column="regression.regression_version",
+        )
+        clauses.extend(key_clauses)
+        params.extend(key_params)
+        params.append(limit)
+        where = " WHERE " + " AND ".join(clauses)
+        sql = (
+            "SELECT regression.resource_json, regression.regression_id::text, "
+            "regression.regression_version, regression.created_at "
+            "FROM observatory_evaluation_regressions AS regression"
+            + where
+            + " ORDER BY regression.created_at DESC, regression.regression_id DESC, "
+            "regression.regression_version DESC LIMIT %s"
+        )
+        async with self._connection_factory() as connection:
+            result = await connection.execute(sql, tuple(params))
+            rows = await result.fetchall()
+        projected: list[dict[str, object]] = []
+        for row in rows:
+            if len(row) < 4:
+                raise EvaluationUnavailable("stored regression projection is unavailable")
+            value = _json_mapping(row[0])
+            if not value:
+                raise EvaluationUnavailable("stored regression projection is unavailable")
+            value["_cursorCreatedAt"] = _date(row[3])
+            value["_cursorVersion"] = str(row[2])
+            projected.append(value)
+        return projected
 
     async def _scores(
         self, *, cursor_state: Mapping[str, object], limit: int, filters: Mapping[str, object] | None

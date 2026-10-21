@@ -13,7 +13,7 @@ const reuseExistingServer = process.env['AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS'
  */
 export default defineConfig({
   testDir: 'src',
-  testMatch: /observatory(?:-web|-evaluation|-experiments)\.spec\.ts/,
+  testMatch: /observatory(?:-web|-evaluation|-experiments|-operations)\.spec\.ts/,
   fullyParallel: false,
   workers,
   timeout: 30_000,
