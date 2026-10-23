@@ -127,7 +127,7 @@ export class OperationsWorkspaceStore {
         return;
       }
       this.state.set(isUnavailableError(cause) ? 'unavailable' : this.hasData() ? 'stale' : 'error');
-      const message = cause instanceof Error ? cause.message : 'Observatory operations are unavailable.';
+      const message = 'The latest operation snapshot is unavailable. Retry when the service is available.';
       this.error.set(this.hasData() ? `Refresh failed; the previous measured dashboard data remains visible. ${message}` : message);
       this.markDashboardRefreshFailed(message);
     }
@@ -216,7 +216,7 @@ export class OperationsWorkspaceStore {
       await this.load();
     } catch (cause) {
       if (cause instanceof ObservatorySessionRequiredError) { this.state.set('unauthorized'); this.error.set('Your owner session has ended. Sign in again to continue.'); this.observatoryStore?.requireSession(this.error() ?? 'Owner Observatory session required.'); }
-      else this.error.set(cause instanceof Error ? cause.message : `${label} failed.`);
+      else this.error.set(`${label[0].toUpperCase()}${label.slice(1)} failed. Your draft is preserved; retry when the service is available.`);
       throw cause;
     } finally { this.busyAction.set(null); }
   }

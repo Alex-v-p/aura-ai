@@ -1,0 +1,99 @@
+agent: frontend_worker
+work_item: AURA-0099
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/frontend_redesign
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory-web.shell, frontend.observatory.presentation-system, frontend.observatory.monitoring-surfaces, frontend.observatory.analysis-surfaces, frontend.observatory.evaluation-surfaces, frontend.observatory.operations-surfaces
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/app/app.component.css
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web/src/styles.css
+  - frontend/apps/observatory-web/src/styles/observatory-tokens.css
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/presentation/observatory-presentation.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/libs/observatory/src/lib/features/retention/retention.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0099.yaml
+    - explicit AURA-0099 changed-path validation (27 paths, including the work item and test handoff)
+    - explicit AURA-0098 preserved-path validation (25 paths; only full-stack, evaluation, and experiments E2E specs)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0099.yaml (no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0099.yaml (no protected baseline changes)
+    - implementation-handoff schema validation
+    - pnpm --dir frontend nx lint observatory-web
+    - pnpm --dir frontend nx lint observatory
+    - pnpm --dir frontend nx test observatory
+    - pnpm --dir frontend nx build observatory-web --configuration=production
+    - prior focused real-browser visual and forced-colors review evidence for the AURA-0099 shell and workspace slices (312 Playwright cases and Chromium forced-colors checks)
+    - git diff --check
+  failed: []
+  not_run:
+    - pnpm --dir frontend nx test observatory-web (owned by the separate test/evaluation worker)
+    - pnpm --dir frontend nx test observatory-api-client (unrelated generated client scope)
+    - pnpm --dir frontend nx build storybook --configuration=production (unrelated Storybook scope)
+    - full-stack AURA-0098 acceptance, which remains blocked by its documented backend/platform prerequisites
+decisions:
+  - >-
+    Kept the handoff to the declared Observatory shell, presentation, monitoring,
+    analysis, evaluation, and operations ownership zones; removed E2E files,
+    nonexistent paths, and the deleted library-internal token stylesheet.
+  - >-
+    Moved global Observatory tokens to the app-owned shell stylesheet while
+    retaining the Observatory presentation TypeScript primitives and behavior.
+  - >-
+    Evaluation qualify, revoke, cancel, and deletion commands now preserve their
+    bounded state update but reject on failure; the confirmation remains open
+    with bounded retry-safe feedback until a command is confirmed successful.
+  - >-
+    Mixed AURA-0098 hunks are intentionally preserved and must be staged
+    separately from this handoff in frontend/libs/observatory/src/lib/observatory-store.ts,
+    frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts,
+    frontend/apps/observatory-web-e2e/src/full-stack.spec.ts,
+    frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts,
+    and frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts.
+    Those E2E files are excluded from this frontend production handoff; the
+    web and operations E2E specs are AURA-0099-only test-worker paths.
+  - >-
+    Preserved request bodies, CSRF headers, idempotency keys, confirmation
+    headers, authenticated memory-only state, and the documented AURA-0098
+    backend/platform blockers.
+risks:
+  - >-
+    The shared working tree contains separately owned AURA-0098 changes and
+    mixed files; integration must stage only the AURA-0099 hunks listed above.
+  - >-
+    AURA-0098 full-stack acceptance remains externally blocked by the documented
+    fresh-schema migration-ledger defect, missing public admission boundaries,
+    and missing governed recovery-health/metric-query surfaces.
+unresolved:
+  - >-
+    The integration owner must perform the final mixed-hunk staging and run the
+    aggregate AURA-0099 browser and repository checks.

@@ -72,14 +72,35 @@ async function installFixture(page: Page): Promise<{ promotionRequests: Array<{ 
   return { promotionRequests, experimentRequests, candidateRequests, regressionRequests, expireExperimentSession: () => { experimentUnauthorized = true; }, getExperimentRequests: () => experimentGetRequests, getEvaluationEventConnections: () => evaluationEventConnections, getEvaluationLastEventIds: () => evaluationLastEventIds, completeRetention: () => { retentionCompleted = true; } };
 }
 
+async function openExperiments(page: Page): Promise<void> {
+  const menu = page.getByRole('button', { name: 'Open Observatory navigation', exact: true });
+  if ((page.viewportSize()?.width ?? 1280) <= 832) {
+    await menu.click();
+    await page.locator('#observatory-sections').getByRole('button', { name: 'Experiments', exact: true }).click();
+    return;
+  }
+  await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+}
+
+async function openRetention(page: Page): Promise<void> {
+  const menu = page.getByRole('button', { name: 'Open Observatory navigation', exact: true });
+  if ((page.viewportSize()?.width ?? 1280) <= 832) {
+    await menu.click();
+    await page.locator('#observatory-sections').getByRole('button', { name: 'Retention', exact: true }).click();
+    return;
+  }
+  await page.getByRole('button', { name: 'Retention', exact: true }).click();
+}
+
 test.describe('Observatory experiments, baselines, and regressions', () => {
   test('supports responsive navigation and typed irreversible promotion safety', async ({ page }) => {
     const fixture = await installFixture(page);
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     const workspace = page.locator('observatory-experiment-workspace');
     await expect(workspace.getByRole('heading', { name: 'Compare controlled evaluation evidence' })).toBeVisible();
+    await workspace.getByText('Open experiment authoring', { exact: false }).click();
     await expect(workspace.getByRole('row', { name: new RegExp(baselineId) })).toBeVisible();
     const variants = workspace.getByRole('group', { name: /Variants \(2 of 16; minimum 2\)/ });
     await expect(variants).toBeVisible();
@@ -110,6 +131,7 @@ test.describe('Observatory experiments, baselines, and regressions', () => {
     expect((experimentBody['variants'] as Array<Record<string, unknown>>)[0]['components']).toEqual([component]);
     expect(Object.keys(experimentBody).sort()).toEqual(['captureAuthorization', 'cohorts', 'createdAt', 'experimentId', 'experimentVersion', 'limits', 'provenance', 'retentionMode', 'suite', 'variants'].sort());
     const candidatePanel = workspace.locator('section[aria-labelledby="candidate-title"]');
+    await candidatePanel.getByText('Open candidate authoring', { exact: false }).click();
     await candidatePanel.getByLabel('Experiment').selectOption(`${experimentId}@1.0.0`);
     await candidatePanel.getByLabel('Baseline variant').selectOption('control');
     await candidatePanel.getByRole('group', { name: 'Candidate cohorts' }).getByRole('checkbox', { name: /cohort-1/ }).check();
@@ -189,7 +211,7 @@ test.describe('Observatory experiments, baselines, and regressions', () => {
   test('propagates an experiment endpoint 401 into shell sign-in recovery', async ({ page }) => {
     const fixture = await installFixture(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     const workspace = page.locator('observatory-experiment-workspace');
     await expect(workspace.getByRole('heading', { name: 'Compare controlled evaluation evidence' })).toBeVisible();
     fixture.expireExperimentSession();
@@ -202,26 +224,26 @@ test.describe('Observatory experiments, baselines, and regressions', () => {
   test('clears experiment selections and refetches after retention completion', async ({ page }) => {
     const fixture = await installFixture(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     const workspace = page.locator('observatory-experiment-workspace');
     await expect(workspace.getByRole('row', { name: new RegExp(experimentId) })).toBeVisible();
     const initialReads = fixture.getExperimentRequests();
-    await page.getByRole('button', { name: 'Retention', exact: true }).click();
+    await openRetention(page);
     await page.getByRole('textbox', { name: 'Delete observations before (UTC)' }).fill('2026-10-01T00:00');
     await page.getByRole('button', { name: 'Delete before cutoff', exact: true }).click();
     const confirmation = page.getByRole('dialog', { name: 'Confirm destructive retention action' });
     await confirmation.getByRole('button', { name: 'Confirm delete-before', exact: true }).click();
     await expect(page.locator('observatory-retention .result div').filter({ hasText: /Status.*succeeded/i }).getByRole('definition')).toHaveText('succeeded');
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     await expect.poll(() => fixture.getExperimentRequests()).toBeGreaterThan(initialReads);
     await expect(page.locator('observatory-experiment-workspace')).not.toContainText(experimentId);
-    await expect(page.locator('observatory-experiment-workspace').getByRole('status').first()).toContainText(/No experiment evidence|Live updates disconnected/);
+    await expect(page.locator('observatory-experiment-workspace').getByRole('status').first()).toContainText(/No experiment evidence|Live experiment snapshot|Live updates disconnected/);
   });
 
   test('refreshes the workspace from metadata-only evaluation SSE and catches up with Last-Event-ID', async ({ page }) => {
     const fixture = await installFixture(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     const workspace = page.locator('observatory-experiment-workspace');
     await expect(workspace.getByRole('heading', { name: 'Compare controlled evaluation evidence' })).toBeVisible();
     await expect.poll(() => fixture.getEvaluationEventConnections(), { timeout: 10000 }).toBeGreaterThan(0);
@@ -242,7 +264,7 @@ test.describe('Observatory experiments, baselines, and regressions', () => {
   test('keeps the experiment workspace usable at narrow widths and announces empty recovery', async ({ page }) => {
     await installFixture(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+    await openExperiments(page);
     const workspace = page.locator('observatory-experiment-workspace');
     await expect(workspace.getByRole('heading', { name: 'Experiments', exact: true })).toBeVisible();
     await page.keyboard.press('Tab');

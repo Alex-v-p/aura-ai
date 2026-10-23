@@ -234,7 +234,7 @@ export class EvaluationWorkspaceStore {
       const dataset = this.requirePage(response, parseEvaluationDataset, 'Evaluation dataset');
       if (!this.current(generation, signal)) return;
       this.notice.set(`Dataset ${dataset.datasetId} ${dataset.datasetVersion} was created.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Dataset creation failed.'); this.busyAction.set(null); } }
+    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set('Dataset creation failed. Retry when the service is available.'); this.busyAction.set(null); } }
   }
 
   async createSuite(request: CreateEvaluationSuiteRequest): Promise<void> {
@@ -249,7 +249,7 @@ export class EvaluationWorkspaceStore {
       if (!this.current(generation, signal)) return;
       this.selectedSuite.set(suite);
       this.notice.set(`Suite ${suite.suiteId} ${suite.suiteVersion} was created.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Suite creation failed.'); this.busyAction.set(null); } }
+    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set('Suite creation failed. Retry when the service is available.'); this.busyAction.set(null); } }
   }
 
   async submitReview(request: CreateEvaluationReviewRequest): Promise<void> {
@@ -263,14 +263,11 @@ export class EvaluationWorkspaceStore {
       const review = this.requirePage(response, parseEvaluationReview, 'Evaluation review');
       if (!this.current(generation, signal)) return;
       this.notice.set(`Review ${review.reviewId} was recorded.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Review submission failed.'); this.busyAction.set(null); } }
+    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set('Review submission failed. Retry when the service is available.'); this.busyAction.set(null); } }
   }
 
   async qualifyJudge(request: QualifyEvaluationJudgeRequest): Promise<void> {
-    if (this.busyAction() === 'qualify') return;
-    const abbreviate = (value: string): string => value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
-    const scope = `dataset ${request.dataset.id}@${request.dataset.version}; suite ${request.suite.id}@${request.suite.version}; evaluator ${request.evaluator.evaluatorId}@${request.evaluator.evaluatorVersion}; judge ${request.judgeDefinition.judgeDefinitionId}@${request.judgeDefinition.judgeDefinitionVersion}; local model ${request.model.modelName}@${request.model.modelVersion} digest ${abbreviate(request.model.modelDigest)} (inspect in Qualification form); calibration ${request.calibration.calibrationId}; calibration result ${request.calibrationResultId}; authorization ${abbreviate(request.authorizationRecordId)}; prompt ${request.prompt.artifactId}; rubric ${request.rubric.artifactId}`;
-    if (!window.confirm(`Confirm qualify-judge for ${scope}. This enables calibrated judge scores.`)) return;
+    if (this.busyAction()) throw new Error('Another evaluation action is already in progress. Retry when it completes.');
     this.busyAction.set('qualify');
     const key = this.actionKeys.get(`qualify:${request.qualificationId}`) ?? uuid();
     this.actionKeys.set(`qualify:${request.qualificationId}`, key);
@@ -280,12 +277,15 @@ export class EvaluationWorkspaceStore {
       const qualification = this.requirePage(response, parseEvaluationQualification, 'Evaluation qualification');
       if (!this.current(generation, signal)) return;
       this.notice.set(`Qualification ${qualification.qualificationId} is ${qualification.state}.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Qualification failed.'); this.busyAction.set(null); } }
+    } catch (cause) {
+      const message = 'Qualification failed. Retry when the service is available.';
+      if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(message); this.busyAction.set(null); }
+      throw new Error(message);
+    }
   }
 
   async revokeQualification(qualificationId: string, request: RevokeEvaluationQualificationRequest): Promise<void> {
-    if (this.busyAction() === `revoke:${qualificationId}`) return;
-    if (!window.confirm(`Confirm revoke-qualification for ${qualificationId}. This disables calibrated judge scores.`)) return;
+    if (this.busyAction()) throw new Error('Another evaluation action is already in progress. Retry when it completes.');
     this.busyAction.set(`revoke:${qualificationId}`);
     const key = this.actionKeys.get(`revoke:${qualificationId}`) ?? uuid();
     this.actionKeys.set(`revoke:${qualificationId}`, key);
@@ -295,7 +295,11 @@ export class EvaluationWorkspaceStore {
       const qualification = this.requirePage(response, parseEvaluationQualification, 'Evaluation qualification');
       if (!this.current(generation, signal)) return;
       this.notice.set(`Qualification ${qualification.qualificationId} is ${qualification.state}.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Qualification revocation failed.'); this.busyAction.set(null); } }
+    } catch (cause) {
+      const message = 'Qualification revocation failed. Retry when the service is available.';
+      if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(message); this.busyAction.set(null); }
+      throw new Error(message);
+    }
   }
 
   async refreshResource(resourceType: EvaluationLiveEvent['resourceType']): Promise<void> {
@@ -445,12 +449,11 @@ export class EvaluationWorkspaceStore {
       const parsedJob = this.requirePage(job, parseEvaluationJob, 'Evaluation job');
       if (!this.current(generation, signal)) return;
       this.activeJobId.set(parsedJob.jobId); this.notice.set(`Evaluation job ${parsedJob.jobId} was queued.`); this.busyAction.set(null); void this.load(); this.pollJob(parsedJob.jobId);
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'The evaluation job could not be submitted.'); this.busyAction.set(null); } }
+    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set('The evaluation job could not be submitted. Retry when the service is available.'); this.busyAction.set(null); } }
   }
 
   async cancelJob(job: EvaluationJob): Promise<void> {
-    if (!window.confirm(`Confirm cancel-job for evaluation job ${job.jobId}. This affects exactly one job.`)) return;
-    if (this.busyAction() === `cancel:${job.jobId}`) return;
+    if (this.busyAction()) throw new Error('Another evaluation action is already in progress. Retry when it completes.');
     this.busyAction.set(`cancel:${job.jobId}`);
     const key = this.actionKeys.get(`cancel:${job.jobId}`) ?? uuid();
     this.actionKeys.set(`cancel:${job.jobId}`, key);
@@ -460,7 +463,11 @@ export class EvaluationWorkspaceStore {
       const cancelled = this.requirePage(response, parseEvaluationJob, 'Evaluation job');
       if (!this.current(generation, signal)) return;
       this.notice.set(`Cancellation for ${cancelled.jobId} is ${cancelled.status}.`); this.busyAction.set(null); void this.load();
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Cancellation failed.'); this.busyAction.set(null); } }
+    } catch (cause) {
+      const message = 'Cancellation failed. Retry when the service is available.';
+      if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(message); this.busyAction.set(null); }
+      throw new Error(message);
+    }
   }
 
   async delete(scope: 'job' | 'dataset' | 'suite' | 'cutoff' | 'purge_all', resourceId?: string, cutoff?: string): Promise<void> {
@@ -470,11 +477,9 @@ export class EvaluationWorkspaceStore {
     }
     const exact = 'DELETE_EVALUATION_ARTIFACTS';
     if (scope !== 'purge_all' && scope !== 'cutoff' && !resourceId) { this.notice.set(`Select a ${scope} before requesting deletion.`); return; }
-    const selector = scope === 'purge_all' ? 'purge_all' : scope === 'cutoff' ? `cutoff ${cutoff ?? ''}` : `${scope} ${resourceId ?? ''}`;
-    if (!window.confirm(`Confirm ${exact} for ${selector}. This cannot be undone.`)) return;
     const actionKey = `delete:${scope}:${resourceId ?? cutoff ?? 'all'}`;
     const busyAction = `delete:${scope}`;
-    if (this.busyAction() === busyAction) return;
+    if (this.busyAction()) throw new Error('Another evaluation action is already in progress. Retry when it completes.');
     this.busyAction.set(busyAction);
     const commandId = this.actionKeys.get(actionKey) ?? uuid();
     this.actionKeys.set(actionKey, commandId);
@@ -492,7 +497,11 @@ export class EvaluationWorkspaceStore {
       const action = this.requirePage(response, parseEvaluationDeletionAction, 'Evaluation deletion');
       if (!this.current(generation, signal)) return;
       this.data.update((value) => ({ ...value, deletion: action })); this.notice.set(`Deletion ${action.actionId} is ${action.status}.`); this.pollDeletion(action.actionId, busyAction);
-    } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(cause instanceof Error ? cause.message : 'Deletion request failed.'); this.busyAction.set(null); } }
+    } catch (cause) {
+      const message = 'Deletion request failed. Retry when the service is available.';
+      if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set(message); this.busyAction.set(null); }
+      throw new Error(message);
+    }
   }
 
   setEvaluationLiveDisconnected(disconnected: boolean): void {

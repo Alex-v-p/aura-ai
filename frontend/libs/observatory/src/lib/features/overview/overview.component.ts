@@ -13,7 +13,7 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.snapshot().state === 'loading') {
-      <aura-state-panel title="Loading Observatory" message="Reading the latest metadata snapshot…" icon="…" mode="status" />
+      <div class="loading-route-panel" role="status" aria-live="polite"><p class="eyebrow">Aura Observatory</p><h2>Loading Observatory</h2><p class="muted">Reading the latest metadata snapshot…</p><div class="route-skeleton overview-skeleton" aria-hidden="true"><span></span><span></span><span></span></div></div>
     }
     @if (store.snapshot().state === 'error') {
       <aura-state-panel title="Observatory unavailable" [message]="store.snapshot().error ?? 'Try again shortly.'" icon="!" tone="danger" mode="alert">
@@ -68,6 +68,23 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
   `,
   styles: [`
     :host { display:block; min-width:0; } .overview-grid { display:grid; gap:1rem; grid-template-columns:repeat(3,minmax(0,1fr)); } article { background:var(--surface); border:1px solid var(--border); border-radius:1rem; padding:1.25rem; min-width:0; } .hero-card,.ingest-card { grid-column:span 3; } .metric-card { display:grid; gap:.3rem; } .metric-card small,.eyebrow,dt,th,small,.muted { color:var(--text-muted); } .metric-card strong { font-size:2rem; } .eyebrow { font-size:.75rem; font-weight:750; letter-spacing:.08em; margin:0 0 .45rem; text-transform:uppercase; } .card-heading,.section-heading { align-items:flex-start; display:flex; gap:1rem; justify-content:space-between; } .section-heading { margin:1.7rem 0 .85rem; } h2,h3 { margin:0; } h2 { font-size:1.1rem; } h3 { font-size:1rem; } .health-summary { font-size:1.15rem; margin:.85rem 0 .4rem; } .muted { margin:.5rem 0 0; } .state-badge { align-items:center; border:1px solid currentColor; border-radius:999px; display:inline-flex; font-size:.78rem; font-weight:750; gap:.3rem; padding:.3rem .6rem; text-transform:capitalize; white-space:nowrap; } .state-healthy { color:var(--success-text); background:var(--success-surface); } .state-delayed,.state-partial { color:var(--warning-text); background:var(--warning-surface); } .state-degraded,.state-unavailable { color:var(--danger-text); background:var(--danger-surface); } .counts,.health-card dl { display:grid; gap:.8rem; grid-template-columns:repeat(5,1fr); margin:1.1rem 0 0; } .counts div,.health-card dl div { border-left:3px solid var(--accent-soft); padding-left:.65rem; } dt { font-size:.78rem; } dd { font-size:1.1rem; font-weight:700; margin:.2rem 0 0; } .health-section,.history-section { border-top:1px solid var(--border); margin-top:1.6rem; padding-top:.1rem; min-width:0; } .health-grid { display:grid; gap:1rem; grid-template-columns:repeat(2,minmax(0,1fr)); } .health-card dl { grid-template-columns:repeat(2,minmax(0,1fr)); margin:.9rem 0 0; } .rejection-card p { margin:.5rem 0 .8rem; } .rejection-card table { min-width:0; } .table-wrap { min-width:0; overflow-x:auto; } table { border-collapse:collapse; min-width:40rem; width:100%; } th,td { border-bottom:1px solid var(--border); padding:.65rem .55rem; text-align:left; } thead th { font-size:.78rem; } tbody th { font-weight:500; } td { color:var(--text); } .state-text { font-weight:650; white-space:nowrap; } .notice { background:var(--warning-surface); border:1px solid var(--warning-text); border-radius:.75rem; color:var(--warning-text); margin:1rem 0 0; padding:.75rem 1rem; } .empty { background:var(--surface-subtle); border-radius:.75rem; padding:.8rem 1rem; } button { background:var(--accent); border:0; border-radius:.45rem; color:var(--on-accent); cursor:pointer; padding:.55rem .8rem; } button:disabled { cursor:not-allowed; opacity:.6; } .secondary-button { background:transparent; border:1px solid var(--control-border); color:var(--text); } .sr-only { height:1px; margin:-1px; overflow:hidden; padding:0; position:absolute; width:1px; clip:rect(0,0,0,0); white-space:nowrap; } @media (max-width:700px) { .overview-grid,.health-grid { grid-template-columns:1fr; } .hero-card,.ingest-card { grid-column:auto; } .counts { grid-template-columns:repeat(2,1fr); } .card-heading,.section-heading { align-items:flex-start; flex-direction:column; } .health-card dl { grid-template-columns:1fr; } } @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; transition-duration:.01ms !important; } }
+  `, `
+    /* Slice-2 workbench hierarchy: one visual system, quiet secondary surfaces. */
+    .hero-card,.ingest-card { background:var(--surface-raised); border:0; border-radius:0; border-top:3px solid var(--accent); padding:1.35rem 0; }
+    .metric-card { background:var(--surface-subtle); border:0; border-radius:.35rem; border-top:2px solid var(--control-border); padding:1rem; }
+    .counts div,.health-card dl div { border-left:0; border-top:1px solid var(--border); padding:.6rem 0 0; }
+    .health-card { background:transparent; border:0; border-radius:0; border-top:2px solid var(--control-border); padding:1rem 0; }
+    .rejection-card { border-top-color:var(--warning-text); }
+    .health-grid { gap:1.4rem 2rem; }
+    .history-section { padding-top:1.1rem; }
+    @media (max-width:700px) { .hero-card,.ingest-card { padding-block:1rem; } .health-grid { gap:1rem; } }
+    .route-skeleton { display:grid; gap:.7rem; }
+    .route-skeleton span { background:var(--surface-subtle); border:1px solid var(--border); border-radius:.35rem; display:block; height:1.1rem; }
+    .loading-route-panel { background:var(--surface); border-top:2px solid var(--control-border); padding:1.25rem 0; }
+    .loading-route-panel h2 { margin:0; }
+    .overview-skeleton { grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:1rem; }
+    .overview-skeleton span:first-child { grid-column:span 2; height:4rem; }
+    @media (max-width:700px) { .overview-skeleton { grid-template-columns:1fr 1fr; } }
   `],
 })
 export class ObservatoryOverviewComponent {

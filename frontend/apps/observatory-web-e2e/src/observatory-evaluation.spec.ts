@@ -25,6 +25,8 @@ type EvaluationFixtureOptions = {
   evaluationSse?: 'reconnect' | 'disconnect';
   providerUnavailable?: boolean;
   rejectDatasets?: boolean;
+  rejectQualification?: boolean;
+  deferQualification?: boolean;
   seedAllTables?: boolean;
   jobStatus?: 'queued' | 'running' | 'succeeded' | 'cancelled' | 'failed';
   deferJobSubmit?: boolean;
@@ -68,6 +70,7 @@ async function installEvaluationFixture(page: Page, options: EvaluationFixtureOp
   restoreSession: () => void;
   releaseJobSubmit: () => void;
   releaseResult: () => void;
+  releaseQualification: () => void;
 }> {
   const deletionRequests: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];
   const commandRequests: Array<{ path: string; body: Record<string, unknown>; headers: Record<string, string> }> = [];
@@ -81,6 +84,8 @@ async function installEvaluationFixture(page: Page, options: EvaluationFixtureOp
   let loggedOut = options.anonymous ?? false;
   let jobSubmitResolver: (() => void) | null = null;
   let resultResolver: (() => void) | null = null;
+  let qualificationResolver: (() => void) | null = null;
+  let qualificationRejected = false;
   await page.route('**/api/v1/**', async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -190,6 +195,21 @@ async function installEvaluationFixture(page: Page, options: EvaluationFixtureOp
       if (path.endsWith('/qualifications') && request.method() === 'POST') {
         const body = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>;
         commandRequests.push({ path, body, headers: request.headers() });
+        if (options.rejectQualification && !qualificationRejected) {
+          qualificationRejected = true;
+          if (options.deferQualification)
+            await new Promise<void>((resolve) => {
+              qualificationResolver = resolve;
+            });
+          await route.fulfill({
+            status: 503,
+            json: {
+              code: 'evaluation_command_rejected',
+              message: 'raw provider diagnostic must not reach the browser',
+            },
+          });
+          return;
+        }
         qualificationState = 'qualified';
         await route.fulfill({ status: 201, json: qualification('qualified') });
         return;
@@ -272,17 +292,26 @@ async function installEvaluationFixture(page: Page, options: EvaluationFixtureOp
     }
     await route.continue();
   });
-  return { deletionRequests, commandRequests, evaluationGetRequests, completeJob: () => { jobStatus = 'succeeded'; }, getEvaluationEventConnections: () => eventConnections, getEvaluationLastEventIds: () => [...evaluationLastEventIds], restoreSession: () => { loggedOut = false; }, releaseJobSubmit: () => { jobSubmitResolver?.(); jobSubmitResolver = null; }, releaseResult: () => { resultResolver?.(); resultResolver = null; } };
+  return { deletionRequests, commandRequests, evaluationGetRequests, completeJob: () => { jobStatus = 'succeeded'; }, getEvaluationEventConnections: () => eventConnections, getEvaluationLastEventIds: () => [...evaluationLastEventIds], restoreSession: () => { loggedOut = false; }, releaseJobSubmit: () => { jobSubmitResolver?.(); jobSubmitResolver = null; }, releaseResult: () => { resultResolver?.(); resultResolver = null; }, releaseQualification: () => { qualificationResolver?.(); qualificationResolver = null; } };
 }
 
 async function openEvaluationWorkspace(page: Page): Promise<Locator> {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
-  await page.getByRole('button', { name: 'Evaluations', exact: true }).click();
+  await openTopLevelDestination(page, 'Evaluations');
   const workspace = page.locator('observatory-evaluation-workspace');
   await expect(workspace.getByRole('heading', { name: 'Datasets and cases', exact: true })).toBeVisible();
   await expect(workspace.getByRole('row', { name: new RegExp(datasetId) })).toBeVisible();
   return workspace;
+}
+async function openTopLevelDestination(page: Page, label: string): Promise<void> {
+  const menu = page.getByRole('button', { name: 'Open Observatory navigation', exact: true });
+  if ((page.viewportSize()?.width ?? 1280) <= 832) {
+    await menu.click();
+    await page.locator('#observatory-sections').getByRole('button', { name: label, exact: true }).click();
+    return;
+  }
+  await page.getByRole('button', { name: label, exact: true }).click();
 }
 async function selectWorkspace(page: Page, workspace: Locator, tab: string): Promise<void> {
   if ((page.viewportSize()?.width ?? 1280) <= 640) await workspace.getByRole('combobox', { name: 'Evaluation workspace' }).selectOption(tab);
@@ -317,7 +346,7 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
     const fixture = await installEvaluationFixture(page, { seedAllTables: true });
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: 'Operational metadata' })).toBeVisible();
-    await page.getByRole('button', { name: 'Evaluations', exact: true }).click();
+    await openTopLevelDestination(page, 'Evaluations');
     const workspace = page.locator('observatory-evaluation-workspace');
     await expect(workspace.getByRole('heading', { name: 'Datasets and cases', exact: true })).toBeVisible();
     await expect(workspace.getByRole('row', { name: new RegExp(datasetId) })).toBeVisible();
@@ -516,13 +545,68 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
     await workspace.getByRole('button', { name: 'Bind selected metadata' }).click();
     await workspace.getByRole('button', { name: 'Submit evaluation' }).click();
     await expect(workspace.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    page.once('dialog', (dialog) => void dialog.accept());
-    await workspace.getByRole('button', { name: 'Cancel' }).click();
+    const cancelJob = workspace.getByRole('button', { name: 'Cancel', exact: true });
+    await cancelJob.click();
+    const cancelDialog = workspace.getByRole('dialog');
+    await expect(cancelDialog).toContainText('Cancel evaluation job');
+    await expect(cancelDialog).toContainText(jobId);
+    await expect(cancelDialog).toContainText('Exactly this queued or running evaluation job');
+    await expect(cancelDialog).toContainText('The job will stop and be recorded as cancelled');
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith(`/jobs/${jobId}/cancel`)).length).toBe(0);
+    await page.keyboard.press('Escape');
+    await expect(cancelDialog).toBeHidden();
+    await expect(cancelJob).toBeFocused();
+    await cancelJob.click();
+    await cancelDialog.getByRole('button', { name: 'Confirm action', exact: true }).click();
     await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith(`/jobs/${jobId}/cancel`)).length).toBe(1);
     const cancellation = fixture.commandRequests.find((request) => request.path.endsWith(`/jobs/${jobId}/cancel`));
     expect(cancellation?.headers['x-observatory-confirmation']).toBe('cancel-job');
     expect(cancellation?.body).toEqual({ action: 'cancel', reason: 'OWNER_REQUESTED' });
     await expect(workspace.getByRole('row', { name: new RegExp(`${jobId}.*cancelled`, 'i') })).toBeVisible();
+  });
+
+  test('keeps a rejected evaluation command recoverable inside its confirmation dialog', async ({ page }) => {
+    const fixture = await installEvaluationFixture(page, { rejectQualification: true, deferQualification: true });
+    const workspace = await openEvaluationWorkspace(page);
+    await workspace.getByRole('button', { name: 'Inspect cases' }).click();
+    await expect(workspace.getByRole('row', { name: new RegExp(caseId) })).toBeVisible();
+    await selectWorkspace(page, workspace, 'suites');
+    await selectVersion(workspace);
+    await selectWorkspace(page, workspace, 'evaluators');
+    await selectVersion(workspace);
+    await selectWorkspace(page, workspace, 'qualification');
+    await workspace.getByLabel('Qualification calibration selection').selectOption(calibrationId);
+    await workspace.getByLabel('Qualification prompt artifact selection').selectOption('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac');
+    await workspace.getByLabel('Qualification rubric artifact selection').selectOption('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad');
+    await workspace.getByLabel('Qualification authorization record ID').fill(authRecordId);
+    await workspace.getByLabel('Calibration result ID').fill(resultId);
+    await workspace.getByLabel('Judge definition ID').fill(judgeDefinitionId);
+    await workspace.getByLabel('Judge definition version').fill('1.0.0');
+    await workspace.getByLabel('Local model ID').fill(modelBinding.modelId);
+    await workspace.getByLabel('Local model version').fill(modelBinding.modelVersion);
+    await workspace.getByLabel('Local model digest').fill(modelBinding.modelDigest);
+    const qualify = workspace.getByRole('button', { name: 'Qualify local judge' });
+    await qualify.click();
+    const dialog = workspace.getByRole('dialog');
+    await expect(dialog).toContainText('Qualify local judge');
+    await expect(dialog).toContainText(`Dataset ${datasetId}@1.0.0; suite ${suiteId}@1.0.0; evaluator ${evaluatorId}@1.0.0`);
+    await expect(dialog).toContainText('This enables calibrated judge scores for the exact persisted metadata selected in this form.');
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(0);
+    const confirm = dialog.getByRole('button', { name: 'Confirm action', exact: true });
+    await confirm.click();
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(1);
+    await confirm.click({ force: true });
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(1);
+    fixture.releaseQualification();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('alert')).toHaveText('The action could not be completed. Your draft is preserved; retry when the service is available.');
+    await expect(dialog).not.toContainText(/raw provider diagnostic|evaluation_command_rejected/i);
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled();
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(2);
+    await expect(dialog).toBeHidden();
+    await expect(qualify).toBeFocused();
   });
 
   test('records human review and qualification lifecycle without exposing content', async ({ page }) => {
@@ -556,17 +640,22 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
     await workspace.getByLabel('Local model ID').fill(modelBinding.modelId);
     await workspace.getByLabel('Local model version').fill(modelBinding.modelVersion);
     await workspace.getByLabel('Local model digest').fill(modelBinding.modelDigest);
-    let qualificationConfirmation = '';
-    page.once('dialog', async (dialog) => { qualificationConfirmation = dialog.message(); await dialog.accept(); });
+    const qualificationDialog = workspace.getByRole('dialog');
     await workspace.getByRole('button', { name: 'Qualify local judge' }).click();
-    expect(qualificationConfirmation).toContain(`judge ${judgeDefinitionId}@1.0.0`);
-    expect(qualificationConfirmation).toContain(`local model ${modelBinding.modelId}@${modelBinding.modelVersion}`);
-    expect(qualificationConfirmation).toContain(`calibration result ${resultId}`);
-    expect(qualificationConfirmation).toContain(`prompt aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac`);
-    expect(qualificationConfirmation).toContain(`rubric aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad`);
+    await expect(qualificationDialog).toContainText('Qualify local judge');
+    await expect(qualificationDialog).toContainText('Target:');
+    await expect(qualificationDialog).toContainText(`Dataset ${datasetId}@1.0.0; suite ${suiteId}@1.0.0; evaluator ${evaluatorId}@1.0.0`);
+    await expect(qualificationDialog).toContainText('This enables calibrated judge scores for the exact persisted metadata selected in this form.');
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(0);
+    await qualificationDialog.getByRole('button', { name: 'Confirm action', exact: true }).click();
     await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/qualifications')).length).toBe(1);
-    page.once('dialog', (dialog) => void dialog.accept());
-    await workspace.getByRole('button', { name: 'Revoke' }).click();
+    const revoke = workspace.getByRole('button', { name: 'Revoke' });
+    await revoke.click();
+    const revokeDialog = workspace.getByRole('dialog');
+    await expect(revokeDialog).toContainText('Revoke judge qualification');
+    await expect(revokeDialog).toContainText('The selected qualification record');
+    await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/revoke')).length).toBe(0);
+    await revokeDialog.getByRole('button', { name: 'Confirm action', exact: true }).click();
     await expect.poll(() => fixture.commandRequests.filter((request) => request.path.endsWith('/revoke')).length).toBe(1);
     expect(fixture.commandRequests.find((request) => request.path.endsWith('/revoke'))?.headers['x-observatory-confirmation']).toBe('revoke-qualification');
     expect(await page.locator('body').textContent()).not.toMatch(/prompt content|rubric content|secret|credential/i);
@@ -578,14 +667,17 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
     await expect(workspace.getByRole('button', { name: 'Load more' })).toBeVisible();
     await workspace.getByRole('button', { name: 'Load more' }).click();
     await expect(workspace.getByRole('row', { name: /aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaf/ })).toBeVisible();
-    page.on('dialog', (dialog) => void dialog.accept());
     await workspace.getByRole('button', { name: 'Delete' }).first().click();
+    await workspace.getByRole('dialog').getByRole('button', { name: 'Confirm action', exact: true }).click();
     await selectWorkspace(page, workspace, 'suites');
     await workspace.getByRole('button', { name: 'Delete' }).first().click();
+    await workspace.getByRole('dialog').getByRole('button', { name: 'Confirm action', exact: true }).click();
     await selectWorkspace(page, workspace, 'jobs');
     await workspace.getByRole('button', { name: 'Delete' }).first().click();
+    await workspace.getByRole('dialog').getByRole('button', { name: 'Confirm action', exact: true }).click();
     await selectWorkspace(page, workspace, 'retention');
     await workspace.getByRole('button', { name: 'Purge all evaluation data' }).click();
+    await workspace.getByRole('dialog').getByRole('button', { name: 'Confirm action', exact: true }).click();
     await expect.poll(() => fixture.deletionRequests.length).toBe(4);
     expect(fixture.deletionRequests.map((request) => request.body.kind)).toEqual(['dataset', 'suite', 'job', 'purge_all']);
     expect(new Set(fixture.deletionRequests.map((request) => request.headers['idempotency-key'])).size).toBe(4);
@@ -600,7 +692,8 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
     fixture.restoreSession();
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Operational metadata' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Evaluations', exact: true })).toBeVisible();
+    if ((page.viewportSize()?.width ?? 1280) <= 832) await expect(page.getByRole('button', { name: 'Open Observatory navigation', exact: true })).toBeVisible();
+    else await expect(page.getByRole('button', { name: 'Evaluations', exact: true })).toBeVisible();
   });
 
   test('reconnects evaluation SSE with Last-Event-ID and renders disconnected recovery', async ({ page }) => {
@@ -665,7 +758,7 @@ test.describe('Observatory evaluation workspace browser acceptance', () => {
   test('distinguishes rejected scope recovery from a fulfilled partial snapshot', async ({ page }) => {
     const fixture = await installEvaluationFixture(page, { rejectDatasets: true });
     await page.goto('/');
-    await page.getByRole('button', { name: 'Evaluations', exact: true }).click();
+    await openTopLevelDestination(page, 'Evaluations');
     const workspace = page.locator('observatory-evaluation-workspace');
     await expect(workspace.locator('.live-banner')).toContainText(/rejected/i);
     await expect(workspace.getByRole('button', { name: 'Retry datasets' })).toBeVisible();
