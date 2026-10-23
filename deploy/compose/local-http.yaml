@@ -14,6 +14,7 @@ services:
   aura-nats:
     volumes: !override
       - local_http_core_nats_data:/data
+      - ./deploy/docker/nats-entrypoint.sh:/usr/local/bin/aura-nats-entrypoint:ro
 
   aura-garage:
     volumes: !override

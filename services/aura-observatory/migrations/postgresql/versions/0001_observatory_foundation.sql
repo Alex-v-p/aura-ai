@@ -1,5 +1,13 @@
 -- Observatory-owned transactional metadata.  Observations remain in
 -- ClickHouse; this schema contains no automatic retention or TTL policy.
+-- Keep the PostgreSQL migration ledger in the service-owned schema before
+-- later migrations record their successful application.  The guarded insert
+-- pattern used by the forward-only migration chain is safe to rerun.
+CREATE TABLE IF NOT EXISTS observatory_migration_ledger (
+    version VARCHAR(128) PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS observatory_components (
     component_id VARCHAR(128) NOT NULL,
     version VARCHAR(64) NOT NULL,

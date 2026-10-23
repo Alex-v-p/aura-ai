@@ -465,9 +465,9 @@ services:
         if [ -z "$${node_id}" ]; then echo 'Garage node identity unavailable' >&2; exit 1; fi;
         if ! /garage --config /run/garage-config/garage.toml layout show | grep -Fq "$${node_id}"; then /garage --config /run/garage-config/garage.toml layout assign "$${node_id}" -z dc1 -c 1GB; fi;
         if ! /garage --config /run/garage-config/garage.toml layout show | grep -Eq 'Current cluster layout version: [1-9][0-9]*'; then /garage --config /run/garage-config/garage.toml layout apply --version 1; fi;
-        if ! /garage --config /run/garage-config/garage.toml key info "$${access_key}" >/dev/null 2>&1; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}"; fi;
+        if ! /garage --config /run/garage-config/garage.toml key info "$${access_key}" >/dev/null 2>&1; then if ! /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1; then echo 'Core Garage key import failed closed' >&2; exit 78; fi; fi;
         if ! /garage --config /run/garage-config/garage.toml bucket info "$${AURA_GARAGE_BUCKET}" >/dev/null 2>&1; then /garage --config /run/garage-config/garage.toml bucket create "$${AURA_GARAGE_BUCKET}"; fi;
-        /garage --config /run/garage-config/garage.toml bucket allow --read --write --key "$${access_key}" "$${AURA_GARAGE_BUCKET}";
+        if ! /garage --config /run/garage-config/garage.toml bucket allow --read --write --key "$${access_key}" "$${AURA_GARAGE_BUCKET}" >/dev/null 2>&1; then echo 'Core Garage grant failed closed' >&2; exit 78; fi;
         unset access_key secret_key
     environment:
       AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
@@ -502,10 +502,6 @@ services:
         secret_key="$$(cat /run/secrets/observatory-garage-secret-key)";
         if [ -z "$${AURA_GARAGE_BUCKET}" ] || [ -z "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ] || [ "$${AURA_GARAGE_BUCKET}" = "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ]; then echo 'Garage Core and Observatory buckets must be configured and differ' >&2; exit 78; fi;
         until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
-        node_id="$$(/garage --config /run/garage-config/garage.toml node id 2>/dev/null | cut -d@ -f1)";
-        if [ -z "$${node_id}" ]; then echo 'Garage node identity unavailable' >&2; exit 1; fi;
-        if ! /garage --config /run/garage-config/garage.toml layout show | grep -Fq "$${node_id}"; then /garage --config /run/garage-config/garage.toml layout assign "$${node_id}" -z dc1 -c 1GB; fi;
-        if ! /garage --config /run/garage-config/garage.toml layout show | grep -Eq 'Current cluster layout version: [1-9][0-9]*'; then /garage --config /run/garage-config/garage.toml layout apply --version 1; fi;
         extract_authorized_buckets() { printf '%s\n' "$${1}" | awk -v expected="$${2}" '
           function emit_row(line, count, fields, alias) {
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", line);
@@ -853,7 +849,24 @@ services:
       aura-evaluation-nats-bootstrap: {condition: service_completed_successfully}
       observatory-judge-garage-bootstrap: {condition: service_completed_successfully}
     healthcheck:
-      test: [CMD, python, -c, "import aura_observatory.entrypoints.evaluation_worker"]
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - |
+          import os
+          target = [b"/app/.venv/bin/python", b"-m", b"aura_observatory.entrypoints.evaluation_worker"]
+          for pid in os.listdir("/proc"):
+              if not pid.isdigit():
+                  continue
+              try:
+                  with open(f"/proc/{pid}/cmdline", "rb") as stream:
+                      argv = stream.read().split(b"\0")
+              except OSError:
+                  continue
+              if argv[:3] == target:
+                  raise SystemExit(0)
+          raise SystemExit(1)
       interval: 10s
       timeout: 3s
       retries: 5
@@ -914,7 +927,24 @@ services:
       observatory-migrate: {condition: service_completed_successfully}
       observatory-postgres: {condition: service_healthy}
     healthcheck:
-      test: [CMD, python, -c, "import aura_observatory.entrypoints.evaluation_scheduler"]
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - |
+          import os
+          target = [b"/app/.venv/bin/python", b"-m", b"aura_observatory.entrypoints.evaluation_scheduler"]
+          for pid in os.listdir("/proc"):
+              if not pid.isdigit():
+                  continue
+              try:
+                  with open(f"/proc/{pid}/cmdline", "rb") as stream:
+                      argv = stream.read().split(b"\0")
+              except OSError:
+                  continue
+              if argv[:3] == target:
+                  raise SystemExit(0)
+          raise SystemExit(1)
       interval: 10s
       timeout: 3s
       retries: 5

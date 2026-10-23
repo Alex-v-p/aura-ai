@@ -1,0 +1,62 @@
+agent: general_reviewer
+work_item: AURA-0100
+verdict: PASS
+checked:
+  - >-
+    Reviewed the approved AURA-0100 work item, final production and test diff,
+    all three implementation handoffs, the PostgreSQL migration runner and
+    ordered migrations, and the effective local-http Compose merge.
+  - >-
+    Verified migration 0001 creates the Observatory-owned ledger before the
+    guarded 0013 and 0014 writes, preserving transactional fresh-schema startup
+    and rerunnable single-record semantics. The live observatory-migrate
+    container completed with exit zero.
+  - >-
+    Verified the local-http NATS override retains the read-only entrypoint bind
+    beside disposable named state, and the dependent Observatory Garage
+    bootstrap performs no node or cluster-layout mutation after the completed
+    Core bootstrap while retaining fail-closed key, bucket, grant, deny, and
+    permission verification.
+  - >-
+    Verified local Garage access IDs use GK plus 24 lowercase hexadecimal
+    characters and secret keys use 64 lowercase hexadecimal characters. Valid
+    files remain stable, invalid launcher-managed defaults rotate atomically
+    with mode 0600 and no-follow protections, and invalid custom paths fail
+    closed.
+  - >-
+    Verified credential-bearing Core Garage key-import and grant commands
+    suppress both output streams, retain nonzero fail-closed behavior with
+    bounded generic diagnostics, and are covered by synthetic regressions that
+    reject access-key and secret-key disclosure.
+  - >-
+    Verified both evaluation healthchecks use the packaged virtual-environment
+    interpreter and exact stdlib /proc process-identity probes. Both services
+    are healthy and expose the intended venv-python module processes without
+    importing the application in the three-second healthcheck budget.
+  - >-
+    Reviewed the delivery-owned exact fresh reset/up and repeated-up evidence,
+    then independently inspected the resulting live stack. All Core and
+    Observatory health-gated services are healthy, all one-shot services exited
+    zero, and every inspected container has zero restarts; Core worker remains
+    running after the separately authorized AURA-0101 stream repair.
+  - >-
+    Bounded current log scans for Core worker, Observatory API, evaluation
+    worker, and evaluation scheduler found no fatal, traceback, exception,
+    authorization-violation, duplicate-subject, or stream-not-found tokens.
+  - >-
+    Verified public Aura and Observatory roots return 200, Observatory healthz
+    returns 200 with its bounded expected response, and Observatory login
+    returns 307 to the separate Authentik authorization path without recording
+    redirect query values.
+  - >-
+    Ran work-item validation, focused Observatory tests (29 passed), expanded
+    AURA-0100/AURA-0094 deployment tests (31 passed), Ruff, Pyright, complete
+    Compose topology tests (50 passed), effective Compose validation, shell
+    syntax, repository shape, module registry, service isolation, contract and
+    baseline checks, and git diff whitespace validation successfully.
+  - >-
+    Changed-path validation remains non-actionable for this review because the
+    intentionally preserved concurrent AURA-0098 and AURA-0101 work is present
+    in the shared working tree. Every reviewed AURA-0100 implementation, test,
+    handoff, and review path is authorized by its approved work item.
+findings: []

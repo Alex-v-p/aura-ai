@@ -231,31 +231,62 @@ PY
 }
 
 ensure_local_secret() {
-  local key=$1 kind=$2 configured path
+  local key=$1 kind=$2 configured path default_path managed_default=0
   configured=$(configured_value "$key")
   case "$key" in
-    AURA_NATS_BOOTSTRAP_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-bootstrap-password} ;;
-    AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-database-password} ;;
-    AURA_NATS_DISPATCH_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-dispatch-password} ;;
-    AURA_NATS_RUNNER_PASSWORD_FILE) configured=${configured:-./.secrets/aura-nats-runner-password} ;;
-    AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-access-key} ;;
-    AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/observatory-garage-secret-key} ;;
-    AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE) configured=${configured:-./.secrets/observatory-judge-garage-access-key} ;;
-    AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE) configured=${configured:-./.secrets/observatory-judge-garage-secret-key} ;;
-    AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-access-key} ;;
-    AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE) configured=${configured:-./.secrets/aura-evaluation-runner-garage-secret-key} ;;
+    AURA_NATS_BOOTSTRAP_PASSWORD_FILE) default_path=./.secrets/aura-nats-bootstrap-password ;;
+    AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE) default_path=./.secrets/aura-evaluation-runner-database-password ;;
+    AURA_NATS_DISPATCH_PASSWORD_FILE) default_path=./.secrets/aura-nats-dispatch-password ;;
+    AURA_NATS_RUNNER_PASSWORD_FILE) default_path=./.secrets/aura-nats-runner-password ;;
+    AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-judge-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-judge-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/aura-evaluation-runner-garage-access-key
+      managed_default=1
+      ;;
+    AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/aura-evaluation-runner-garage-secret-key
+      managed_default=1
+      ;;
   esac
+  if [ -z "$configured" ]; then
+    configured=$default_path
+  fi
   path=$(absolute_path "$configured")
   [ -n "$configured" ] || die "$key must be configured"
+  default_absolute=
+  if [ -n "$default_path" ]; then
+    default_absolute=$(absolute_path "$default_path")
+  fi
   umask 077
   mkdir -p "$(dirname -- "$path")"
-  python3 - "$path" "$kind" <<'PY'
+  AURA_LOCAL_DEFAULT_SECRET_PATH="$default_absolute" python3 - "$path" "$kind" "$managed_default" <<'PY'
 import os
+import re
 import secrets
 import stat
 import sys
 
-path, kind = sys.argv[1:]
+path, kind, managed_default = sys.argv[1:]
+default_absolute = os.environ.get("AURA_LOCAL_DEFAULT_SECRET_PATH", "")
+managed_default = (
+    managed_default == "1"
+    and (not default_absolute or os.path.abspath(path) == os.path.abspath(default_absolute))
+)
 if not hasattr(os, "O_NOFOLLOW"):
     raise SystemExit("local secret creation requires no-follow filesystem support")
 
@@ -270,14 +301,110 @@ def validate_existing() -> None:
         raise SystemExit("local secret file is empty")
 
 
+def read_bounded(descriptor: int, limit: int) -> bytes:
+    payload = bytearray()
+    while len(payload) <= limit:
+        chunk = os.read(descriptor, limit + 1 - len(payload))
+        if not chunk:
+            break
+        payload.extend(chunk)
+    return bytes(payload)
+
+
+def valid_garage_credential() -> bool:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        limit = 27 if kind == "garage-access" else 65
+        payload = read_bounded(descriptor, limit)
+    finally:
+        os.close(descriptor)
+    if payload.endswith(b"\n"):
+        payload = payload[:-1]
+    pattern = br"GK[0-9a-f]{24}" if kind == "garage-access" else br"[0-9a-f]{64}"
+    return re.fullmatch(pattern, payload) is not None
+
+
+def write_payload(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        offset += os.write(descriptor, payload[offset:])
+    os.fchmod(descriptor, 0o600)
+    os.fsync(descriptor)
+
+
+def rotate_invalid_default_credential() -> None:
+    parent = os.path.dirname(path) or "."
+    basename = os.path.basename(path)
+    if kind == "garage-access":
+        value = "GK" + secrets.token_hex(12)
+    elif kind == "garage-secret":
+        value = secrets.token_hex(32)
+    else:
+        raise SystemExit("unsupported local credential rotation kind")
+    payload = (value + "\n").encode("ascii")
+    temporary_path = None
+    descriptor = None
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    try:
+        for _ in range(32):
+            candidate = os.path.join(
+                parent, f".{basename}.tmp-{secrets.token_hex(16)}"
+            )
+            try:
+                descriptor = os.open(candidate, flags, 0o600)
+            except FileExistsError:
+                continue
+            temporary_path = candidate
+            break
+        if descriptor is None or temporary_path is None:
+            raise SystemExit("could not create a secure temporary Garage credential file")
+        try:
+            write_payload(descriptor, payload)
+        finally:
+            os.close(descriptor)
+            descriptor = None
+        current = os.lstat(path)
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_dev != existing.st_dev
+            or current.st_ino != existing.st_ino
+            or current.st_mode & 0o077
+            or not current.st_mode & 0o400
+        ):
+            raise SystemExit("local secret path changed while rotating Garage credential")
+        os.replace(temporary_path, path)
+        temporary_path = None
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory_descriptor = os.open(parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
 if os.path.lexists(path):
     validate_existing()
+    if kind in ("garage-access", "garage-secret") and not valid_garage_credential():
+        if not managed_default:
+            raise SystemExit("local Garage credential has an invalid provider format")
+        existing = os.lstat(path)
+        rotate_invalid_default_credential()
     raise SystemExit(0)
 
 if kind == "garage-access":
-    value = "GK" + secrets.token_urlsafe(18)
+    value = "GK" + secrets.token_hex(12)
 elif kind == "garage-secret":
-    value = secrets.token_urlsafe(48)
+    value = secrets.token_hex(32)
 elif kind == "nats":
     value = secrets.token_urlsafe(32)
 elif kind == "database":
@@ -289,11 +416,7 @@ flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 descriptor = os.open(path, flags, 0o600)
 try:
     payload = (value + "\n").encode("utf-8")
-    offset = 0
-    while offset < len(payload):
-        offset += os.write(descriptor, payload[offset:])
-    os.fchmod(descriptor, 0o600)
-    os.fsync(descriptor)
+    write_payload(descriptor, payload)
 finally:
     os.close(descriptor)
 PY

@@ -1,0 +1,149 @@
+agent: test_evaluation_engineer
+work_item: AURA-0100
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: null
+scope:
+  ownership_zone: evaluation.observatory-startup
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0100_startup.py
+  - deploy/tests/test_aura0100_observatory_startup.py
+  - deploy/compose/test_topology.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory
+      pytest -q services/aura-observatory/tests/test_aura0100_startup.py
+      services/aura-observatory/tests/test_aura0097_test_evaluation.py (29 passed)
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory
+      ruff check services/aura-observatory/tests/test_aura0100_startup.py
+      services/aura-observatory/tests/test_aura0097_test_evaluation.py
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory
+      pyright services/aura-observatory/tests/test_aura0100_startup.py (0 errors)
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q
+      deploy/tests/test_aura0100_observatory_startup.py
+      deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py
+      (9 passed)
+    - >
+      Ruff and Pyright checks for deploy/tests/test_aura0100_observatory_startup.py
+      (passed; Pyright 0 errors)
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q
+      deploy/tests/test_aura0100_observatory_startup.py
+      deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py
+      (29 passed), including the controlled fake /proc healthcheck fixtures
+    - >
+      Ruff and Pyright rerun after the healthcheck additions (passed; Pyright
+      0 errors), work-item validation (passed), and git diff --check (passed)
+    - >
+      Focused topology regression
+      deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_bootstrap_reuses_core_layout_and_keeps_grants_fail_closed
+      (passed)
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q
+      deploy/tests/test_aura0100_observatory_startup.py (24 passed), including
+      extracted-helper access-ID and Garage-secret generation, rotation,
+      exact-default classification, preservation, bounded malformed input, and
+      fail-closed path cases, rendered evaluation runtime command checks, and
+      source/rendered stdlib-only evaluation process-identity probes exercised
+      against controlled fake /proc fixtures, plus Core Garage credential-output
+      suppression and generic fail-closed diagnostics for import and grant
+      failures
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run python -m unittest
+      deploy.compose.test_topology (50 passed), including the privacy-safe
+      random Garage access-key fixture contract, the current disposable
+      network exhaustion diagnostic, and named network/subnet allocation
+      checks
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run ruff check
+      deploy/tests/test_aura0100_observatory_startup.py and
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run pyright
+      deploy/tests/test_aura0100_observatory_startup.py (0 errors), plus
+      git diff --check (passed)
+    - >
+      UV_CACHE_DIR=/tmp/aura-0100-uv uv run ruff check
+      deploy/tests/test_aura0100_observatory_startup.py and Pyright over the
+      same file (passed; 0 errors)
+    - >
+      git diff --check (passed)
+    - >
+      Docker Compose local-http config rendering, bash -n deploy/compose/local-http.sh,
+      repository shape, module registry, service isolation, contract-change,
+      baseline-protection, and git diff --check validators (passed)
+  failed:
+    - >
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0100.yaml reports pre-existing AURA-0098
+      and concurrent production paths outside this work item's allowed_paths.
+    - >
+      Ruff and Pyright over the full deploy/compose/test_topology.py remain
+      blocked by pre-existing lint/type findings outside the added test method.
+  not_run:
+    - >
+      Full disposable local-http Docker startup and authenticated redirect
+      evidence; those integration checks remain owned by the delivery/integration
+      flow and were not changed by this test-only slice.
+decisions:
+  - >
+    Added deterministic source and rendered-Compose regressions for the
+    PostgreSQL ledger prerequisite, the guarded 0013/0014 ledger records, the
+    disposable NATS volume plus read-only entrypoint bind, and the complete
+    Observatory migration dependency chain.
+  - >
+    Extended deploy/compose/test_topology.py to lock the Garage ownership
+    boundary: Core's completed bootstrap owns cluster layout, while the
+    Observatory bootstrap retains only its separate fail-closed key, bucket,
+    and least-privilege grant verification.
+  - >
+    Updated the helper behavior contract in tests so launcher-managed Garage
+    secrets require exactly 64 lowercase hexadecimal characters, rotate only
+    at the exact launcher default path, and reject malformed custom values
+    without replacing them; NATS and database secret preservation remains
+    unchanged.
+  - >
+    Added source and rendered-Compose checks that evaluation worker and
+    scheduler targets inherit exactly their Dockerfile CMD lists using
+    /app/.venv/bin/python and the existing entrypoint modules, with no bare
+    python command or Compose override.
+  - >
+    Added source and rendered-Compose healthcheck checks requiring
+      /app/.venv/bin/python -c probes that scan /proc/[0-9]*/cmdline and match
+      the exact venv-python/-m/service-module argv prefix. The probes compile
+      without importing the service module and are behaviorally checked against
+      target, self, and wrong-module fake process fixtures.
+  - >
+    Updated the topology regressions to follow the current implementation:
+    the observatory full-stack runner generates Garage access keys through its
+    privacy-safe random_access_key helper, reports the current bounded
+    disposable-network exhaustion diagnostic, and emits named network/subnet
+    allocations for the complete fixture network set.
+  - >
+    Added a synthetic-fake-Garage regression for the Core bootstrap's
+    credential-bearing key-import and bucket-grant commands. Each failure path
+    asserts command stdout is suppressed, synthetic credentials do not appear
+    in captured output, and only the bounded generic fail-closed diagnostic
+    plus the expected nonzero status is exposed.
+risks:
+  - >
+    Rendered Compose assertions require the docker CLI; they skip when Docker
+    is unavailable, while the static overlay and dependency assertions remain
+    deterministic.
+unresolved:
+  - >
+    Changed-path validation is blocked by pre-existing AURA-0098 and concurrent
+    AURA-0100 production paths, not by files in this ownership zone.

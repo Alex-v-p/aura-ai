@@ -513,14 +513,19 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("10.254.192.0/18", runner)
         self.assertNotIn("172.30.0.0/16", runner)
         self.assertNotIn("172.31.0.0/16", runner)
-        self.assertIn("no three free /28 subnets remain", runner)
+        self.assertIn("not enough free /28 subnets remain", runner)
         self.assertIn("AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet", runner)
         self.assertIn("AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet", runner)
+        self.assertIn("print(network_names[0], frontend)", runner)
         self.assertIn(
-            "print(selected[0], selected[1], selected[2])",
+            "for name, subnet in zip(network_names[1:], selected):",
             runner,
         )
-        self.assertIn('test -n "$observatory_object_storage_subnet"', runner)
+        self.assertIn('test -n "${network_subnets[$network_name]:-}"', runner)
+        self.assertIn(
+            "observatory_object_storage_subnet=${network_subnets[observatory-object-storage]}",
+            runner,
+        )
         self.assertIn(
             "AURA_OBSERVATORY_OBJECT_STORAGE_SUBNET=$observatory_object_storage_subnet",
             runner,
@@ -802,7 +807,7 @@ class ComposeTopologyTests(unittest.TestCase):
         )
         self.assertIn("printf 'GK000000000000000000000000\\n'", runner)
         self.assertIn(
-            "write_fixture_secret observatory-garage-access-key GK111111111111111111111111",
+            'write_fixture_secret observatory-garage-access-key "$(random_access_key)"',
             observatory_runner,
         )
         self.assertIn("entrypoint: [/garage]", garage)
@@ -894,6 +899,36 @@ class ComposeTopologyTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_observatory_garage_bootstrap_reuses_core_layout_and_keeps_grants_fail_closed(
+        self,
+    ) -> None:
+        document = yaml.safe_load(self.compose)
+        service = document["services"]["observatory-garage-bootstrap"]
+        command = service["command"][0]
+
+        self.assertEqual(
+            service["depends_on"]["aura-garage-bootstrap"]["condition"],
+            "service_completed_successfully",
+        )
+        for forbidden in ("node id", "layout show", "layout assign", "layout apply"):
+            self.assertNotIn(forbidden, command)
+
+        self.assertEqual(
+            service["secrets"],
+            ["observatory-garage-access-key", "observatory-garage-secret-key"],
+        )
+        self.assertIn("AURA_OBSERVATORY_GARAGE_BUCKET", command)
+        for verification in (
+            "key info",
+            "bucket info",
+            "bucket allow --write --key",
+            "bucket deny --read --key",
+            "bucket deny --owner --key",
+            "permission verification failed closed",
+            "grant verification failed closed",
+        ):
+            self.assertIn(verification, command)
 
     def test_observatory_garage_rendered_command_reaches_grant_and_verification(self) -> None:
         document = yaml.safe_load(self.compose)
