@@ -785,7 +785,12 @@ class ComposeTopologyTests(unittest.TestCase):
             self.compose, "aura-garage-bootstrap", "observatory-garage-bootstrap"
         )
         api = service_block(self.compose, "aura-core-api", "aura-core-worker")
-        worker = service_block(self.compose, "aura-core-worker", "aura-core-migrate")
+        observatory_api = service_block(
+            self.compose, "observatory-api", "observatory-worker"
+        )
+        worker = service_block(
+            self.compose, "aura-core-worker", "aura-core-migrate"
+        )
         environment = (ROOT / ".env.example").read_text(encoding="utf-8")
         runner = (ROOT / "deploy/compose/run-full-stack-e2e.sh").read_text(
             encoding="utf-8"
@@ -835,6 +840,11 @@ class ComposeTopologyTests(unittest.TestCase):
         observatory_bootstrap = service_block(
             self.compose,
             "observatory-garage-bootstrap",
+            "aura-evaluation-runner-garage-bootstrap",
+        )
+        evaluation_runner_bootstrap = service_block(
+            self.compose,
+            "aura-evaluation-runner-garage-bootstrap",
             "observatory-api-garage-bootstrap",
         )
         observatory_api_bootstrap = service_block(
@@ -842,7 +852,9 @@ class ComposeTopologyTests(unittest.TestCase):
             "observatory-api-garage-bootstrap",
             "observatory-judge-garage-bootstrap",
         )
-        observatory_worker = service_block(self.compose, "observatory-worker", "observatory-migrate")
+        observatory_worker = service_block(
+            self.compose, "observatory-worker", "observatory-migrate"
+        )
         self.assertIn("observatory-object-storage", garage)
         self.assertIn("observatory-garage-access-key", observatory_bootstrap)
         self.assertIn("observatory-garage-secret-key", observatory_bootstrap)
@@ -877,18 +889,33 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("observatory-garage-access-key", observatory_worker)
         self.assertIn("observatory-garage-secret-key", observatory_worker)
         self.assertIn("observatory-object-storage", observatory_worker)
+        self.assertIn(
+            "aura-evaluation-runner-garage-access-key", evaluation_runner_bootstrap
+        )
+        self.assertIn(
+            "aura-evaluation-runner-garage-secret-key", evaluation_runner_bootstrap
+        )
+        self.assertNotIn("observatory-garage-access-key", evaluation_runner_bootstrap)
+        self.assertNotIn("observatory-api-garage-access-key", evaluation_runner_bootstrap)
+        self.assertIn("bucket allow --read --write --key", evaluation_runner_bootstrap)
+        self.assertIn("bucket deny --owner --key", evaluation_runner_bootstrap)
+        self.assertIn('permissions}" != "RW"', evaluation_runner_bootstrap)
+        self.assertIn(
+            "observatory-garage-bootstrap: {condition: service_completed_successfully}",
+            evaluation_runner_bootstrap,
+        )
         self.assertIn("observatory-api-garage-access-key", observatory_api_bootstrap)
         self.assertIn("observatory-api-garage-secret-key", observatory_api_bootstrap)
         self.assertIn("bucket allow --write --key", observatory_api_bootstrap)
         self.assertIn("bucket deny --read --key", observatory_api_bootstrap)
         self.assertIn("bucket deny --owner --key", observatory_api_bootstrap)
         self.assertIn('permission_flags}" != "W"', observatory_api_bootstrap)
-        self.assertIn("observatory-api-garage-access-key", api)
-        self.assertIn("observatory-api-garage-secret-key", api)
-        self.assertIn("observatory-object-storage", api)
+        self.assertIn("observatory-api-garage-access-key", observatory_api)
+        self.assertIn("observatory-api-garage-secret-key", observatory_api)
+        self.assertIn("observatory-object-storage", observatory_api)
         self.assertIn(
             "observatory-api-garage-bootstrap: {condition: service_completed_successfully}",
-            api,
+            observatory_api,
         )
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", api)
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", worker)
@@ -964,11 +991,13 @@ class ComposeTopologyTests(unittest.TestCase):
             rendered.index("bucket deny --read --key"),
         )
         self.assertNotIn(
-            "bucket deny --read --key \"${access_key}\" \"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
+            "bucket deny --read --key \"${access_key}\" "
+            "\"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
             rendered,
         )
         self.assertNotIn(
-            "bucket deny --owner --key \"${access_key}\" \"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
+            "bucket deny --owner --key \"${access_key}\" "
+            "\"${AURA_OBSERVATORY_GARAGE_BUCKET}\" >/dev/null 2>&1 || true",
             rendered,
         )
         self.assertLess(
@@ -991,22 +1020,27 @@ class ComposeTopologyTests(unittest.TestCase):
                 "case \"$*\" in\n"
                 "  *' status') exit 0 ;;\n"
                 "  *' node id') printf 'node@local\\n'; exit 0 ;;\n"
-                "  *' layout show') printf 'node\\nCurrent cluster layout version: 1\\n'; exit 0 ;;\n"
+                "  *' layout show') printf 'node\\nCurrent cluster layout version: "
+                "1\\n'; exit 0 ;;\n"
                 "  *' key info'*)\n"
                 "    count=$(cat \"$GARAGE_TEST_KEY_INFO_COUNT\")\n"
                 "    count=$((count + 1))\n"
                 "    printf '%s' \"$count\" > \"$GARAGE_TEST_KEY_INFO_COUNT\"\n"
                 "    if [ \"$count\" -eq 1 ]; then\n"
-                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\nPermissions  ID  Global aliases  Local aliases\\n'\n"
+                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\n"
+                "Permissions  ID  Global aliases  Local aliases\\n'\n"
                 "    else\n"
-                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\nPermissions  ID  Global aliases  Local aliases\\n W  7f4d8e7b11112222  aura-observatory-evaluation\\n'\n"
+                "      printf 'Key name: fixture\\n==== BUCKETS FOR THIS KEY ====\\n"
+                "Permissions  ID  Global aliases  Local aliases\\n W  "
+                "7f4d8e7b11112222  aura-observatory-evaluation\\n'\n"
                 "    fi\n"
                 "    exit 0 ;;\n"
                 "  *' bucket info'*)\n"
                 "    count=$(cat \"$GARAGE_TEST_BUCKET_INFO_COUNT\")\n"
                 "    count=$((count + 1))\n"
                 "    printf '%s' \"$count\" > \"$GARAGE_TEST_BUCKET_INFO_COUNT\"\n"
-                "    if [ \"$count\" -gt 1 ]; then printf 'W  7f4d8e7b11112222  %s\\n\\n' \"$GARAGE_TEST_ACCESS_KEY\"; fi\n"
+                "    if [ \"$count\" -gt 1 ]; then printf 'W  7f4d8e7b11112222  %s\\n\\n' "
+                "\"$GARAGE_TEST_ACCESS_KEY\"; fi\n"
                 "    exit 0 ;;\n"
                 "  *' bucket allow '*) exit 0 ;;\n"
                 "  *' bucket deny '*)\n"
@@ -1059,13 +1093,17 @@ class ComposeTopologyTests(unittest.TestCase):
             self.assertGreaterEqual(sum("bucket info" in line for line in operations), 2)
             self.assertGreaterEqual(sum("key info" in line for line in operations), 2)
             allow_index = next(
-                index for index, line in enumerate(operations) if "bucket allow --write --key" in line
+                index
+                for index, line in enumerate(operations)
+                if "bucket allow --write --key" in line
             )
             read_deny_index = next(
                 index for index, line in enumerate(operations) if "bucket deny --read --key" in line
             )
             owner_deny_index = next(
-                index for index, line in enumerate(operations) if "bucket deny --owner --key" in line
+                index
+                for index, line in enumerate(operations)
+                if "bucket deny --owner --key" in line
             )
             self.assertLess(allow_index, read_deny_index)
             self.assertLess(read_deny_index, owner_deny_index)
@@ -1803,11 +1841,14 @@ class ComposeTopologyTests(unittest.TestCase):
                         f"AURA_NATS_BOOTSTRAP_PASSWORD_FILE={fixture / 'bootstrap-password'}",
                         f"AURA_NATS_DISPATCH_PASSWORD_FILE={fixture / 'dispatch-password'}",
                         f"AURA_NATS_RUNNER_PASSWORD_FILE={fixture / 'runner-password'}",
-                        f"AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE={fixture / 'runner-database-password'}",
+                        "AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE="
+                        f"{fixture / 'runner-database-password'}",
                         f"AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE={fixture / 'observatory-access'}",
                         f"AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE={fixture / 'observatory-secret'}",
-                        f"AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE={fixture / 'runner-access'}",
-                        f"AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE={fixture / 'runner-secret'}",
+                        "AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE="
+                        f"{fixture / 'runner-access'}",
+                        "AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE="
+                        f"{fixture / 'runner-secret'}",
                         "",
                     )
                 ),

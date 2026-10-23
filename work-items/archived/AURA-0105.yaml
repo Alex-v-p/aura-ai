@@ -1,0 +1,110 @@
+id: AURA-0105
+title: Correct Garage topology assertion scope
+status: integrated
+change_class: bugfix
+intent: >
+  Make the static Compose topology regression inspect each Garage bootstrap
+  service independently so the Observatory write-only identity remains
+  protected without misclassifying the evaluation runner's authorized read
+  grant, thereby unblocking truthful AURA-0098 validation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - AURA-0104 established a distinct write-only Observatory API Garage identity and retained the evaluation runner's separate read-write identity.
+    - The correction is limited to the static topology test's service-block selection; production Compose topology credentials permissions and service ordering remain unchanged.
+    - The existing assertions for the Observatory and Observatory API write-only identities must continue to reject read and owner grants and require compact permission flag W.
+    - The evaluation runner's authorized read-write grant remains legitimate and must not be weakened or hidden by the correction.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deploy.compose.topology-tests
+  - delivery.aura0105
+allowed_paths:
+  - work-items/active/AURA-0105.yaml
+  - work-items/archived/AURA-0105.yaml
+  - work-items/handoffs/AURA-0105-*.yaml
+  - work-items/reviews/AURA-0105-*.yaml
+  - work-items/integration/AURA-0105.yaml
+  - deploy/compose/test_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/docker/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - The corrected fixture extraction must keep the Observatory worker and API Garage identities provably write-only with no read or owner grant.
+    - The test must continue to distinguish the evaluation runner's authorized read-write identity from the separate Observatory write-only identities.
+    - No production credential grant network attachment service dependency or secret handling may change.
+  data_classes:
+    - deployment_permission_metadata
+required_agents:
+  implementation:
+    - platform_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The Observatory worker Garage bootstrap assertions inspect only the observatory-garage-bootstrap service and no longer include the intervening aura-evaluation-runner-garage-bootstrap service.
+  - The focused topology regression passes while still asserting that the Observatory worker bootstrap grants write only denies read and owner access and verifies compact permission flag W.
+  - The existing Observatory API Garage bootstrap assertions remain intact and continue to require its distinct write-only credential grant private object-storage network dependency and compact permission flag W.
+  - The evaluation runner's legitimate read-write Garage grant remains unchanged and is not treated as evidence about either write-only Observatory identity.
+  - The complete static Compose topology suite passes without any production Compose contract service credential network dependency or runtime change.
+  - AURA-0098 validation is unblocked only for this false-positive assertion; this work item does not claim or weaken any other AURA-0098 acceptance gate.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0105.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0105.yaml
+  - UV_CACHE_DIR=/tmp/aura-0105-uv uv run python -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_garage_is_private_digest_qualified_and_core_only -v
+  - UV_CACHE_DIR=/tmp/aura-0105-uv uv run python -m unittest deploy.compose.test_topology -v
+  - UV_CACHE_DIR=/tmp/aura-0105-uv uv run ruff check deploy/compose/test_topology.py
+  - docker compose --profile observatory config --quiet
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0105.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0105.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
