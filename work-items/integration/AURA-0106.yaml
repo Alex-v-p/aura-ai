@@ -1,0 +1,55 @@
+agent: integration_maintainer
+work_item: AURA-0106
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0106-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0106-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0106.yaml
+checks:
+  passed:
+    - >-
+      The Observatory worker handoff and both required review verdicts were
+      read and confirmed complete, with PASS reviews and no unresolved blocking
+      findings.
+    - >-
+      AURA-0106 work-item validation passed before archival, and explicit
+      six-path changed-path validation passed while excluding concurrent
+      AURA-0098 paths from the shared checkout.
+    - >-
+      Focused storage and judge suites passed: 168 tests passed and one
+      provider-gated test was skipped.
+    - >-
+      Ruff and Pyright passed with zero errors for the changed adapter and
+      storage tests.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      Contract-change and protected-baseline validation passed with no
+      contract or protected baseline changes.
+    - git diff --check passed.
+    - >-
+      The exact staged diff contains only the AURA-0106 Garage adapter,
+      storage regression, and governance artifacts; no AURA-0098 path was
+      staged.
+    - >-
+      A single focused Conventional Commit checkpoint was created after the
+      reviewed and validated AURA-0106 slice was staged; no push was performed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation files. They were not staged, modified, or claimed as part
+    of AURA-0106 integration.
+  - >-
+    AURA-0106 corrects only Garage upload byte accounting and does not claim
+    the composed Garage or other AURA-0098 resilience gates.

@@ -81,6 +81,15 @@ class GarageEvaluationObjectStore:
             or any(char not in "0123456789abcdef" for char in expected_sha256)
         ):
             raise EvaluationObjectStoreError("storage_integrity")
+
+        streamed_bytes = 0
+
+        async def counted_stream() -> AsyncIterable[bytes]:
+            nonlocal streamed_bytes
+            async for chunk in stream:
+                streamed_bytes += len(chunk)
+                yield chunk
+
         request = self._signed_request(
             "PUT",
             key,
@@ -90,7 +99,7 @@ class GarageEvaluationObjectStore:
             # contract digest.  The unsigned form is retained only for
             # callers that do not provide an integrity contract.
             payload_hash=expected_sha256 or "UNSIGNED-PAYLOAD",
-            content=stream,
+            content=counted_stream(),
         )
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
             try:
@@ -99,8 +108,7 @@ class GarageEvaluationObjectStore:
                     if response.is_redirect:
                         raise EvaluationObjectStoreError("storage_integrity")
                     response.raise_for_status()
-                    value = response.headers.get("content-length")
-                    return int(value) if value and value.isdigit() else 0
+                    return streamed_bytes
                 finally:
                     await response.aclose()
             except EvaluationObjectStoreError:

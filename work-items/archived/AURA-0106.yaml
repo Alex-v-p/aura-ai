@@ -1,0 +1,125 @@
+id: AURA-0106
+title: Return streamed upload bytes from Garage adapter
+status: integrated
+change_class: bugfix
+intent: >
+  Make successful Observatory evaluation-artifact uploads report the bytes
+  actually streamed to Garage instead of the provider's response-body length,
+  while preserving exact digest and size verification, bounded streaming,
+  least-privilege storage, and public contract compatibility.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0090.yaml
+    - work-items/archived/AURA-0094.yaml
+    - Garage PUT response Content-Length describes the response body and is not evidence of request-body bytes accepted by the provider.
+    - The Garage adapter must derive its successful upload count from bytes consumed from the outgoing async stream without buffering duplicating logging or persisting artifact content.
+    - ArtifactStorageService remains the authority that compares the adapter count with its independently digesting bounded stream and the exact declared byte count and SHA-256 before publishing metadata.
+    - AURA-0098 retains ownership of real composed Garage acceptance and all other resilience gates; this corrective work item supplies only the production adapter repair and focused regression coverage.
+  contracts: []
+feature_references:
+  - EVA-030
+ownership_zones:
+  - services.aura-observatory.evaluation-object-storage
+  - evaluation.observatory-artifact-streaming
+  - delivery.aura0106
+allowed_paths:
+  - work-items/active/AURA-0106.yaml
+  - work-items/archived/AURA-0106.yaml
+  - work-items/handoffs/AURA-0106-*.yaml
+  - work-items/reviews/AURA-0106-*.yaml
+  - work-items/integration/AURA-0106.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/tests/test_aura0090_storage.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Artifact bytes remain an incrementally consumed async stream and must never be accumulated into an unbounded buffer logged emitted as telemetry or included in provider diagnostics.
+    - The existing exact declared-size SHA-256 and signed-payload verification must remain fail closed before artifact metadata becomes available.
+    - UUID-derived object keys fixed private bucket routing redirect rejection bounded timeouts content-free error classes and best-effort partial-object cleanup remain unchanged.
+    - Garage credentials bucket permissions private networks and the separate API worker judge runner and Core storage identities remain unchanged.
+  data_classes:
+    - authorized_evaluation_content
+    - evaluation_artifact_metadata
+    - object_storage_credentials
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - GarageEvaluationObjectStore.put_stream returns the exact number of non-buffered request-body bytes consumed from the outgoing async stream after a successful provider response.
+  - A successful Garage PUT with a missing zero or otherwise response-body-specific Content-Length is not misclassified as artifact integrity failure and does not trigger deletion of a correctly uploaded object.
+  - The adapter does not trust the PUT response Content-Length as uploaded-byte evidence and does not buffer replay or arbitrarily dump the artifact while counting the stream.
+  - ArtifactStorageService retains its independent bounded digesting stream and continues to require agreement among the streamed byte count declared byte count and expected SHA-256 before publishing available artifact metadata.
+  - Existing redirect HTTP status authentication timeout malformed-stream limit digest mismatch cleanup and bounded failure behavior remains compatible and content-free.
+  - No public API event schema generated client port signature migration storage layout credential permission network dependency Core code or frontend code changes.
+  - Focused tests model Garage's empty successful PUT response verify multi-chunk sent-byte counting and digest signing and retain the existing integrity and failure-path coverage.
+  - AURA-0098 is unblocked only for the real Garage upload-count defect and must still independently pass its composed artifact and resilience acceptance.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0106.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0106.yaml
+  - UV_CACHE_DIR=/tmp/aura-0106-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0090_storage.py services/aura-observatory/tests/test_aura0094_judges.py
+  - UV_CACHE_DIR=/tmp/aura-0106-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/object_storage.py services/aura-observatory/tests/test_aura0090_storage.py
+  - UV_CACHE_DIR=/tmp/aura-0106-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/object_storage.py services/aura-observatory/tests/test_aura0090_storage.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0106.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0106.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

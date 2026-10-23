@@ -1559,7 +1559,7 @@ class ScoreListingHTTPClient(RecordingHTTPClient):
 
 class RecordingS3Client:
     requests: list[tuple[str, bytes, dict[str, str]]] = []
-    content_length_delta = 0
+    response_content_length: str | None = None
 
     def __init__(self, **_kwargs: Any) -> None:
         pass
@@ -1574,21 +1574,25 @@ class RecordingS3Client:
         body = await request.aread()
         self.requests.append((request.method, body, dict(request.headers)))
         if request.method == "PUT":
-            content_length = str(len(body) + self.content_length_delta)
+            headers: dict[str, str] = {}
+            if self.response_content_length is not None:
+                headers["content-length"] = self.response_content_length
             return httpx.Response(
                 200,
-                headers={"content-length": content_length},
+                headers=headers,
                 request=request,
             )
         return httpx.Response(204, request=request)
 
 
 @pytest.mark.asyncio
-async def test_sigv4_put_authenticates_expected_digest_and_rejects_corrupt_provider_length(
+@pytest.mark.parametrize("response_content_length", [None, "0", "999999"])
+async def test_sigv4_put_counts_chunked_request_bytes_not_response_length(
     monkeypatch: pytest.MonkeyPatch,
+    response_content_length: str | None,
 ) -> None:
     RecordingS3Client.requests = []
-    RecordingS3Client.content_length_delta = 1
+    RecordingS3Client.response_content_length = response_content_length
     monkeypatch.setattr(
         "aura_observatory.adapters.object_storage.httpx.AsyncClient", RecordingS3Client
     )
@@ -1603,17 +1607,46 @@ async def test_sigv4_put_authenticates_expected_digest_and_rejects_corrupt_provi
     )
     service = ArtifactStorageService(repository, store, max_bytes=1024)
 
-    with pytest.raises(ArtifactStorageError, match="integrity_invalid"):
-        await service.store(request, _chunks(payload))
+    record = await service.store(request, _chunks(payload, size=3))
 
     put_method, put_body, put_headers = RecordingS3Client.requests[0]
     assert put_method == "PUT"
     assert put_body == payload
+    assert record.byte_count == len(payload)
     assert put_headers["x-amz-content-sha256"] == request.expected_sha256
     assert "AWS4-HMAC-SHA256" in put_headers["authorization"]
-    assert RecordingS3Client.requests[-1][0] == "DELETE"
-    assert repository.records_by_key == {}
-    assert repository.failures[request.artifact_reference_id] == "integrity_invalid"
+    assert RecordingS3Client.requests[-1][0] == "PUT"
+    assert repository.records_by_key[request.idempotency_key] == record
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_content_length", [None, "0", "999999"])
+async def test_garage_put_stream_returns_bytes_consumed_from_chunked_upload(
+    monkeypatch: pytest.MonkeyPatch,
+    response_content_length: str | None,
+) -> None:
+    RecordingS3Client.requests = []
+    RecordingS3Client.response_content_length = response_content_length
+    monkeypatch.setattr(
+        "aura_observatory.adapters.object_storage.httpx.AsyncClient", RecordingS3Client
+    )
+    payload = b"chunked synthetic object payload"
+    store = GarageEvaluationObjectStore(
+        "http://garage.internal:3900",
+        "observatory-evaluation",
+        access_key="observatory-key",
+        secret_key="s" * 64,
+    )
+
+    consumed = await store.put_stream(
+        _id(),
+        _chunks(payload, size=2),
+        content_type="application/octet-stream",
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+    assert consumed == len(payload)
+    assert RecordingS3Client.requests[0][1] == payload
 
 
 def test_sigv4_path_style_vector_preserves_garage_uri_and_signed_headers() -> None:
