@@ -107,6 +107,7 @@ ANALYTICS_METRICS = (
     "reminder_failure_count",
     "notification_failure_count",
     "notification_acknowledgement_outcome",
+    "evaluation_runner_nats_recovery_count",
 )
 ANALYTICS_UNITS = frozenset({"count", "milliseconds", "bytes", "ratio", "score"})
 ANALYTICS_FOCUSES = ("all", "model", "queue", "retrieval", "tool", "memory", "automation")

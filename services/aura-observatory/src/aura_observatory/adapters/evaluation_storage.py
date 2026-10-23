@@ -28,6 +28,8 @@ from aura_observatory.evaluation_storage import (
     ArtifactRecord,
     ArtifactStorageError,
     ArtifactUpload,
+    CaptureAuthorizationCommand,
+    CaptureAuthorizationRecord,
     DeletionCommand,
     DeletionKind,
     DeletionSelector,
@@ -54,6 +56,126 @@ class PostgresEvaluationArtifactRepository:
             return [str(value) for value in await self._result_reference.result_ids_for_selector(selector)]
         raise ArtifactStorageError("result_reference_unavailable")
 
+    async def create_capture_authorization(
+        self, command: CaptureAuthorizationCommand
+    ) -> CaptureAuthorizationRecord:
+        """Insert or replay one owner authorization without content access."""
+
+        async with self._connection_factory() as connection:
+            existing_result = await connection.execute(
+                """SELECT authorization_record_id, request_id, dataset_id,
+                COALESCE(dataset_version, ''), capture_classification,
+                authorization_purpose, authorization_context, retention_mode,
+                authorized_at, revoked_at, idempotency_key, request_fingerprint
+                FROM observatory_evaluation_authorizations
+                WHERE idempotency_key = %s OR authorization_record_id = %s
+                LIMIT 1""",
+                (command.idempotency_key, command.authorization_record_id),
+            )
+            existing = await existing_result.fetchone()
+            if existing is not None:
+                if (
+                    str(existing[11] or "") != command.request_fingerprint
+                    or str(existing[0]) != command.authorization_record_id
+                    or str(existing[1]) != command.request_id
+                    or str(existing[2]) != command.dataset_id
+                    or str(existing[3]) != command.dataset_version
+                    or str(existing[4]) != command.capture_classification
+                    or str(existing[5]) != command.authorization_purpose
+                    or str(existing[6]) != command.authorization_context
+                    or str(existing[7]) != command.retention_mode
+                    or cast(datetime, existing[8]).astimezone(UTC) != command.authorized_at
+                    or existing[9] is not None
+                ):
+                    raise ArtifactStorageError("idempotency_conflict")
+                return CaptureAuthorizationRecord(
+                    authorization_record_id=str(existing[0]),
+                    request_id=str(existing[1]),
+                    dataset_id=str(existing[2]),
+                    dataset_version=str(existing[3]),
+                    capture_classification=str(existing[4]),
+                    authorization_purpose=str(existing[5]),
+                    authorization_context=str(existing[6]),
+                    retention_mode=str(existing[7]),
+                    authorized_at=cast(datetime, existing[8]).astimezone(UTC),
+                )
+            try:
+                insert_result = await connection.execute(
+                    """INSERT INTO observatory_evaluation_authorizations(
+                    authorization_record_id, request_id, dataset_id, dataset_version,
+                    capture_classification, authorization_purpose, authorization_context,
+                    retention_mode, authorized_at, idempotency_key, request_fingerprint)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING""",
+                    (
+                        command.authorization_record_id,
+                        command.request_id,
+                        command.dataset_id,
+                        command.dataset_version,
+                        command.capture_classification,
+                        command.authorization_purpose,
+                        command.authorization_context,
+                        command.retention_mode,
+                        command.authorized_at,
+                        command.idempotency_key,
+                        command.request_fingerprint,
+                    ),
+                )
+                if getattr(insert_result, "rowcount", 1) == 0:
+                    replay_result = await connection.execute(
+                        """SELECT authorization_record_id, request_id, dataset_id,
+                        COALESCE(dataset_version, ''), capture_classification,
+                        authorization_purpose, authorization_context, retention_mode,
+                        authorized_at, revoked_at, idempotency_key, request_fingerprint
+                        FROM observatory_evaluation_authorizations
+                        WHERE idempotency_key = %s OR authorization_record_id = %s
+                        LIMIT 1""",
+                        (command.idempotency_key, command.authorization_record_id),
+                    )
+                    existing = await replay_result.fetchone()
+                    if existing is None:
+                        raise ArtifactStorageError("database_failure")
+                    if (
+                        str(existing[11] or "") != command.request_fingerprint
+                        or str(existing[0]) != command.authorization_record_id
+                        or str(existing[1]) != command.request_id
+                        or str(existing[2]) != command.dataset_id
+                        or str(existing[3]) != command.dataset_version
+                        or str(existing[4]) != command.capture_classification
+                        or str(existing[5]) != command.authorization_purpose
+                        or str(existing[6]) != command.authorization_context
+                        or str(existing[7]) != command.retention_mode
+                        or cast(datetime, existing[8]).astimezone(UTC) != command.authorized_at
+                        or existing[9] is not None
+                    ):
+                        raise ArtifactStorageError("idempotency_conflict")
+                    return CaptureAuthorizationRecord(
+                        authorization_record_id=str(existing[0]),
+                        request_id=str(existing[1]),
+                        dataset_id=str(existing[2]),
+                        dataset_version=str(existing[3]),
+                        capture_classification=str(existing[4]),
+                        authorization_purpose=str(existing[5]),
+                        authorization_context=str(existing[6]),
+                        retention_mode=str(existing[7]),
+                        authorized_at=cast(datetime, existing[8]).astimezone(UTC),
+                    )
+            except ArtifactStorageError:
+                raise
+            except Exception as exc:
+                raise ArtifactStorageError("database_failure") from exc
+        return CaptureAuthorizationRecord(
+            authorization_record_id=command.authorization_record_id,
+            request_id=command.request_id,
+            dataset_id=command.dataset_id,
+            dataset_version=command.dataset_version,
+            capture_classification=command.capture_classification,
+            authorization_purpose=command.authorization_purpose,
+            authorization_context=command.authorization_context,
+            retention_mode=command.retention_mode,
+            authorized_at=command.authorized_at,
+        )
+
     async def lookup_artifact_metadata(
         self, artifact_reference_id: str
     ) -> EvaluationArtifactMetadata | None:
@@ -67,7 +189,8 @@ class PostgresEvaluationArtifactRepository:
                 artifact.byte_count,
                 artifact.intended_use,
                 artifact.artifact_version,
-                authz.authorized_at, (authz.revoked_at IS NOT NULL) AS revoked
+                authz.authorized_at, (authz.revoked_at IS NOT NULL) AS revoked,
+                authz.dataset_version
                 FROM observatory_evaluation_artifacts AS artifact
                 JOIN observatory_evaluation_authorizations AS authz
                   ON authz.authorization_record_id = artifact.authorization_record_id
@@ -94,6 +217,7 @@ class PostgresEvaluationArtifactRepository:
             artifact_version=str(row[13]),
             authorized_at=cast(datetime, row[14]).astimezone(UTC),
             revoked=bool(row[15]),
+            dataset_version=str(row[16]) if row[16] is not None else None,
         )
 
     async def lookup_authorization_metadata(
@@ -103,35 +227,44 @@ class PostgresEvaluationArtifactRepository:
 
         async with self._connection_factory() as connection:
             result = await connection.execute(
-                """SELECT authorization_record_id, dataset_id,
-                capture_classification, authorization_purpose,
+                """SELECT authorization_record_id, request_id, dataset_id,
+                dataset_version, capture_classification, authorization_purpose,
                 authorization_context, retention_mode, authorized_at,
                 (revoked_at IS NOT NULL) AS revoked
                 FROM observatory_evaluation_authorizations
                 WHERE authorization_record_id = %s AND dataset_id = %s
                 LIMIT 1""",
-                (authorization_record_id, dataset_id),
+            (authorization_record_id, dataset_id),
             )
             row = await result.fetchone()
         if row is None:
             return None
         return EvaluationArtifactMetadata(
             artifact_reference_id="",
-            dataset_id=str(row[1]),
-            capture_classification=str(row[2]),
+            dataset_id=str(row[2]),
+            capture_classification=str(row[4]),
             authorization_record_id=str(row[0]),
-            authorization_purpose=str(row[3]),
-            authorization_context=str(row[4]),
-            retention_mode=str(row[5]),
+            authorization_purpose=str(row[5]),
+            authorization_context=str(row[6]),
+            retention_mode=str(row[7]),
             sha256="",
             status="authorized",
-            authorized_at=cast(datetime, row[6]).astimezone(UTC),
-            revoked=bool(row[7]),
+            authorized_at=cast(datetime, row[8]).astimezone(UTC),
+            revoked=bool(row[9]),
+            request_id=str(row[1]),
+            dataset_version=str(row[3]) if row[3] is not None else None,
         )
 
     async def reserve_artifact(self, request: ArtifactUpload) -> ArtifactRecord | None | bool:
         intended_use = request.intended_use or "input"
         async with self._connection_factory() as connection:
+            columns = (
+                "artifact_id", "artifact_reference_id", "request_id", "result_id",
+                "idempotency_key", "authorization_record_id", "capture_classification",
+                "media_classification", "media_type", "byte_count", "sha256", "job_id",
+                "dataset_id", "suite_id", "created_at", "status", "declared_max_bytes",
+                "intended_use", "artifact_version",
+            )
             existing_result = await connection.execute(
                 """SELECT artifact.artifact_id, artifact.artifact_reference_id,
                 artifact.request_id, artifact.result_id, artifact.idempotency_key,
@@ -167,27 +300,6 @@ class PostgresEvaluationArtifactRepository:
             )
             existing = await existing_result.fetchone()
             if existing is not None:
-                columns = (
-                    "artifact_id",
-                    "artifact_reference_id",
-                    "request_id",
-                    "result_id",
-                    "idempotency_key",
-                    "authorization_record_id",
-                    "capture_classification",
-                    "media_classification",
-                    "media_type",
-                    "byte_count",
-                    "sha256",
-                    "job_id",
-                    "dataset_id",
-                    "suite_id",
-                    "created_at",
-                    "status",
-                    "declared_max_bytes",
-                    "intended_use",
-                    "artifact_version",
-                )
                 if any(
                     str(
                         _row_value_or(
@@ -212,14 +324,8 @@ class PostgresEvaluationArtifactRepository:
                         (12, request.dataset_id),
                         (13, request.suite_id),
                         (16, request.max_bytes),
-                        (
-                            17,
-                            intended_use,
-                        ),
-                        (
-                            18,
-                            request.artifact_version,
-                        ),
+                        (17, intended_use),
+                        (18, request.artifact_version),
                     )
                 ):
                     raise ArtifactStorageError("idempotency_conflict")
@@ -260,7 +366,7 @@ class PostgresEvaluationArtifactRepository:
                 return False
             if str(authorization[0]) != request.capture_classification:
                 raise ArtifactStorageError("authorization_mismatch")
-            await connection.execute(
+            insert_result = await connection.execute(
                 """INSERT INTO observatory_evaluation_artifacts(
                 artifact_id, artifact_reference_id, request_id, result_id,
                 idempotency_key, authorization_record_id, capture_classification,
@@ -268,7 +374,8 @@ class PostgresEvaluationArtifactRepository:
                 dataset_id, suite_id, status, declared_max_bytes, created_at, updated_at,
                 intended_use, artifact_version)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s,
-                'pending', %s, %s, CURRENT_TIMESTAMP, %s, %s)""",
+                'pending', %s, %s, CURRENT_TIMESTAMP, %s, %s)
+                ON CONFLICT (idempotency_key) DO NOTHING""",
                 (
                     request.artifact_id,
                     request.artifact_reference_id,
@@ -289,6 +396,43 @@ class PostgresEvaluationArtifactRepository:
                     request.artifact_version,
                 ),
             )
+            if getattr(insert_result, "rowcount", 1) == 0:
+                replay_result = await connection.execute(
+                    """SELECT artifact_id, artifact_reference_id, request_id,
+                    result_id, idempotency_key, authorization_record_id,
+                    capture_classification, media_classification, media_type,
+                    byte_count, sha256, job_id, dataset_id, suite_id, created_at,
+                    status, declared_max_bytes, intended_use, artifact_version
+                    FROM observatory_evaluation_artifacts
+                    WHERE idempotency_key = %s LIMIT 1""",
+                    (request.idempotency_key,),
+                )
+                existing = await replay_result.fetchone()
+                if existing is None:
+                    raise ArtifactStorageError("database_failure")
+                if any(
+                    str(_row_value_or(existing, index, columns[index], "input" if index == 17 else "1.0.0" if index == 18 else None))
+                    != str(value)
+                    for index, value in (
+                        (0, request.artifact_id),
+                        (1, request.artifact_reference_id),
+                        (2, request.request_id),
+                        (3, request.result_id),
+                        (5, request.authorization_record_id),
+                        (6, request.capture_classification),
+                        (7, request.media_classification),
+                        (8, request.media_type),
+                        (10, request.expected_sha256),
+                        (11, request.job_id),
+                        (12, request.dataset_id),
+                        (13, request.suite_id),
+                        (16, request.max_bytes),
+                        (17, intended_use),
+                        (18, request.artifact_version),
+                    )
+                ):
+                    raise ArtifactStorageError("idempotency_conflict")
+                return _artifact_from_row(existing)
             return None
 
     async def publish_artifact(self, artifact: ArtifactRecord) -> None:

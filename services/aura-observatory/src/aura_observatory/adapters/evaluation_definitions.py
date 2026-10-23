@@ -47,6 +47,7 @@ class InMemoryEvaluationDefinitionRepository:
         self.components: set[tuple[str, str]] = set()
         self.definition_audits: list[dict[str, str]] = []
         self._definition_command_claims: dict[tuple[str, str, str, str, str], str] = {}
+        self._definition_command_replays: dict[tuple[str, str], dict[str, object]] = {}
 
     def add_component(self, component_id: str, version: str) -> None:
         self.components.add((component_id, version))
@@ -112,6 +113,16 @@ class InMemoryEvaluationDefinitionRepository:
         resource_version: str,
     ) -> DefinitionCommandClaim:
         claim_key = (operation, idempotency_key, request_fingerprint, resource_id, resource_version)
+        replay = self._definition_command_replays.get((operation, idempotency_key))
+        if replay is not None:
+            return DefinitionCommandClaim(
+                replay=dict(replay), claimed=False, claim_phase="definition_replay"
+            )
+        if any(
+            key[0] == operation and key[1] == idempotency_key
+            for key in self._definition_command_claims
+        ):
+            raise DefinitionCommandPendingError("definition command is already in progress")
         claim_token = uuid4().hex
         self._definition_command_claims[claim_key] = claim_token
         return DefinitionCommandClaim(
@@ -143,6 +154,7 @@ class InMemoryEvaluationDefinitionRepository:
         if matching_key is None:
             raise DefinitionCommandPendingError("definition command claim is not owned")
         del self._definition_command_claims[matching_key]
+        self._definition_command_replays[(operation, idempotency_key)] = dict(response)
         return dict(response)
 
     async def get_dataset(self, resource_id: str, version: str) -> DatasetDefinition | None:
@@ -280,7 +292,7 @@ class PostgresEvaluationDefinitionRepository:
         resource_id: str,
         resource_version: str,
     ) -> DefinitionCommandClaim:
-        if operation not in {"create_dataset", "create_suite"}:
+        if operation not in {"create_dataset", "create_suite", "create_local_judge_evaluator"}:
             raise DefinitionValidationError("definition command operation is invalid")
         claim_token = uuid4().hex
         claim_phase = "definition_claim"

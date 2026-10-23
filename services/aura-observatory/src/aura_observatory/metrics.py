@@ -114,6 +114,9 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "evidence_read",
         "evidence_reference_read",
         "fact_projection_write",
+        "capture_authorization_admission",
+        "artifact_admission",
+        "local_judge_admission",
     }
 )
 COMPONENT_SPAN_DEPENDENCIES = frozenset(
@@ -132,7 +135,7 @@ COMPONENT_SPAN_DEPENDENCIES = frozenset(
 COMPONENT_SPAN_OUTCOMES = frozenset(
     {
         "success", "complete", "partial", "stale", "incompatible", "no_data",
-        "failure", "duplicate", "timeout", "unavailable",
+        "failure", "duplicate", "timeout", "unavailable", "rejected",
     }
 )
 COMPONENT_SPAN_ERRORS = frozenset(
@@ -163,7 +166,18 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "execution_storage_failure",
         "qualification_denied",
         "authorization_required",
+        "authorization_mismatch",
+        "unsupported_media",
         "artifact_limit",
+        "artifact_limit_exceeded",
+        "artifact_state_conflict",
+        "artifact_deleting",
+        "integrity_mismatch",
+        "integrity_invalid",
+        "malformed_stream",
+        "storage_authentication",
+        "storage_integrity",
+        "storage_timeout",
         "conflict",
         "duplicate",
         "insufficient",
@@ -171,6 +185,8 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "not_found",
         "incompatible",
         "lease_lost",
+        "idempotency_conflict",
+        "dependency_unavailable",
     }
 )
 MAX_LAG_MS = 604_800_000.0
@@ -833,6 +849,9 @@ class ObservatoryMetrics:
             "evidence_read",
             "evidence_reference_read",
             "fact_projection_write",
+            "capture_authorization_admission",
+            "artifact_admission",
+            "local_judge_admission",
         },
         "state": {
             "firing", "recovered", "stale", "partial", "no_data", "inconclusive",

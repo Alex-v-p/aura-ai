@@ -17,6 +17,7 @@ function refName(ref) {
 
 function typeExpression(schema) {
   if (schema.$ref) return refName(schema.$ref);
+  if (schema.type === 'string' && schema.format === 'binary') return 'Blob';
   if (schema.const !== undefined) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
   if (schema.oneOf && schema.type !== 'object') return schema.oneOf.map(typeExpression).join(' | ');
@@ -78,8 +79,8 @@ function responseType(operation) {
 
 function bodyType(operation) {
   const content = operation.requestBody?.content;
-  assertSupportedContent(content, ['application/json'], `${operation.operationId} request`);
-  const schema = content?.['application/json']?.schema;
+  assertSupportedContent(content, ['application/json', 'multipart/form-data'], `${operation.operationId} request`);
+  const schema = content?.['application/json']?.schema ?? content?.['multipart/form-data']?.schema;
   return schema ? typeExpression(schema) : 'never';
 }
 
@@ -104,7 +105,11 @@ for (const [path, pathItem] of Object.entries(document.paths)) {
       pathType: parameterType(parameters, 'path'),
       queryType: parameterType(parameters, 'query'),
       headerType: parameterType(parameters, 'header'),
-      requestMode: operation.requestBody ? 'json' : 'none',
+      requestMode: operation.requestBody?.content?.['multipart/form-data']
+        ? 'multipart'
+        : operation.requestBody
+          ? 'json'
+          : 'none',
       responseMode: successResponse(operation)?.content?.['text/event-stream']
         ? 'event-stream'
         : successResponse(operation)?.content
@@ -121,7 +126,7 @@ const operationTypes = operations.map((operation) =>
 const descriptors = operations.map((operation) =>
   `  ${operation.id}: { method: '${operation.method}', pathTemplate: '${operation.path}', requestMode: '${operation.requestMode}', responseMode: '${operation.responseMode}' },`,
 ).join('\n');
-const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json';\n  readonly responseMode: 'none' | 'json' | 'event-stream';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
+const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json' | 'multipart';\n  readonly responseMode: 'none' | 'json' | 'event-stream';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
 
 if (process.argv.includes('--check')) {
   if (readFileSync(outputPath, 'utf8') !== generated) {

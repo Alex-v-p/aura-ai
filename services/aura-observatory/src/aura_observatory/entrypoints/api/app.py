@@ -144,6 +144,7 @@ def create_app(
     ingest_service: TelemetryIngestService | None = None,
     auth: ObservatoryAuth | None = None,
     query_store: object | None = None,
+    evaluation_service: object | None = None,
     testing: bool = False,
 ) -> FastAPI:
     """Build the API with an explicit service dependency for deterministic tests."""
@@ -493,12 +494,16 @@ def create_app(
     # Production always uses the durable PostgreSQL/ClickHouse query port.
     # Missing optional object-store credentials disable artifact commands at
     # the application boundary; they must never select an in-memory read model.
-    evaluation_service = build_evaluation_api_service(resolved) if not testing else None
+    selected_evaluation_service = (
+        evaluation_service
+        if evaluation_service is not None
+        else build_evaluation_api_service(resolved) if not testing else None
+    )
     register_evaluation_routes(
         app,
         owner_session=owner_session,
         auth_service=auth_service,
-        service=evaluation_service,
+        service=cast(Any, selected_evaluation_service),
         resolved=resolved,
     )
     _register_operations_routes(app, owner_session, auth_service, resolved, testing=testing)

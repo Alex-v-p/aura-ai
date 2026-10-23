@@ -1,0 +1,192 @@
+agent: contract_steward
+work_item: AURA-0104
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura0104_contracts
+  worktree: feat/aura-0104-observatory-acceptance-prerequisites
+scope:
+  ownership_zone: contracts.observatory-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_evaluation_v1.py
+  - contracts/tests/test_observatory_v1.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - work-items/handoffs/AURA-0104-contract-steward.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for the
+    observatory-v1 source contract, its focused contract tests, and the
+    reproducible transport-only generated client during this ownership slice.
+    Service behavior, persistence, migrations, deployment, and product
+    frontend logic were not changed.
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - >-
+          Added owner-only local-judge evaluator creation to the existing
+          evaluation evaluator collection. The closed request combines the
+          settled evaluation-v1 Evaluator and LocalJudgeDefinition concepts,
+          carries immutable artifact bindings instead of prompt or rubric
+          content, and requires the existing anti-CSRF and UUID idempotency
+          headers.
+        - >-
+          Added owner-only multipart artifact creation to the existing
+          evaluation artifact collection. The form contains exactly a closed
+          JSON metadata part and one binary part, caps both the declared and
+          represented payload at one MiB, admits only inspectable JSON, plain
+          text, or Markdown, requires explicit content capture authorization
+          and manual retention, and declares exact byte-count and digest
+          verification, conflict, unsupported-media, oversized-payload, and
+          no-store response boundaries without exposing bytes or storage
+          locations in responses.
+        - >-
+          Added an owner-only, CSRF-protected, UUID-idempotent capture
+          authorization command. It durably binds an opaque authorization and
+          request identity to one exact dataset version, finite capture class
+          and purpose, controlled-evaluation context, authorization time, and
+          manual-only retention, returning closed content-free metadata with
+          no-store.
+        - >-
+          Additively admitted local_judge references in evaluation suite
+          creation so existing job, result, and score resources can provide the
+          requested work admission and readback without a bespoke orchestration
+          endpoint.
+        - >-
+          Added evaluation_runner_nats_recovery_count to the finite operational
+          analytics metric allowlist without widening dimensions, grouping,
+          pagination, scan limits, or metadata capture policy.
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      changes:
+        - >-
+          No source change. Existing Artifact, Evaluator,
+          LocalJudgeDefinition, Request, Result, Score, authorization, budget,
+          provenance, digest, and retention definitions remain authoritative
+          for the additive Observatory transport projections.
+  compatibility_notes:
+    - >-
+      observatory-v1 remains version 1.0.0. Existing paths, operations,
+      request and response shapes, operation identifiers, authentication,
+      evaluation readback, and SSE contracts remain present.
+    - >-
+      The evaluator and artifact mutations are additive methods on existing
+      collections, and capture authorization is an additive collection path. Existing
+      generated client operations remain unchanged; the generated descriptor
+      union adds multipart as a request mode and emits Blob only for the new
+      upload operation.
+    - >-
+      The capture-authorization path is additive. The not-yet-integrated
+      artifact mutation was narrowed before release from generic binary plus
+      text to approved inspectable JSON and text media only, so no released
+      producer or consumer loses compatibility.
+    - >-
+      The evaluation suite evaluator kind accepts the previously supported
+      deterministic value plus local_judge. Human review remains excluded from
+      automated suite admission.
+    - >-
+      evaluation_runner_nats_recovery_count is one new member of the existing
+      bounded analytics allowlist. No existing metric, unit, aggregation,
+      dimension, or grouping value was removed or redefined.
+  producers:
+    - >-
+      Aura Observatory evaluation API, producing immutable local-judge
+      evaluator definitions, owner capture-authorization records, and
+      byte-count/digest-verified artifact metadata after the downstream
+      service implementation lands.
+    - >-
+      Existing Aura Core evaluation runner telemetry producer, which already
+      emits evaluation_runner_nats_recovery_count asynchronously through OTLP.
+  consumers:
+    - Aura Observatory evaluation storage and local-judge orchestration.
+    - Existing Observatory evaluation job, result, score, and analytics query resources.
+    - AURA-0098 disposable full-stack acceptance and dependency-recovery harness.
+    - Generated Observatory API client and its injected transport implementation.
+  rollout:
+    - >-
+      Land this contract and generated output before the matching Observatory
+      API, storage, orchestration, and analytics catalogue implementation.
+    - >-
+      Deploy the new mutations only with owner authorization, same-origin CSRF,
+      UUID idempotency, exact multipart parsing, streaming byte enforcement,
+      exact byte-count and SHA-256 verification, recursive JSON and bounded
+      text prohibited-content rejection, approved-media enforcement, and
+      no-store response handling implemented and tested.
+    - >-
+      Continue using existing job submission and job/result/score reads for
+      local-judge execution. Enable the composed AURA-0098 acceptance paths
+      only after those public resources and the analytics metric are live.
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.evaluation_storage
+    - aura.observatory.local_judges
+  metrics_added:
+    - evaluation_runner_nats_recovery_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0104.yaml
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run pytest -q contracts/tests (37 passed)
+    - pnpm --dir frontend nx test observatory-api-client (7 passed)
+    - pnpm --dir frontend nx lint observatory-api-client
+    - pnpm --dir frontend nx run observatory-api-client:check-generated
+    - pnpm --dir frontend nx run observatory-api-client:validate-contract
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Observatory service, deployment, browser, and composed-stack checks are
+      assigned to subsequent AURA-0104 ownership slices and require their
+      implementations.
+decisions:
+  - >-
+    Reused the existing evaluator, suite, artifact, job, result, and score
+    resource families instead of adding a bespoke local-judge work endpoint.
+  - >-
+    Added first-class multipart generation with a typed Blob body and
+    declarative requestMode only; serialization, network behavior, retries,
+    authentication, and domain behavior remain outside the generated client.
+  - >-
+    Kept evaluation-v1 unchanged because its existing concepts and bounds are
+    sufficient. Focused mapping tests prevent transport definitions from
+    drifting from its content authorization and local-judge budget.
+  - >-
+    Added a public capture-authorization command instead of relying on private
+    SQL fixture setup. The response remains content-free and gives artifact
+    admission the exact durable authorization identity and dataset binding it
+    must verify.
+  - >-
+    Removed application/octet-stream from the new upload admission before
+    integration because opaque bytes cannot satisfy the prohibited-credential
+    inspection policy. Historical artifact metadata and runner reference
+    schemas remain unchanged.
+  - >-
+    Kept ordinary analytics metadata-only and added only the exact existing
+    Core recovery counter required by acceptance.
+risks:
+  - >-
+    The downstream Observatory implementation must enforce streaming limits,
+    actual byte-count and digest equality, recursive credential and
+    prohibited-content rejection, exact multipart fields and media-type match,
+    durable capture authorization, CSRF, idempotency, and no-store; OpenAPI can
+    declare but cannot itself execute these invariants.
+unresolved: []

@@ -258,6 +258,39 @@ class ArtifactUpload:
 
 
 @dataclass(frozen=True, slots=True)
+class CaptureAuthorizationRecord:
+    """Durable content-free authorization state returned by the PG port."""
+
+    authorization_record_id: str
+    request_id: str
+    dataset_id: str
+    dataset_version: str
+    capture_classification: str
+    authorization_purpose: str
+    authorization_context: str
+    retention_mode: str
+    authorized_at: datetime
+    status: str = "active"
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureAuthorizationCommand:
+    """Closed authorization command; idempotency is supplied by the API."""
+
+    authorization_record_id: str
+    request_id: str
+    dataset_id: str
+    dataset_version: str
+    capture_classification: str
+    authorization_purpose: str
+    authorization_context: str
+    retention_mode: str
+    authorized_at: datetime
+    idempotency_key: str
+    request_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactRecord:
     artifact_id: str
     artifact_reference_id: str
@@ -934,13 +967,13 @@ class ArtifactStorageService:
                 content_type=request.media_type,
                 expected_sha256=request.expected_sha256,
             )
-            if verifier.byte_count != byte_count and byte_count > 0:
+            if verifier.byte_count != byte_count:
                 raise ArtifactStorageError("integrity_invalid")
             digest = verifier.hexdigest
-            if verifier.byte_count > request.max_bytes:
-                raise ArtifactStorageError("artifact_limit_exceeded")
             if digest != request.expected_sha256:
                 raise ArtifactStorageError("integrity_mismatch")
+            if verifier.byte_count != request.max_bytes:
+                raise ArtifactStorageError("integrity_invalid")
             record = ArtifactRecord(
                 artifact_id=request.artifact_id,
                 artifact_reference_id=request.artifact_reference_id,

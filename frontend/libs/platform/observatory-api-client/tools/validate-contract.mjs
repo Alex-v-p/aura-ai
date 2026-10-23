@@ -100,6 +100,73 @@ for (const [path, pathItem] of Object.entries(document.paths)) {
   }
 }
 
+const artifactAdmission = document.paths?.['/api/v1/evaluation/artifacts']?.post;
+assert(
+  artifactAdmission?.operationId === 'createEvaluationArtifact',
+  'Evaluation artifact admission is missing or renamed',
+);
+assert(
+  artifactAdmission.requestBody?.content?.['multipart/form-data']?.schema?.$ref ===
+    '#/components/schemas/ArtifactUploadForm',
+  'Evaluation artifact admission must use the closed multipart form',
+);
+assert(
+  artifactAdmission.responses?.['201']?.headers?.['Cache-Control']?.schema?.const === 'no-store',
+  'Evaluation artifact admission must prevent authenticated response caching',
+);
+const artifactForm = document.components.schemas.ArtifactUploadForm;
+assert(artifactForm?.additionalProperties === false, 'Artifact upload form must be closed');
+assert(
+  artifactForm?.minProperties === 2 && artifactForm?.maxProperties === 2,
+  'Artifact upload form must contain exactly metadata and content',
+);
+assert(
+  artifactForm?.properties?.content?.maxLength === 1048576,
+  'Evaluation artifact upload must remain capped at one MiB',
+);
+assert(
+  !document.components.schemas.EvaluationArtifactUploadMetadata?.properties?.mediaType?.enum?.includes(
+    'application/octet-stream',
+  ),
+  'Evaluation artifact admission must reject uninspectable generic binary media',
+);
+assert(
+  JSON.stringify(document.components.schemas.EvaluationArtifactUploadMetadata?.properties?.mediaType?.enum) ===
+    JSON.stringify(['application/json', 'text/plain', 'text/markdown']),
+  'Evaluation artifact admission must remain limited to approved inspectable media',
+);
+
+const captureAuthorization = document.paths?.['/api/v1/evaluation/capture-authorizations']?.post;
+assert(
+  captureAuthorization?.operationId === 'createEvaluationCaptureAuthorization',
+  'Evaluation capture-authorization command is missing or renamed',
+);
+assert(
+  captureAuthorization.responses?.['201']?.headers?.['Cache-Control']?.schema?.const === 'no-store',
+  'Evaluation capture-authorization response must prevent authenticated caching',
+);
+assert(
+  document.components.schemas.CreateEvaluationCaptureAuthorizationRequest?.additionalProperties === false &&
+    document.components.schemas.EvaluationCaptureAuthorizationRecord?.additionalProperties === false,
+  'Evaluation capture-authorization request and response must remain closed',
+);
+
+const localJudgeAdmission = document.paths?.['/api/v1/evaluation/evaluators']?.post;
+assert(
+  localJudgeAdmission?.operationId === 'createEvaluationLocalJudgeEvaluator',
+  'Local-judge evaluator admission is missing or renamed',
+);
+assert(
+  document.components.schemas.CreateLocalJudgeEvaluatorRequest?.additionalProperties === false,
+  'Local-judge evaluator admission must be closed',
+);
+assert(
+  document.components.schemas.AnalyticsMetricName?.enum?.includes(
+    'evaluation_runner_nats_recovery_count',
+  ),
+  'Core evaluation-runner NATS recovery metric must be explicitly allowlisted',
+);
+
 // A closed summary cannot be extended through allOf: JSON Schema evaluates
 // the detail-only fields against the summary's additionalProperties: false.
 // Keep the detail response independently closed and self-contained.

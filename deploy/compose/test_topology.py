@@ -835,7 +835,12 @@ class ComposeTopologyTests(unittest.TestCase):
         observatory_bootstrap = service_block(
             self.compose,
             "observatory-garage-bootstrap",
-            "aura-evaluation-runner-garage-bootstrap",
+            "observatory-api-garage-bootstrap",
+        )
+        observatory_api_bootstrap = service_block(
+            self.compose,
+            "observatory-api-garage-bootstrap",
+            "observatory-judge-garage-bootstrap",
         )
         observatory_worker = service_block(self.compose, "observatory-worker", "observatory-migrate")
         self.assertIn("observatory-object-storage", garage)
@@ -872,8 +877,19 @@ class ComposeTopologyTests(unittest.TestCase):
         self.assertIn("observatory-garage-access-key", observatory_worker)
         self.assertIn("observatory-garage-secret-key", observatory_worker)
         self.assertIn("observatory-object-storage", observatory_worker)
-        self.assertNotIn("observatory-garage-access-key", api)
-        self.assertNotIn("observatory-garage-secret-key", api)
+        self.assertIn("observatory-api-garage-access-key", observatory_api_bootstrap)
+        self.assertIn("observatory-api-garage-secret-key", observatory_api_bootstrap)
+        self.assertIn("bucket allow --write --key", observatory_api_bootstrap)
+        self.assertIn("bucket deny --read --key", observatory_api_bootstrap)
+        self.assertIn("bucket deny --owner --key", observatory_api_bootstrap)
+        self.assertIn('permission_flags}" != "W"', observatory_api_bootstrap)
+        self.assertIn("observatory-api-garage-access-key", api)
+        self.assertIn("observatory-api-garage-secret-key", api)
+        self.assertIn("observatory-object-storage", api)
+        self.assertIn(
+            "observatory-api-garage-bootstrap: {condition: service_completed_successfully}",
+            api,
+        )
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", api)
         self.assertIn("aura-garage-bootstrap: {condition: service_completed_successfully}", worker)
         self.assertIn("AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900", api)

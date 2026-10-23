@@ -2,7 +2,9 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   OBSERVATORY_API_OPERATIONS,
+  type ArtifactUploadForm,
   type EvaluationArtifactPage,
+  type EvaluationCaptureAuthorizationRecord,
   type EvaluationAttemptPage,
   type EvaluationClaimedAttempt,
   type EvaluationCalibrationPage,
@@ -83,6 +85,28 @@ describe('ObservatoryApiClient', () => {
       requestMode: 'json',
       responseMode: 'json',
     });
+    expect(OBSERVATORY_API_OPERATIONS.createEvaluationLocalJudgeEvaluator).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/evaluators',
+      requestMode: 'json',
+      responseMode: 'json',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.createEvaluationArtifact).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/artifacts',
+      requestMode: 'multipart',
+      responseMode: 'json',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.createEvaluationCaptureAuthorization).toEqual({
+      method: 'POST',
+      pathTemplate: '/api/v1/evaluation/capture-authorizations',
+      requestMode: 'json',
+      responseMode: 'json',
+    });
+    expectTypeOf<ObservatoryApiOperations['createEvaluationArtifact']['body']>().toEqualTypeOf<ArtifactUploadForm>();
+    expectTypeOf<
+      ObservatoryOperationResponse<'createEvaluationCaptureAuthorization'>
+    >().toEqualTypeOf<EvaluationCaptureAuthorizationRecord>();
     expect(OBSERVATORY_API_OPERATIONS.streamEvents.responseMode).toBe('event-stream');
     expect(OBSERVATORY_API_OPERATIONS.streamEvaluationEvents).toEqual({
       method: 'GET',

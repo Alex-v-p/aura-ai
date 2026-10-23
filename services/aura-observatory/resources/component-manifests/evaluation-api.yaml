@@ -12,6 +12,7 @@ output:
 dependencies:
   - postgresql
   - clickhouse
+  - garage
   - oidc_provider
   - login_state_store
   - session_store
@@ -65,11 +66,12 @@ evaluators:
   - evaluation_api_bounded_query
   - evaluation_sse_metadata_isolation
   - evaluation_sse_last_event_id_catch_up
+  - observatory_public_evaluation_admission
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:
   metric_attributes: [operation, outcome]
-  trace_only: [trace_id, span_id, parent_span_id, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, dependency, error_code]
   prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity, bearer, password, object_key, url, uri]
 export:
   sink: otlp_http_metrics_and_traces

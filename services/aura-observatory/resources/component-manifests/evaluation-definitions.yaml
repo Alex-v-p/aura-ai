@@ -40,6 +40,8 @@ evaluators:
   - evaluation_definition_contract_validation
   - evaluation_definition_immutability
   - evaluation_suite_binding_validation
+  - evaluation_local_judge_admission
+  - observatory_public_evaluation_admission
   - evaluation_api_contract_compatibility
   - evaluation_api_authorization
   - evaluation_api_csrf_idempotency

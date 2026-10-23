@@ -20,10 +20,16 @@ if TYPE_CHECKING:
         EvaluatorDefinition,
         SuiteDefinition,
     )
-    from aura_observatory.evaluation_judges import JudgeArtifactReference, JudgeResponse
+    from aura_observatory.evaluation_judges import (
+        JudgeArtifactReference,
+        JudgeResponse,
+        LocalJudgeDefinition,
+    )
     from aura_observatory.evaluation_storage import (
         ArtifactRecord,
         ArtifactUpload,
+        CaptureAuthorizationCommand,
+        CaptureAuthorizationRecord,
         DeletionCommand,
         DeletionSelector,
         EvaluationScore,
@@ -52,6 +58,11 @@ class EvaluationArtifactMetadata:
     byte_count: int = 0
     media_classification: str = "evaluation_input"
     intended_use: str = "input"
+    # The authorization row owns the request correlation used by the artifact
+    # storage transaction.  It is returned only across the Observatory's
+    # internal typed port; no HTTP projection exposes it.
+    request_id: str | None = None
+    dataset_version: str | None = None
 
 
 # These defaults are part of the bounded analytics request contract.  They
@@ -99,6 +110,54 @@ class ClaimOutcome(StrEnum):
 
 class ObservationStore(Protocol):
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome: ...
+
+
+class EvaluationArtifactMetadataPort(Protocol):
+    """Content-free artifact and authorization lookup owned by Observatory."""
+
+    async def lookup_artifact_metadata(
+        self, artifact_reference_id: str
+    ) -> EvaluationArtifactMetadata | None: ...
+
+    async def lookup_authorization_metadata(
+        self, authorization_record_id: str, dataset_id: str
+    ) -> EvaluationArtifactMetadata | None: ...
+
+    async def create_capture_authorization(
+        self, command: CaptureAuthorizationCommand
+    ) -> CaptureAuthorizationRecord: ...
+
+
+class EvaluationArtifactStoragePort(Protocol):
+    async def store(
+        self, request: ArtifactUpload, stream: AsyncIterator[bytes]
+    ) -> ArtifactRecord: ...
+
+
+class LocalJudgeDefinitionPort(Protocol):
+    async def create(self, definition: LocalJudgeDefinition) -> LocalJudgeDefinition: ...
+
+
+class EvaluationDefinitionCommandPort(Protocol):
+    async def begin_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_id: str,
+        resource_version: str,
+    ) -> DefinitionCommandClaim: ...
+
+    async def complete_definition_command(
+        self,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        response: Mapping[str, object],
+        claim_token: str,
+    ) -> dict[str, object]: ...
+
+    async def admit_evaluator(self, payload: Mapping[str, Any]) -> EvaluatorDefinition: ...
 
 
 class ObservationIdRegistry(Protocol):

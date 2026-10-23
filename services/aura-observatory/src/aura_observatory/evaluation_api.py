@@ -14,9 +14,11 @@ provider diagnostics.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import re
+import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from time import monotonic
@@ -39,6 +41,7 @@ from aura_observatory.evaluation_definitions import (
     DefinitionNotFoundError,
     DefinitionStorageError,
     DefinitionValidationError,
+    EvaluationDefinitionService,
 )
 from aura_observatory.evaluation_experiments import (
     EvaluationExperimentService,
@@ -46,6 +49,12 @@ from aura_observatory.evaluation_experiments import (
     ExperimentError,
     ExperimentNotFound,
     ExperimentUnavailable,
+)
+from aura_observatory.evaluation_judges import (
+    MAX_ARTIFACT_BYTES,
+    JudgeArtifactReference,
+    JudgeError,
+    LocalJudgeDefinition,
 )
 from aura_observatory.evaluation_live import EvaluationLiveEventPort, EvaluationLiveEventStore
 from aura_observatory.evaluation_orchestration import EvaluationAdmission, OrchestrationError
@@ -62,9 +71,18 @@ from aura_observatory.evaluation_query import (
 )
 from aura_observatory.evaluation_storage import (
     ArtifactStorageError,
+    ArtifactUpload,
+    CaptureAuthorizationCommand,
+    CaptureAuthorizationRecord,
     DeletionCommand,
     DeletionKind,
     DeletionSelector,
+)
+from aura_observatory.ports import (
+    EvaluationArtifactMetadataPort,
+    EvaluationArtifactStoragePort,
+    EvaluationDefinitionCommandPort,
+    LocalJudgeDefinitionPort,
 )
 
 _ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -236,6 +254,56 @@ _SCOPE_IDS = frozenset({"public_project", "private", "sensitive", "environment"}
 _EVALUATOR_KINDS = frozenset({"deterministic", "local_judge", "human_review"})
 _COMPONENT_ID = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_UPLOAD_MAX_BYTES = 1_048_576
+_UPLOAD_METADATA_FIELDS = frozenset(
+    {
+        "artifactId", "artifactVersion", "purpose", "mediaClassification", "mediaType",
+        "byteCount", "integrity", "captureAuthorization", "retentionMode", "provenance",
+        "createdAt",
+    }
+)
+_UPLOAD_INTEGRITY_FIELDS = frozenset({"algorithm", "digest"})
+_UPLOAD_PROVENANCE_FIELDS = frozenset({
+    "dataset", "suite", "evaluators", "components", "model", "deploymentRevision",
+    "reproducibility",
+})
+_LOCAL_JUDGE_BUDGET_FIELDS = frozenset({
+    "timeoutMs", "maxInputBytes", "maxOutputBytes", "maxOutputTokens", "maxContextTokens",
+    "maxConcurrency", "temperature",
+})
+_LOCAL_JUDGE_PROMPT_FIELDS = frozenset({"artifactId", "artifactVersion", "purpose", "digest"})
+_LOCAL_JUDGE_PROVENANCE_FIELDS = frozenset({"createdByComponent", "createdByVersion", "sourceDigest"})
+_LOCAL_JUDGE_FIELDS = frozenset({
+    "evaluatorId", "evaluatorVersion", "metric", "componentIds", "judgeDefinitionId",
+    "judgeDefinitionVersion", "model", "prompt", "rubric", "calibration", "seed", "budget",
+    "outputContract", "defaultDisposition", "retentionMode", "provenance", "createdAt",
+})
+_SECRET_MARKERS = re.compile(
+    r"(?:bearer\s+[a-z0-9._~+/=-]{8,}|-----BEGIN PRIVATE KEY-----|-----BEGIN [A-Z0-9 _-]{1,80}(?:PRIVATE KEY|PKCS8)-----|(?:authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|client[_-]?secret|password|secret|private[_-]?key)\s*[:=]|AWS_(?:SECRET_ACCESS_KEY|ACCESS_KEY_ID)\s*=)",
+    re.IGNORECASE,
+)
+_SECRET_KEYS = frozenset({
+    "authorization", "cookie", "set_cookie", "apikey", "api_key", "access_token",
+    "refresh_token", "client_secret", "password", "passwd", "secret", "private_key",
+    "credential", "credentials", "token",
+})
+_JSON_SECRET_KEY = re.compile(
+    r"[\"'](?P<key>[A-Za-z0-9_.-]{1,128})[\"']\s*:", re.IGNORECASE
+)
+_ADMISSION_OPERATION_NAMES = frozenset({
+    "capture_authorization_admission", "artifact_admission", "local_judge_admission",
+})
+_ADMISSION_ERROR_CODES = frozenset(
+    {
+        "database_failure", "storage_failure", "timeout", "validation",
+        "dependency_unavailable", "authorization_required", "authorization_mismatch",
+        "unsupported_media", "artifact_limit", "artifact_limit_exceeded",
+        "artifact_state_conflict", "artifact_deleting", "integrity_mismatch",
+        "integrity_invalid", "malformed_stream", "storage_authentication",
+        "storage_integrity", "storage_timeout", "idempotency_conflict", "conflict",
+        "duplicate", "rejected",
+    }
+)
 
 
 def _uuid(value: object, name: str) -> str:
@@ -1036,7 +1104,11 @@ class EvaluationApplicationService:
         self,
         *,
         query: EvaluationQueryService | None = None,
-        definition_service: Any | None = None,
+        definition_service: EvaluationDefinitionService | None = None,
+        artifact_storage: EvaluationArtifactStoragePort | None = None,
+        artifact_metadata: EvaluationArtifactMetadataPort | None = None,
+        definition_commands: EvaluationDefinitionCommandPort | None = None,
+        judge_definitions: LocalJudgeDefinitionPort | None = None,
         orchestration: Any | None = None,
         calibration_service: Any | None = None,
         deletion_service: Any | None = None,
@@ -1046,6 +1118,11 @@ class EvaluationApplicationService:
     ) -> None:
         self.query = query or EvaluationQueryService()
         self.definition_service = definition_service
+        self.artifact_storage = artifact_storage
+        self.artifact_metadata = artifact_metadata
+        self.definition_commands = definition_commands
+        self.judge_definitions = judge_definitions
+        self._command_replays: dict[str, tuple[str, dict[str, object]]] = {}
         self.orchestration = orchestration
         self.calibration_service = calibration_service
         self.deletion_service = deletion_service
@@ -1142,10 +1219,352 @@ class EvaluationApplicationService:
         except Exception:
             return
 
+    def _record_admission_span(
+        self,
+        *,
+        operation: str,
+        started: float,
+        outcome: str,
+        dependency: str,
+        error_code: str | None = None,
+    ) -> None:
+        if operation not in _ADMISSION_OPERATION_NAMES:
+            return
+        bounded_error = error_code if error_code in _ADMISSION_ERROR_CODES else "rejected"
+        self._record_span(
+            operation=operation,
+            started=started,
+            outcome=outcome,
+            dependency=dependency,
+            error_code=bounded_error,
+            component_id="aura.observatory.evaluation_api",
+        )
     def record_api_metric(self, outcome: str, *, operation: str = "read") -> None:
         self._record_metric(
             "observatory_evaluation_api_operation_count",
             labels={"operation": operation, "outcome": outcome},
+        )
+
+    async def create_capture_authorization(
+        self, body: Mapping[str, object], *, idempotency_key: str
+    ) -> dict[str, object]:
+        """Durably admit one content-free owner capture authorization."""
+
+        started = monotonic()
+        if self.artifact_metadata is None:
+            raise EvaluationUnavailable("artifact storage is unavailable")
+        normalized = _validate_capture_authorization_payload(body)
+        command = CaptureAuthorizationCommand(
+            authorization_record_id=cast(str, normalized["authorizationRecordId"]),
+            request_id=cast(str, normalized["requestId"]),
+            dataset_id=cast(str, cast(Mapping[str, object], normalized["dataset"])["id"]),
+            dataset_version=cast(str, cast(Mapping[str, object], normalized["dataset"])["version"]),
+            capture_classification=cast(str, normalized["captureClassification"]),
+            authorization_purpose=cast(str, normalized["authorizationPurpose"]),
+            authorization_context=cast(str, normalized["authorizationContext"]),
+            retention_mode=cast(str, normalized["retentionMode"]),
+            authorized_at=_timestamp(normalized["authorizedAt"], "authorizedAt"),
+            idempotency_key=idempotency_key,
+            request_fingerprint=_json_digest(normalized),
+        )
+        try:
+            record = await self.artifact_metadata.create_capture_authorization(command)
+        except ArtifactStorageError as exc:
+            if exc.failure_code == "idempotency_conflict":
+                raise EvaluationConflict("idempotency key conflicts with existing state") from exc
+            raise EvaluationUnavailable("capture authorization is unavailable") from exc
+        except Exception as exc:
+            raise EvaluationUnavailable("capture authorization is unavailable") from exc
+        response = _capture_authorization_projection(record)
+        self._record_admission_span(
+            operation="capture_authorization_admission", started=started, outcome="success",
+            dependency="postgresql",
+        )
+        self.record_api_metric("success", operation="write")
+        return response
+
+    async def create_artifact(
+        self,
+        metadata: Mapping[str, object],
+        stream: AsyncIterator[bytes],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        """Admit one bounded multipart artifact through the Garage port."""
+
+        started = monotonic()
+        if self.artifact_storage is None:
+            raise EvaluationUnavailable("artifact storage is unavailable")
+        normalized = _validate_artifact_upload_metadata(metadata)
+        provenance_value = cast(Mapping[str, object], normalized["provenance"])
+        dataset = cast(Mapping[str, object], provenance_value["dataset"])
+        suite = cast(Mapping[str, object], provenance_value["suite"])
+        artifact_id = cast(str, normalized["artifactId"])
+        authorization = cast(Mapping[str, object], normalized["captureAuthorization"])
+        authorization_metadata = None
+        if self.artifact_metadata is None:
+            raise EvaluationUnavailable("artifact metadata is unavailable")
+        authorization_metadata = await self.artifact_metadata.lookup_authorization_metadata(
+            cast(str, authorization["authorizationRecordId"]),
+            cast(str, dataset["resourceId"]),
+        )
+        if (
+            authorization_metadata is None
+            or authorization_metadata.revoked
+            or authorization_metadata.status != "authorized"
+            or authorization_metadata.dataset_version != str(dataset["resourceVersion"])
+            or authorization_metadata.capture_classification != authorization["captureClassification"]
+            or authorization_metadata.authorization_purpose != authorization["authorizationPurpose"]
+            or authorization_metadata.authorization_context != authorization["authorizationContext"]
+            or authorization_metadata.retention_mode != normalized["retentionMode"]
+            or authorization_metadata.authorized_at != _timestamp(authorization["authorizedAt"], "authorizedAt")
+        ):
+            raise ArtifactStorageError("authorization_required")
+        request_id = authorization_metadata.request_id or cast(str, authorization["authorizationRecordId"])
+        request = ArtifactUpload(
+            artifact_id=artifact_id,
+            artifact_reference_id=artifact_id,
+            request_id=request_id,
+            result_id=artifact_id,
+            idempotency_key=idempotency_key,
+            authorization_record_id=cast(str, authorization["authorizationRecordId"]),
+            capture_classification=cast(str, authorization["captureClassification"]),
+            media_classification=cast(str, normalized["mediaClassification"]),
+            media_type=cast(str, normalized["mediaType"]),
+            expected_sha256=cast(str, cast(Mapping[str, object], normalized["integrity"])["digest"]),
+            max_bytes=int(normalized["byteCount"]),
+            job_id=artifact_id,
+            dataset_id=cast(str, dataset["resourceId"]),
+            suite_id=cast(str, suite["resourceId"]),
+            created_at=_timestamp(normalized["createdAt"], "createdAt"),
+            authorization_purpose=cast(str, authorization["authorizationPurpose"]),
+            authorization_context=cast(str, authorization["authorizationContext"]),
+            intended_use={
+                "dataset_case": "input",
+                "input": "input",
+                "expected_output": "input",
+                "judge_prompt": "prompt",
+                "judge_rubric": "rubric",
+            }[cast(str, normalized["purpose"])],
+            artifact_version=cast(str, normalized["artifactVersion"]),
+        )
+        try:
+            record = await self.artifact_storage.store(request, stream)
+        except ArtifactStorageError:
+            raise
+        except Exception as exc:
+            raise EvaluationUnavailable("artifact storage is unavailable") from exc
+        if (
+            record.artifact_id != artifact_id
+            or record.artifact_reference_id != artifact_id
+            or record.artifact_version != cast(str, normalized["artifactVersion"])
+            or record.sha256 != cast(str, cast(Mapping[str, object], normalized["integrity"])["digest"])
+            or record.byte_count != int(normalized["byteCount"])
+            or record.media_type != cast(str, normalized["mediaType"])
+            or record.media_classification != cast(str, normalized["mediaClassification"])
+            or record.authorization_record_id != cast(str, authorization["authorizationRecordId"])
+            or record.capture_classification != cast(str, authorization["captureClassification"])
+            or record.authorization_context != cast(str, authorization["authorizationContext"])
+            or record.authorization_purpose != cast(str, authorization["authorizationPurpose"])
+            or record.intended_use != {
+                "dataset_case": "input", "input": "input", "expected_output": "input",
+                "judge_prompt": "prompt", "judge_rubric": "rubric",
+            }[cast(str, normalized["purpose"])]
+            or not record.created_at
+        ):
+            raise ArtifactStorageError("artifact_state_conflict")
+        response = {
+            "schemaVersion": 1,
+            "resourceType": "artifact",
+            "artifactId": record.artifact_id,
+            "artifactVersion": record.artifact_version,
+            "jobId": record.job_id,
+            "resultId": record.result_id,
+            "purpose": normalized["purpose"],
+            "mediaClassification": record.media_classification,
+            "mediaType": record.media_type,
+            "digest": record.sha256,
+            "byteCount": record.byte_count,
+            "captureClassification": record.capture_classification,
+            "authorizationRecordId": record.authorization_record_id,
+            "retentionMode": normalized["retentionMode"],
+            "deletionStatus": "retained",
+            "provenance": normalized["provenance"],
+            "createdAt": record.created_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        self.record_api_metric("success", operation="write")
+        self._record_admission_span(
+            operation="artifact_admission", started=started, outcome="success",
+            dependency="garage",
+        )
+        return response
+
+    async def create_local_judge_evaluator(
+        self, body: Mapping[str, object], *, idempotency_key: str
+    ) -> dict[str, object]:
+        """Admit a local-only judge and durable evaluator identity."""
+
+        started = monotonic()
+        if self.judge_definitions is None:
+            raise EvaluationUnavailable("local judge definitions are unavailable")
+        payload = _validate_local_judge_payload(body)
+        fingerprint = _json_digest(payload)
+        prior = self._command_replays.get(idempotency_key)
+        if prior is not None:
+            if prior[0] != fingerprint:
+                raise EvaluationConflict("idempotency key conflicts with existing state")
+            return dict(prior[1])
+        durable_claim = None
+        if self.definition_commands is not None:
+            try:
+                durable_claim = await self.definition_commands.begin_definition_command(
+                    "create_local_judge_evaluator",
+                    idempotency_key,
+                    fingerprint,
+                    cast(str, payload["evaluatorId"]),
+                    cast(str, payload["evaluatorVersion"]),
+                )
+            except DefinitionConflictError as exc:
+                raise EvaluationConflict("idempotency key conflicts with existing state") from exc
+            except (DefinitionCommandPendingError, DefinitionStorageError) as exc:
+                raise EvaluationUnavailable("local judge command is unavailable") from exc
+            if durable_claim.replay is not None:
+                return dict(durable_claim.replay)
+            if not durable_claim.claimed or not durable_claim.claim_token:
+                raise EvaluationUnavailable("local judge command is unavailable")
+
+        prompt = await self._judge_artifact_reference(payload["prompt"], "prompt")
+        rubric = await self._judge_artifact_reference(payload["rubric"], "rubric")
+        model = cast(Mapping[str, object], payload["model"])
+        budget = cast(Mapping[str, object], payload["budget"])
+        provenance_value = cast(Mapping[str, object], payload["provenance"])
+        definition = LocalJudgeDefinition(
+            judge_id=cast(str, payload["judgeDefinitionId"]),
+            judge_version=cast(str, payload["judgeDefinitionVersion"]),
+            model_name=cast(str, model["modelName"]),
+            model_version=cast(str, model["modelVersion"]),
+            model_digest=cast(str, model["modelDigest"]),
+            prompt_version=cast(str, cast(Mapping[str, object], payload["prompt"])["artifactVersion"]),
+            rubric_version=cast(str, cast(Mapping[str, object], payload["rubric"])["artifactVersion"]),
+            calibration_version=cast(str, cast(Mapping[str, object], payload["calibration"])["calibrationVersion"]),
+            prompt_artifact=prompt,
+            rubric_artifact=rubric,
+            seed=cast(int, payload["seed"]),
+            timeout_seconds=cast(int, budget["timeoutMs"]) / 1000.0,
+            max_output_bytes=cast(int, budget["maxOutputBytes"]),
+            max_output_tokens=cast(int, budget["maxOutputTokens"]),
+            max_input_bytes=cast(int, budget["maxInputBytes"]),
+            context_tokens=cast(int, budget["maxContextTokens"]),
+            max_concurrency=cast(int, budget["maxConcurrency"]),
+            metric=cast(str, payload["metric"]),
+            calibration_id=cast(str, cast(Mapping[str, object], payload["calibration"])["calibrationId"]),
+            created_at=_timestamp(payload["createdAt"], "createdAt"),
+            provenance_component=cast(str, provenance_value["createdByComponent"]),
+            provenance_version=cast(str, provenance_value["createdByVersion"]),
+            provenance_digest=cast(str, provenance_value["sourceDigest"]),
+            evaluator_id=cast(str, payload["evaluatorId"]),
+            evaluator_version=cast(str, payload["evaluatorVersion"]),
+        )
+        try:
+            created = await self.judge_definitions.create(definition)
+        except JudgeError as exc:
+            if str(exc) in {"validation", "artifact_unauthorized"}:
+                raise EvaluationQueryError("invalid request") from exc
+            raise EvaluationUnavailable("local judge definitions are unavailable") from exc
+        generic_payload: dict[str, object] = {
+            "schemaVersion": 1,
+            "resourceType": "evaluator",
+            "evaluatorId": created.evaluator_id,
+            "evaluatorVersion": created.evaluator_version,
+            "kind": "local_judge",
+            "metric": created.metric,
+            "componentIds": list(cast(Sequence[str], payload["componentIds"])),
+            "rubricVersion": created.rubric_version,
+            "calibrationVersion": created.calibration_version,
+            "retentionMode": "manual_only",
+            "provenance": payload["provenance"],
+            "createdAt": payload["createdAt"],
+        }
+        if self.definition_commands is None:
+            admitted_evaluator = definition
+        else:
+            try:
+                admitted_evaluator = await self.definition_commands.admit_evaluator(generic_payload)
+            except (DefinitionValidationError, DefinitionConflictError) as exc:
+                raise EvaluationConflict("evaluator definition conflicts with existing state") from exc
+            except Exception as exc:
+                raise EvaluationUnavailable("evaluator definitions are unavailable") from exc
+        response = {
+            "schemaVersion": 1,
+            "resourceType": "evaluator",
+            "evaluatorId": admitted_evaluator.evaluator_id,
+            "evaluatorVersion": admitted_evaluator.evaluator_version,
+            "kind": "local_judge",
+            "metric": admitted_evaluator.metric,
+            "componentIds": list(cast(Sequence[str], payload["componentIds"])),
+            "rubricVersion": created.rubric_version,
+            "calibrationVersion": created.calibration_version,
+            "retentionMode": "manual_only",
+            "provenance": payload["provenance"],
+            "createdAt": created.created_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        if durable_claim is not None and self.definition_commands is not None:
+            try:
+                response = await self.definition_commands.complete_definition_command(
+                    "create_local_judge_evaluator",
+                    idempotency_key,
+                    fingerprint,
+                    response,
+                    durable_claim.claim_token,
+                )
+            except (DefinitionCommandPendingError, DefinitionStorageError) as exc:
+                raise EvaluationUnavailable("local judge command is unavailable") from exc
+        self._command_replays[idempotency_key] = (fingerprint, response)
+        self.record_api_metric("success", operation="write")
+        self._record_admission_span(
+            operation="local_judge_admission", started=started, outcome="success",
+            dependency="postgresql",
+        )
+        return response
+
+    async def _judge_artifact_reference(
+        self, value: object, intended_use: str
+    ) -> JudgeArtifactReference:
+        data = cast(Mapping[str, object], value)
+        if self.artifact_metadata is None:
+            raise EvaluationUnavailable("artifact metadata is unavailable")
+        metadata = await self.artifact_metadata.lookup_artifact_metadata(
+            cast(str, data["artifactId"])
+        )
+        if metadata is None:
+            raise EvaluationQueryError("artifact reference is unavailable")
+        if (
+            metadata.artifact_reference_id != str(data["artifactId"])
+            or metadata.artifact_version != str(data["artifactVersion"])
+            or metadata.sha256 != str(data["digest"])
+            or metadata.intended_use != intended_use
+            or metadata.status != "available"
+            or metadata.revoked
+            or metadata.retention_mode != "manual_only"
+            or metadata.media_classification != "evaluation_input"
+            or metadata.media_type not in {"application/json", "text/plain", "text/markdown"}
+        ):
+            raise EvaluationQueryError("artifact reference is unavailable")
+        return JudgeArtifactReference(
+            artifact_reference_id=str(metadata.artifact_reference_id),
+            dataset_id=str(metadata.dataset_id),
+            authorization_record_id=str(metadata.authorization_record_id),
+            sha256=str(metadata.sha256),
+            byte_count=int(metadata.byte_count),
+            media_type=str(metadata.media_type),
+            capture_classification=str(metadata.capture_classification),
+            authorization_purpose=str(metadata.authorization_purpose),
+            revoked=bool(metadata.revoked),
+            artifact_version=str(metadata.artifact_version),
+            authorization_context=str(metadata.authorization_context),
+            retention_mode=str(metadata.retention_mode),
+            media_classification=str(metadata.media_classification),
+            intended_use=intended_use,
         )
 
     async def create_experiment(
@@ -2465,6 +2884,477 @@ class EvaluationApplicationService:
         return stored
 
 
+def _validate_artifact_upload_metadata(value: Mapping[str, object]) -> dict[str, object]:
+    """Validate the closed upload part before any repository or Garage call."""
+
+    if frozenset(value) != _UPLOAD_METADATA_FIELDS:
+        raise EvaluationQueryError("artifact metadata is invalid")
+    result = dict(value)
+    _uuid(result["artifactId"], "artifactId")
+    _version(result["artifactVersion"], "artifactVersion")
+    if result["purpose"] not in {"dataset_case", "input", "expected_output", "judge_prompt", "judge_rubric"}:
+        raise EvaluationQueryError("artifact purpose is invalid")
+    if result["mediaClassification"] not in {"evaluation_input", "evaluation_context", "evaluation_evidence"}:
+        raise EvaluationQueryError("artifact media classification is invalid")
+    if result["retentionMode"] != "manual_only":
+        raise EvaluationQueryError("artifact retention mode is invalid")
+    if result["mediaType"] not in {"application/json", "text/plain", "text/markdown"}:
+        raise EvaluationQueryError("artifact media type is invalid")
+    if type(result["byteCount"]) is not int or not 1 <= result["byteCount"] <= _UPLOAD_MAX_BYTES:
+        raise EvaluationQueryError("artifact byte count is invalid")
+    integrity = _object(result["integrity"], _UPLOAD_INTEGRITY_FIELDS)
+    if integrity.get("algorithm") != "sha256" or not isinstance(integrity.get("digest"), str) or not _DIGEST.fullmatch(cast(str, integrity["digest"])):
+        raise EvaluationQueryError("artifact integrity is invalid")
+    authorization = _object(result["captureAuthorization"], _CAPTURE_AUTH_FIELDS)
+    if authorization.get("captureClassification") not in {"redacted", "sampled_content", "full_content"}:
+        raise EvaluationQueryError("artifact authorization is invalid")
+    if authorization.get("authorizationPurpose") not in {"synthetic_benchmark", "owner_supplied_evaluation", "controlled_replay", "human_review"}:
+        raise EvaluationQueryError("artifact authorization is invalid")
+    if authorization.get("authorizationContext") != "controlled_evaluation" or authorization.get("retentionMode") != "manual_only":
+        raise EvaluationQueryError("artifact authorization is invalid")
+    _uuid(authorization.get("authorizationRecordId"), "authorizationRecordId")
+    _timestamp(authorization.get("authorizedAt"), "authorizedAt")
+    provenance_value = _object(result["provenance"], _UPLOAD_PROVENANCE_FIELDS)
+    for name in ("dataset", "suite"):
+        reference = _object(provenance_value.get(name), frozenset({"resourceId", "resourceVersion"}))
+        _uuid(reference.get("resourceId"), f"provenance.{name}.resourceId")
+        _version(reference.get("resourceVersion"), f"provenance.{name}.resourceVersion")
+    evaluators = provenance_value.get("evaluators")
+    if not isinstance(evaluators, list) or not 1 <= len(evaluators) <= 32:
+        raise EvaluationQueryError("provenance.evaluators is invalid")
+    for index, item in enumerate(evaluators):
+        evaluator = _object(item, _EVALUATOR_FIELDS)
+        _uuid(evaluator.get("evaluatorId"), f"provenance.evaluators[{index}].evaluatorId")
+        _version(evaluator.get("evaluatorVersion"), f"provenance.evaluators[{index}].evaluatorVersion")
+        if evaluator.get("kind") not in _EVALUATOR_KINDS:
+            raise EvaluationQueryError("provenance evaluator kind is invalid")
+    components = provenance_value.get("components")
+    if not isinstance(components, list) or not 1 <= len(components) <= 32:
+        raise EvaluationQueryError("provenance.components is invalid")
+    for index, item in enumerate(components):
+        _validate_component(item, f"provenance.components[{index}]")
+    model = _object(provenance_value.get("model"), _MODEL_FIELDS)
+    _model_identifier(model.get("modelId"), "provenance.model.modelId")
+    _version(model.get("modelVersion"), "provenance.model.modelVersion")
+    if not isinstance(model.get("modelDigest"), str) or not _DIGEST.fullmatch(cast(str, model["modelDigest"])):
+        raise EvaluationQueryError("provenance model digest is invalid")
+    _version(provenance_value.get("deploymentRevision"), "provenance.deploymentRevision")
+    reproducibility = _object(provenance_value.get("reproducibility"), _REPRODUCIBILITY_FIELDS)
+    seed = reproducibility.get("seed")
+    if type(seed) is not int or not 0 <= seed <= 2_147_483_647:
+        raise EvaluationQueryError("provenance reproducibility is invalid")
+    if reproducibility.get("clockMode") not in {"fixed", "recorded"} or reproducibility.get("timeZone") != "UTC":
+        raise EvaluationQueryError("provenance reproducibility is invalid")
+    locale = reproducibility.get("locale")
+    if not isinstance(locale, str) or re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", locale) is None:
+        raise EvaluationQueryError("provenance reproducibility is invalid")
+    for name in ("fixtureRevision", "promptRevision", "policyRevision"):
+        _version(reproducibility.get(name), f"provenance.reproducibility.{name}")
+    result["integrity"] = integrity
+    result["captureAuthorization"] = authorization
+    result["provenance"] = provenance_value
+    _timestamp(result["createdAt"], "createdAt")
+    return result
+
+
+def _validate_capture_authorization_payload(value: Mapping[str, object]) -> dict[str, object]:
+    allowed = frozenset({
+        "authorizationRecordId", "requestId", "dataset", "captureClassification",
+        "authorizationPurpose", "authorizationContext", "retentionMode", "authorizedAt",
+    })
+    result = _object(value, allowed)
+    if frozenset(result) != allowed:
+        raise EvaluationQueryError("capture authorization is invalid")
+    _uuid(result["authorizationRecordId"], "authorizationRecordId")
+    _uuid(result["requestId"], "requestId")
+    dataset = _object(result["dataset"], _REFERENCE_FIELDS)
+    _uuid(dataset.get("id"), "dataset.id")
+    _version(dataset.get("version"), "dataset.version")
+    if result["captureClassification"] not in {"redacted", "sampled_content", "full_content"}:
+        raise EvaluationQueryError("capture authorization is invalid")
+    if result["authorizationPurpose"] not in {
+        "synthetic_benchmark", "owner_supplied_evaluation", "controlled_replay", "human_review",
+    } or result["authorizationContext"] != "controlled_evaluation" or result["retentionMode"] != "manual_only":
+        raise EvaluationQueryError("capture authorization is invalid")
+    _timestamp(result["authorizedAt"], "authorizedAt")
+    result["dataset"] = dataset
+    return result
+
+
+def _capture_authorization_projection(record: CaptureAuthorizationRecord) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "resourceType": "capture_authorization",
+        "authorizationRecordId": record.authorization_record_id,
+        "requestId": record.request_id,
+        "dataset": {"id": record.dataset_id, "version": record.dataset_version},
+        "captureClassification": record.capture_classification,
+        "authorizationPurpose": record.authorization_purpose,
+        "authorizationContext": record.authorization_context,
+        "retentionMode": record.retention_mode,
+        "authorizedAt": record.authorized_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "status": record.status,
+    }
+
+
+def _contains_prohibited_content(value: bytes, media_type: str) -> bool:
+    """Reject credentials recursively before any bytes reach Garage."""
+    if len(value) > _UPLOAD_MAX_BYTES:
+        return True
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    if _SECRET_MARKERS.search(text):
+        return True
+    json_candidate = media_type == "application/json" or text.lstrip().startswith(("{", "["))
+    if not json_candidate:
+        return False
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise EvaluationQueryError("artifact JSON is invalid") from None
+
+    def walk(item: object) -> bool:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                normalized = str(key).casefold().replace("-", "_")
+                if normalized in _SECRET_KEYS or any(
+                    marker in normalized
+                    for marker in ("credential", "private_key", "access_token", "refresh_token")
+                ):
+                    return True
+                if walk(child):
+                    return True
+            return False
+        if isinstance(item, list):
+            return any(walk(child) for child in item)
+        return isinstance(item, str) and bool(_SECRET_MARKERS.search(item))
+
+    return walk(parsed)
+
+
+class _ProhibitedContentScanner:
+    """Bounded incremental equivalent of ``_contains_prohibited_content``.
+
+    Multipart content is forwarded in chunks, so the route cannot wait for a
+    complete payload.  This state machine carries only a small marker window:
+    it applies the same marker and normalized JSON-key allowlist, including
+    keys split across ASGI chunks, without buffering the artifact.
+    """
+
+    _TAIL_BYTES = 1024
+
+    def __init__(self, media_type: str) -> None:
+        self._media_type = media_type
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self._tail = ""
+        self._prefix = ""
+        self.rejected = False
+
+    @staticmethod
+    def _json_secret_key(text: str) -> bool:
+        for match in _JSON_SECRET_KEY.finditer(text):
+            key = match.group("key").casefold().replace("-", "_")
+            if key in _SECRET_KEYS or any(
+                marker in key
+                for marker in ("credential", "private_key", "access_token", "refresh_token")
+            ):
+                return True
+        return False
+
+    def feed(self, value: bytes) -> None:
+        if self.rejected:
+            return
+        try:
+            text = self._decoder.decode(value, final=False)
+        except UnicodeDecodeError:
+            self.rejected = True
+            return
+        combined = self._tail + text
+        if _SECRET_MARKERS.search(combined):
+            self.rejected = True
+            return
+        self._prefix = (self._prefix + text).lstrip()[:128]
+        json_candidate = self._media_type == "application/json" or self._prefix.startswith(("{", "["))
+        if json_candidate and self._json_secret_key(combined):
+            self.rejected = True
+            return
+        self._tail = combined[-self._TAIL_BYTES:]
+
+    def finish(self) -> None:
+        if self.rejected:
+            return
+        try:
+            text = self._decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            self.rejected = True
+            return
+        self.feed(text.encode("utf-8"))
+
+
+def observatory_public_evaluation_admission(observation: Mapping[str, object]) -> bool:
+    """Evaluate bounded owner-API probe facts without inspecting content."""
+
+    allowed = frozenset(
+        {"statusCode", "authenticated", "csrfRejected", "noStore", "storageBytes"}
+    )
+    if frozenset(observation) != allowed:
+        raise EvaluationQueryError("public admission observation is invalid")
+    status_code = observation.get("statusCode")
+    storage_bytes = observation.get("storageBytes")
+    if (
+        isinstance(status_code, bool)
+        or not isinstance(status_code, int)
+        or not 100 <= status_code <= 599
+        or not isinstance(observation.get("authenticated"), bool)
+        or not isinstance(observation.get("csrfRejected"), bool)
+        or not isinstance(observation.get("noStore"), bool)
+        or isinstance(storage_bytes, bool)
+        or not isinstance(storage_bytes, int)
+        or not 0 <= storage_bytes <= _UPLOAD_MAX_BYTES
+    ):
+        raise EvaluationQueryError("public admission observation is invalid")
+    accepted = (
+        status_code == 201
+        and bool(observation["authenticated"])
+        and not bool(observation["csrfRejected"])
+        and bool(observation["noStore"])
+        and storage_bytes > 0
+    )
+    if status_code == 401:
+        bounded_rejection = (
+            not bool(observation["authenticated"])
+            and not bool(observation["csrfRejected"])
+            and bool(observation["noStore"])
+            and storage_bytes == 0
+        )
+    elif status_code == 403:
+        bounded_rejection = (
+            bool(observation["authenticated"])
+            and bool(observation["csrfRejected"])
+            and bool(observation["noStore"])
+            and storage_bytes == 0
+        )
+    else:
+        bounded_rejection = (
+            status_code in {400, 409, 413, 415, 422, 503}
+            and bool(observation["authenticated"])
+            and not bool(observation["csrfRejected"])
+            and bool(observation["noStore"])
+            and storage_bytes == 0
+        )
+    return accepted or bounded_rejection
+
+
+def _validate_local_judge_payload(value: Mapping[str, object]) -> dict[str, object]:
+    if frozenset(value) != _LOCAL_JUDGE_FIELDS:
+        raise EvaluationQueryError("local judge evaluator is invalid")
+    result = dict(value)
+    _uuid(result["evaluatorId"], "evaluatorId")
+    _version(result["evaluatorVersion"], "evaluatorVersion")
+    if not isinstance(result["metric"], str) or re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", result["metric"]) is None:
+        raise EvaluationQueryError("local judge metric is invalid")
+    components = result["componentIds"]
+    if not isinstance(components, list) or not 1 <= len(components) <= 32 or len(set(components)) != len(components):
+        raise EvaluationQueryError("local judge components are invalid")
+    if any(not isinstance(item, str) or _COMPONENT_ID.fullmatch(item) is None for item in components):
+        raise EvaluationQueryError("local judge components are invalid")
+    _uuid(result["judgeDefinitionId"], "judgeDefinitionId")
+    _version(result["judgeDefinitionVersion"], "judgeDefinitionVersion")
+    model = _object(result["model"], _LOCAL_JUDGE_MODEL_FIELDS)
+    if model.get("provider") != "local_ollama":
+        raise EvaluationQueryError("local judge provider is invalid")
+    _model_identifier(model.get("modelName"), "model.modelName")
+    _version(model.get("modelVersion"), "model.modelVersion")
+    if not isinstance(model.get("modelDigest"), str) or not _DIGEST.fullmatch(cast(str, model["modelDigest"])):
+        raise EvaluationQueryError("local judge model digest is invalid")
+    for name, purpose in (("prompt", "judge_prompt"), ("rubric", "judge_rubric")):
+        binding = _object(result[name], _LOCAL_JUDGE_PROMPT_FIELDS)
+        _uuid(binding.get("artifactId"), f"{name}.artifactId")
+        _version(binding.get("artifactVersion"), f"{name}.artifactVersion")
+        if binding.get("purpose") != purpose or not isinstance(binding.get("digest"), str) or not _DIGEST.fullmatch(cast(str, binding["digest"])):
+            raise EvaluationQueryError(f"{name} is invalid")
+    calibration = _object(result["calibration"], frozenset({"calibrationId", "calibrationVersion"}))
+    _uuid(calibration.get("calibrationId"), "calibration.calibrationId")
+    _version(calibration.get("calibrationVersion"), "calibration.calibrationVersion")
+    if type(result["seed"]) is not int or not 0 <= result["seed"] <= 2_147_483_647:
+        raise EvaluationQueryError("local judge seed is invalid")
+    budget = _object(result["budget"], _LOCAL_JUDGE_BUDGET_FIELDS)
+    bounds = {
+        "timeoutMs": (100, 120000), "maxInputBytes": (1, MAX_ARTIFACT_BYTES),
+        "maxOutputBytes": (1, 8192), "maxOutputTokens": (1, 2048),
+        "maxContextTokens": (1, 16384), "maxConcurrency": (1, 2),
+    }
+    for name, (lower, upper) in bounds.items():
+        if type(budget.get(name)) is not int or not lower <= cast(int, budget[name]) <= upper:
+            raise EvaluationQueryError(f"local judge budget {name} is invalid")
+    if budget.get("temperature") != 0:
+        raise EvaluationQueryError("local judge temperature is invalid")
+    if result["outputContract"] != "local_judge_score_v1" or result["defaultDisposition"] != "advisory_only" or result["retentionMode"] != "manual_only":
+        raise EvaluationQueryError("local judge contract is invalid")
+    provenance_value = _object(result["provenance"], _LOCAL_JUDGE_PROVENANCE_FIELDS)
+    if _COMPONENT_ID.fullmatch(cast(str, provenance_value.get("createdByComponent", ""))) is None:
+        raise EvaluationQueryError("local judge provenance is invalid")
+    _version(provenance_value.get("createdByVersion"), "provenance.createdByVersion")
+    if not isinstance(provenance_value.get("sourceDigest"), str) or not _DIGEST.fullmatch(cast(str, provenance_value["sourceDigest"])):
+        raise EvaluationQueryError("local judge provenance is invalid")
+    _timestamp(result["createdAt"], "createdAt")
+    result.update({"model": model, "prompt": dict(cast(Mapping[str, object], result["prompt"])), "rubric": dict(cast(Mapping[str, object], result["rubric"])), "calibration": calibration, "budget": budget, "provenance": provenance_value})
+    return result
+
+
+async def _multipart_upload(request: Request) -> tuple[dict[str, object], AsyncIterator[bytes]]:
+    """Parse multipart headers/metadata eagerly and stream content incrementally."""
+
+    content_type = request.headers.get("content-type", "")
+    match = re.fullmatch(r"multipart/form-data;\s*boundary=(?:\"([^\"]+)\"|([^;]+))", content_type, re.IGNORECASE)
+    if match is None:
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    boundary = (match.group(1) or match.group(2) or "").encode("ascii", "strict")
+    if not 1 <= len(boundary) <= 70:
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    length_header = request.headers.get("content-length")
+    if length_header is not None:
+        try:
+            if int(length_header) > _UPLOAD_MAX_BYTES + 262_144:
+                raise HTTPException(status_code=413, detail="request too large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+    marker = b"--" + boundary
+    delimiter = b"\r\n" + marker
+    source = request.stream().__aiter__()
+    buffer = bytearray()
+    received = 0
+
+    async def fill() -> None:
+        nonlocal received
+        try:
+            chunk = await source.__anext__()
+        except StopAsyncIteration as exc:
+            raise HTTPException(status_code=415, detail="unsupported multipart request") from exc
+        if not isinstance(chunk, bytes):
+            raise HTTPException(status_code=415, detail="unsupported multipart request")
+        received += len(chunk)
+        if received > _UPLOAD_MAX_BYTES + 262_144:
+            raise HTTPException(status_code=413, detail="request too large")
+        buffer.extend(chunk)
+
+    async def consume(delim: bytes, limit: int) -> bytes:
+        while True:
+            index = buffer.find(delim)
+            if index >= 0:
+                value = bytes(buffer[:index])
+                del buffer[: index + len(delim)]
+                return value
+            if len(buffer) > limit + len(delim):
+                raise HTTPException(status_code=413, detail="request too large")
+            await fill()
+
+    async def exact(count: int) -> bytes:
+        while len(buffer) < count:
+            await fill()
+        value = bytes(buffer[:count])
+        del buffer[:count]
+        return value
+
+    initial = await consume(marker + b"\r\n", 8192)
+    if initial:
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+
+    async def part_headers() -> dict[str, str]:
+        raw_headers = await consume(b"\r\n\r\n", 8192)
+        headers: dict[str, str] = {}
+        for line in raw_headers.split(b"\r\n"):
+            name, colon, header_value = line.partition(b":")
+            if not colon:
+                raise HTTPException(status_code=415, detail="unsupported multipart request")
+            try:
+                header_name = name.decode("ascii").strip().casefold()
+                header_text = header_value.decode("ascii").strip()
+            except UnicodeDecodeError as exc:
+                raise HTTPException(status_code=415, detail="unsupported multipart request") from exc
+            if not header_name or header_name in headers:
+                raise HTTPException(status_code=415, detail="unsupported multipart request")
+            headers[header_name] = header_text
+        return headers
+
+    metadata_headers = await part_headers()
+    metadata_disposition = metadata_headers.get("content-disposition", "")
+    if not re.fullmatch(r'form-data;\s*name="metadata"', metadata_disposition, re.IGNORECASE):
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    if metadata_headers.get("content-type") not in {None, "application/json"}:
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    metadata_bytes = await consume(delimiter, 262_144)
+    if await exact(2) != b"\r\n":
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+
+    content_headers = await part_headers()
+    content_disposition = content_headers.get("content-disposition", "")
+    if not re.fullmatch(
+        r'form-data;\s*name="content"(?:\s*;\s*filename="[^"\r\n]{0,255}")?',
+        content_disposition,
+        re.IGNORECASE,
+    ):
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    content_media_type = content_headers.get("content-type")
+    if content_media_type not in {"application/json", "text/plain", "text/markdown"}:
+        raise HTTPException(status_code=415, detail="unsupported multipart request")
+    try:
+        metadata_value = json.loads(metadata_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="invalid request") from exc
+    if not isinstance(metadata_value, Mapping):
+        raise HTTPException(status_code=422, detail="invalid request")
+    declared_media_type = metadata_value.get("mediaType")
+    if not isinstance(declared_media_type, str) or content_media_type != declared_media_type:
+        raise HTTPException(status_code=415, detail="unsupported media")
+
+    async def content_stream() -> AsyncIterator[bytes]:
+        nonlocal received
+        pending = bytearray(buffer)
+        buffer.clear()
+        content_count = 0
+        while True:
+            index = pending.find(delimiter)
+            if index >= 0 and len(pending) >= index + len(delimiter) + 2:
+                suffix_start = index + len(delimiter)
+                suffix = bytes(pending[suffix_start : suffix_start + 2])
+                if suffix not in {b"--", b"\r\n"}:
+                    del pending[: index + 1]
+                    continue
+                content = bytes(pending[:index])
+                if content:
+                    content_count += len(content)
+                    if content_count > _UPLOAD_MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="request too large")
+                    yield content
+                del pending[: suffix_start + 2]
+                if suffix == b"\r\n" or pending.strip(b"\r\n"):
+                    raise HTTPException(status_code=415, detail="unsupported multipart request")
+                return
+            keep = len(delimiter) + 2
+            if len(pending) > keep:
+                content = bytes(pending[:-keep])
+                del pending[:-keep]
+                content_count += len(content)
+                if content_count > _UPLOAD_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="request too large")
+                yield content
+            try:
+                chunk = await source.__anext__()
+            except StopAsyncIteration as exc:
+                raise HTTPException(status_code=415, detail="unsupported multipart request") from exc
+            if not isinstance(chunk, bytes):
+                raise HTTPException(status_code=415, detail="unsupported multipart request")
+            received += len(chunk)
+            if received > _UPLOAD_MAX_BYTES + 262_144:
+                raise HTTPException(status_code=413, detail="request too large")
+            pending.extend(chunk)
+
+    return dict(cast(Mapping[str, object], metadata_value)), content_stream()
+
+
 def _no_store(value: object, status_code: int = 200) -> JSONResponse:
     return JSONResponse(value, status_code=status_code, headers={"Cache-Control": "no-store"})
 
@@ -2500,6 +3390,50 @@ def register_evaluation_routes(
         if confirmation is not None and confirmation not in _CONFIRMATIONS:
             raise HTTPException(status_code=400, detail="invalid request")
         return session
+
+    def admission_error_code(status_code: int) -> str:
+        return {
+            401: "authorization_required",
+            403: "authorization_required",
+            413: "artifact_limit",
+            415: "unsupported_media",
+            503: "dependency_unavailable",
+        }.get(status_code, "validation")
+
+    def artifact_error_dependency(failure_code: str) -> str:
+        """Attribute bounded storage failures to their owning boundary."""
+
+        if failure_code in {
+            "authorization_mismatch",
+            "artifact_deleting",
+            "artifact_state_conflict",
+            "database_failure",
+            "idempotency_conflict",
+        }:
+            return "postgresql"
+        return "garage"
+
+    async def admission_command_headers(
+        operation: str,
+        started: float,
+        request: Request,
+        *,
+        confirmation: str | None,
+        idempotency_key: str | None,
+    ) -> Any:
+        try:
+            return await command_headers(
+                request, confirmation=confirmation, idempotency_key=idempotency_key
+            )
+        except HTTPException as exc:
+            evaluation._record_admission_span(
+                operation=operation,
+                started=started,
+                outcome="rejected",
+                dependency="session_store",
+                error_code=admission_error_code(exc.status_code),
+            )
+            raise
 
     async def body(request: Request) -> dict[str, object]:
         try:
@@ -2868,6 +3802,49 @@ def register_evaluation_routes(
     ) -> JSONResponse:
         return await collection(request, "evaluators", cursor, page_size, {"kind": kind})
 
+    @app.post("/api/v1/evaluation/evaluators", status_code=201)
+    async def create_local_judge_evaluator(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        admission_started = monotonic()
+        await admission_command_headers(
+            "local_judge_admission", admission_started, request,
+            confirmation=None, idempotency_key=idempotency_key,
+        )
+        try:
+            _uuid(idempotency_key, "idempotency_key")
+        except EvaluationQueryError as exc:
+            evaluation._record_admission_span(
+                operation="local_judge_admission", started=admission_started,
+                outcome="rejected", dependency="postgresql", error_code="validation",
+            )
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        try:
+            result = await evaluation.create_local_judge_evaluator(
+                await body(request), idempotency_key=cast(str, idempotency_key)
+            )
+        except HTTPException as exc:
+            evaluation._record_admission_span(
+                operation="local_judge_admission", started=admission_started,
+                outcome="rejected", dependency="postgresql",
+                error_code=admission_error_code(exc.status_code),
+            )
+            raise
+        except EvaluationConflict as exc:
+            evaluation._record_admission_span(operation="local_judge_admission", started=admission_started, outcome="rejected", dependency="postgresql", error_code="idempotency_conflict")
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except EvaluationUnavailable as exc:
+            evaluation._record_admission_span(operation="local_judge_admission", started=admission_started, outcome="unavailable", dependency="postgresql", error_code="dependency_unavailable")
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except (EvaluationQueryError, JudgeError) as exc:
+            evaluation._record_admission_span(
+                operation="local_judge_admission", started=admission_started,
+                outcome="rejected", dependency="postgresql", error_code="validation",
+            )
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
+
     @app.get("/api/v1/evaluation/evaluators/{evaluator_id}/versions/{resource_version}")
     async def get_evaluator(
         evaluator_id: str, resource_version: str, request: Request
@@ -3059,6 +4036,126 @@ def register_evaluation_routes(
         except EvaluationUnavailable as exc:
             raise HTTPException(status_code=503, detail="service unavailable") from exc
         return _no_store(result)
+
+    @app.post("/api/v1/evaluation/artifacts", status_code=201)
+    async def create_artifact(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        admission_started = monotonic()
+        await admission_command_headers(
+            "artifact_admission", admission_started, request,
+            confirmation=None, idempotency_key=idempotency_key,
+        )
+        try:
+            _uuid(idempotency_key, "idempotency_key")
+            metadata, content = await _multipart_upload(request)
+        except EvaluationQueryError as exc:
+            evaluation._record_admission_span(
+                operation="artifact_admission", started=admission_started,
+                outcome="rejected", dependency="garage", error_code="validation",
+            )
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except HTTPException as exc:
+            evaluation._record_admission_span(
+                operation="artifact_admission", started=admission_started,
+                outcome="rejected", dependency="garage",
+                error_code=admission_error_code(exc.status_code),
+            )
+            raise
+        try:
+            normalized = _validate_artifact_upload_metadata(metadata)
+            media_type = cast(str, normalized["mediaType"])
+
+            async def stream() -> AsyncIterator[bytes]:
+                scanner = _ProhibitedContentScanner(media_type)
+                with tempfile.SpooledTemporaryFile(
+                    max_size=64 * 1024, mode="w+b"
+                ) as staged:
+                    async for chunk in content:
+                        scanner.feed(chunk)
+                        if scanner.rejected:
+                            raise ArtifactStorageError("authorization_required")
+                        staged.write(chunk)
+                    scanner.finish()
+                    if scanner.rejected:
+                        raise ArtifactStorageError("authorization_required")
+                    staged.seek(0)
+                    payload = staged.read(_UPLOAD_MAX_BYTES + 1)
+                    if len(payload) > _UPLOAD_MAX_BYTES:
+                        raise ArtifactStorageError("artifact_limit_exceeded")
+                    try:
+                        if _contains_prohibited_content(payload, media_type):
+                            raise ArtifactStorageError("authorization_required")
+                    except EvaluationQueryError as exc:
+                        raise ArtifactStorageError("authorization_required") from exc
+                    staged.seek(0)
+                    while True:
+                        chunk = staged.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            result = await evaluation.create_artifact(
+                normalized,
+                stream(),
+                idempotency_key=cast(str, idempotency_key),
+            )
+        except ArtifactStorageError as exc:
+            evaluation._record_admission_span(operation="artifact_admission", started=admission_started, outcome="rejected", dependency=artifact_error_dependency(exc.failure_code), error_code=exc.failure_code)
+            if exc.failure_code in {"artifact_limit_exceeded", "artifact_limit"}:
+                raise HTTPException(status_code=413, detail="request too large") from exc
+            if exc.failure_code in {"unsupported_media"}:
+                raise HTTPException(status_code=415, detail="unsupported media") from exc
+            if exc.failure_code in {"idempotency_conflict", "artifact_state_conflict"}:
+                raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        except EvaluationUnavailable as exc:
+            evaluation._record_admission_span(operation="artifact_admission", started=admission_started, outcome="unavailable", dependency="garage", error_code="dependency_unavailable")
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except EvaluationQueryError as exc:
+            evaluation._record_admission_span(operation="artifact_admission", started=admission_started, outcome="rejected", dependency="garage", error_code="validation")
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
+
+    @app.post("/api/v1/evaluation/capture-authorizations", status_code=201)
+    async def create_capture_authorization(
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        admission_started = monotonic()
+        await admission_command_headers(
+            "capture_authorization_admission", admission_started, request,
+            confirmation=None, idempotency_key=idempotency_key,
+        )
+        try:
+            key = _uuid(idempotency_key, "idempotency_key")
+            request_body = await body(request)
+        except HTTPException as exc:
+            evaluation._record_admission_span(
+                operation="capture_authorization_admission", started=admission_started,
+                outcome="rejected", dependency="postgresql",
+                error_code=admission_error_code(exc.status_code),
+            )
+            raise
+        except EvaluationQueryError as exc:
+            evaluation._record_admission_span(
+                operation="capture_authorization_admission", started=admission_started,
+                outcome="rejected", dependency="postgresql", error_code="validation",
+            )
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        try:
+            result = await evaluation.create_capture_authorization(request_body, idempotency_key=key)
+        except EvaluationConflict as exc:
+            evaluation._record_admission_span(operation="capture_authorization_admission", started=admission_started, outcome="rejected", dependency="postgresql", error_code="idempotency_conflict")
+            raise HTTPException(status_code=409, detail="request conflicts with existing state") from exc
+        except EvaluationUnavailable as exc:
+            evaluation._record_admission_span(operation="capture_authorization_admission", started=admission_started, outcome="unavailable", dependency="postgresql", error_code="dependency_unavailable")
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except ArtifactStorageError as exc:
+            evaluation._record_admission_span(operation="capture_authorization_admission", started=admission_started, outcome="rejected", dependency="postgresql", error_code="validation")
+            raise HTTPException(status_code=422, detail="invalid request") from exc
+        return _no_store(result, 201)
 
     @app.get("/api/v1/evaluation/results/{result_id}/scores")
     async def list_scores(

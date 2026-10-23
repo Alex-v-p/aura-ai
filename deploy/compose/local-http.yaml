@@ -36,6 +36,11 @@ services:
       - local_http_core_garage_data:/var/lib/garage:ro
       - local_http_core_garage_config:/run/garage-config:ro
 
+  observatory-api-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
   aura-evaluation-runner-garage-bootstrap:
     volumes: !override
       - local_http_core_garage_data:/var/lib/garage:ro
@@ -92,7 +97,7 @@ services:
       AURA_OBSERVATORY_OIDC_REDIRECT_URI: http://observatory.localhost:4300/api/v1/auth/callback
       AURA_OBSERVATORY_OWNER_SUBJECT: ${AURA_OBSERVATORY_OWNER_SUBJECT:-}
       AURA_OBSERVATORY_SECURE_COOKIES: "false"
-    networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress]
+    networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress, observatory-object-storage]
 
   observatory-evaluation-worker:
     environment:

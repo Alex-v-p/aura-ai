@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 3b271a5dd45000b353cca42d91b173e51c8a76bc2cd7682601cdb0ca3475c17a
+// Contract SHA-256: 28d78122b2407f1545049a6e200b5a050326e1f11c29881aeca159ed59f05ae7
 
 export type Uuid = string;
 
@@ -43,6 +43,12 @@ export type EvaluationAuthorizationPurpose = "synthetic_benchmark" | "owner_supp
 
 export type EvaluationCaptureAuthorization = { readonly "captureClassification": "metadata_only"; readonly "authorizationPurpose": EvaluationAuthorizationPurpose; readonly "authorizationContext": "controlled_evaluation"; readonly "retentionMode": EvaluationRetentionMode; } | { readonly "captureClassification": "hashed" | "redacted" | "sampled_content" | "full_content"; readonly "authorizationPurpose": EvaluationAuthorizationPurpose; readonly "authorizationContext": "controlled_evaluation"; readonly "retentionMode": EvaluationRetentionMode; readonly "authorizationRecordId": Uuid; readonly "authorizedAt": UtcInstant; };
 
+export type EvaluationContentCaptureAuthorization = { readonly "captureClassification": "redacted" | "sampled_content" | "full_content"; readonly "authorizationPurpose": EvaluationAuthorizationPurpose; readonly "authorizationContext": "controlled_evaluation"; readonly "retentionMode": EvaluationRetentionMode; readonly "authorizationRecordId": Uuid; readonly "authorizedAt": UtcInstant; };
+
+export type CreateEvaluationCaptureAuthorizationRequest = { readonly "authorizationRecordId": Uuid; readonly "requestId": Uuid; readonly "dataset": EvaluationDefinitionReference; readonly "captureClassification": "redacted" | "sampled_content" | "full_content"; readonly "authorizationPurpose": EvaluationAuthorizationPurpose; readonly "authorizationContext": "controlled_evaluation"; readonly "retentionMode": EvaluationRetentionMode; readonly "authorizedAt": UtcInstant; };
+
+export type EvaluationCaptureAuthorizationRecord = { readonly "schemaVersion": 1; readonly "resourceType": "capture_authorization"; readonly "authorizationRecordId": Uuid; readonly "requestId": Uuid; readonly "dataset": EvaluationResourceReference; readonly "captureClassification": "redacted" | "sampled_content" | "full_content"; readonly "authorizationPurpose": EvaluationAuthorizationPurpose; readonly "authorizationContext": "controlled_evaluation"; readonly "retentionMode": EvaluationRetentionMode; readonly "authorizedAt": UtcInstant; readonly "status": "active"; };
+
 export type EvaluationRunnerLimits = { readonly "execution": EvaluationExecutionLimits; readonly "maxQueueTimeMs": number; readonly "maxModelCalls": number; readonly "maxArtifactOperations": number; };
 
 export type EvaluationArtifactIntegrity = { readonly "algorithm": "sha256"; readonly "digest": EvaluationDigest; };
@@ -75,7 +81,7 @@ export type EvaluationCasePage = { readonly "items": ReadonlyArray<EvaluationCas
 
 export type EvaluationEvaluatorReference = { readonly "evaluatorId": Uuid; readonly "evaluatorVersion": EvaluationVersion; readonly "kind": EvaluationEvaluatorKind; };
 
-export type EvaluationSuiteEvaluatorReference = { readonly "evaluatorId": Uuid; readonly "evaluatorVersion": EvaluationVersion; readonly "kind": "deterministic"; };
+export type EvaluationSuiteEvaluatorReference = { readonly "evaluatorId": Uuid; readonly "evaluatorVersion": EvaluationVersion; readonly "kind": "deterministic" | "local_judge"; };
 
 export type CreateEvaluationSuiteRequest = { readonly "suiteId": Uuid; readonly "suiteVersion": EvaluationVersion; readonly "dataset": EvaluationDefinitionReference; readonly "evaluators": ReadonlyArray<EvaluationSuiteEvaluatorReference>; readonly "components": ReadonlyArray<EvaluationComponentBinding>; readonly "variantBindings"?: ReadonlyArray<EvaluationExperimentVariant>; readonly "limits": EvaluationExecutionLimits; readonly "manualThresholds"?: Readonly<Record<string, number>>; readonly "retentionMode": EvaluationRetentionMode; readonly "provenance": EvaluationProvenance; readonly "createdAt": UtcInstant; };
 
@@ -84,6 +90,10 @@ export type EvaluationSuite = { readonly "schemaVersion": 1; readonly "resourceT
 export type EvaluationSuitePage = { readonly "items": ReadonlyArray<EvaluationSuite>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
 
 export type EvaluationEvaluatorKind = "deterministic" | "local_judge" | "human_review";
+
+export type EvaluationLocalJudgeBudget = { readonly "timeoutMs": number; readonly "maxInputBytes": number; readonly "maxOutputBytes": number; readonly "maxOutputTokens": number; readonly "maxContextTokens": number; readonly "maxConcurrency": number; readonly "temperature": 0; };
+
+export type CreateLocalJudgeEvaluatorRequest = { readonly "evaluatorId": Uuid; readonly "evaluatorVersion": EvaluationVersion; readonly "metric": EvaluationIdentifier; readonly "componentIds": ReadonlyArray<ComponentId>; readonly "judgeDefinitionId": Uuid; readonly "judgeDefinitionVersion": EvaluationVersion; readonly "model": EvaluationLocalJudgeModel; readonly "prompt": EvaluationPromptArtifactBinding; readonly "rubric": EvaluationRubricArtifactBinding; readonly "calibration": EvaluationCalibrationReference; readonly "seed": number; readonly "budget": EvaluationLocalJudgeBudget; readonly "outputContract": "local_judge_score_v1"; readonly "defaultDisposition": "advisory_only"; readonly "retentionMode": EvaluationRetentionMode; readonly "provenance": EvaluationProvenance; readonly "createdAt": UtcInstant; };
 
 export type EvaluationEvaluator = { readonly "schemaVersion": 1; readonly "resourceType": "evaluator"; readonly "evaluatorId": Uuid; readonly "evaluatorVersion": EvaluationVersion; readonly "kind": EvaluationEvaluatorKind; readonly "metric": EvaluationIdentifier; readonly "componentIds": ReadonlyArray<ComponentId>; readonly "rubricVersion"?: EvaluationVersion; readonly "calibrationVersion"?: EvaluationVersion; readonly "retentionMode": EvaluationRetentionMode; readonly "provenance": EvaluationProvenance; readonly "createdAt": UtcInstant; };
 
@@ -122,6 +132,10 @@ export type EvaluationScore = { readonly "schemaVersion": 1; readonly "resourceT
 export type EvaluationScorePage = { readonly "items": ReadonlyArray<EvaluationScore>; readonly "nextCursor": Cursor | null; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; };
 
 export type EvaluationArtifactDeletionStatus = "retained" | "deletion_queued" | "deleting" | "deleted" | "deletion_failed";
+
+export type EvaluationArtifactUploadMetadata = { readonly "artifactId": Uuid; readonly "artifactVersion": EvaluationVersion; readonly "purpose": "dataset_case" | "input" | "expected_output" | "judge_prompt" | "judge_rubric"; readonly "mediaClassification": "evaluation_input" | "evaluation_context" | "evaluation_evidence"; readonly "mediaType": "application/json" | "text/plain" | "text/markdown"; readonly "byteCount": number; readonly "integrity": EvaluationArtifactIntegrity; readonly "captureAuthorization": EvaluationContentCaptureAuthorization; readonly "retentionMode": EvaluationRetentionMode; readonly "provenance": EvaluationExecutionProvenance; readonly "createdAt": UtcInstant; };
+
+export type ArtifactUploadForm = { readonly "metadata": EvaluationArtifactUploadMetadata; readonly "content": Blob; };
 
 export type EvaluationArtifact = { readonly "schemaVersion": 1; readonly "resourceType": "artifact"; readonly "artifactId": Uuid; readonly "artifactVersion": EvaluationVersion; readonly "jobId": Uuid | null; readonly "resultId": Uuid | null; readonly "purpose": "dataset_case" | "input" | "expected_output" | "actual_output" | "evidence" | "judge_prompt" | "judge_rubric" | "review_comment"; readonly "mediaClassification": "evaluation_input" | "evaluation_output" | "evaluation_context" | "evaluation_evidence" | "evaluation_report"; readonly "mediaType": "application/json" | "application/octet-stream" | "text/plain" | "text/markdown" | "image/png" | "image/jpeg" | "audio/wav"; readonly "digest": EvaluationDigest; readonly "byteCount": number; readonly "captureClassification": EvaluationCaptureClassification; readonly "authorizationRecordId": Uuid; readonly "retentionMode": EvaluationRetentionMode; readonly "deletionStatus": EvaluationArtifactDeletionStatus; readonly "provenance": EvaluationExecutionProvenance; readonly "createdAt": UtcInstant; };
 
@@ -439,7 +453,7 @@ export type AnalyticsFocus = "all" | "model" | "queue" | "retrieval" | "tool" | 
 
 export type AnalyticsUnit = "count" | "milliseconds" | "bytes" | "ratio" | "score";
 
-export type AnalyticsMetricName = "operation_duration_ms" | "run_duration_ms" | "queue_wait_ms" | "errors" | "retries" | "backlog" | "backlog_depth" | "inference_duration_ms" | "time_to_first_token_ms" | "output_tokens" | "provider_errors" | "model_routing_duration_ms" | "structured_inference_duration_ms" | "tool_selection_duration_ms" | "tool_selection_outcome" | "tool_policy_evaluation_duration_ms" | "tool_policy_decision" | "tool_argument_validation_outcome" | "tool_execution_duration_ms" | "tool_execution_outcome" | "tool_timeout_count" | "memory_extraction_duration_ms" | "memory_candidate_decision" | "memory_reviewable_candidate_count" | "memory_operation_duration_ms" | "memory_operation_outcome" | "memory_retrieval_duration_ms" | "memory_lexical_search_duration_ms" | "memory_vector_search_duration_ms" | "memory_rerank_duration_ms" | "memory_processing_errors" | "memory_retry_count" | "memory_reindex_backlog" | "document_retrieval_duration_ms" | "document_retrieval_outcome" | "document_retrieval_candidate_count" | "reminder_scheduler_scan_duration_ms" | "reminder_due_lag_ms" | "reminder_series_due_lag_ms" | "reminder_fired_count" | "reminder_failure_count" | "notification_failure_count" | "notification_acknowledgement_outcome";
+export type AnalyticsMetricName = "operation_duration_ms" | "run_duration_ms" | "queue_wait_ms" | "errors" | "retries" | "backlog" | "backlog_depth" | "inference_duration_ms" | "time_to_first_token_ms" | "output_tokens" | "provider_errors" | "model_routing_duration_ms" | "structured_inference_duration_ms" | "tool_selection_duration_ms" | "tool_selection_outcome" | "tool_policy_evaluation_duration_ms" | "tool_policy_decision" | "tool_argument_validation_outcome" | "tool_execution_duration_ms" | "tool_execution_outcome" | "tool_timeout_count" | "memory_extraction_duration_ms" | "memory_candidate_decision" | "memory_reviewable_candidate_count" | "memory_operation_duration_ms" | "memory_operation_outcome" | "memory_retrieval_duration_ms" | "memory_lexical_search_duration_ms" | "memory_vector_search_duration_ms" | "memory_rerank_duration_ms" | "memory_processing_errors" | "memory_retry_count" | "memory_reindex_backlog" | "document_retrieval_duration_ms" | "document_retrieval_outcome" | "document_retrieval_candidate_count" | "reminder_scheduler_scan_duration_ms" | "reminder_due_lag_ms" | "reminder_series_due_lag_ms" | "reminder_fired_count" | "reminder_failure_count" | "notification_failure_count" | "notification_acknowledgement_outcome" | "evaluation_runner_nats_recovery_count";
 
 export type AnalyticsAggregation = "average" | "sum" | "minimum" | "maximum" | "p50" | "p90" | "p95" | "p99" | "rate" | "count";
 
@@ -633,6 +647,7 @@ export interface ObservatoryApiOperations {
   readonly createEvaluationSuite: { readonly response: EvaluationSuite; readonly body: CreateEvaluationSuiteRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
   readonly getEvaluationSuite: { readonly response: EvaluationSuite; readonly body: never; readonly path: { readonly "suite_id": Uuid; readonly "resource_version": EvaluationVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationEvaluators: { readonly response: EvaluationEvaluatorPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "kind"?: EvaluationEvaluatorKind; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createEvaluationLocalJudgeEvaluator: { readonly response: EvaluationEvaluator; readonly body: CreateLocalJudgeEvaluatorRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
   readonly getEvaluationEvaluator: { readonly response: EvaluationEvaluator; readonly body: never; readonly path: { readonly "evaluator_id": Uuid; readonly "resource_version": EvaluationVersion; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationJobs: { readonly response: EvaluationJobPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "status"?: EvaluationJobStatus; readonly "suite_id"?: Uuid; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly submitEvaluationJob: { readonly response: EvaluationJob; readonly body: SubmitEvaluationJobRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
@@ -643,6 +658,8 @@ export interface ObservatoryApiOperations {
   readonly getEvaluationResult: { readonly response: EvaluationResult; readonly body: never; readonly path: { readonly "result_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationScores: { readonly response: EvaluationScorePage; readonly body: never; readonly path: { readonly "result_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "evaluator_id"?: EvaluationIdentifier; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationArtifacts: { readonly response: EvaluationArtifactPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "job_id"?: Uuid; readonly "result_id"?: Uuid; readonly "deletion_status"?: EvaluationArtifactDeletionStatus; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createEvaluationArtifact: { readonly response: EvaluationArtifact; readonly body: ArtifactUploadForm; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
+  readonly createEvaluationCaptureAuthorization: { readonly response: EvaluationCaptureAuthorizationRecord; readonly body: CreateEvaluationCaptureAuthorizationRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
   readonly getEvaluationArtifact: { readonly response: EvaluationArtifact; readonly body: never; readonly path: { readonly "artifact_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationReviews: { readonly response: EvaluationReviewPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "result_id"?: Uuid; readonly "calibration_id"?: EvaluationIdentifier; }; readonly headers: Readonly<Record<string, never>>; };
   readonly createEvaluationReview: { readonly response: EvaluationReview; readonly body: CreateEvaluationReviewRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
@@ -713,7 +730,7 @@ export type ObservatoryOperationResponse<K extends ObservatoryOperationId> = Obs
 export interface ObservatoryOperationDescriptor {
   readonly method: string;
   readonly pathTemplate: string;
-  readonly requestMode: 'none' | 'json';
+  readonly requestMode: 'none' | 'json' | 'multipart';
   readonly responseMode: 'none' | 'json' | 'event-stream';
 }
 
@@ -741,6 +758,7 @@ export const OBSERVATORY_API_OPERATIONS = {
   createEvaluationSuite: { method: 'POST', pathTemplate: '/api/v1/evaluation/suites', requestMode: 'json', responseMode: 'json' },
   getEvaluationSuite: { method: 'GET', pathTemplate: '/api/v1/evaluation/suites/{suite_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
   listEvaluationEvaluators: { method: 'GET', pathTemplate: '/api/v1/evaluation/evaluators', requestMode: 'none', responseMode: 'json' },
+  createEvaluationLocalJudgeEvaluator: { method: 'POST', pathTemplate: '/api/v1/evaluation/evaluators', requestMode: 'json', responseMode: 'json' },
   getEvaluationEvaluator: { method: 'GET', pathTemplate: '/api/v1/evaluation/evaluators/{evaluator_id}/versions/{resource_version}', requestMode: 'none', responseMode: 'json' },
   listEvaluationJobs: { method: 'GET', pathTemplate: '/api/v1/evaluation/jobs', requestMode: 'none', responseMode: 'json' },
   submitEvaluationJob: { method: 'POST', pathTemplate: '/api/v1/evaluation/jobs', requestMode: 'json', responseMode: 'json' },
@@ -751,6 +769,8 @@ export const OBSERVATORY_API_OPERATIONS = {
   getEvaluationResult: { method: 'GET', pathTemplate: '/api/v1/evaluation/results/{result_id}', requestMode: 'none', responseMode: 'json' },
   listEvaluationScores: { method: 'GET', pathTemplate: '/api/v1/evaluation/results/{result_id}/scores', requestMode: 'none', responseMode: 'json' },
   listEvaluationArtifacts: { method: 'GET', pathTemplate: '/api/v1/evaluation/artifacts', requestMode: 'none', responseMode: 'json' },
+  createEvaluationArtifact: { method: 'POST', pathTemplate: '/api/v1/evaluation/artifacts', requestMode: 'multipart', responseMode: 'json' },
+  createEvaluationCaptureAuthorization: { method: 'POST', pathTemplate: '/api/v1/evaluation/capture-authorizations', requestMode: 'json', responseMode: 'json' },
   getEvaluationArtifact: { method: 'GET', pathTemplate: '/api/v1/evaluation/artifacts/{artifact_id}', requestMode: 'none', responseMode: 'json' },
   listEvaluationReviews: { method: 'GET', pathTemplate: '/api/v1/evaluation/reviews', requestMode: 'none', responseMode: 'json' },
   createEvaluationReview: { method: 'POST', pathTemplate: '/api/v1/evaluation/reviews', requestMode: 'json', responseMode: 'json' },

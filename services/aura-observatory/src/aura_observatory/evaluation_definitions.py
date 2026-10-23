@@ -615,8 +615,8 @@ class EvaluatorReference:
             value, "evaluator", frozenset({"evaluatorId", "evaluatorVersion", "kind"})
         )
         kind = data.get("kind")
-        if kind != "deterministic":
-            raise DefinitionValidationError("AURA-0093 suites require deterministic evaluators")
+        if kind not in {"deterministic", "local_judge"}:
+            raise DefinitionValidationError("suite evaluator kind is not admitted")
         return cls(
             _uuid(data.get("evaluatorId"), "evaluatorId"),
             _version(data.get("evaluatorVersion"), "evaluatorVersion"),
@@ -1260,8 +1260,8 @@ class EvaluatorDefinition(_DefinitionBase):
         )
         if data.get("schemaVersion") != 1 or data.get("resourceType") != "evaluator":
             raise DefinitionValidationError("evaluator schema identity is invalid")
-        if data.get("kind") != "deterministic":
-            raise DefinitionValidationError("AURA-0093 only admits deterministic evaluators")
+        if data.get("kind") not in {"deterministic", "local_judge"}:
+            raise DefinitionValidationError("evaluator kind is not admitted")
         component_ids = _list_of_ids(data.get("componentIds"), "componentIds", maximum=32)
         if any(not _COMPONENT.fullmatch(item) for item in component_ids):
             raise DefinitionValidationError("evaluator component id is invalid")
@@ -1288,7 +1288,7 @@ class EvaluatorDefinition(_DefinitionBase):
             _retention(data.get("retentionMode", "manual_only")),
             ResourceProvenance.from_payload(cast(Mapping[str, Any], data.get("provenance"))),
             _timestamp(data.get("createdAt"), "createdAt"),
-            "deterministic",
+            str(data["kind"]),
             _identifier(data.get("metric"), "metric"),
             tuple(component_ids),
             _version(data["rubricVersion"], "rubricVersion") if "rubricVersion" in data else None,
@@ -1320,8 +1320,10 @@ class EvaluatorDefinition(_DefinitionBase):
 def _default_evaluator_compatibility(definition: EvaluatorDefinition) -> None:
     """Validate a definition against the closed deterministic registry IDs."""
 
+    if definition.kind == "local_judge":
+        return
     if definition.kind != "deterministic":
-        raise DefinitionValidationError("AURA-0093 only admits deterministic evaluators")
+        raise DefinitionValidationError("evaluator kind is not runtime compatible")
     family = BUILTIN_EVALUATOR_IDS.get(definition.evaluator_id)
     if family is None:
         if (

@@ -52,7 +52,7 @@ from aura_observatory.evaluation_calibration import (
     CalibrationService,
     PostgresCalibrationRepository,
 )
-from aura_observatory.evaluation_definitions import EvaluationDefinitionService
+from aura_observatory.evaluation_definitions import EvaluationDefinitionService, EvaluatorDefinition
 from aura_observatory.evaluation_evaluators import (
     DeterministicEvaluatorRegistry,
     EvaluationApplicationService,
@@ -88,6 +88,13 @@ from aura_observatory.dashboards import DashboardService
 from aura_observatory.incidents import IncidentService
 from aura_observatory.operational_live import OperationalLiveService
 from aura_observatory.saved_queries import SavedQueryExecutionService, SavedQueryService
+
+
+def _evaluation_definition_compatibility(definition: EvaluatorDefinition) -> None:
+    """Keep deterministic registry checks while admitting persisted local judges."""
+    if definition.kind == "local_judge":
+        return
+    DeterministicEvaluatorRegistry().validate_definition(definition)
 
 
 class _ExactAnnotationReferenceProvider(Protocol):
@@ -624,6 +631,19 @@ def build_evaluation_artifact_storage(settings: Settings) -> ArtifactStorageServ
     )
 
 
+def build_evaluation_artifact_metadata_repository(
+    settings: Settings,
+) -> PostgresEvaluationArtifactRepository:
+    """Compose the content-free metadata port independently from byte storage."""
+
+    def connection_factory() -> Any:
+        return postgres_connection(settings.database_url)
+    result_reference = PostgresEvaluationResultReferencePort(connection_factory)
+    return PostgresEvaluationArtifactRepository(
+        connection_factory, result_reference=result_reference
+    )
+
+
 def build_evaluation_deletion(settings: Settings) -> EvaluationDeletionService:
     """Compose recoverable object/score/metadata deletion for the worker."""
 
@@ -794,7 +814,7 @@ def build_evaluation_definition_service(settings: Settings) -> EvaluationDefinit
             lambda: postgres_connection(settings.database_url)
         ),
         metrics=_production_metrics(settings),
-        evaluator_compatibility=DeterministicEvaluatorRegistry().validate_definition,
+        evaluator_compatibility=_evaluation_definition_compatibility,
     )
 
 
@@ -937,7 +957,10 @@ def build_evaluation_api_service(settings: Settings) -> EvaluationApiApplication
         return await live_store.publish(resource_type, resource_id, change, state)
 
     deletion_service = None
+    artifact_storage = None
+    artifact_metadata = build_evaluation_artifact_metadata_repository(settings)
     if settings.evaluation_object_access_key and settings.evaluation_object_secret_key:
+        artifact_storage = build_evaluation_artifact_storage(settings)
         deletion_service = build_evaluation_deletion(settings)
     calibration_service = build_calibration_service(settings)
     experiment_definition_repository = build_evaluation_definition_repository(settings)
@@ -951,16 +974,23 @@ def build_evaluation_api_service(settings: Settings) -> EvaluationApiApplication
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
     )
+    definition_service = EvaluationDefinitionService(
+        experiment_definition_repository,
+        artifact_repository=PostgresEvaluationArtifactRepository(
+            lambda: postgres_connection(settings.database_url)
+        ),
+        metrics=api_metrics,
+        evaluator_compatibility=_evaluation_definition_compatibility,
+    )
     return EvaluationApiApplicationService(
         query=query,
         live=live_store,
-        definition_service=EvaluationDefinitionService(
-            experiment_definition_repository,
-            artifact_repository=PostgresEvaluationArtifactRepository(
-                lambda: postgres_connection(settings.database_url)
-            ),
-            metrics=api_metrics,
-            evaluator_compatibility=DeterministicEvaluatorRegistry().validate_definition,
+        definition_service=definition_service,
+        artifact_storage=artifact_storage,
+        artifact_metadata=artifact_metadata,
+        definition_commands=definition_service,
+        judge_definitions=PostgresJudgeDefinitionRepository(
+            lambda: postgres_connection(settings.database_url)
         ),
         orchestration=build_evaluation_orchestration(settings, event_publisher=publish_live),
         calibration_service=calibration_service,

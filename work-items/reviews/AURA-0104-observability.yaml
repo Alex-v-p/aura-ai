@@ -1,0 +1,51 @@
+agent: observability_steward
+work_item: AURA-0104
+verdict: PASS
+checked:
+  - >-
+    Re-verified the final correction against AURA-0104, the Observatory
+    architecture/specification, ADRs 0013/0015/0016, production route and
+    storage paths, shared metric vocabularies, component manifests, evaluator,
+    and focused tests.
+  - >-
+    All three public admission routes now call the header recorder outside
+    their later parsing/application exception blocks. Unauthenticated,
+    invalid-CSRF, and missing-idempotency requests therefore emit exactly one
+    bounded admission span and one duration sample rather than duplicate
+    observations.
+  - >-
+    Direct ASGI probes confirmed artifact, capture-authorization, and
+    local-judge 401 requests each emit one span with dependency session_store,
+    error authorization_required, and a trace ID exactly matching the HTTP
+    problem response. Focused parameterized tests cover all three routes for
+    401, 403, and malformed/missing header rejection.
+  - >-
+    Shared span and metric label vocabularies admit all three stable operation
+    names, rejected/unavailable outcomes, and bounded admission error classes.
+    unsupported_media and authorization_mismatch are explicitly allowlisted;
+    the production artifact dependency classifier attributes PostgreSQL state
+    conflicts and database failures to postgresql and object/stream failures
+    to garage.
+  - >-
+    EvaluationApplicationService._record_admission_span maps any unrecognized
+    internal storage/provider code to the finite rejected class. Direct probes
+    confirmed authorization_mismatch and unsupported_media retain their exact
+    allowlisted values, while result_reference_unavailable and an arbitrary
+    provider detail both emit a span classified as rejected rather than being
+    dropped or increasing cardinality.
+  - >-
+    The executable observatory_public_evaluation_admission evaluator retains
+    strict mutually consistent success, authentication, CSRF, no-store, and
+    zero-unexpected-storage rules, with negative contradiction coverage.
+  - >-
+    Component identity/version, request correlation, latency, outcome/error
+    classes, dependency attribution, metadata-only capture, prohibited content
+    fields, manual retention, and bounded cardinality are consistent with the
+    affected manifests. Metric definitions exactly match their owning metric
+    lists and the evaluation object-store dependency is named garage.
+  - >-
+    Verification passed: 29 focused AURA-0104 plus observability tests, 20
+    Observatory/evaluation contract tests, 4 deployment tests, the
+    observability declaration validator, direct route/storage probes, and git
+    diff --check.
+findings: []

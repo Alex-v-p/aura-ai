@@ -1,0 +1,126 @@
+agent: observatory_worker
+work_item: AURA-0104
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: /tmp/aura-0104-prereq.kMq0RY
+scope:
+  ownership_zone: services.aura-observatory.evaluation-admission
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/resources/component-manifests/evaluation-api.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml
+  - services/aura-observatory/migrations/postgresql/versions/0015_evaluation_public_admission.sql
+  - services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+contracts: {changed: false}
+migrations:
+  changed: true
+  owning_service: aura-observatory
+  summary: >
+    Added rerunnable 0015 columns and constraints for authorization idempotency,
+    dataset-version binding, artifact intended use/version, local-judge
+    evaluator admission, and create_local_judge_evaluator command replay.
+observability:
+  components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_storage
+    - aura.observatory.local_judges
+  metrics_added:
+    - evaluation_runner_nats_recovery_count
+    - observatory_evaluation_operation_duration_ms
+  telemetry: >
+    Admission success, rejected, idempotency-conflict, and unavailable paths
+    emit bounded component spans with allowlisted operation, dependency,
+    latency, outcome, and existing request trace correlation; failures remain
+    content-free. The public admission evaluator is executable over bounded
+    HTTP probe facts, and the multipart route shares the authoritative
+    incremental prohibited-content detector. Shared operation label values now
+    include every admission span, including rejected unsupported media. The
+    shared admission-header helper is the sole owner of auth/CSRF/header
+    rejection spans, preventing duplicate route telemetry; all three public
+    admission routes attribute those rejections to session_store with one
+    bounded authorization_required span. ArtifactStorageError values,
+    including authorization_mismatch, are normalized to allowlisted component
+    errors and retain Garage/PostgreSQL dependency attribution.
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0090_storage.py (132 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+    - git diff --check
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run pytest -q contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py contracts/tests/test_evaluation_v1.py (20 passed)
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_backend.py (60 passed)
+    - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_migration.py services/aura-observatory/tests/test_aura0093_definitions.py (49 passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-observability.py
+  failed: []
+  not_run:
+    - Repository-wide AURA-0104 governance and composed full-stack checks (owned by delivery/integration)
+    - Frontend, deployment, and browser acceptance checks (outside this ownership zone)
+decisions:
+  - >
+    Added the public evaluator and artifact routes to the existing owner-session
+    and CSRF boundary. Multipart input is parsed as exactly bounded metadata
+    and content parts without adding a dependency; bytes are handed to the
+    existing streaming, digest-verifying Garage service.
+  - >
+    Authorization request correlation is resolved from the Observatory-owned
+    authorization metadata port rather than accepted from HTTP input. The
+    request correlation remains internal and is never projected.
+  - >
+    Local-judge evaluator admission writes both the immutable judge definition
+    and generic evaluator identity, accepts local_judge suite references, and
+    uses the durable definition-command idempotency ledger for replay and
+    interruption recovery.
+  - >
+    Capture authorization creation is owner/CSRF protected, closed, content
+    free, durably idempotent, and bound to exact dataset version and manual
+    retention. Artifact admission validates stored authorization, digest,
+    version, intended use, media, byte count, and revocation before publish.
+  - >
+    Multipart parsing is incremental and capped, recognizes delimiters only at
+    complete CRLF boundary lines, rejects malformed headers, and recursively
+    rejects credential-bearing JSON/text before Garage storage. Standard
+    filename dispositions are accepted without persisting filenames. JSON
+    content is staged in a bounded temporary spool, fully decoded and
+    recursively validated (including escaped credential keys), then replayed
+    in full bounded chunks to storage only after validation.
+  - >
+    Public admission probe evaluation is strict about authentication, CSRF,
+    no-store, and storage-byte facts for both success and expected rejection;
+    contradictory probes fail closed.
+  - >
+    Storage and metadata are separate inward ports; production composition
+    injects the PostgreSQL metadata adapter independently, while the typed
+    definition-command port owns local-judge replay and generic evaluator
+    admission.
+risks:
+  - >
+    A fresh composed stack must have an owner-authorized evaluation
+    authorization row and Garage credentials before artifact upload can be
+    accepted; missing prerequisites fail closed with bounded responses.
+unresolved:
+  - >
+    Full-stack recovery evidence and integration of the contract/frontend
+    changes remain with the delivery and integration owners.

@@ -246,6 +246,14 @@ ensure_local_secret() {
       default_path=./.secrets/observatory-garage-secret-key
       managed_default=1
       ;;
+    AURA_OBSERVATORY_API_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-api-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_API_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-api-garage-secret-key
+      managed_default=1
+      ;;
     AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE)
       default_path=./.secrets/observatory-judge-garage-access-key
       managed_default=1
@@ -429,6 +437,8 @@ ensure_evaluation_secrets() {
   ensure_local_secret AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE database
   ensure_local_secret AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_API_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_API_GARAGE_SECRET_KEY_FILE garage-secret
   ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE garage-secret
   ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE garage-access

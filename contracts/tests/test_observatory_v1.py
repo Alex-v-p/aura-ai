@@ -62,6 +62,7 @@ def test_evaluation_surface_is_owner_only_bounded_and_complete() -> None:
         "listEvaluationScores",
         "listEvaluationArtifacts",
         "getEvaluationArtifact",
+        "createEvaluationCaptureAuthorization",
         "listEvaluationReviews",
         "createEvaluationReview",
         "listEvaluationCalibrations",
@@ -116,6 +117,7 @@ def test_commands_require_csrf_idempotency_and_closed_confirmation() -> None:
         "createEvaluationSuite": False,
         "submitEvaluationJob": False,
         "createEvaluationReview": False,
+        "createEvaluationCaptureAuthorization": False,
         "cancelEvaluationJob": True,
         "qualifyEvaluationJudge": True,
         "revokeEvaluationQualification": True,
@@ -472,3 +474,111 @@ def test_generated_evaluation_page_operations_never_erase_success_responses() ->
         assert f"{operation_id}: {{ method: 'GET'" in generated
         descriptor = generated.split(f"{operation_id}: {{ method: 'GET'", 1)[1].split("\n", 1)[0]
         assert "responseMode: 'json'" in descriptor
+
+
+def test_acceptance_admission_contracts_are_owner_only_closed_and_bounded() -> None:
+    document = _document()
+    schemas = document["components"]["schemas"]
+    operations = {operation["operationId"]: operation for operation in _operations(document)}
+
+    evaluator = operations["createEvaluationLocalJudgeEvaluator"]
+    artifact = operations["createEvaluationArtifact"]
+    authorization = operations["createEvaluationCaptureAuthorization"]
+    for operation in (evaluator, artifact, authorization):
+        parameters = [
+            _resolve_parameter(document, item) for item in operation["parameters"]
+        ]
+        headers = {item["name"] for item in parameters if item["in"] == "header"}
+        assert headers == {"X-Observatory-CSRF", "Idempotency-Key"}
+        assert {"400", "401", "403", "409", "422", "503"} <= operation[
+            "responses"
+        ].keys()
+        success = next(
+            response
+            for status, response in operation["responses"].items()
+            if status.startswith("2")
+        )
+        assert success["headers"]["Cache-Control"]["schema"] == {
+            "type": "string",
+            "const": "no-store",
+        }
+
+    create_evaluator = schemas["CreateLocalJudgeEvaluatorRequest"]
+    assert create_evaluator["additionalProperties"] is False
+    assert create_evaluator["x-evaluation-v1-resource"] == "LocalJudgeDefinition"
+    assert create_evaluator["properties"]["outputContract"]["const"] == (
+        "local_judge_score_v1"
+    )
+    assert create_evaluator["properties"]["defaultDisposition"]["const"] == (
+        "advisory_only"
+    )
+    assert schemas["EvaluationSuiteEvaluatorReference"]["properties"]["kind"][
+        "enum"
+    ] == ["deterministic", "local_judge"]
+
+    multipart = artifact["requestBody"]["content"]["multipart/form-data"]
+    assert multipart["schema"] == {"$ref": "#/components/schemas/ArtifactUploadForm"}
+    form = schemas["ArtifactUploadForm"]
+    assert form["additionalProperties"] is False
+    assert form["minProperties"] == form["maxProperties"] == 2
+    metadata = schemas["EvaluationArtifactUploadMetadata"]
+    assert metadata["additionalProperties"] is False
+    assert metadata["properties"]["byteCount"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1048576,
+    }
+    assert metadata["properties"]["captureAuthorization"] == {
+        "$ref": "#/components/schemas/EvaluationContentCaptureAuthorization"
+    }
+    assert metadata["properties"]["mediaType"]["enum"] == [
+        "application/json",
+        "text/plain",
+        "text/markdown",
+    ]
+    assert "application/octet-stream" not in json.dumps(metadata)
+    assert form["properties"]["content"]["maxLength"] == 1048576
+    assert "contentMediaType" not in form["properties"]["content"]
+
+    authorization_request = schemas["CreateEvaluationCaptureAuthorizationRequest"]
+    authorization_record = schemas["EvaluationCaptureAuthorizationRecord"]
+    assert authorization_request["additionalProperties"] is False
+    assert authorization_record["additionalProperties"] is False
+    assert authorization_request["properties"]["dataset"] == {
+        "$ref": "#/components/schemas/EvaluationDefinitionReference"
+    }
+    assert authorization_record["properties"]["status"] == {
+        "type": "string",
+        "const": "active",
+    }
+    for schema in (authorization_request, authorization_record):
+        assert schema["properties"]["retentionMode"] == {
+            "$ref": "#/components/schemas/EvaluationRetentionMode"
+        }
+        assert schema["properties"]["authorizationContext"] == {
+            "type": "string",
+            "const": "controlled_evaluation",
+        }
+
+
+def test_core_nats_recovery_measurement_is_additively_allowlisted() -> None:
+    schemas = _document()["components"]["schemas"]
+    assert "evaluation_runner_nats_recovery_count" in schemas["AnalyticsMetricName"][
+        "enum"
+    ]
+
+
+def test_generated_client_supports_bounded_multipart_without_transport_behavior() -> None:
+    generated = GENERATED_PATH.read_text(encoding="utf-8")
+    assert (
+        "readonly createEvaluationArtifact: { readonly response: EvaluationArtifact; "
+        "readonly body: ArtifactUploadForm;" in generated
+    )
+    assert 'readonly "content": Blob;' in generated
+    assert (
+        "createEvaluationArtifact: { method: 'POST', pathTemplate: "
+        "'/api/v1/evaluation/artifacts', requestMode: 'multipart', "
+        "responseMode: 'json' }" in generated
+    )
+    assert "readonly createEvaluationLocalJudgeEvaluator:" in generated
+    assert "readonly createEvaluationCaptureAuthorization:" in generated

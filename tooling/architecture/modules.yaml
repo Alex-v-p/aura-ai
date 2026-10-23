@@ -166,6 +166,9 @@ modules:
   - aura-observatory.evaluation-live
   - aura-observatory.evaluation-orchestration
   - aura-observatory.evaluation-storage
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.local-judges
+  - aura-observatory.ports
   - aura-observatory.calibration
   - aura-observatory.evaluation-experiments
 - id: aura-observatory.adapters.evaluation-query
