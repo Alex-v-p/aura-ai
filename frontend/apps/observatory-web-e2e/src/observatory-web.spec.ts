@@ -1483,6 +1483,122 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(Math.max(...metricWidths) - Math.min(...metricWidths)).toBeLessThanOrEqual(1);
   });
 
+  test('keeps Overview surfaces padded and contained at desktop and 320px reflow', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    const overview = page.locator('observatory-overview');
+    const surfaceSelectors = ['.hero-card', '.ingest-card', '.metric-card', '.health-card'];
+
+    for (const viewport of [
+      { width: 1600, height: 1000 },
+      { width: 320, height: 900 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const layout = await overview.evaluate((root, selectors) => {
+        const surfaces = selectors.flatMap((selector) =>
+          Array.from(root.querySelectorAll<HTMLElement>(selector)),
+        );
+        const visibleSurfaces = surfaces.filter((surface) => {
+          const style = getComputedStyle(surface);
+          const rect = surface.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0;
+        });
+        const horizontalPadding = visibleSurfaces.map((surface) =>
+          Number.parseFloat(getComputedStyle(surface).paddingInlineStart),
+        );
+        return {
+          surfaceKindCounts: selectors.map((selector) => root.querySelectorAll(selector).length),
+          minHorizontalPadding: Math.min(...horizontalPadding),
+          maxHorizontalPadding: Math.max(...horizontalPadding),
+          documentWidth: document.documentElement.scrollWidth,
+          viewportWidth: window.innerWidth,
+        };
+      }, surfaceSelectors);
+
+      expect(layout.surfaceKindCounts.every((count) => count > 0)).toBe(true);
+      expect(
+        layout.minHorizontalPadding,
+        `Overview surfaces lost their horizontal inset at ${viewport.width}px`,
+      ).toBeGreaterThanOrEqual(12);
+      expect(
+        layout.maxHorizontalPadding - layout.minHorizontalPadding,
+        `Overview surface insets diverged at ${viewport.width}px`,
+      ).toBeLessThanOrEqual(1);
+      expect(
+        layout.documentWidth,
+        `Overview created horizontal overflow at ${viewport.width}px`,
+      ).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    }
+  });
+
+  test('keeps Overview loading and history-state content aligned to the inset', async ({
+    page,
+  }) => {
+    await installFixture(page);
+    let releaseOverview: () => void = () => undefined;
+    let overviewReady = new Promise<void>((resolve) => {
+      releaseOverview = resolve;
+    });
+    await page.route('**/api/v1/overview', async (route) => {
+      await overviewReady;
+      await route.fulfill({ json: overview() });
+    });
+
+    for (const viewport of [
+      { width: 1600, height: 1000 },
+      { width: 320, height: 900 },
+    ]) {
+      await page.setViewportSize(viewport);
+      if (viewport.width === 1600) await page.goto('/');
+      else {
+        overviewReady = new Promise<void>((resolve) => {
+          releaseOverview = resolve;
+        });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+      }
+
+      const loadingPanel = page.locator('observatory-overview .loading-route-panel');
+      await expect(loadingPanel).toBeVisible();
+      const loadingPadding = await loadingPanel.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).paddingInlineStart),
+      );
+      expect(
+        loadingPadding,
+        `Overview loading content lost its inset at ${viewport.width}px`,
+      ).toBeGreaterThanOrEqual(12);
+      releaseOverview();
+      await expect(page.locator('observatory-overview .hero-card')).toBeVisible();
+    }
+
+    await page.unroute('**/api/v1/overview');
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await installFixture(page, { emptyHealthHistory: true });
+    await page.reload();
+    await expect(page.locator('observatory-overview .history-section > .empty')).toBeVisible();
+    for (const width of [1600, 320]) {
+      await page.setViewportSize({ width, height: width === 320 ? 900 : 1000 });
+      const historyStateMargins = await page
+        .locator('observatory-overview .history-section > p')
+        .evaluateAll((states) =>
+          states.map((state) => {
+            const style = getComputedStyle(state);
+            return {
+              inlineStart: Number.parseFloat(style.marginInlineStart),
+              inlineEnd: Number.parseFloat(style.marginInlineEnd),
+            };
+          }),
+        );
+      expect(historyStateMargins.length).toBeGreaterThan(0);
+      expect(
+        Math.min(...historyStateMargins.map((margin) => margin.inlineStart)),
+      ).toBeGreaterThanOrEqual(12);
+      expect(
+        Math.min(...historyStateMargins.map((margin) => margin.inlineEnd)),
+      ).toBeGreaterThanOrEqual(12);
+    }
+  });
+
   test('gives Runs and Trace empty states bounded next actions and resets scroll on navigation', async ({
     page,
   }) => {

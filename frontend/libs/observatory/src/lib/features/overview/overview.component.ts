@@ -96,6 +96,21 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
     .notice { border-left:3px solid var(--warning-text); border-radius:.45rem; }
     @media (min-width:1100px) { .overview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .hero-card,.ingest-card { grid-column:1 / -1; } }
     @media (max-width:700px) { .overview-grid { gap:1rem; } .hero-card { padding-block:1.25rem; } }
+  `, `
+    :host { --overview-inset:clamp(1rem,2.2vw,1.5rem); }
+    .hero-card,.ingest-card { padding:clamp(1.25rem,2vw,1.5rem) var(--overview-inset); }
+    .metric-card { padding-inline:var(--overview-inset); }
+    .loading-route-panel { padding-inline:var(--overview-inset); }
+    .health-section,.history-section { padding-inline:0; }
+    .health-section > .section-heading { padding-inline:var(--overview-inset); }
+    .history-section > .section-heading,
+    .history-section > .table-wrap,
+    .history-section > p { margin-inline:var(--overview-inset); }
+    .counts { column-gap:clamp(.8rem,1.8vw,1.5rem); }
+    .health-card { padding-inline:var(--overview-inset); }
+    @media (max-width:700px) {
+      .hero-card,.ingest-card { padding-block:1.25rem; }
+    }
   `],
 })
 export class ObservatoryOverviewComponent {
