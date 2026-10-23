@@ -53,11 +53,11 @@ authorization {
       password: "$normal_password"
       permissions: {
         publish: {
-          allow: ["aura.runs.>", "aura.approvals.>", "aura.notifications.>", "aura.artifacts.>", "aura.runs.resume.v1", "\$JS.API.ACCOUNT.INFO", "\$JS.API.STREAM.INFO.AURA_RUNS", "\$JS.API.STREAM.CREATE.AURA_RUNS", "\$JS.API.STREAM.UPDATE.AURA_RUNS", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-worker", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_RUNS.aura-core-worker", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-worker", "\$JS.ACK.AURA_RUNS.aura-core-worker.>"]
+          allow: ["aura.runs.>", "aura.approvals.>", "aura.notifications.>", "aura.artifacts.>", "aura.runs.resume.v1", "aura.memory.process.v1", "aura.automation.reminders.v1", "aura.automation.notifications.v1", "aura.knowledge.documents.process.v1", "aura.knowledge.documents.delete.v1", "aura.knowledge.documents.events.v1", "\$JS.API.INFO", "\$JS.API.STREAM.LIST", "\$JS.API.STREAM.INFO.AURA_RUNS", "\$JS.API.STREAM.CREATE.AURA_RUNS", "\$JS.API.STREAM.UPDATE.AURA_RUNS", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-worker", "\$JS.API.CONSUMER.CREATE.AURA_RUNS.aura-core-worker.aura.runs.execute.v1", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-worker", "\$JS.ACK.AURA_RUNS.aura-core-worker.>", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-memory-worker", "\$JS.API.CONSUMER.CREATE.AURA_RUNS.aura-core-memory-worker.aura.memory.process.v1", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-memory-worker", "\$JS.ACK.AURA_RUNS.aura-core-memory-worker.>", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-approval-resume-worker", "\$JS.API.CONSUMER.CREATE.AURA_RUNS.aura-core-approval-resume-worker.aura.runs.resume.v1", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-approval-resume-worker", "\$JS.ACK.AURA_RUNS.aura-core-approval-resume-worker.>", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-document-process-worker", "\$JS.API.CONSUMER.CREATE.AURA_RUNS.aura-core-document-process-worker.aura.knowledge.documents.process.v1", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-document-process-worker", "\$JS.ACK.AURA_RUNS.aura-core-document-process-worker.>", "\$JS.API.CONSUMER.INFO.AURA_RUNS.aura-core-document-delete-worker", "\$JS.API.CONSUMER.CREATE.AURA_RUNS.aura-core-document-delete-worker.aura.knowledge.documents.delete.v1", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.aura-core-document-delete-worker", "\$JS.ACK.AURA_RUNS.aura-core-document-delete-worker.>"]
           deny: ["aura.evaluation.>"]
         }
         subscribe: {
-          allow: ["aura.runs.>", "aura.approvals.>", "aura.notifications.>", "aura.artifacts.>", "_INBOX.>"]
+          allow: ["aura.runs.>", "aura.approvals.>", "aura.notifications.>", "aura.artifacts.>", "aura.memory.process.v1", "aura.knowledge.documents.process.v1", "aura.knowledge.documents.delete.v1", "_INBOX.>"]
           deny: ["aura.evaluation.>"]
         }
       }
@@ -66,7 +66,7 @@ authorization {
       user: "$bootstrap_user"
       password: "$bootstrap_password"
       permissions: {
-        publish: { allow: ["\$JS.API.ACCOUNT.INFO", "\$JS.API.STREAM.INFO.AURA_EVALUATION_RUNNER", "\$JS.API.STREAM.CREATE.AURA_EVALUATION_RUNNER", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation"] }
+        publish: { allow: ["\$JS.API.STREAM.INFO.AURA_EVALUATION_RUNNER", "\$JS.API.STREAM.CREATE.AURA_EVALUATION_RUNNER", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation"] }
         subscribe: { allow: ["_INBOX.>"] }
       }
     }

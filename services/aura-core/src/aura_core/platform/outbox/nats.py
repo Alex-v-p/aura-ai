@@ -40,6 +40,9 @@ RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
 # Deliberately plain Core NATS: this subject is live-only and must never be
 # included in a JetStream stream or transactional outbox command.
 THINKING_EVENT_SUBJECT = "aura.runs.thinking.v1"
+AURA_RUNS_STREAM = "AURA_RUNS"
+_STREAM_LOOKUP_ATTEMPTS = 3
+_STREAM_LOOKUP_DELAY_SECONDS = 0.1
 
 
 class EvaluationTransportMetrics(Protocol):
@@ -272,7 +275,7 @@ class NatsOutbox:
         # than an existing stream.  Account info proves JetStream is actually
         # usable before readiness reports the broker as healthy.
         await self._jetstream.account_info()
-        info = await self._jetstream.stream_info("AURA_RUNS")
+        info = await self._jetstream.stream_info(AURA_RUNS_STREAM)
         subjects = _stream_subjects(info)
         if self.subject not in subjects:
             raise RuntimeError("AURA_RUNS does not contain the configured run subject")
@@ -290,7 +293,7 @@ class NatsOutbox:
         try:
             await _assert_thinking_subject_unretained(self._jetstream)
             await self._jetstream.account_info()
-            info = await self._jetstream.stream_info("AURA_RUNS")
+            info = await self._jetstream.stream_info(AURA_RUNS_STREAM)
             subjects = _stream_subjects(info)
             if self.subject not in subjects:
                 self._readiness_detail = "run stream subject missing"
@@ -676,12 +679,12 @@ class NatsRunConsumer:
         jetstream = self._connection.jetstream()
         await _ensure_command_stream(jetstream, (RUN_COMMAND_TOPIC, self.subject))
         await jetstream.account_info()
-        info = await jetstream.stream_info("AURA_RUNS")
+        info = await jetstream.stream_info(AURA_RUNS_STREAM)
         subjects = _stream_subjects(info)
         if self.subject not in subjects:
             raise RuntimeError("AURA_RUNS does not contain the configured run subject")
         self._subscription = await jetstream.pull_subscribe(
-            self.subject, durable=self.durable, stream="AURA_RUNS"
+            self.subject, durable=self.durable, stream=AURA_RUNS_STREAM
         )
 
     async def receive(self) -> OutboxCommand | None:
@@ -1042,19 +1045,52 @@ async def _assert_thinking_subject_unretained(jetstream: Any) -> None:
 
 
 async def _ensure_command_stream(jetstream: Any, subjects: tuple[str, ...]) -> None:
+    requested = tuple(dict.fromkeys(subjects))
     try:
-        await jetstream.add_stream(name="AURA_RUNS", subjects=subjects)
-    except Exception:
-        info = await jetstream.stream_info("AURA_RUNS")
-        existing = _stream_subjects(info)
-        missing = [subject for subject in subjects if subject not in existing]
+        await jetstream.add_stream(name=AURA_RUNS_STREAM, subjects=requested)
+        return
+    except Exception as creation_error:
+        info = await _lookup_created_stream(jetstream, creation_error)
+        config = getattr(info, "config", None)
+        if str(getattr(config, "name", "")) != AURA_RUNS_STREAM:
+            raise RuntimeError(
+                "AURA_RUNS lookup returned a differently named stream"
+            ) from creation_error
+        raw_subjects = cast(object, getattr(config, "subjects", None))
+        if not isinstance(raw_subjects, (list, tuple)):
+            raise RuntimeError("AURA_RUNS subject configuration is unavailable") from creation_error
+        existing = tuple(
+            str(subject)
+            for subject in cast(list[Any] | tuple[Any, ...], raw_subjects)
+        )
+        missing = [subject for subject in requested if subject not in existing]
         if missing:
             # Upgrade an older AURA_RUNS stream in place.  The stream retains
             # all existing messages while adding the versioned memory subject.
             await jetstream.update_stream(
-                name="AURA_RUNS",
+                name=AURA_RUNS_STREAM,
                 subjects=list(dict.fromkeys(existing + tuple(missing))),
             )
+
+
+async def _lookup_created_stream(jetstream: Any, creation_error: Exception) -> Any:
+    """Bound a lost-create race and preserve the provider error if absent."""
+
+    for attempt in range(_STREAM_LOOKUP_ATTEMPTS):
+        try:
+            info = await jetstream.stream_info(AURA_RUNS_STREAM)
+        except Exception:
+            if attempt + 1 == _STREAM_LOOKUP_ATTEMPTS:
+                raise creation_error from None
+            await asyncio.sleep(_STREAM_LOOKUP_DELAY_SECONDS * (attempt + 1))
+            continue
+        config = getattr(info, "config", None)
+        if str(getattr(config, "name", "")) == AURA_RUNS_STREAM:
+            return info
+        if attempt + 1 == _STREAM_LOOKUP_ATTEMPTS:
+            raise creation_error
+        await asyncio.sleep(_STREAM_LOOKUP_DELAY_SECONDS * (attempt + 1))
+    raise creation_error
 
 
 def _optional_command_metadata(command: OutboxCommand) -> dict[str, str]:

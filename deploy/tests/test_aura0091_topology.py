@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +29,27 @@ def _services() -> dict[str, dict[str, Any]]:
     }
 
 
+def _nats_user_block(script: str, user_variable: str) -> str:
+    """Return one generated authorization block without parsing shell secrets."""
+
+    start = script.index(f'user: "{user_variable}"')
+    next_user = script.find('\n    {\n      user:', start + 1)
+    return script[start:] if next_user == -1 else script[start:next_user]
+
+
+def _nats_permission_subjects(block: str, permission: str) -> set[str]:
+    match = re.search(
+        rf"{permission}:\s*\{{\s*allow:\s*\[(.*?)\]",
+        block,
+        flags=re.DOTALL,
+    )
+    assert match is not None, f"missing {permission} permission block"
+    return {
+        value.replace(r"\$", "$")
+        for value in re.findall(r'"((?:\\.|[^"\\])*)"', match.group(1))
+    }
+
+
 def test_evaluation_nats_has_closed_subject_acl_and_file_injected_identities() -> None:
     services = _services()
     nats = services["aura-nats"]
@@ -47,7 +69,6 @@ def test_evaluation_nats_has_closed_subject_acl_and_file_injected_identities() -
     assert "/run/secrets/aura-nats-dispatch-password" in script
     assert "/run/secrets/aura-nats-runner-password" in script
     assert "/run/secrets/aura-nats-bootstrap-password" in script
-    assert 'allow: ["\\$JS.API.ACCOUNT.INFO"' in script
     assert '"\\$JS.API.STREAM.INFO.AURA_EVALUATION_RUNNER"' in script
     assert '"\\$JS.API.STREAM.CREATE.AURA_EVALUATION_RUNNER"' in script
     assert (
@@ -61,6 +82,110 @@ def test_evaluation_nats_has_closed_subject_acl_and_file_injected_identities() -
     assert "CONSUMER.INFO.AURA_EVALUATION_RUNNER" in script
     assert "printf '%s' \"$value\"" in script
     assert "echo \"$value\"" not in script
+
+
+def test_core_nats_identity_has_only_the_exact_current_jetstream_matrix() -> None:
+    script = (ROOT / "deploy/docker/nats-entrypoint.sh").read_text(encoding="utf-8")
+    normal = _nats_user_block(script, "$normal_user")
+    normal_publish = _nats_permission_subjects(normal, "publish")
+    normal_subscribe = _nats_permission_subjects(normal, "subscribe")
+
+    consumers = (
+        ("aura-core-worker", "aura.runs.execute.v1"),
+        ("aura-core-memory-worker", "aura.memory.process.v1"),
+        ("aura-core-approval-resume-worker", "aura.runs.resume.v1"),
+        ("aura-core-document-process-worker", "aura.knowledge.documents.process.v1"),
+        ("aura-core-document-delete-worker", "aura.knowledge.documents.delete.v1"),
+    )
+    expected_jetstream = {
+        "$JS.API.INFO",
+        "$JS.API.STREAM.LIST",
+        "$JS.API.STREAM.INFO.AURA_RUNS",
+        "$JS.API.STREAM.CREATE.AURA_RUNS",
+        "$JS.API.STREAM.UPDATE.AURA_RUNS",
+    }
+    for durable, filter_subject in consumers:
+        expected_jetstream.update(
+            {
+                f"$JS.API.CONSUMER.INFO.AURA_RUNS.{durable}",
+                f"$JS.API.CONSUMER.CREATE.AURA_RUNS.{durable}.{filter_subject}",
+                f"$JS.API.CONSUMER.MSG.NEXT.AURA_RUNS.{durable}",
+                f"$JS.ACK.AURA_RUNS.{durable}.>",
+            }
+        )
+
+    actual_jetstream = {
+        subject for subject in normal_publish if subject.startswith("$JS.")
+    }
+    assert actual_jetstream == expected_jetstream
+    assert "$JS.API.ACCOUNT.INFO" not in actual_jetstream
+    assert not any(
+        subject.startswith("$JS.API.") and ">" in subject
+        for subject in actual_jetstream
+    )
+    assert not any(
+        subject.startswith("$JS.API.CONSUMER.DURABLE.CREATE")
+        for subject in actual_jetstream
+    )
+
+    # The ordinary Core topics remain explicit where they are not covered by
+    # the existing broad run/approval/notification/artifact permissions.
+    assert {
+        "aura.memory.process.v1",
+        "aura.knowledge.documents.process.v1",
+        "aura.knowledge.documents.delete.v1",
+    } <= normal_subscribe
+    assert "$JS.API.STREAM.DELETE.AURA_RUNS" not in normal_publish
+    assert "$JS.API.STREAM.PURGE.AURA_RUNS" not in normal_publish
+    assert not any(
+        subject.startswith("$JS.API.CONSUMER.DELETE")
+        or subject.startswith("$JS.API.CONSUMER.DURABLE.CREATE")
+        for subject in normal_publish
+    )
+
+
+def test_non_core_nats_identities_have_no_core_jetstream_grants() -> None:
+    script = (ROOT / "deploy/docker/nats-entrypoint.sh").read_text(encoding="utf-8")
+    normal = _nats_user_block(script, "$normal_user")
+    normal_publish = _nats_permission_subjects(normal, "publish")
+    normal_jetstream = {subject for subject in normal_publish if subject.startswith("$JS.")}
+
+    # ACCOUNT.INFO is not needed by any identity; stream/account metadata must
+    # not become a shortcut to cross-domain or evaluation access.
+    assert '"\\$JS.API.ACCOUNT.INFO"' not in script
+
+    bootstrap = _nats_user_block(script, "$bootstrap_user")
+    bootstrap_jetstream = {
+        subject
+        for subject in _nats_permission_subjects(bootstrap, "publish")
+        if subject.startswith("$JS.")
+    }
+    assert bootstrap_jetstream == {
+        "$JS.API.STREAM.INFO.AURA_EVALUATION_RUNNER",
+        "$JS.API.STREAM.CREATE.AURA_EVALUATION_RUNNER",
+        "$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch",
+        "$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch",
+        "$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner",
+        "$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner",
+        "$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation",
+        "$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation",
+    }
+
+    for user_variable in ("$dispatch_user", "$runner_user"):
+        block = _nats_user_block(script, user_variable)
+        published = _nats_permission_subjects(block, "publish")
+        published_jetstream = {
+            subject for subject in published if subject.startswith("$JS.")
+        }
+        assert not (published_jetstream & normal_jetstream)
+        assert "$JS.API.INFO" not in published
+        assert "$JS.API.STREAM.LIST" not in published
+        assert "$JS.API.ACCOUNT.INFO" not in published
+        assert not any(
+            subject.startswith("$JS.API.CONSUMER.CREATE.AURA_RUNS")
+            or subject.startswith("$JS.API.CONSUMER.DURABLE.CREATE.AURA_RUNS")
+            for subject in published
+        )
 
 
 def test_runner_is_not_a_normal_core_or_observatory_service() -> None:

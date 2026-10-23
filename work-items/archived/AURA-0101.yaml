@@ -1,0 +1,132 @@
+id: AURA-0101
+title: Restore fresh JetStream worker startup
+status: integrated
+change_class: bugfix
+intent: >
+  Make Aura Core's run consumer create or reconcile its owned AURA_RUNS stream
+  deterministically on a fresh NATS volume so the supported Docker launcher
+  keeps Core workers running while preserving existing stream ownership,
+  subjects, messages, and Core/Observatory isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications: []
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - AURA_RUNS remains Core-owned and is created or updated through the existing JetStream adapter without deleting streams reassigning subjects or introducing a bootstrap authority.
+    - Requested subjects are deduplicated in stable order before stream creation so the default run subject is not submitted twice.
+    - A lost concurrent creation race may reconcile only after the named AURA_RUNS stream becomes visible through a bounded retry; absent or differently owned subject state fails closed.
+    - The normal Core NATS identity receives only the exact current-client account stream-list AURA_RUNS stream and five durable-consumer management subjects required by its runtime; obsolete normal-client API subjects are removed while evaluation bootstrap keeps its separately used legacy bootstrap subjects.
+    - AURA-0100 separately repairs the supported Observatory launcher and remains the owning record for migration Compose Garage credential and healthcheck changes.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - services.aura-core.nats-outbox
+  - deploy.nats.authorization
+  - evaluation.core-fresh-stream-startup
+  - delivery.aura0101
+allowed_paths:
+  - work-items/active/AURA-0101.yaml
+  - work-items/archived/AURA-0101.yaml
+  - work-items/handoffs/AURA-0101-*.yaml
+  - work-items/reviews/AURA-0101-*.yaml
+  - work-items/integration/AURA-0101.yaml
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+  - deploy/docker/nats-entrypoint.sh
+  - deploy/tests/test_aura0091_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - compose.yaml
+  - frontend/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: aura_core.platform.outbox
+observability:
+  applicable: true
+  affected_components:
+    - aura.execution.run_coordinator
+  required_metrics: []
+  required_evaluators:
+    - fresh_aura_runs_stream_creation
+    - concurrent_stream_creation_recovery
+    - existing_stream_subject_reconciliation
+  capture_policy: bounded stream names and subject identifiers only
+security_privacy:
+  applicable: true
+  concerns:
+    - The normal Core identity receives only the exact JetStream account-info API subject required by the installed client; no wildcard or evaluation subject is added.
+    - Stream-list responses are discarded bounded operational configuration metadata and grant no message reads stream deletion purge or evaluation management.
+    - Bootstrap dispatch and runner identities retain their existing narrower duties and receive no account-info permission.
+    - NATS passwords remain file-injected and absent from arguments logs reports and committed files.
+  data_classes:
+    - operational_metadata
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - observability_steward
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The default NatsRunConsumer creates AURA_RUNS with each requested subject exactly once and no duplicate-subject provider error on a fresh NATS volume.
+  - A custom run subject is preserved alongside the default run command subject in stable order.
+  - An existing AURA_RUNS stream missing an authorized requested subject is updated in place without deleting messages or removing subjects.
+  - The normal Core NATS identity can perform exact $JS.API.INFO and $JS.API.STREAM.LIST requests and exact create info next and acknowledgement operations for the run memory approval-resume document-process and document-delete durable/filter pairs, with no JetStream API or consumer wildcard.
+  - No identity retains the obsolete $JS.API.ACCOUNT.INFO grant, the normal identity drops obsolete CONSUMER.DURABLE.CREATE while evaluation bootstrap retains only the legacy subjects its script actively uses, and normal Core remains denied evaluation management deletion and purge.
+  - A concurrent creation loss is recovered only after bounded lookup confirms the named AURA_RUNS stream exists; persistent absence or incompatible ownership fails closed without fabricating success.
+  - The supported local HTTP Docker launcher leaves aura-core-worker running without duplicate-subject stream-not-found restart loops while Aura Core API and Observatory remain healthy.
+  - No public contract migration provider dependency stream deletion subject reassignment cross-service database access or protected baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0101.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0101.yaml
+  - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest -q services/aura-core/tests/test_aura0101_nats_stream.py
+  - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core ruff check services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/tests/test_aura0101_nats_stream.py
+  - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pyright services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/tests/test_aura0101_nats_stream.py
+  - UV_CACHE_DIR=/tmp/aura-0101-uv uv run pytest -q deploy/tests/test_aura0091_topology.py
+  - bash -n deploy/docker/nats-entrypoint.sh
+  - Bounded live Docker verification that aura-core-worker remains running after fresh and repeated supported startup
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0101.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0101.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0101.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

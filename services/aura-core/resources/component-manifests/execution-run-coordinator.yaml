@@ -44,6 +44,9 @@ evaluators:
   - conversational_reminder_metadata_only_capture
   - conversation_branch_context_isolation
   - conversation_regeneration_evidence_freshness
+  - fresh_aura_runs_stream_creation
+  - concurrent_stream_creation_recovery
+  - existing_stream_subject_reconciliation
 metric_semantics:
   queue_wait_ms: Persisted run started_at minus persisted run created_at.
   run_duration_ms: Monotonic elapsed execution time tagged with terminal status.
