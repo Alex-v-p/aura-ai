@@ -30,10 +30,10 @@ export class ObservatoryStatusBadgeComponent {
   template: `<header class="section-heading"><div><p class="eyebrow">{{ eyebrow() }}</p><h2>{{ title() }}</h2>@if (description()) { <p class="description">{{ description() }}</p> }</div><div class="actions"><ng-content /></div></header>`,
   styles: [`
     :host { display:block; min-width:0; }
-    .section-heading { align-items:flex-start; display:flex; flex-wrap:wrap; gap:1rem; justify-content:space-between; }
+    .section-heading { align-items:flex-start; display:flex; flex-wrap:wrap; gap:1.25rem; justify-content:space-between; }
     .eyebrow { color:var(--obs-accent-strong); font-size:.7rem; font-weight:800; letter-spacing:.13em; margin:0 0 .35rem; text-transform:uppercase; }
     h2 { color:var(--obs-ink); font-size:clamp(1.35rem,2vw,1.75rem); letter-spacing:-.025em; line-height:1.15; margin:0; overflow-wrap:anywhere; }
-    .description { color:var(--obs-ink-soft); font-size:.9rem; line-height:1.5; margin:.45rem 0 0; max-width:46rem; }
+    .description { color:var(--obs-ink-soft); font-size:.9rem; line-height:1.55; margin:.6rem 0 0; max-width:var(--obs-prose-max); }
     .actions { align-items:center; display:flex; flex-wrap:wrap; gap:.5rem; }
   `],
 })
@@ -50,7 +50,7 @@ export class ObservatorySectionHeadingComponent {
   template: `<section class="surface"><ng-content /></section>`,
   styles: [`
     :host { display:block; min-width:0; }
-    .surface { background:var(--obs-surface); border:1px solid var(--obs-line); border-radius:var(--obs-radius-md); box-shadow:var(--obs-shadow-sm); min-width:0; padding:var(--obs-space-5); }
+    .surface { background:var(--obs-surface); border:1px solid var(--obs-line); border-radius:var(--obs-radius-md); box-shadow:var(--obs-shadow-sm); min-width:0; padding:clamp(1.25rem, 2vw, 1.75rem); }
     @media (max-width:40rem) { .surface { padding:var(--obs-space-4); } }
   `],
 })

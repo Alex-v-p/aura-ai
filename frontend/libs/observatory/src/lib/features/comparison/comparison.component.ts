@@ -60,6 +60,16 @@ import type { ComparisonState, RunComparison } from '@aura/observatory-api-clien
     .comparison-legend { background:var(--surface-subtle); border-top:2px solid var(--accent); color:var(--text-muted); font-size:.82rem; margin:1rem 0; padding:.65rem 0; }
     .result-heading { border-bottom:1px solid var(--border); padding-bottom:1rem; }
     @media (max-width:800px) { .selection-card,.surface-card { padding-block:.85rem; } }
+  `, `
+    .section-heading { margin-bottom:1.35rem; }
+    .section-heading > div { max-width:var(--obs-prose-max); }
+    .selection-card { max-width:var(--obs-control-max); padding:1.35rem; }
+    .selectors { gap:1rem; }
+    .swap-button { align-self:end; min-width:7rem; }
+    .selectors .primary-button { min-width:10rem; }
+    .state,.selection-guidance { border-left:3px solid currentColor; border-radius:.45rem; margin-block:1.25rem; padding:.85rem 1rem; }
+    .surface-card { margin-top:var(--obs-section-gap); padding:1.35rem; }
+    @media (max-width:800px) { .selection-card,.surface-card { padding:1rem; } .selectors .primary-button { justify-self:start; } }
   `],
 })
 export class ObservatoryComparisonComponent {

@@ -56,8 +56,8 @@ const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {
       @if (store.analytics().state === 'disconnected') { <div class="state notice" role="status" aria-live="polite"><strong>Live analytics updates are disconnected.</strong><p>Showing the last known bounded snapshot until the stream reconnects.</p><button type="button" (click)="refresh()">Refresh metrics</button></div> }
 
       @if (store.analytics().snapshot; as snapshot) {
-        <div class="query-summary" aria-label="Applied analytics query"><span>{{ snapshot.query.from | date:'medium':'UTC' }} UTC – {{ snapshot.query.to | date:'medium':'UTC' }} UTC</span><span>{{ snapshot.query.bucket }} buckets · {{ snapshot.query.groupBy === 'none' ? 'one series' : snapshot.query.groupBy }}</span><span>{{ snapshot.query.unit }} · {{ snapshot.query.aggregation }}</span><span>{{ snapshot.scan.scannedRows | number }} rows scanned</span></div>
-        @if (snapshot.freshness.state !== 'fresh' || snapshot.partial || snapshot.unavailableSignals.length) { <div class="state notice" role="status"><strong>{{ freshnessLabel(snapshot) }}</strong><p>{{ freshnessExplanation(snapshot) }}</p>@if (snapshot.partialReasons.length) { <p>Partial reasons: {{ snapshot.partialReasons.join(', ') }}.</p> } @if (snapshot.unavailableSignals.length) { <p>Unavailable signals: {{ snapshot.unavailableSignals.join(', ') }}.</p> }</div> }
+        <div class="query-summary" aria-label="Applied analytics query"><span>{{ snapshot.query.from | date:'medium':'UTC' }} UTC – {{ snapshot.query.to | date:'medium':'UTC' }}</span><span>{{ bucketLabel(snapshot.query.bucket) }} · {{ snapshot.query.groupBy === 'none' ? 'One series' : groupLabel(snapshot.query.groupBy) }}</span><span>{{ snapshot.query.unit }} · {{ aggregationLabel(snapshot.query.aggregation) }}</span><span>{{ snapshot.scan.scannedRows | number }} rows scanned</span></div>
+        @if (snapshot.freshness.state !== 'fresh' || snapshot.partial || snapshot.unavailableSignals.length) { <div class="state notice" role="status"><strong>{{ freshnessLabel(snapshot) }}</strong><p>{{ freshnessExplanation(snapshot) }}</p>@if (snapshot.partialReasons.length) { <p>Partial reasons: {{ formatReasons(snapshot.partialReasons) }}.</p> } @if (snapshot.unavailableSignals.length) { <p>Unavailable signals: {{ formatReasons(snapshot.unavailableSignals) }}.</p> }</div> }
         @if (store.analytics().state === 'empty') { <p class="empty" role="status">No measurements match this bounded window and filter set. A zero is only shown when the service reports a measured zero.</p> }
         @if (snapshot.series.length) {
           <section class="series-section" aria-labelledby="series-title"><div class="section-heading"><div><h3 id="series-title">{{ metricLabel(snapshot.query.metric) }}</h3><p class="muted">Values are {{ snapshot.query.unit }}. Percentiles use {{ snapshot.percentileMethod }}.</p></div><span class="status-label" [class]="snapshot.freshness.state">{{ snapshot.freshness.state }}</span></div>
@@ -91,6 +91,20 @@ const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {
     .analytics-skeleton span:first-child { width:96%; }
     .analytics-skeleton span:nth-child(2) { width:74%; }
     .analytics-skeleton span:nth-child(3) { width:88%; }
+  `, `
+    .section-heading { margin-bottom:1.35rem; }
+    .focus-description { max-width:var(--obs-prose-max); line-height:1.5; }
+    .analytics-controls { background:var(--surface); border:1px solid var(--border); border-radius:.65rem; gap:1rem; max-width:var(--obs-control-max); padding:1.25rem; }
+    .analytics-controls button { justify-self:start; min-width:10rem; }
+    .query-summary { gap:.7rem 1.5rem; margin-block:1.5rem; padding-block:.9rem; }
+    .state.notice,.state.failure { background:var(--surface-subtle); border:1px solid var(--border); border-left:3px solid var(--warning-text); border-radius:.45rem; color:var(--text); max-width:var(--obs-prose-max); padding:.8rem 1rem; }
+    .state.failure { border-left-color:var(--danger-text); }
+    .series-section,.breakdowns { margin-top:var(--obs-section-gap); }
+    .series-grid { gap:1.5rem; }
+    .series-card { padding-block:1.25rem; }
+    .summary-grid { gap:1rem; }
+    @media (max-width:800px) { .analytics-controls { padding:1rem; } }
+    @media (max-width:520px) { .analytics-controls button { justify-self:stretch; } }
   `],
 })
 export class ObservatoryAnalyticsComponent {
@@ -146,6 +160,9 @@ export class ObservatoryAnalyticsComponent {
   metricLabel(metric: AnalyticsMetricName): string { return metric.replaceAll('_', ' '); }
   aggregationLabel(aggregation: AnalyticsAggregation): string { return aggregation === 'average' ? 'Average' : aggregation === 'rate' ? 'Rate' : aggregation.toUpperCase(); }
   groupLabel(group: AnalyticsGroupBy): string { return group === 'none' ? 'One series' : group.replaceAll('_', ' '); }
+  bucketLabel(bucket: AnalyticsBucket): string { const labels: Record<AnalyticsBucket, string> = { auto: 'Automatic buckets', one_minute: '1 minute', five_minutes: '5 minutes', fifteen_minutes: '15 minutes', one_hour: '1 hour', six_hours: '6 hours', one_day: '1 day' }; return labels[bucket] ?? this.humanize(bucket); }
+  formatReasons(values: ReadonlyArray<string>): string { return values.map((value) => this.humanize(value)).join(', '); }
+  private humanize(value: string): string { return value.replaceAll('_', ' ').replace(/(^|\s)\S/g, (character) => character.toUpperCase()); }
   seriesLabel(series: Pick<AnalyticsSeries, 'seriesKey' | 'facets'>): string { return series.seriesKey || 'All measurements'; }
   facetLabel(series: Pick<AnalyticsSeries, 'facets'>): string { return Object.values(series.facets).filter(Boolean).join(' · '); }
   safeId(value: string): string { let hash = 2166136261; for (const character of value) { hash ^= character.codePointAt(0) ?? 0; hash = Math.imul(hash, 16777619); } return `${value.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 96)}-${(hash >>> 0).toString(16)}`; }

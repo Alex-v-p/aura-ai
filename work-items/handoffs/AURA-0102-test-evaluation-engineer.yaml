@@ -1,0 +1,107 @@
+agent: test_evaluation_engineer
+work_item: AURA-0102
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0102_test_design
+  worktree: shared
+scope:
+  ownership_zone: evaluation.observatory-spacing-ux
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0102-test-evaluation-engineer.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --pretty false -p tsconfig.json
+    - >-
+      cd frontend && pnpm nx lint observatory-web-e2e
+    - >-
+      pnpm --dir frontend nx test observatory-web (1 test passed)
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4312
+      AURA_OBSERVATORY_WEB_E2E_BASE_URL=http://127.0.0.1:4312
+      pnpm --dir frontend exec playwright test
+      --config apps/observatory-web-e2e/playwright.config.ts
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      --project=desktop --workers=1 --timeout=30000
+      --grep 'bounded desktop frame|Runs and Trace empty|compares two runs|keyboard-accessible retention confirmation'
+      (4 passed)
+    - >-
+      git diff --check --
+      frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      Re-ran Prettier, TypeScript compilation, and Observatory E2E lint after
+      the review correction that returns to the visible Overview route and
+      requires both measured metric widths to be positive.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4315
+      AURA_OBSERVATORY_WEB_E2E_BASE_URL=http://127.0.0.1:4315
+      pnpm --dir frontend exec playwright test
+      --config apps/observatory-web-e2e/playwright.config.ts
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      --project=desktop --workers=1 --timeout=30000
+      --grep 'bounded desktop frame|Runs and Trace empty|compares two runs|keyboard-accessible retention confirmation'
+      (4 passed after review correction)
+  failed:
+    - >-
+      The first unit-test invocation included unsupported Vitest option
+      --runInBand; it failed before test execution. The corrected
+      pnpm --dir frontend nx test observatory-web command passed.
+  not_run:
+    - >-
+      Full Observatory Playwright matrix across desktop, tablet, and mobile;
+      this handoff ran only the focused desktop browser slice.
+    - >-
+      Full AURA-0102 lint, build, Storybook, architecture, and integration
+      checks; aggregate integration owns those checks.
+    - >-
+      Screenshot or golden-image testing; intentionally not added because
+      automated pixels do not establish visual quality.
+decisions:
+  - >-
+    Added semantic desktop composition coverage for the visible Observatory
+    routes: route containment within the shell main frame, no document
+    overflow, positive content bounds, and balanced Overview metric widths.
+  - >-
+    Added bounded actionable empty-state coverage for Runs and Trace and
+    verified route navigation resets scroll to the page origin.
+  - >-
+    Replaced the outdated Compare assertion requiring at least four desktop
+    CSS grid tracks with semantic control geometry checks for no overlap,
+    no internal selector overflow, positive control bounds, and containment.
+  - >-
+    Extended retention confirmation coverage to require cancel-first focus,
+    a distinct danger class only on the confirmation action, cancellation
+    focus restoration, and the existing exact request semantics.
+  - >-
+    Did not modify the AURA-0098-overlapping evaluation, experiment, or
+    operations specs and did not add production, store, contract, backend,
+    deploy, or documentation changes.
+  - >-
+    Addressed review feedback by measuring Overview metrics only after
+    navigating back to the visible Overview route and asserting every width
+    is positive, preventing hidden-card zero-width measurements from passing
+    vacuously.
+risks:
+  - >-
+    The new assertions intentionally protect semantic layout invariants and
+    state hierarchy, not subjective visual polish; rendered UX review remains
+    required by AURA-0102.
+  - >-
+    The focused browser run used a disposable local Angular server and mocked
+    Observatory fixtures; live authenticated Docker acceptance remains an
+    integration concern.
+unresolved: []

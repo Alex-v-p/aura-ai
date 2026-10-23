@@ -24,8 +24,8 @@ type SuiteField = 'dataset' | 'evaluator' | 'definition' | 'component' | 'limits
         <div><p class="eyebrow">Evaluation workbench</p><h2 id="evaluation-title" tabindex="-1">Controlled evaluation metadata</h2><p class="muted">Definitions, progress, scores, provenance, and retention. Evaluation content stays in its authorized store.</p></div>
         <button class="secondary" type="button" (click)="refresh()" [disabled]="!!store.busyAction()">Refresh</button>
       </header>
-      <div class="live-banner" [class.partial]="store.state() === 'partial'" [class.rejected]="store.state() === 'rejected'" role="status" aria-live="polite">{{ stateLabel() }}@if (store.lastUpdatedAt()) { <span>Last snapshot {{ store.lastUpdatedAt() | slice:0:19 }} UTC</span> }</div>
-      @if (store.error()) { <div class="notice error" role="alert">{{ store.error() }} <button type="button" (click)="refresh()" [disabled]="!!store.busyAction()">Retry all</button>@if (store.state() === 'rejected') { <span class="retry-scopes">@for (scope of store.rejectedScopes(); track scope) { <button type="button" (click)="retryScope(scope)" [disabled]="!!store.busyAction()">Retry {{ scope }}</button> }</span> }</div> }
+      @if (!store.error()) { <div class="live-banner" [class.partial]="store.state() === 'partial'" [class.rejected]="store.state() === 'rejected'" role="status" aria-live="polite">{{ stateLabel() }}@if (store.lastUpdatedAt()) { <span>Last snapshot {{ store.lastUpdatedAt() | slice:0:19 }} UTC</span> }</div> }
+      @if (store.error()) { <div class="live-banner notice error recovery-region" [class.rejected]="store.state() === 'rejected'" role="alert"><div><strong>{{ stateLabel() }}</strong>@if (store.state() !== 'rejected') { <p>{{ store.error() }}</p> }</div><div class="recovery-actions"><button type="button" class="primary" (click)="refresh()" [disabled]="!!store.busyAction()">Retry all</button>@if (store.state() === 'rejected' && store.rejectedScopes().length) { <details class="retry-details" open><summary>Retry an affected scope</summary><div class="retry-scopes">@for (scope of store.rejectedScopes(); track scope) { <button type="button" class="secondary" (click)="retryScope(scope)" [disabled]="!!store.busyAction()">Retry {{ scope }}</button> }</div></details> }</div></div> }
       @if (store.notice()) { <div class="notice" role="status">{{ store.notice() }}</div> }
       @if (store.busyAction()) { <div class="action-progress" role="status" aria-live="polite">{{ actionLabel() }}</div> }
       <div class="workspace-metrics" aria-label="Evaluation workspace summary"><div><span>Datasets</span><strong>{{ store.data().datasets?.items.length ?? 0 }}</strong></div><div><span>Running jobs</span><strong>{{ runningJobCount() }}</strong></div><div><span>Results</span><strong>{{ store.data().results?.items.length ?? 0 }}</strong></div><p>Review the current metadata snapshot first; authoring controls are scoped to the selected workspace.</p></div>
@@ -228,6 +228,28 @@ type SuiteField = 'dataset' | 'evaluator' | 'definition' | 'component' | 'limits
     }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition-duration:.01ms!important; } }
     @media (forced-colors:active) { .primary,.danger { background:ButtonFace !important; border:2px solid ButtonBorder !important; color:ButtonText !important; forced-color-adjust:auto; } }
+  `, `
+    .evaluation { gap:var(--obs-section-gap); }
+    .section-heading { gap:1.25rem; }
+    .section-heading > div { max-width:var(--obs-prose-max); }
+    .live-banner,.action-progress { border-left:3px solid currentColor; border-radius:.45rem; padding:.85rem 1rem; }
+    .recovery-region { align-items:flex-start; display:flex; flex-wrap:wrap; gap:1rem 1.5rem; justify-content:space-between; max-width:var(--obs-prose-max); }
+    .recovery-region p { margin:.35rem 0 0; }
+    .recovery-actions { align-items:center; display:flex; flex-wrap:wrap; gap:.65rem; }
+    .retry-details { min-width:12rem; }
+    .retry-details summary { color:var(--accent-hover); cursor:pointer; font-size:.82rem; font-weight:750; padding:.35rem 0; }
+    .retry-scopes { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }
+    .workspace-tabs { gap:.35rem; padding-bottom:1px; }
+    .workspace-tabs button { padding-inline:1rem; }
+    .workspace-metrics { border-radius:.5rem; gap:1rem 2rem; padding:1rem 1.25rem; }
+    .panel { border-radius:.65rem; padding:clamp(1.25rem,2vw,1.75rem); }
+    .metric-grid { gap:1rem; }
+    .metric { padding:1rem; }
+    .review-form,.suite-form { gap:1rem; margin-top:1.25rem; }
+    .data-table th,.data-table td { padding:.8rem .65rem; }
+    .empty { background:var(--surface-subtle); border:1px dashed var(--control-border); border-radius:.45rem; }
+    @media (max-width:640px) { .panel { padding:1rem; } .workspace-tabs button { padding-inline:.75rem; } }
+    @media (min-width:641px) { .workspace-tabs { flex-wrap:wrap; overflow:visible; } }
   `],
 })
 export class EvaluationWorkspaceComponent {

@@ -85,6 +85,17 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
     .overview-skeleton { grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:1rem; }
     .overview-skeleton span:first-child { grid-column:span 2; height:4rem; }
     @media (max-width:700px) { .overview-skeleton { grid-template-columns:1fr 1fr; } }
+  `, `
+    .overview-grid { gap:1.25rem; }
+    .hero-card { padding-block:1.5rem; }
+    .metric-card { min-height:8.5rem; }
+    .health-section,.history-section { margin-top:var(--obs-section-gap); }
+    .section-heading { margin-bottom:1rem; }
+    .health-card { padding-block:1.25rem; }
+    .history-section .table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:.6rem; overflow:auto; }
+    .notice { border-left:3px solid var(--warning-text); border-radius:.45rem; }
+    @media (min-width:1100px) { .overview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .hero-card,.ingest-card { grid-column:1 / -1; } }
+    @media (max-width:700px) { .overview-grid { gap:1rem; } .hero-card { padding-block:1.25rem; } }
   `],
 })
 export class ObservatoryOverviewComponent {

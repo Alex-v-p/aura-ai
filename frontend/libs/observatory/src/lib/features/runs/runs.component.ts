@@ -9,7 +9,7 @@ import { normalizeRunFilters, type RunFilters } from '../../observatory-models';
   selector: 'observatory-runs', standalone: true, imports: [FormsModule, DatePipe], changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h2 class="panel-title">Recent metadata runs</h2><form class="filters" (ngSubmit)="apply()" aria-label="Run filters"><label>Status <select name="status" [(ngModel)]="draft.status"><option [ngValue]="undefined">All statuses</option>@for (status of statuses; track status) { <option [value]="status">{{ status }}</option> }</select></label><label>Component <input name="component" [(ngModel)]="draft.component" placeholder="component id" /></label><details class="advanced-filters"><summary>More filters</summary><div class="advanced-filter-grid"><label>Model <input name="model" [(ngModel)]="draft.model" placeholder="model label" /></label><label>Deployment <input name="deployment" [(ngModel)]="draft.deployment" placeholder="deployment id" /></label><label>From (UTC) <input name="from" type="datetime-local" [(ngModel)]="draft.from" /></label><label>To (UTC) <input name="to" type="datetime-local" [(ngModel)]="draft.to" /></label></div></details><button type="submit">Apply filters</button><button type="button" class="clear-button" (click)="clearFilters()">Clear filters</button></form><p class="active-filter-summary" role="status" aria-live="polite">{{ activeFilterSummary() }}</p>
-    @if (store.resourceState('runs') === 'loading') { <div class="route-skeleton runs-skeleton" role="status" aria-label="Loading recent runs"><span></span><span></span><span></span></div> } @else if (store.resourceState('runs') === 'error') { <p class="failure" role="alert">Recent runs are unavailable. <button type="button" (click)="retry()">Retry recent runs</button></p> } @else if (store.resourceState('runs') === 'stale') { <p class="notice" role="status">Recent runs could not be refreshed; showing the last known results. <button type="button" (click)="retry()">Retry</button></p> } @else if (store.resourceState('runs') === 'empty') { <p class="empty" role="status">No metadata runs match these filters.</p> } @else { <div class="table-wrap"><table><caption class="sr-only">Recent Observatory runs</caption><thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Model</th><th scope="col">Deployment</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>@for (run of store.snapshot().runs?.items ?? []; track run.runId) { <tr><th scope="row"><button class="link" type="button" (click)="select(run.runId)">{{ run.runId }}</button></th><td><span class="status" [class]="'status-' + run.status">{{ run.status }}</span></td><td>{{ run.startedAt | date:'short' }}</td><td>{{ run.durationMs === null ? '—' : (run.durationMs + ' ms') }}</td><td>{{ run.model ?? '—' }}</td><td>{{ run.deploymentId }}</td><td>@if (run.traceId) { <button class="link" type="button" (click)="select(run.runId)">Trace</button> }</td></tr> }</tbody></table></div> }
+    @if (store.resourceState('runs') === 'loading') { <div class="route-skeleton runs-skeleton" role="status" aria-label="Loading recent runs"><span></span><span></span><span></span></div> } @else if (store.resourceState('runs') === 'error') { <p class="failure" role="alert">Recent runs are unavailable. <button type="button" (click)="retry()">Retry recent runs</button></p> } @else if (store.resourceState('runs') === 'stale') { <p class="notice" role="status">Recent runs could not be refreshed; showing the last known results. <button type="button" (click)="retry()">Retry</button></p> } @else if (store.resourceState('runs') === 'empty') { <section class="empty empty-state" role="status" aria-live="polite"><strong>No metadata runs match these filters.</strong><p>{{ hasActiveFilters() ? 'Adjust the filters or clear them to browse recent runs.' : 'No recent runs are available in the current snapshot.' }}</p>@if (hasActiveFilters()) { <button type="button" class="clear-button" (click)="clearFilters()">Clear filters</button> } @else { <button type="button" (click)="retry()">Refresh runs</button> }</section> } @else { <div class="table-wrap"><table><caption class="sr-only">Recent Observatory runs</caption><thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Model</th><th scope="col">Deployment</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>@for (run of store.snapshot().runs?.items ?? []; track run.runId) { <tr><th scope="row"><button class="link" type="button" (click)="select(run.runId)">{{ run.runId }}</button></th><td><span class="status" [class]="'status-' + run.status">{{ run.status }}</span></td><td>{{ run.startedAt | date:'short' }}</td><td>{{ run.durationMs === null ? '—' : (run.durationMs + ' ms') }}</td><td>{{ run.model ?? '—' }}</td><td>{{ run.deploymentId }}</td><td>@if (run.traceId) { <button class="link" type="button" (click)="select(run.runId)">Trace</button> }</td></tr> }</tbody></table></div> }
     @if (store.snapshot().state === 'stale' || store.snapshot().state === 'disconnected') { <p class="notice" role="status">Data may be stale: {{ store.snapshot().error }}</p> }
   `,
   styles: [`
@@ -33,6 +33,21 @@ import { normalizeRunFilters, type RunFilters } from '../../observatory-models';
     .runs-skeleton span:first-child { width:82%; }
     .runs-skeleton span:nth-child(2) { width:94%; }
     .runs-skeleton span:nth-child(3) { width:68%; }
+  `, `
+    .panel-title { font-size:clamp(1.35rem,2vw,1.7rem); margin-bottom:1.25rem; }
+    .filters { align-items:end; background:var(--surface); border:1px solid var(--border); border-radius:.65rem; gap:1rem; margin-bottom:.65rem; max-width:var(--obs-control-max); padding:1.25rem; }
+    .filters > button { justify-self:start; min-width:8.5rem; }
+    .filters > .clear-button { justify-self:start; }
+    .advanced-filter-grid { gap:1rem; }
+    .active-filter-summary { margin:.25rem 0 1.5rem; }
+    .table-wrap { border-radius:.65rem; }
+    .empty { background:var(--surface); border:1px dashed var(--control-border); border-radius:.65rem; margin-top:1.5rem; padding:2.5rem 1.5rem; }
+    .empty-state { display:grid; gap:.6rem; justify-items:start; max-width:40rem; text-align:left; }
+    .empty-state p { color:var(--text-muted); margin:0; }
+    .empty-state button { margin-top:.35rem; }
+    .notice,.failure { border-radius:.45rem; margin-top:1.5rem; padding:.8rem 1rem; }
+    @media (min-width:701px) { .filters { grid-template-columns:repeat(2,minmax(12rem,22rem)); } .filters .advanced-filters { grid-column:1 / -1; } }
+    @media (max-width:700px) { .filters { padding:1rem; } .filters > button,.filters > .clear-button { justify-self:stretch; } }
   `],
 })
 export class ObservatoryRunsComponent {
@@ -43,6 +58,7 @@ export class ObservatoryRunsComponent {
   apply(): void { this.store.setFilters(normalizeRunFilters(this.draft)); }
   retry(): void { void this.store.load(); }
   clearFilters(): void { this.draft = {}; this.apply(); }
+  hasActiveFilters(): boolean { const applied = this.store.filters(); return [applied.status, applied.component, applied.model, applied.deployment, applied.from, applied.to].some(Boolean); }
   activeFilterSummary(): string { const applied = this.store.filters(); const values = [applied.status, applied.component, applied.model, applied.deployment, applied.from, applied.to].filter(Boolean); return values.length ? `${values.length} filter${values.length === 1 ? '' : 's'} active` : 'No filters applied'; }
   select(id: string): void { void this.store.openRun(id); this.runSelected.emit(id); }
 }

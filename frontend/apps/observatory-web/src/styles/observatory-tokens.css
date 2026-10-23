@@ -40,6 +40,13 @@
   --obs-space-4: 1rem;
   --obs-space-5: 1.5rem;
   --obs-space-6: 2rem;
+  --obs-space-7: 2.5rem;
+  --obs-space-8: 3rem;
+  --obs-page-gutter: clamp(1rem, 2.8vw, 3.25rem);
+  --obs-page-top: clamp(1.5rem, 3vw, 2.5rem);
+  --obs-section-gap: clamp(1.75rem, 3vw, 2.5rem);
+  --obs-control-max: 66rem;
+  --obs-prose-max: 48rem;
   --obs-content-max: 100rem;
 }
 

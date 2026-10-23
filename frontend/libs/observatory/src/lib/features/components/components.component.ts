@@ -21,7 +21,7 @@ import { ObservatoryStore } from '../../observatory-store';
               @if (component.definitionVersions?.length) { <p class="muted">Declared versions: {{ component.definitionVersions.join(', ') }}</p> }
               <dl><div><dt>Samples</dt><dd>{{ component.health.sampleCount }}</dd></div><div><dt>P50 latency</dt><dd>{{ component.health.latencyP50Ms === null ? 'Not observed' : component.health.latencyP50Ms + ' ms' }}</dd></div><div><dt>P95 latency</dt><dd>{{ component.health.latencyP95Ms === null ? 'Not observed' : component.health.latencyP95Ms + ' ms' }}</dd></div><div><dt>Outcomes</dt><dd>{{ component.health.outcomes.succeeded }} succeeded / {{ component.health.outcomes.failed }} failed; {{ errorRateLabel(component.health.errorRate) }}</dd></div></dl>
               @if (store.isComponentHealthLoading(component.componentId)) { <p class="muted" role="status">Loading bounded health trend…</p> } @else { <div class="trend">@for (point of trend(component.componentId); track point.startAt) { <span [style.height.%]="bar(point.summary.sampleCount)" [attr.title]="point.startAt | date:'short'" [attr.aria-label]="point.summary.sampleCount + ' samples at ' + (point.startAt | date:'short')" role="img">{{ point.summary.sampleCount }}</span> }</div><p class="trend-legend">Trend shows sample volume; exact latency and outcome values are listed above.</p> }
-              @if (healthError(component.componentId)) { <p class="failure-inline" role="status">Trend unavailable: {{ healthError(component.componentId) }}</p> }
+              @if (healthError(component.componentId)) { <p class="failure-inline" role="status">Trend data unavailable</p> }
               <p class="muted">Seen {{ component.firstSeenAt | date:'short' }} – {{ component.lastSeenAt | date:'short' }}</p>
               @if (component.definitionState === 'declared' && (component.definitionVersions?.length || component.versions.length)) { <div class="version-actions"><label [for]="'version-' + safeId(component.componentId)">Definition version</label><select [id]="'version-' + safeId(component.componentId)" #version><option [value]="versionFor(component)">{{ versionFor(component) }}</option>@for (item of component.definitionVersions ?? []; track item) { @if (item !== versionFor(component)) { <option [value]="item">{{ item }}</option> } }</select><button #detailOpener type="button" class="primary-button" [attr.aria-expanded]="isSelected(component.componentId)" aria-controls="component-details-panel" (click)="open(component.componentId, version.value, detailOpener)">View definition and topology</button></div> }
               @else { <p class="observed-copy">No approved definition is available for this observed component.</p> }
@@ -58,6 +58,18 @@ import { ObservatoryStore } from '../../observatory-store';
     .component-card:has(button[aria-expanded="true"]) { background:var(--surface-tint); border-top:3px solid var(--accent); }
     .details-panel { scroll-margin-top:1rem; }
     @media (max-width:640px) { .catalogue-hidden-small { display:none; } .details-panel { margin-top:0; } }
+  `, `
+    .section-heading { margin-bottom:1.5rem; }
+    .section-heading > div { max-width:var(--obs-prose-max); }
+    .component-grid { gap:1.5rem; grid-template-columns:repeat(auto-fit,minmax(min(24rem,100%),1fr)); }
+    .component-card,.details-panel { border-top-width:3px; padding:1.35rem; }
+    .component-card .card-heading { gap:1rem; }
+    .component-card dl { gap:1rem; margin-block:1.25rem; }
+    .state { border-left:3px solid currentColor; border-radius:.45rem; margin-block:1.25rem; padding:.8rem 1rem; }
+    .failure-inline { background:var(--surface-subtle); border-left:2px solid var(--warning-text); border-radius:0; color:var(--text-muted); padding:.55rem .7rem; }
+    .topology-summary { margin-top:1.5rem; padding-top:1.25rem; }
+    .dependency-columns { gap:1.5rem; }
+    @media (max-width:640px) { .component-card,.details-panel { padding:1.1rem; } .component-grid { gap:1rem; } }
   `],
 })
 export class ObservatoryComponentsComponent implements DoCheck {

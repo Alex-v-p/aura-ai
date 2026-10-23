@@ -116,7 +116,7 @@ interface ObservatoryNavGroup {
         <main id="observatory-main" tabindex="-1" class="shell-main">
             <observatory-overview [hidden]="destination() !== 'overview'" [style.display]="destination() === 'overview' ? 'block' : 'none'" />
             <observatory-runs [hidden]="destination() !== 'runs'" [style.display]="destination() === 'runs' ? 'block' : 'none'" (runSelected)="openTraceFromRun()" />
-            <observatory-trace [hidden]="destination() !== 'trace'" [style.display]="destination() === 'trace' ? 'block' : 'none'" />
+            <observatory-trace [hidden]="destination() !== 'trace'" [style.display]="destination() === 'trace' ? 'block' : 'none'" (browseRuns)="openDestination('runs')" />
             <observatory-comparison [hidden]="destination() !== 'comparison'" [style.display]="destination() === 'comparison' ? 'block' : 'none'" />
             <observatory-components [hidden]="destination() !== 'components'" [style.display]="destination() === 'components' ? 'block' : 'none'" />
             <observatory-analytics [hidden]="destination() !== 'analytics'" [style.display]="destination() === 'analytics' ? 'block' : 'none'" />
@@ -202,6 +202,9 @@ export class AppComponent {
     // a workspace underneath an active navigation dialog.
     this.closeNavigation(false);
     this.destination.set(destination);
+    // Each destination is a distinct workspace. Restore the page origin so
+    // route switching never opens a new surface halfway down the prior one.
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     this.focusDestination(destination);
   }
 

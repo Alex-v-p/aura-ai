@@ -1422,6 +1422,104 @@ async function expectNoA11yViolations(page: Page): Promise<void> {
 }
 
 test.describe('Observatory Web mocked browser acceptance', () => {
+  test('keeps every primary page inside the bounded desktop frame and balanced overview metrics', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.setViewportSize({ width: 1600, height: 1000 });
+
+    for (const destination of [
+      'Runs',
+      'Trace',
+      'Components',
+      'Analytics',
+      'Compare',
+      'Retention',
+    ]) {
+      await openDestination(page, destination, true);
+      const layout = await page.locator('main.shell-main').evaluate((main, routeName) => {
+        const route = Array.from(main.children).find((child) => {
+          const style = getComputedStyle(child);
+          return style.display !== 'none' && style.visibility !== 'hidden';
+        });
+        if (!route) throw new Error(`No visible route for ${routeName}`);
+        const mainRect = main.getBoundingClientRect();
+        const routeRect = route.getBoundingClientRect();
+        const routeStyle = getComputedStyle(route);
+        return {
+          documentWidth: document.documentElement.scrollWidth,
+          viewportWidth: document.documentElement.clientWidth,
+          mainLeft: mainRect.left,
+          mainRight: mainRect.right,
+          routeLeft: routeRect.left,
+          routeRight: routeRect.right,
+          routeWidth: routeRect.width,
+          routeMaxWidth: Number.parseFloat(routeStyle.maxWidth),
+          routeHeight: routeRect.height,
+        };
+      }, destination);
+      expect(
+        layout.documentWidth,
+        `${destination} created horizontal overflow`,
+      ).toBeLessThanOrEqual(layout.viewportWidth + 1);
+      expect(layout.routeLeft, `${destination} escaped the main frame`).toBeGreaterThanOrEqual(
+        layout.mainLeft - 1,
+      );
+      expect(layout.routeRight, `${destination} escaped the main frame`).toBeLessThanOrEqual(
+        layout.mainRight + 1,
+      );
+      expect(layout.routeWidth, `${destination} has no visible content frame`).toBeGreaterThan(0);
+      expect(layout.routeHeight, `${destination} has no visible route content`).toBeGreaterThan(0);
+      expect(layout.routeWidth).toBeLessThanOrEqual(layout.routeMaxWidth + 1);
+    }
+
+    await openDestination(page, 'Overview', true);
+    await expect(page.locator('observatory-overview')).toBeVisible();
+    const metricWidths = await page
+      .locator('observatory-overview:visible .metric-card:visible')
+      .evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().width));
+    expect(metricWidths).toHaveLength(2);
+    expect(metricWidths.every((width) => width > 0)).toBe(true);
+    expect(Math.max(...metricWidths) - Math.min(...metricWidths)).toBeLessThanOrEqual(1);
+  });
+
+  test('gives Runs and Trace empty states bounded next actions and resets scroll on navigation', async ({
+    page,
+  }) => {
+    await openFixture(page, { runsEmpty: true });
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await openDestination(page, 'Runs', true);
+
+    const runsEmpty = page.locator('observatory-runs .empty-state');
+    await expect(runsEmpty).toHaveRole('status');
+    await expect(
+      runsEmpty.getByRole('button', { name: 'Refresh runs', exact: true }),
+    ).toBeVisible();
+    const runsLayout = await runsEmpty.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        parentWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    expect(runsLayout.width).toBeGreaterThan(0);
+    expect(runsLayout.width).toBeLessThanOrEqual(runsLayout.parentWidth + 1);
+
+    await page.evaluate(() => window.scrollTo(0, 600));
+    await openDestination(page, 'Trace', true);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    const traceEmpty = page.locator('observatory-trace .empty-state');
+    await expect(traceEmpty).toHaveRole('status');
+    await expect(
+      traceEmpty.getByRole('button', { name: 'Browse runs', exact: true }),
+    ).toBeVisible();
+    await traceEmpty.getByRole('button', { name: 'Browse runs', exact: true }).click();
+    await expect(page.locator('observatory-runs')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
   test('keeps first use as plain selection guidance when runs exist', async ({ page }) => {
     await openFixture(page, { comparisonFailure: 'partial' });
     await openDestination(page, 'Compare');
@@ -1500,13 +1598,51 @@ test.describe('Observatory Web mocked browser acceptance', () => {
           .getByRole('button', { name: 'Compare', exact: true }),
       ).toBeFocused();
     }
-    const selectorGrid = await comparison.locator('.selectors').evaluate((element) => ({
-      tracks: getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
-        .length,
-      viewport: window.innerWidth,
-    }));
-    if (selectorGrid.viewport <= 800) expect(selectorGrid.tracks).toBe(1);
-    else expect(selectorGrid.tracks).toBeGreaterThanOrEqual(4);
+    const selectorLayout = await comparison.locator('.selectors').evaluate((element) => {
+      const bounds = (item: Element) => {
+        const rect = item.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      };
+      const controls = Array.from(element.querySelectorAll('label, button')).map(bounds);
+      const overlaps = controls.some((left, index) =>
+        controls
+          .slice(index + 1)
+          .some(
+            (right) =>
+              left.left < right.right &&
+              left.right > right.left &&
+              left.top < right.bottom &&
+              left.bottom > right.top,
+          ),
+      );
+      const container = bounds(element);
+      return {
+        overflow: element.scrollWidth - element.clientWidth,
+        controls,
+        overlaps,
+        container,
+        viewport: window.innerWidth,
+      };
+    });
+    expect(selectorLayout.overflow).toBeLessThanOrEqual(1);
+    expect(selectorLayout.overlaps).toBe(false);
+    expect(
+      selectorLayout.controls.every((control) => control.width > 0 && control.height > 0),
+    ).toBe(true);
+    expect(
+      selectorLayout.controls.every(
+        (control) =>
+          control.left >= selectorLayout.container.left - 1 &&
+          control.right <= selectorLayout.container.right + 1,
+      ),
+    ).toBe(true);
     const left = comparison.getByRole('combobox', { name: 'Left run' });
     const right = comparison.getByRole('combobox', { name: 'Right run' });
     await left.selectOption(runId);
@@ -2847,6 +2983,19 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await deleteButton.focus();
     await page.keyboard.press('Enter');
     const confirmation = page.getByRole('dialog', { name: 'Confirm destructive retention action' });
+    await expect(confirmation).toBeVisible();
+    const cancel = confirmation.getByRole('button', { name: 'Cancel', exact: true });
+    const confirmDelete = confirmation.getByRole('button', {
+      name: 'Confirm delete-before',
+      exact: true,
+    });
+    await expect(cancel).toBeFocused();
+    await expect(confirmDelete).toHaveClass(/danger/);
+    expect((await cancel.getAttribute('class')) ?? '').not.toMatch(/\bdanger\b/);
+    await cancel.click();
+    await expect(confirmation).toBeHidden();
+    await expect(deleteButton).toBeFocused();
+    await deleteButton.press('Enter');
     await expect(confirmation).toBeVisible();
     await confirmation.getByRole('button', { name: 'Confirm delete-before', exact: true }).click();
     await expect.poll(() => fixture.retentionRequests.length).toBe(1);

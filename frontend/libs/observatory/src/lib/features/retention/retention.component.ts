@@ -30,6 +30,16 @@ export function retentionFailureMessage(code: string): string {
     .progress { border-left:3px solid var(--info-text); }
     dialog { margin:auto; max-height:min(calc(100dvh - 2rem), 36rem); max-width:min(32rem, calc(100vw - 2rem)); overflow:auto; width:calc(100vw - 2rem); }
     @media (max-width:520px) { .dialog-actions { align-items:stretch; flex-direction:column; } }
+  `, `
+    .retention-card { background:var(--surface); border:1px solid var(--border); border-radius:.65rem; border-top:3px solid var(--danger); max-width:var(--obs-prose-max); padding:clamp(1.5rem,3vw,2rem); }
+    .retention-card h2 { font-size:clamp(1.35rem,2vw,1.7rem); }
+    .retention-card .muted { max-width:42rem; }
+    .effective,.progress,.failure { border-left:3px solid currentColor; border-radius:.35rem; margin-block:1.25rem; padding:.8rem 1rem; }
+    .actions { gap:.75rem; margin-top:1.5rem; }
+    .actions button { min-height:2.6rem; }
+    .actions button.danger { margin-left:auto; }
+    .result { gap:2rem; margin-top:1.5rem; padding-top:1.25rem; }
+    @media (max-width:520px) { .retention-card { padding:1.25rem; } .actions button,.actions button.danger { margin-left:0; width:100%; } }
   `],
 })
 export class ObservatoryRetentionComponent {
