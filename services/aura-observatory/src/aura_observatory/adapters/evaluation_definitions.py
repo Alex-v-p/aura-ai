@@ -522,11 +522,13 @@ class PostgresEvaluationDefinitionRepository:
         try:
             async with self._connection_factory() as connection:
                 result = await connection.execute(
-                    "SELECT 1 FROM observatory_evaluation_dataset_cases "
-                    "WHERE dataset_id = %s AND dataset_version = %s AND case_id = %s",
-                    (dataset_id, version, case_id),
+                    "SELECT %s = ANY(case_ids) "
+                    "FROM observatory_evaluation_datasets "
+                    "WHERE dataset_id = %s AND dataset_version = %s",
+                    (case_id, dataset_id, version),
                 )
-                value = await result.fetchone() is not None
+                row = await result.fetchone()
+                value = bool(row and row[0])
         except Exception:
             self._record_dependency("read", "failure", started, "database_failure")
             raise DefinitionStorageError("definition storage failure") from None

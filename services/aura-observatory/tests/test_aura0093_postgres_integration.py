@@ -21,10 +21,13 @@ from aura_observatory.adapters.evaluation_definitions import (
     PostgresEvaluationDefinitionRepository,
 )
 from aura_observatory.evaluation_definitions import (
+    CaseDefinition,
     DatasetDefinition,
     DefinitionConflictError,
+    DefinitionValidationError,
+    EvaluationDefinitionService,
 )
-from test_aura0093_definitions import _dataset
+from test_aura0093_definitions import _case, _dataset
 
 MIGRATION_ROOT = Path(__file__).parents[1] / "migrations/postgresql/versions"
 
@@ -113,3 +116,90 @@ async def test_postgres_definition_insert_is_atomic_idempotent_and_audited() -> 
                 ("idempotent_reuse", "duplicate"),
                 ("conflict", "rejected"),
             }
+
+
+@pytest.mark.asyncio
+async def test_postgres_admits_first_declared_case_before_membership_exists() -> None:
+    database_url = _database_url()
+    with _isolated_schema(database_url) as schema:
+
+        @asynccontextmanager
+        async def connection_factory():
+            connection: Any = await psycopg.AsyncConnection.connect(database_url)
+            try:
+                await connection.execute(f"SET search_path TO {_quote_identifier(schema)}")
+                yield connection
+                await connection.commit()
+            except BaseException:
+                await connection.rollback()
+                raise
+            finally:
+                await connection.close()
+
+        repository = PostgresEvaluationDefinitionRepository(connection_factory)
+        service = EvaluationDefinitionService(repository)
+        dataset = DatasetDefinition.from_payload(_dataset())
+        await repository.create_dataset(dataset)
+
+        async with connection_factory() as connection:
+            membership = await connection.execute(
+                "SELECT count(*) FROM observatory_evaluation_dataset_cases"
+            )
+            assert await membership.fetchone() == (0,)
+
+        case_payload = _case()
+        undeclared_payload = dict(case_payload)
+        undeclared_payload["caseId"] = "00000000-0000-0000-0000-000000000009"
+        with pytest.raises(DefinitionValidationError):
+            await service.admit_case(undeclared_payload)
+
+        wrong_dataset_payload = dict(case_payload)
+        wrong_dataset_payload["dataset"] = {
+            "id": "00000000-0000-0000-0000-000000000009",
+            "version": "1.0.0",
+        }
+        with pytest.raises(DefinitionValidationError):
+            await service.admit_case(wrong_dataset_payload)
+
+        wrong_version_payload = dict(case_payload)
+        wrong_version_payload["dataset"] = {
+            "id": dataset.resource_id,
+            "version": "2.0.0",
+        }
+        with pytest.raises(DefinitionValidationError):
+            await service.admit_case(wrong_version_payload)
+
+        admitted = await service.admit_case(case_payload)
+        assert admitted == CaseDefinition.from_payload(case_payload)
+        assert await service.admit_case(case_payload) == admitted
+
+        conflicting_payload = dict(case_payload)
+        conflicting_payload["caseVersion"] = "2.0.0"
+        with pytest.raises(DefinitionConflictError):
+            await service.admit_case(conflicting_payload)
+
+        async with connection_factory() as connection:
+            stored_cases = await connection.execute(
+                "SELECT case_id, case_version, dataset_id, dataset_version "
+                "FROM observatory_evaluation_cases"
+            )
+            assert await stored_cases.fetchall() == [
+                (
+                    dataset.case_ids[0],
+                    "1.0.0",
+                    dataset.resource_id,
+                    dataset.version,
+                )
+            ]
+            stored_membership = await connection.execute(
+                "SELECT case_id, case_version, dataset_id, dataset_version "
+                "FROM observatory_evaluation_dataset_cases"
+            )
+            assert await stored_membership.fetchall() == [
+                (
+                    dataset.case_ids[0],
+                    "1.0.0",
+                    dataset.resource_id,
+                    dataset.version,
+                )
+            ]

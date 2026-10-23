@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -45,6 +46,30 @@ def _suite() -> dict[str, Any]:
     return value
 
 
+class _CaseDeclarationResult:
+    def __init__(self, row: tuple[bool] | None) -> None:
+        self._row = row
+
+    async def fetchone(self) -> tuple[bool] | None:
+        return self._row
+
+
+class _CaseDeclarationConnection:
+    def __init__(self, declarations: dict[tuple[str, str], tuple[str, ...]]) -> None:
+        self.declarations = declarations
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def execute(self, query: str, params: tuple[object, ...]) -> _CaseDeclarationResult:
+        self.calls.append((query, params))
+        dataset_id = str(params[1])
+        version = str(params[2])
+        case_id = str(params[0])
+        declared = self.declarations.get((dataset_id, version))
+        return _CaseDeclarationResult(
+            None if declared is None else (case_id in declared,)
+        )
+
+
 @pytest.mark.asyncio
 async def test_definition_service_admits_exact_references_and_is_idempotent() -> None:
     repository = InMemoryEvaluationDefinitionRepository()
@@ -62,6 +87,30 @@ async def test_definition_service_admits_exact_references_and_is_idempotent() ->
     assert suite.manual_thresholds[0].evaluator.evaluator_id == IDS["evaluator"]
     assert await service.admit_dataset(_dataset()) is dataset
     assert await service.admit_case(_case()) is case
+
+
+@pytest.mark.asyncio
+async def test_postgres_case_declared_reads_exact_immutable_dataset_declaration() -> None:
+    connection = _CaseDeclarationConnection(
+        {(IDS["dataset"], "1.0.0"): (IDS["case"],)}
+    )
+
+    @asynccontextmanager
+    async def connection_factory():
+        yield connection
+
+    repository = PostgresEvaluationDefinitionRepository(connection_factory)
+
+    assert await repository.case_declared(IDS["dataset"], "1.0.0", IDS["case"])
+    assert not await repository.case_declared(
+        IDS["dataset"], "1.0.0", "00000000-0000-0000-0000-000000000009"
+    )
+    assert not await repository.case_declared(IDS["dataset"], "2.0.0", IDS["case"])
+    assert not await repository.case_declared(
+        "00000000-0000-0000-0000-000000000009", "1.0.0", IDS["case"]
+    )
+    assert all("dataset_cases" not in query for query, _params in connection.calls)
+    assert all("case_ids" in query for query, _params in connection.calls)
 
 
 @pytest.mark.asyncio
