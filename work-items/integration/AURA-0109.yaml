@@ -1,0 +1,89 @@
+agent: integration_maintainer
+work_item: AURA-0109
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0109-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0109-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0109-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0109-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0109.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs were read and confirmed complete; all four
+      required specialist reviews are PASS with no unresolved findings.
+    - >-
+      The staged slice contains only the authorized AURA-0109 files. In the
+      overlapping composition.py and ports.py files, only bounded-ingest hunks
+      were staged; AURA-0098 evaluation wiring remains unstaged. The complete
+      staged file list is recorded by git diff --cached --stat and contains 18
+      files across Observatory ingest/storage, tests, governance, and reviews.
+    - >-
+      Archived work-item validation, explicit AURA-0109 changed-path
+      validation, repository-shape, module-registry, import-boundary,
+      service-isolation, contract-change, observability, baseline-protection,
+      staged diff-whitespace, Ruff, and Pyright checks passed.
+    - >-
+      Focused and regression checks passed 108 tests with 10 environment-gated
+      skips before the unrelated migration assertion; the AURA-0109-focused
+      suite itself passed completely, and the worker handoff records the
+      independent live PostgreSQL 17 plus ClickHouse 25.8 acceptance passing
+      all five cases in 6.24 seconds, including 128 observations with zero
+      lag and no duplicate rows.
+    - >-
+      The unchanged full-stack harness reached the target Core run through
+      Collector and Observatory with zero Core exporter failures, 199
+      completed receipts, zero pending receipts, and zero visibility lag in
+      post-browser diagnostics. The target run was therefore visible inside
+      the existing acceptance window after the AURA-0109 throughput change.
+    - >-
+      Migration provenance was checked: HEAD contains
+      0015_evaluation_public_admission.sql from commit 52066c3 while the
+      protected legacy assertions still require version 14. No migration or
+      protected baseline was changed.
+    - >-
+      A single focused Conventional Commit checkpoint is created for this
+      reviewed, validated AURA-0109 slice; no push is performed.
+  failed:
+    - >-
+      The repository-wide changed-path validator sees unrelated dirty
+      AURA-0098 paths and the integrated AURA-0104 manifest/evaluation paths;
+      its exact unfiltered run is therefore blocked by shared-worktree scope.
+      Explicit validation of the 18 staged AURA-0109 paths passed.
+    - >-
+      The focused regression command reported 108 passed and 10 skipped with
+      one unrelated AURA-0104 migration-version failure: the test expects
+      migration 14 but HEAD and the dirty shared tree contain migration 15.
+    - >-
+      The full Observatory suite reported 1292 passed and 43 skipped with six
+      failures outside AURA-0109: four migration-0015 baseline assertions and
+      two AURA-0098 full-stack runner-shape assertions. These are preserved
+      and routed to their existing owners.
+    - >-
+      The unchanged full-stack harness browser phase failed only the dirty
+      AURA-0098 overflowSafe privacy assertion; its target-run visibility and
+      post-browser observability diagnostics passed, and no AURA-0109 failure
+      was identified.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation, acceptance, and governance files. They were not staged,
+    modified, or claimed as AURA-0109.
+  - >-
+    The full Observatory suite retains the known AURA-0104 migration baseline
+    failures and AURA-0098 runner-shape/privacy failures until those owners
+    complete their work; this integration does not weaken or update those
+    baselines.

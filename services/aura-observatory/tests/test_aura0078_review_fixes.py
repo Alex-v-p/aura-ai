@@ -324,8 +324,15 @@ async def test_clickhouse_deduplication_token_is_stable_across_concurrent_retrie
     assert outcomes.count(InsertOutcome.ACCEPTED) == 1
     assert outcomes.count(InsertOutcome.DUPLICATE) == 1
     assert len(requests) == 1
-    assert requests[0]["params"]["insert_deduplicate"] == "1"
-    assert requests[0]["params"]["insert_deduplication_token"] == observation.observation_id
+    statement = requests[0]["content"].split("\n", 1)[0]
+    assert requests[0]["params"] == {"database": "aura_observatory"}
+    assert "X-ClickHouse-Settings-insert_deduplication_token" not in requests[0].get(
+        "headers", {}
+    )
+    assert statement == (
+        "INSERT INTO observations SETTINGS insert_deduplicate=1, "
+        f"insert_deduplication_token='{observation.observation_id}' FORMAT JSONEachRow"
+    )
 
 
 @pytest.mark.asyncio
@@ -534,7 +541,8 @@ async def test_clickhouse_response_loss_recovers_without_second_visible_row(
         async def post(self, _endpoint: str, **kwargs: Any) -> FakeResponse:
             nonlocal fail_first
             requests.append(kwargs)
-            token = kwargs["params"]["insert_deduplication_token"]
+            statement = kwargs["content"].split("\n", 1)[0]
+            token = statement.split("insert_deduplication_token='", 1)[1].split("'", 1)[0]
             visible_tokens.add(token)
             if fail_first:
                 fail_first = False

@@ -6,17 +6,21 @@ the repository port remains the only interface visible to the ingest use case.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any, cast
 
 import httpx
 
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.ports import (
+    BatchClaim,
+    BatchObservationIdRegistry,
     ClaimOutcome,
     InsertOutcome,
     ObservationIdRegistry,
@@ -33,6 +37,44 @@ _CLICKHOUSE_ERROR_CLASSES = (
 )
 
 
+def _record_storage_span(
+    metrics: Any | None,
+    *,
+    duration_ms: float,
+    outcome: str,
+    error_code: str | None = None,
+) -> None:
+    if metrics is None:
+        return
+    record_span = getattr(metrics, "record_component_span", None)
+    if not callable(record_span):
+        return
+    try:
+        record_span(
+            component_id="aura.observatory.telemetry_storage",
+            component_version="1.0.0",
+            deployment_id=metrics.deployment_id,
+            operation="write",
+            duration_ms=duration_ms,
+            outcome=outcome,
+            dependency="clickhouse",
+            error_code=error_code,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return
+
+
+def _storage_error_code(error: BaseException) -> str:
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if error.__class__.__name__ == "CancelledError":
+        # Cancellation is represented by the existing finite provider failure
+        # class; the metadata span contract intentionally has no cancellation
+        # label and must not be expanded by this work item.
+        return "transport_unavailable"
+    return "transport_unavailable"
+
+
 class ClickHouseObservationStore:
     def __init__(
         self,
@@ -42,12 +84,153 @@ class ClickHouseObservationStore:
         user: str = "default",
         password: str = "",
         id_registry: ObservationIdRegistry,
+        max_concurrency: int = 8,
+        metrics: Any | None = None,
     ) -> None:
+        if not 1 <= max_concurrency <= 32:
+            raise ValueError("ClickHouse ingest concurrency is out of bounds")
         self.endpoint = endpoint.rstrip("/")
         self.database = database
         self.user = user
         self.password = password
         self.id_registry = id_registry
+        self.max_concurrency = max_concurrency
+        self.metrics = metrics
+
+    async def insert_observations(
+        self, observations: Sequence[MetadataObservation]
+    ) -> dict[str, InsertOutcome]:
+        """Write one bounded batch with one client and bounded concurrency.
+
+        PostgreSQL claims, immutable sequences, and pending receipts are
+        established before this method performs any external I/O.  Failed or
+        ambiguous provider calls remain pending for redelivery/reconciliation;
+        only confirmed successes are settled and made visible.
+        """
+
+        if not observations:
+            return {}
+        if len(observations) > 5000:
+            raise ValueError("ClickHouse ingest batch is out of bounds")
+        claim_batch = getattr(self.id_registry, "claim_batch", None)
+        if not callable(claim_batch):
+            result: dict[str, InsertOutcome] = {}
+            for observation in observations:
+                result[observation.observation_id] = await self.insert_observation(observation)
+            return result
+        batch_registry = cast(BatchObservationIdRegistry, self.id_registry)
+        claims = await cast(
+            Callable[[Sequence[tuple[str, datetime]]], Awaitable[Sequence[BatchClaim]]],
+            batch_registry.claim_batch,
+        )(
+            [(observation.observation_id, observation.observed_at) for observation in observations]
+        )
+        by_id = {claim.observation_id: claim for claim in claims}
+        result = {
+            observation.observation_id: (
+                InsertOutcome.DUPLICATE
+                if by_id[observation.observation_id].outcome is ClaimOutcome.DUPLICATE
+                else InsertOutcome.RETRYABLE
+                if by_id[observation.observation_id].outcome is ClaimOutcome.PENDING
+                else InsertOutcome.RETRYABLE
+            )
+            for observation in observations
+        }
+        acquired = [
+            observation
+            for observation in observations
+            if by_id[observation.observation_id].outcome is ClaimOutcome.ACQUIRED
+            and by_id[observation.observation_id].ingest_sequence is not None
+        ]
+        if not acquired:
+            await cast(BatchObservationIdRegistry, self.id_registry).abort_batch([])
+            return result
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def write_one(observation: MetadataObservation) -> tuple[str, bool]:
+            claim = by_id[observation.observation_id]
+            sequence = claim.ingest_sequence
+            if sequence is None:
+                return observation.observation_id, False
+            async with semaphore:
+                try:
+                    await self._insert_with_client(client, observation, sequence)
+                except Exception:
+                    return observation.observation_id, False
+            return observation.observation_id, True
+
+        successful: list[tuple[str, int]] = []
+        started = perf_counter()
+        provider_span_recorded = False
+        try:
+            async with httpx.AsyncClient() as client:
+                outcomes: list[tuple[str, bool]] = []
+                for offset in range(0, len(acquired), self.max_concurrency):
+                    wave = acquired[offset : offset + self.max_concurrency]
+                    outcomes.extend(await asyncio.gather(*(write_one(item) for item in wave)))
+            for observation_id, success in outcomes:
+                sequence = by_id[observation_id].ingest_sequence
+                if success and sequence is not None:
+                    successful.append((observation_id, sequence))
+                    result[observation_id] = InsertOutcome.ACCEPTED
+            provider_partial = len(successful) < len(acquired)
+            _record_storage_span(
+                self.metrics,
+                duration_ms=(perf_counter() - started) * 1000.0,
+                outcome="partial" if provider_partial else "complete",
+                error_code="transport_unavailable" if provider_partial else None,
+            )
+            provider_span_recorded = True
+            if successful:
+                await cast(BatchObservationIdRegistry, self.id_registry).settle_batch(successful)
+            else:
+                await cast(BatchObservationIdRegistry, self.id_registry).abort_batch(
+                    [item.observation_id for item in acquired]
+                )
+        except BaseException as exc:
+            if not provider_span_recorded:
+                _record_storage_span(
+                    self.metrics,
+                    duration_ms=(perf_counter() - started) * 1000.0,
+                    outcome="failure",
+                    error_code=_storage_error_code(exc),
+                )
+            await cast(BatchObservationIdRegistry, self.id_registry).abort_batch(
+                [item.observation_id for item in acquired]
+            )
+            raise
+        return result
+
+    async def _insert_with_client(
+        self, client: httpx.AsyncClient, observation: MetadataObservation, sequence: int
+    ) -> None:
+        payload = observation.to_payload()
+        insert = (
+            "INSERT INTO observations SETTINGS "
+            "insert_deduplicate=1, "
+            f"insert_deduplication_token={_sql_literal(observation.observation_id)} "
+            "FORMAT JSONEachRow\n"
+            + json.dumps(clickhouse_row(payload, ingest_sequence=sequence), separators=(",", ":"))
+        )
+        inserted = await client.post(
+            self.endpoint,
+            params={
+                "database": self.database,
+            },
+            auth=(self.user, self.password),
+            content=insert,
+        )
+        try:
+            inserted.raise_for_status()
+        except httpx.HTTPStatusError:
+            code, message = _clickhouse_error_details(inserted)
+            _LOGGER.error(
+                "ClickHouse observation insert failed status=%s code=%s message=%s",
+                inserted.status_code,
+                code,
+                message,
+            )
+            raise
 
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome:
         claim = await self.id_registry.claim(observation.observation_id)
@@ -66,16 +249,18 @@ class ClickHouseObservationStore:
             # point reuses that same sequence on retry.
             await self.id_registry.commit_ingest_boundary(observation.observation_id)
             async with httpx.AsyncClient() as client:
-                insert = "INSERT INTO observations FORMAT JSONEachRow\n" + json.dumps(
-                    clickhouse_row(payload, ingest_sequence=sequence), separators=(",", ":")
+                insert = (
+                    "INSERT INTO observations SETTINGS "
+                    "insert_deduplicate=1, "
+                    f"insert_deduplication_token={_sql_literal(observation.observation_id)} "
+                    "FORMAT JSONEachRow\n"
+                    + json.dumps(
+                        clickhouse_row(payload, ingest_sequence=sequence), separators=(",", ":")
+                    )
                 )
                 inserted = await client.post(
                     self.endpoint,
-                    params={
-                        "database": self.database,
-                        "insert_deduplicate": "1",
-                        "insert_deduplication_token": observation.observation_id,
-                    },
+                    params={"database": self.database},
                     auth=(self.user, self.password),
                     content=insert,
                 )

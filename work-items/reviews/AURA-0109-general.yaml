@@ -1,0 +1,65 @@
+agent: general_reviewer
+work_item: AURA-0109
+verdict: PASS
+checked:
+  - >-
+    Re-read the final AURA-0109 implementation and test handoffs, active work
+    item, actual diff, production composition, and focused tests while
+    separating overlapping AURA-0098 and AURA-0104 shared-tree edits.
+  - >-
+    Verified the prior serial-PostgreSQL finding remains resolved: catalogue
+    projection, receipt insertion, stale-claim classification, sequence
+    allocation, receipt settlement, visibility marking, and watermark advance
+    use bounded set-oriented operations under the existing advisory-lock and
+    transaction semantics.
+  - >-
+    Verified the prior catalogue blocker is resolved. Deployment role sets are
+    serialized as bounded JSON and decoded with jsonb_to_recordset, preserving
+    independently sized role arrays; production PostgreSQL acceptance executes
+    the projection twice and confirms exact idempotent component, deployment,
+    and role associations.
+  - >-
+    Verified ClickHouse creates only fixed-size waves up to the configured
+    5,000-observation maximum, reuses one client, embeds each validated opaque
+    identifier in provider-supported INSERT SETTINGS rather than URL/header
+    metadata, and retains the immutable sequence and deduplication token across
+    ambiguous response-loss redelivery.
+  - >-
+    Verified partial provider failures settle only confirmed successes, failed
+    or cancelled writes remain pending, claim and settlement cancellation roll
+    back before advisory unlock, restart/stale-lease recovery reuses sequences,
+    and retention cannot cross the active ingest guard.
+  - >-
+    Verified catalogue, PostgreSQL admission, ClickHouse write, and PostgreSQL
+    settlement produce four correlated metadata-only phase spans with distinct
+    component/operation/dependency identities, finite outcomes and error codes,
+    and no duplicate catalogue-adapter span.
+  - >-
+    Inspected the five live PostgreSQL 17 and ClickHouse 25.8 acceptance cases:
+    claim/settle/abort/restart recovery, unequal deployment-role catalogue
+    projection, complete 128-observation TelemetryIngestService admission,
+    direct contiguous watermark and zero-lag verification, and response-loss
+    redelivery all passed in 6.24 seconds. The complete service case produced
+    128 accepted observations, 128 completed receipts, 128 unique ClickHouse
+    rows, zero storage failures, and committed watermark 128 inside 90 seconds.
+  - >-
+    Re-ran the focused AURA-0109 and AURA-0078 review suites: 61 passed and 5
+    environment-gated live tests skipped without their explicit service URLs.
+    Ruff passed for the reviewed implementation/test surfaces and Pyright
+    passed for the Observatory.
+  - >-
+    Re-ran work-item, repository-shape, module-registry, import-boundary,
+    service-isolation, contract-change, observability, baseline-protection, and
+    diff-whitespace checks; all applicable checks passed.
+findings: []
+risks:
+  - >-
+    The unchanged AURA-0098 composed full-stack harness remains an integration
+    check; AURA-0109's independent live production acceptance now covers the
+    throughput, persistence, idempotency, restart, and catalogue behaviors
+    assigned to this item.
+  - >-
+    The shared checkout contains unrelated AURA-0098 changes and the known
+    AURA-0104 migration-version assertion mismatch; focused integration must
+    preserve and attribute those separately.
+unresolved: []

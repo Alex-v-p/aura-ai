@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import secrets
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -402,6 +402,13 @@ class TelemetryIngestService:
         return duration_ms
 
     async def ingest(self, payload: Any, *, credential: str | None) -> dict[str, int | float]:
+        trace_context = getattr(self.metrics, "trace_context", None) if self.metrics else None
+        if callable(trace_context):
+            with cast(Any, trace_context)():
+                return await self._ingest(payload, credential=credential)
+        return await self._ingest(payload, credential=credential)
+
+    async def _ingest(self, payload: Any, *, credential: str | None) -> dict[str, int | float]:
         started = monotonic()
         self.authenticate(credential)
         try:
@@ -411,80 +418,158 @@ class TelemetryIngestService:
             raise
 
         accepted = rejected = duplicates = malformed = storage_failures = 0
+        rejection_reasons: dict[str, int] = {}
+        observations: list[MetadataObservation] = []
         for record in records:
             try:
                 observation = MetadataObservation.from_payload(record)
             except ValidationError:
                 rejected += 1
-                self.health.rejection("schema_validation")
-                await _safe_health_call(self.health_port.record_rejection("schema_validation"))
+                rejection_reasons["schema_validation"] = (
+                    rejection_reasons.get("schema_validation", 0) + 1
+                )
                 continue
             except (TypeError, ValueError):
                 malformed += 1
-                self.health.rejection("malformed")
-                await _safe_health_call(self.health_port.record_rejection("malformed"))
+                rejection_reasons["malformed"] = rejection_reasons.get("malformed", 0) + 1
                 continue
-            observed_at = observation.observed_at.astimezone(UTC)
-            try:
-                await self.catalog.record_component(
-                    observation.component.id, observation.component.version
+            observations.append(observation)
+
+        # Parse the complete bounded request before any catalogue, receipt, or
+        # provider write.  Repeated identifiers are classified once here so a
+        # batch claim cannot accidentally allocate two sequences for one item.
+        unique_observations: list[MetadataObservation] = []
+        seen_ids: set[str] = set()
+        for observation in observations:
+            if observation.observation_id in seen_ids:
+                duplicates += 1
+                continue
+            seen_ids.add(observation.observation_id)
+            unique_observations.append(observation)
+
+        for reason, amount in rejection_reasons.items():
+            self.health.rejection(reason, amount)
+            await _safe_health_call(self.health_port.record_rejection(reason, amount))
+
+        storage_observations: list[MetadataObservation] = []
+        # Catalogue writes remain idempotent and are deliberately completed
+        # before receipt admission.  They are bounded by the already bounded
+        # request and never receive raw payload content.
+        batch_catalog = getattr(self.catalog, "record_ingest_batch", None)
+        if callable(batch_catalog):
+            components = sorted(
+                {(item.component.id, item.component.version) for item in unique_observations}
+            )
+            deployment_roles: dict[tuple[str, str, str, str], set[str]] = {}
+            for item in unique_observations:
+                deployment = item.deployment
+                key = (
+                    deployment.deployment_id,
+                    deployment.git_commit,
+                    deployment.environment,
+                    deployment.host_id,
                 )
+                deployment_roles.setdefault(key, set()).add(item.service_role)
+            deployments = [
+                (*key, tuple(sorted(roles))) for key, roles in sorted(deployment_roles.items())
+            ]
+            catalog_started = perf_counter()
+            try:
+                await cast(Any, batch_catalog)(components, deployments)
             except Exception:
-                storage_failures += 1
-                self.health.storage_failure()
-                await _safe_health_call(self.health_port.record_storage_failure())
-                continue
-            try:
-                await self.catalog.record_deployment(
-                    observation.deployment.deployment_id,
-                    observation.deployment.git_commit,
-                    observation.deployment.environment,
-                    observation.deployment.host_id,
-                )
-                record_role = getattr(self.catalog, "record_deployment_role", None)
-                if record_role is not None:
-                    await record_role(
+                storage_failures += len(unique_observations)
+            else:
+                storage_observations = unique_observations
+            self._record_ingest_span(
+                duration_ms=(perf_counter() - catalog_started) * 1000.0,
+                outcome="failure" if storage_failures else "complete",
+                dependency="postgresql",
+                error_code="database_failure" if storage_failures else None,
+            )
+        else:
+            for observation in unique_observations:
+                try:
+                    await self.catalog.record_component(
+                        observation.component.id, observation.component.version
+                    )
+                except Exception:
+                    storage_failures += 1
+                    continue
+                try:
+                    await self.catalog.record_deployment(
                         observation.deployment.deployment_id,
                         observation.deployment.git_commit,
                         observation.deployment.environment,
                         observation.deployment.host_id,
-                        observation.service_role,
                     )
-            except Exception:
-                storage_failures += 1
-                self.health.storage_failure()
-                await _safe_health_call(self.health_port.record_storage_failure())
-                continue
-            storage_started = perf_counter()
+                    record_role = getattr(self.catalog, "record_deployment_role", None)
+                    if record_role is not None:
+                        await record_role(
+                            observation.deployment.deployment_id,
+                            observation.deployment.git_commit,
+                            observation.deployment.environment,
+                            observation.deployment.host_id,
+                            observation.service_role,
+                        )
+                except Exception:
+                    storage_failures += 1
+                    continue
+                storage_observations.append(observation)
+
+        storage_started = perf_counter()
+        batch_insert = getattr(self.observation_store, "insert_observations", None)
+        outcomes: Mapping[str, InsertOutcome] = {}
+        if storage_observations:
             try:
-                outcome = await self.observation_store.insert_observation(observation)
+                if callable(batch_insert):
+                    outcomes = cast(
+                        Mapping[str, InsertOutcome],
+                        await cast(
+                            Callable[[list[MetadataObservation]], Awaitable[object]], batch_insert
+                        )(storage_observations),
+                    )
+                else:
+                    outcomes = {
+                        observation.observation_id: await self.observation_store.insert_observation(
+                            observation
+                        )
+                        for observation in storage_observations
+                    }
             except Exception:
-                self.health.storage_latency.add((perf_counter() - storage_started) * 1000.0)
-                duration = (perf_counter() - storage_started) * 1000.0
-                self.health.storage_failure()
-                if self.metrics is not None:
-                    self.metrics.record("observatory_ingest_storage_duration_ms", duration)
-                await _safe_health_call(self.health_port.record_latency("storage", duration))
-                await _safe_health_call(self.health_port.record_storage_failure())
-                storage_failures += 1
-                continue
-            storage_duration = (perf_counter() - storage_started) * 1000.0
+                outcomes = {
+                    observation.observation_id: InsertOutcome.RETRYABLE
+                    for observation in storage_observations
+                }
+        storage_duration = (perf_counter() - storage_started) * 1000.0
+        if storage_observations:
             self.health.storage_latency.add(storage_duration)
             if self.metrics is not None:
                 self.metrics.record("observatory_ingest_storage_duration_ms", storage_duration)
             await _safe_health_call(self.health_port.record_latency("storage", storage_duration))
+        accepted_times: list[datetime] = []
+        for observation in storage_observations:
+            outcome = outcomes.get(observation.observation_id, InsertOutcome.RETRYABLE)
             if outcome is InsertOutcome.DUPLICATE:
                 duplicates += 1
-                self.health.duplicate()
-                await _safe_health_call(self.health_port.record_duplicate())
             elif outcome is InsertOutcome.RETRYABLE:
                 storage_failures += 1
-                self.health.storage_failure()
-                await _safe_health_call(self.health_port.record_storage_failure())
             else:
                 accepted += 1
-                self.health.accepted(observed_at)
-                await _safe_health_call(self.health_port.record_accepted_observation(observed_at))
+                accepted_times.append(observation.observed_at.astimezone(UTC))
+
+        if accepted_times:
+            accepted_at = max(accepted_times)
+            self.health.accepted(accepted_at)
+            await _safe_health_call(
+                self.health_port.record_accepted_observation(accepted_at, len(accepted_times))
+            )
+        if duplicates:
+            for _ in range(duplicates):
+                self.health.duplicate()
+            await _safe_health_call(self.health_port.record_duplicate(duplicates))
+        if storage_failures:
+            self.health.storage_failure(storage_failures)
+            await _safe_health_call(self.health_port.record_storage_failure(storage_failures))
 
         catalog_failures = 0
         for name, amount in (
@@ -554,6 +639,33 @@ class TelemetryIngestService:
         if isinstance(persisted, dict) and persisted:
             return cast(dict[str, object], persisted)
         return local
+
+    def _record_ingest_span(
+        self,
+        *,
+        duration_ms: float,
+        outcome: str,
+        dependency: str,
+        error_code: str | None = None,
+    ) -> None:
+        if self.metrics is None:
+            return
+        record_span = getattr(self.metrics, "record_component_span", None)
+        if not callable(record_span):
+            return
+        try:
+            record_span(
+                component_id="aura.observatory.telemetry_ingestion",
+                component_version="1.0.0",
+                deployment_id=self.metrics.deployment_id,
+                operation="write",
+                duration_ms=duration_ms,
+                outcome=outcome,
+                dependency=dependency,
+                error_code=error_code,
+            )
+        except (AttributeError, TypeError, ValueError):
+            return
 
 
 async def _safe_health_call(operation: Awaitable[object]) -> None:

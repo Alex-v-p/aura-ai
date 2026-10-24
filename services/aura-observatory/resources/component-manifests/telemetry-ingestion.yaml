@@ -164,6 +164,7 @@ evaluators:
   - observatory_self_monitoring
   - observatory_ingest_crash_window_recovery
   - observatory_snapshot_visibility_consistency
+  - observatory_ingest_bounded_concurrency
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

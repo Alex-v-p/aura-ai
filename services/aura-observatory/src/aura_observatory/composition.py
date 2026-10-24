@@ -432,10 +432,14 @@ def build_ingest_runtime(
 ) -> tuple[TelemetryIngestService, IngestReconciliationService]:
     """Compose ingest and its bounded crash-window recovery companion."""
 
-    catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
+    metrics = _production_metrics(settings)
+    catalog = PostgresCatalog(
+        lambda: postgres_connection(settings.database_url), metrics=metrics
+    )
     id_registry = PostgresObservationIdRegistry(
         lambda: postgres_connection(settings.database_url),
         lease_seconds=settings.observation_claim_lease_seconds,
+        metrics=metrics,
     )
     observations = ClickHouseObservationStore(
         settings.clickhouse_url,
@@ -443,8 +447,9 @@ def build_ingest_runtime(
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
         id_registry=id_registry,
+        max_concurrency=settings.ingest_clickhouse_concurrency,
+        metrics=metrics,
     )
-    metrics = _production_metrics(settings)
     service = TelemetryIngestService(
         observations,
         catalog,

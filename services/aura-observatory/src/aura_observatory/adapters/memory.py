@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 
 from aura_observatory.contract import MetadataObservation
 from aura_observatory.metrics import IngestHealth, ObservatoryMetrics, bounded_lag_ms
-from aura_observatory.ports import ClaimOutcome, DeletionResult, InsertOutcome
+from aura_observatory.ports import BatchClaim, ClaimOutcome, DeletionResult, InsertOutcome
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -66,6 +66,14 @@ class MemoryObservationStore:
         self.observations[observation.observation_id] = observation
         return InsertOutcome.ACCEPTED
 
+    async def insert_observations(
+        self, observations: Sequence[MetadataObservation]
+    ) -> dict[str, InsertOutcome]:
+        result: dict[str, InsertOutcome] = {}
+        for observation in observations:
+            result[observation.observation_id] = await self.insert_observation(observation)
+        return result
+
 
 class MemoryObservationIdRegistry:
     def __init__(
@@ -117,6 +125,42 @@ class MemoryObservationIdRegistry:
 
     async def abort(self, observation_id: str) -> None:
         del observation_id
+
+    async def claim_batch(
+        self, observations: Sequence[tuple[str, datetime]]
+    ) -> list[BatchClaim]:
+        if not 1 <= len(observations) <= 5000:
+            raise ValueError("ingest claim batch is out of bounds")
+        if len({item[0] for item in observations}) != len(observations):
+            raise ValueError("duplicate identifiers")
+        claims: list[BatchClaim] = []
+        async with self._lock:
+            now = self._clock()
+            for observation_id, _observed_at in observations:
+                if observation_id in self._completed:
+                    claims.append(BatchClaim(observation_id, ClaimOutcome.DUPLICATE))
+                    continue
+                claimed_at = self._pending.get(observation_id)
+                if claimed_at is not None and now - claimed_at < self._lease_seconds:
+                    claims.append(BatchClaim(observation_id, ClaimOutcome.PENDING))
+                    continue
+                self._pending[observation_id] = now
+                sequence = self._sequences.get(observation_id)
+                if sequence is None:
+                    self._next_sequence += 1
+                    sequence = self._next_sequence
+                    self._sequences[observation_id] = sequence
+                claims.append(BatchClaim(observation_id, ClaimOutcome.ACQUIRED, sequence))
+        return claims
+
+    async def settle_batch(self, successful: Sequence[tuple[str, int]]) -> None:
+        async with self._lock:
+            for observation_id, _sequence in successful:
+                self._pending.pop(observation_id, None)
+                self._completed.add(observation_id)
+
+    async def abort_batch(self, observation_ids: Sequence[str]) -> None:
+        del observation_ids
 
 
 class MemoryCatalog:

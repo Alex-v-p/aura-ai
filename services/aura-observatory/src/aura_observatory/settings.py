@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     ingest_reconciliation_timeout_seconds: float = Field(default=5.0, gt=0, le=30.0)
     ingest_reconciliation_pass_timeout_seconds: float = Field(default=15.0, gt=0, le=60.0)
     ingest_max_batch_size: int = Field(default=500, ge=1, le=5000)
+    ingest_clickhouse_concurrency: int = Field(default=8, ge=1, le=32)
     ingest_max_payload_bytes: int = Field(default=1_000_000, ge=1024, le=10_000_000)
     # Evaluation artifacts are a separate, least-privilege Garage boundary.
     # These values are deliberately worker-only settings; the API composition

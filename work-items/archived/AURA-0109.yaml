@@ -1,0 +1,188 @@
+id: AURA-0109
+title: Bound Observatory telemetry ingest throughput
+status: integrated
+change_class: bugfix
+intent: >
+  Remove the serial per-observation PostgreSQL and ClickHouse critical path
+  from Observatory metadata ingestion so a bounded Collector batch converges
+  to the committed visibility watermark inside the existing AURA-0098
+  acceptance window without weakening idempotency, recovery, retention, or
+  Core and Observatory isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0078.yaml
+    - work-items/archived/AURA-0080.yaml
+    - work-items/archived/AURA-0108.yaml
+    - PostgreSQL remains the Observatory-owned receipt sequence visibility and contiguous-watermark authority; ClickHouse remains the high-cardinality observation store.
+    - The existing Observatory ingest use case validates the complete bounded request before storage, then claims valid observations and allocates immutable ingest sequences in one bounded PostgreSQL critical section under the existing service advisory lock.
+    - A claimed batch crosses its durable PostgreSQL boundary before external ClickHouse I/O. The existing advisory-lock and retention ordering remains authoritative through final batch settlement or cancellation cleanup.
+    - ClickHouse writes may run concurrently only through a configured bounded worker set. Each observation remains an independent JSONEachRow insert with its stable observation identifier as the deduplication token and its immutable ingest sequence.
+    - Successful observations are settled together without skipping a failed or pending visibility slot. Ambiguous failed or cancelled writes remain pending and retain their immutable sequence for ordinary lease redelivery or AURA-0108 reconciliation.
+    - Health and catalogue counters are aggregated by finite outcome for the batch. Per-observation database health writes and unbounded task queues are prohibited.
+    - The existing telemetry-ingestion and telemetry-storage component manifests may add only the observatory_ingest_bounded_concurrency evaluator declaration required by this item. Their metric catalogues capture policy retention dependencies and other evaluators remain unchanged.
+    - Existing PostgreSQL columns locks and receipts are sufficient. No migration public contract new service transport or dependency is authorized; evidence requiring one returns to planning.
+    - AURA-0098 retains ownership of the composed full-stack harness and its existing visibility deadline. This item may execute but must not edit that harness.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v2/metadata-observation.schema.json
+feature_references:
+  - OBS-005
+  - OBS-006
+  - OBS-010
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - services.aura-observatory.telemetry-ingestion
+  - services.aura-observatory.telemetry-storage
+  - evaluation.observatory-ingest-throughput
+  - delivery.aura0109
+allowed_paths:
+  - work-items/active/AURA-0109.yaml
+  - work-items/archived/AURA-0109.yaml
+  - work-items/handoffs/AURA-0109-*.yaml
+  - work-items/reviews/AURA-0109-*.yaml
+  - work-items/integration/AURA-0109.yaml
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/test_aura0078_ingestion.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0092_metrics.py
+  - services/aura-observatory/tests/test_aura0094_clickhouse_integration.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0094_worker.py
+  - services/aura-observatory/tests/test_aura0108_reconciliation.py
+  - services/aura-observatory/tests/test_aura0109_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - observatory-v1
+    - telemetry-v2
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: telemetry.ingestion
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - telemetry_ingest_accepted_count
+    - telemetry_ingest_rejected_count
+    - telemetry_ingest_duplicate_count
+    - telemetry_ingest_storage_failure_count
+    - telemetry_ingest_duration_ms
+    - observatory_ingest_storage_duration_ms
+    - observatory_ingest_visibility_lag_count
+    - observatory_ingest_backlog_count
+  required_evaluators:
+    - telemetry_ingestion_idempotency
+    - observatory_ingest_crash_window_recovery
+    - observatory_snapshot_visibility_consistency
+    - observatory_ingest_bounded_concurrency
+    - observatory_service_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Batch validation claims settlement health and performance evidence retain only already-authorized metadata observations opaque identifiers immutable sequences finite outcomes counts and bounded durations.
+    - Concurrency must not copy payloads into logs metrics traces exception text task names URLs browser state or persistent retry queues.
+    - Duplicate identifiers within one request concurrent request races stale-lease redelivery and response-loss retries must retain one immutable sequence and one stable ClickHouse deduplication token per observation.
+    - The existing advisory lock continues to serialize ingest with authorized retention so cancellation failure and late completion cannot resurrect deleted receipts or visibility state.
+    - PostgreSQL ClickHouse or health-provider failure remains confined to Observatory and cannot add a Core dependency change producer behavior or cross-product communication.
+  data_classes:
+    - operational_metadata
+    - opaque_observation_identifiers
+    - ingest_sequence_metadata
+    - content_free_health_metrics
+required_agents:
+  implementation:
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - TelemetryIngestService authenticates and validates the complete bounded payload before any catalogue receipt or ClickHouse write while preserving the existing mixed-batch per-record rejected malformed and valid outcome semantics.
+  - Production ingestion claims all valid unique observations in one bounded PostgreSQL transaction under the existing advisory lock classifying acquired duplicate and already-pending identifiers deterministically including repeated identifiers inside one request.
+  - Every acquired observation receives one immutable ingest sequence and durable pending receipt before ClickHouse I/O; retry restart and stale-lease reclaim reuse both that sequence and the stable observation-identifier deduplication token.
+  - ClickHouse writes use a shared bounded client lifetime and at most the configured validated concurrency. No unbounded asyncio task set in-memory retry queue batch-wide deduplication token or multi-observation failure domain is introduced.
+  - After bounded concurrent writes the PostgreSQL batch settlement atomically completes only successful receipts marks only their sequences visible and advances the committed watermark solely through contiguous visible slots.
+  - A ClickHouse transport error timeout ambiguous response cancellation or process interruption leaves affected receipts pending without sequence replacement or false visibility so ordinary redelivery and AURA-0108 reconciliation remain authoritative.
+  - Concurrent ingest requests retention deletion reconciliation and stale-lease redelivery cannot double-complete observations skip or regress the watermark reuse a sequence classify a pending row as accepted or resurrect deleted state.
+  - Component and deployment catalogue projections remain correct and idempotent while accepted rejected duplicate malformed and storage-failure counters plus storage and batch durations are persisted in bounded aggregate operations rather than one health transaction per observation.
+  - Existing finite metric names labels traces and capture policy remain unchanged; batch diagnostics disclose no observation run trace deployment provider endpoint credential content or exception text.
+  - The telemetry-ingestion and telemetry-storage manifests declare observatory_ingest_bounded_concurrency as an evaluator while retaining exact metric equality and every existing evaluator capture retention dependency and cardinality declaration.
+  - Deterministic barrier-controlled acceptance proves more than one acquired observation executes concurrently never exceeds the configured bound and a maximum configured batch completes its external writes in no more than ceiling batch-size divided by concurrency release waves without weakening failure accounting.
+  - Production-adapter acceptance proves a 128-observation Collector-sized metadata batch reaches a contiguous committed watermark with zero visibility lag and no duplicate ClickHouse observation inside the unchanged 90-second AURA-0098 visibility window.
+  - Cancellation during claim ClickHouse write and settlement always releases the advisory lock and provider resources within a bound and leaves every unconfirmed item recoverable after worker or API restart.
+  - Existing metadata validation payload limits authentication OTLP mapping AURA-0108 reconciliation query visibility retention and service-isolation behavior remain compatible.
+  - No Core Aura Web Observatory frontend entrypoint public contract migration deploy file dependency protected baseline threshold service queue-capacity or Collector batch-size change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0109.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0109.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0109.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0109.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0109.yaml
+  - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_*.py
+  - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0094_postgres_integration.py services/aura-observatory/tests/test_aura0094_worker.py services/aura-observatory/tests/test_aura0108_reconciliation.py services/aura-observatory/tests/test_aura0109_*.py
+  - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src services/aura-observatory/tests/test_aura0109_*.py
+  - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory
+  - ./deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

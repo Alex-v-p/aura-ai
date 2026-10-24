@@ -109,6 +109,15 @@ class ClaimOutcome(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class BatchClaim:
+    """Content-free result of one bounded receipt-claim transaction."""
+
+    observation_id: str
+    outcome: ClaimOutcome
+    ingest_sequence: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PendingObservationReceipt:
     """Content-free receipt candidate eligible for visibility recovery."""
 
@@ -118,6 +127,12 @@ class PendingObservationReceipt:
 
 class ObservationStore(Protocol):
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome: ...
+
+
+class BatchObservationStore(Protocol):
+    async def insert_observations(
+        self, observations: Sequence[MetadataObservation]
+    ) -> Mapping[str, InsertOutcome]: ...
 
 
 class ObservationPresenceStore(Protocol):
@@ -197,6 +212,17 @@ class ObservationIdRegistry(Protocol):
     async def abort(self, observation_id: str) -> None: ...
 
 
+
+class BatchObservationIdRegistry(Protocol):
+    async def claim_batch(
+        self, observations: Sequence[tuple[str, datetime]]
+    ) -> Sequence[BatchClaim]: ...
+
+    async def settle_batch(self, successful: Sequence[tuple[str, int]]) -> None: ...
+
+    async def abort_batch(self, observation_ids: Sequence[str]) -> None: ...
+
+
 class ObservationReconciliationRegistry(Protocol):
     """Additional durable seam used only by the crash-window reconciler."""
 
@@ -223,6 +249,16 @@ class ObservatoryCatalog(Protocol):
     async def counters(self) -> Mapping[str, int]: ...
 
     async def last_ingest_at(self) -> datetime | None: ...
+
+
+class BatchObservatoryCatalog(Protocol):
+    """Bounded metadata projection for one validated ingest batch."""
+
+    async def record_ingest_batch(
+        self,
+        components: Sequence[tuple[str, str]],
+        deployments: Sequence[tuple[str, str, str, str, Sequence[str]]],
+    ) -> None: ...
 
 
 
@@ -781,6 +817,10 @@ class ObservatoryAnnotationReferencePort(Protocol):
 
 
 __all__ = [
+    "BatchClaim",
+    "BatchObservationIdRegistry",
+    "BatchObservationStore",
+    "BatchObservatoryCatalog",
     "ClaimOutcome",
     "DeletionResult",
     "InsertOutcome",

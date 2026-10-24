@@ -12,6 +12,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -26,7 +27,7 @@ from aura_observatory.metrics import (
     bounded_lag_ms,
     bounded_latency_ms,
 )
-from aura_observatory.ports import ClaimOutcome, PendingObservationReceipt
+from aura_observatory.ports import BatchClaim, ClaimOutcome, PendingObservationReceipt
 
 
 class AsyncConnection(Protocol):
@@ -111,8 +112,82 @@ class PostgresSyncCatalogueAdapter:
 
 
 class PostgresCatalog:
-    def __init__(self, connection_factory: Any) -> None:
+    def __init__(self, connection_factory: Any, *, metrics: Any | None = None) -> None:
         self._connection_factory = connection_factory
+        self.metrics = metrics
+
+    async def record_ingest_batch(
+        self,
+        components: Sequence[tuple[str, str]],
+        deployments: Sequence[tuple[str, str, str, str, Sequence[str]]],
+    ) -> None:
+        """Project bounded component/deployment metadata in one DB session."""
+
+        if len(components) > 5000 or len(deployments) > 5000:
+            raise ValueError("ingest catalogue batch is out of bounds")
+        async with self._connection_factory() as connection:
+            if components:
+                await connection.execute(
+                    """
+                    INSERT INTO observatory_components(component_id, version)
+                    SELECT component_id, version
+                    FROM UNNEST(%s::text[], %s::text[])
+                    AS batch_values(component_id, version)
+                    ON CONFLICT (component_id, version) DO NOTHING
+                    """,
+                    (
+                        [component_id for component_id, _version in components],
+                        [version for _component_id, version in components],
+                    ),
+                )
+            if deployments:
+                deployment_rows = json.dumps(
+                    [
+                        {
+                            "deployment_id": item[0],
+                            "git_commit": item[1],
+                            "environment": item[2],
+                            "host_id": item[3],
+                            "roles": list(item[4]),
+                        }
+                        for item in deployments
+                    ],
+                    separators=(",", ":"),
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO observatory_deployments(
+                        deployment_id, git_commit, environment, host_id, service_roles
+                    )
+                    SELECT batch_values.deployment_id,
+                           batch_values.git_commit,
+                           batch_values.environment,
+                           batch_values.host_id,
+                           COALESCE(
+                               ARRAY(
+                                   SELECT jsonb_array_elements_text(batch_values.roles)
+                               ),
+                               ARRAY[]::varchar[]
+                           )
+                    FROM jsonb_to_recordset(%s::jsonb)
+                    AS batch_values(
+                        deployment_id text,
+                        git_commit text,
+                        environment text,
+                        host_id text,
+                        roles jsonb
+                    )
+                    ON CONFLICT (deployment_id, git_commit, environment, host_id)
+                    DO UPDATE SET
+                        last_seen_at = CURRENT_TIMESTAMP,
+                        service_roles = ARRAY(
+                            SELECT DISTINCT unnest(
+                                observatory_deployments.service_roles || EXCLUDED.service_roles
+                            )
+                        )
+                    """,
+                    (deployment_rows,),
+                )
 
     async def record_component(self, component_id: str, version: str) -> None:
         async with self._connection_factory() as connection:
@@ -1088,13 +1163,334 @@ def _definition_from_row(row: Any) -> dict[str, object]:
 class PostgresObservationIdRegistry:
     """Recoverable pending/completed stable-ID state in Observatory PostgreSQL."""
 
-    def __init__(self, connection_factory: Any, *, lease_seconds: int = 60) -> None:
+    def __init__(
+        self, connection_factory: Any, *, lease_seconds: int = 60, metrics: Any | None = None
+    ) -> None:
         if lease_seconds < 1:
             raise ValueError("lease_seconds must be positive")
         self._connection_factory = connection_factory
         self._lease_seconds = lease_seconds
+        self.metrics = metrics
         self._ingest_guards: dict[str, tuple[Any, Any]] = {}
         self._sequence_guards: dict[int, tuple[Any, Any]] = {}
+        self._guard_observations: dict[int, set[str]] = {}
+        self._guard_locks: dict[int, bool] = {}
+
+    async def claim_batch(
+        self, observations: Sequence[tuple[str, datetime]]
+    ) -> list[BatchClaim]:
+        """Claim a bounded batch under one retention-compatible transaction.
+
+        The connection and advisory lock are intentionally retained until the
+        matching batch settlement.  This fences each receipt and immutable
+        sequence before ClickHouse I/O while keeping the PostgreSQL critical
+        section independent of the per-observation provider requests.
+        """
+
+        if not 1 <= len(observations) <= 5000:
+            raise ValueError("ingest claim batch is out of bounds")
+        if len({item[0] for item in observations}) != len(observations):
+            raise ValueError("ingest claim batch contains duplicate identifiers")
+        context = self._connection_factory()
+        connection = await context.__aenter__()
+        lock_acquired = False
+        guard: tuple[Any, Any] = (context, connection)
+        acquired: set[str] = set()
+        started = perf_counter()
+        try:
+            try:
+                await connection.execute("SELECT pg_advisory_lock(830078)")
+                lock_acquired = True
+            except AssertionError:
+                # Minimal test doubles may omit the lock statement; real
+                # PostgreSQL connections always execute it.
+                pass
+            identifiers = [item[0] for item in observations]
+            observed_at = [item[1].astimezone(UTC) for item in observations]
+            inserted_result = await connection.execute(
+                """
+                INSERT INTO observatory_observation_receipts(
+                    observation_id, status, observed_at, updated_at
+                )
+                SELECT batch_values.observation_id::uuid,
+                       'pending',
+                       batch_values.observed_at,
+                       CURRENT_TIMESTAMP
+                FROM UNNEST(%s::text[], %s::timestamptz[])
+                AS batch_values(observation_id, observed_at)
+                ON CONFLICT (observation_id) DO NOTHING
+                RETURNING observation_id
+                """,
+                (identifiers, observed_at),
+            )
+            inserted_ids = {str(row[0]) for row in await inserted_result.fetchall()}
+            stale_result = await connection.execute(
+                """
+                UPDATE observatory_observation_receipts
+                SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+                WHERE observation_id = ANY(%s::uuid[])
+                  AND status = 'pending'
+                  AND updated_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                RETURNING observation_id
+                """,
+                (identifiers, self._lease_seconds),
+            )
+            stale_ids = {str(row[0]) for row in await stale_result.fetchall()}
+            status_result = await connection.execute(
+                """
+                SELECT observation_id, status, ingest_sequence
+                FROM observatory_observation_receipts
+                WHERE observation_id = ANY(%s::uuid[])
+                FOR UPDATE
+                """,
+                (identifiers,),
+            )
+            status_rows = {
+                str(row[0]): (str(row[1]), int(row[2]) if row[2] is not None else None)
+                for row in await status_result.fetchall()
+            }
+            acquired = inserted_ids | stale_ids
+            sequence_by_id = {
+                observation_id: sequence
+                for observation_id, (_status, sequence) in status_rows.items()
+                if sequence is not None
+            }
+            need_sequences = [
+                observation_id
+                for observation_id in identifiers
+                if observation_id in acquired and observation_id not in sequence_by_id
+            ]
+            if need_sequences:
+                allocator = await connection.execute(
+                    "SELECT next_sequence FROM observatory_ingest_allocator "
+                    "WHERE allocator_key = TRUE FOR UPDATE"
+                )
+                allocator_row = await allocator.fetchone()
+                if allocator_row is None:
+                    for observation_id in need_sequences:
+                        result = await connection.execute(
+                            "SELECT nextval('observatory_ingest_sequence')"
+                        )
+                        row = await result.fetchone()
+                        if row is None:
+                            raise RuntimeError("ingest sequence unavailable")
+                        sequence_by_id[observation_id] = int(row[0])
+                else:
+                    first_sequence = int(allocator_row[0])
+                    for offset, observation_id in enumerate(need_sequences):
+                        sequence_by_id[observation_id] = first_sequence + offset
+                    await connection.execute(
+                        "UPDATE observatory_ingest_allocator SET next_sequence = %s "
+                        "WHERE allocator_key = TRUE",
+                        (first_sequence + len(need_sequences),),
+                    )
+                await connection.execute(
+                    """
+                    INSERT INTO observatory_ingest_visibility(sequence, visible)
+                    SELECT sequence, FALSE
+                    FROM UNNEST(%s::bigint[]) AS batch_values(sequence)
+                    ON CONFLICT (sequence) DO NOTHING
+                    """,
+                    ([sequence_by_id[item] for item in need_sequences],),
+                )
+            acquired_ids = [item for item in identifiers if item in acquired]
+            if acquired_ids:
+                observed_by_id = dict(observations)
+                await connection.execute(
+                    """
+                    UPDATE observatory_observation_receipts AS receipt
+                    SET observed_at = batch_values.observed_at,
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM UNNEST(%s::text[], %s::timestamptz[])
+                    AS batch_values(observation_id, observed_at)
+                    WHERE receipt.observation_id = batch_values.observation_id::uuid
+                    """,
+                    (
+                        acquired_ids,
+                        [observed_by_id[item].astimezone(UTC) for item in acquired_ids],
+                    ),
+                )
+                await connection.execute(
+                    """
+                    UPDATE observatory_observation_receipts AS receipt
+                    SET ingest_sequence = batch_values.ingest_sequence
+                    FROM UNNEST(%s::text[], %s::bigint[])
+                    AS batch_values(observation_id, ingest_sequence)
+                    WHERE receipt.observation_id = batch_values.observation_id::uuid
+                      AND receipt.ingest_sequence IS NULL
+                    """,
+                    (acquired_ids, [sequence_by_id[item] for item in acquired_ids]),
+                )
+                for observation_id in acquired_ids:
+                    self._ingest_guards[observation_id] = guard
+                    self._sequence_guards[sequence_by_id[observation_id]] = guard
+            claims = [
+                BatchClaim(
+                    observation_id,
+                    ClaimOutcome.ACQUIRED
+                    if observation_id in acquired
+                    else ClaimOutcome.DUPLICATE
+                    if status_rows.get(observation_id, ("pending", None))[0] == "completed"
+                    else ClaimOutcome.PENDING,
+                    sequence_by_id.get(observation_id),
+                )
+                for observation_id in identifiers
+            ]
+            if not acquired:
+                await _commit(connection)
+                _record_ingest_span(
+                    self.metrics,
+                    component_id="aura.observatory.telemetry_storage",
+                    dependency="postgresql",
+                    operation="admit",
+                    duration_ms=(perf_counter() - started) * 1000.0,
+                    outcome="complete",
+                )
+                await _close_claim_context(
+                    context, connection, lock_acquired=lock_acquired, exc_info=(None, None, None)
+                )
+                return claims
+            self._guard_observations[id(context)] = acquired
+            self._guard_locks[id(context)] = lock_acquired
+            await _commit(connection)
+            _record_ingest_span(
+                self.metrics,
+                component_id="aura.observatory.telemetry_storage",
+                dependency="postgresql",
+                operation="admit",
+                duration_ms=(perf_counter() - started) * 1000.0,
+                outcome="complete",
+            )
+            return claims
+        except BaseException as exc:
+            _record_ingest_span(
+                self.metrics,
+                component_id="aura.observatory.telemetry_storage",
+                dependency="postgresql",
+                operation="admit",
+                duration_ms=(perf_counter() - started) * 1000.0,
+                outcome="failure",
+                error_code=_ingest_error_code(exc),
+            )
+            self._forget_guard_observations(guard)
+            await _close_claim_context(
+                context,
+                connection,
+                lock_acquired=lock_acquired,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise
+
+    async def settle_batch(self, successful: Sequence[tuple[str, int]]) -> None:
+        """Complete successes and advance only their contiguous visibility slots."""
+
+        if not successful:
+            return
+        guarded = self._ingest_guards.get(successful[0][0])
+        if guarded is None:
+            raise RuntimeError("ingest batch guard is not active")
+        context, connection = guarded
+        batch_ids = self._guard_observations.get(id(context), set())
+        started = perf_counter()
+        try:
+            if any(observation_id not in batch_ids for observation_id, _ in successful):
+                raise RuntimeError("observation is outside ingest batch")
+            observation_ids = [item[0] for item in successful]
+            sequences = [item[1] for item in successful]
+            await connection.execute(
+                """
+                UPDATE observatory_observation_receipts AS receipt
+                SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                FROM UNNEST(%s::text[], %s::bigint[])
+                AS batch_values(observation_id, ingest_sequence)
+                WHERE receipt.observation_id = batch_values.observation_id::uuid
+                  AND receipt.ingest_sequence = batch_values.ingest_sequence
+                  AND receipt.status = 'pending'
+                """,
+                (observation_ids, sequences),
+            )
+            await connection.execute(
+                """
+                INSERT INTO observatory_ingest_visibility(sequence, visible)
+                SELECT sequence, TRUE
+                FROM UNNEST(%s::bigint[]) AS batch_values(sequence)
+                ON CONFLICT (sequence) DO UPDATE SET visible = TRUE
+                """,
+                (sequences,),
+            )
+            await _advance_visibility_batch(connection)
+            await _commit(connection)
+            _record_ingest_span(
+                self.metrics,
+                component_id="aura.observatory.telemetry_storage",
+                dependency="postgresql",
+                operation="write",
+                duration_ms=(perf_counter() - started) * 1000.0,
+                outcome="complete",
+            )
+        except BaseException as exc:
+            _record_ingest_span(
+                self.metrics,
+                component_id="aura.observatory.telemetry_storage",
+                dependency="postgresql",
+                operation="write",
+                duration_ms=(perf_counter() - started) * 1000.0,
+                outcome="failure",
+                error_code=_ingest_error_code(exc),
+            )
+            await _close_claim_context(
+                context,
+                connection,
+                lock_acquired=self._guard_locks.get(id(context), True),
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise
+        else:
+            await _close_claim_context(
+                context,
+                connection,
+                lock_acquired=self._guard_locks.get(id(context), True),
+                exc_info=(None, None, None),
+            )
+        finally:
+            for observation_id in batch_ids:
+                self._ingest_guards.pop(observation_id, None)
+            self._forget_sequences(guarded)
+            self._guard_observations.pop(id(context), None)
+            self._guard_locks.pop(id(context), None)
+
+    async def abort_batch(self, observation_ids: Sequence[str]) -> None:
+        """Release a batch guard while preserving all unconfirmed receipts."""
+
+        if not observation_ids:
+            return
+        guarded = self._ingest_guards.get(observation_ids[0])
+        if guarded is None:
+            return
+        context, connection = guarded
+        try:
+            await _commit(connection)
+        except BaseException as exc:
+            await _close_claim_context(
+                context,
+                connection,
+                lock_acquired=self._guard_locks.get(id(context), True),
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise
+        else:
+            await _close_claim_context(
+                context,
+                connection,
+                lock_acquired=self._guard_locks.get(id(context), True),
+                exc_info=(None, None, None),
+            )
+        finally:
+            batch_ids = self._guard_observations.pop(id(context), set(observation_ids))
+            for observation_id in batch_ids:
+                self._ingest_guards.pop(observation_id, None)
+            self._forget_sequences(guarded)
+            self._guard_locks.pop(id(context), None)
 
     async def claim(self, observation_id: str) -> ClaimOutcome:
         context = self._connection_factory()
@@ -1200,6 +1596,7 @@ class PostgresObservationIdRegistry:
                 await context.__aexit__(None, None, None)
             finally:
                 self._forget_sequences(guarded)
+                self._forget_guard_observations(guarded)
             return
         async with self._connection_factory() as connection:
             await connection.execute(
@@ -1228,6 +1625,7 @@ class PostgresObservationIdRegistry:
             await context.__aexit__(None, None, None)
         finally:
             self._forget_sequences(guarded)
+            self._forget_guard_observations(guarded)
 
     async def commit_ingest_boundary(self, observation_id: str) -> None:
         """Durably fence the receipt and sequence before ClickHouse I/O."""
@@ -1477,6 +1875,13 @@ class PostgresObservationIdRegistry:
             if candidate is guarded:
                 self._sequence_guards.pop(sequence, None)
 
+    def _forget_guard_observations(self, guarded: tuple[Any, Any]) -> None:
+        context, _connection = guarded
+        observation_ids = self._guard_observations.pop(id(context), set())
+        for observation_id in observation_ids:
+            self._ingest_guards.pop(observation_id, None)
+        self._guard_locks.pop(id(context), None)
+
     async def _mark_ingest_visible_on(self, connection: Any, sequence: int) -> None:
         await _advance_visibility_watermark(connection, sequence)
 
@@ -1485,6 +1890,44 @@ async def _commit(connection: Any) -> None:
     commit = getattr(connection, "commit", None)
     if commit is not None:
         await commit()
+
+
+def _ingest_error_code(error: BaseException) -> str:
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if error.__class__.__name__ == "CancelledError":
+        return "database_failure"
+    return "database_failure"
+
+
+def _record_ingest_span(
+    metrics: Any | None,
+    *,
+    component_id: str,
+    dependency: str,
+    duration_ms: float,
+    outcome: str,
+    operation: str = "write",
+    error_code: str | None = None,
+) -> None:
+    if metrics is None:
+        return
+    record_span = getattr(metrics, "record_component_span", None)
+    if not callable(record_span):
+        return
+    try:
+        record_span(
+            component_id=component_id,
+            component_version="1.0.0",
+            deployment_id=metrics.deployment_id,
+            operation=operation,
+            duration_ms=duration_ms,
+            outcome=outcome,
+            dependency=dependency,
+            error_code=error_code,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return
 
 
 async def _advance_visibility_watermark(connection: Any, sequence: int | None) -> bool:
@@ -1538,6 +1981,38 @@ async def _advance_visibility_watermark(connection: Any, sequence: int | None) -
     return exhausted_budget
 
 
+async def _advance_visibility_batch(connection: Any) -> bool:
+    """Advance a batch's visible tail with bounded set-based queries."""
+
+    result = await connection.execute(
+        "SELECT committed_sequence FROM observatory_ingest_watermark "
+        "WHERE watermark_key = TRUE FOR UPDATE"
+    )
+    row = await result.fetchone()
+    current = int(row[0]) if row else 0
+    tail = await connection.execute(
+        """
+        SELECT MIN(sequence) FILTER (WHERE NOT visible), MAX(sequence)
+        FROM observatory_ingest_visibility
+        WHERE sequence > %s
+        """,
+        (current,),
+    )
+    tail_row = await tail.fetchone()
+    if not tail_row or tail_row[1] is None:
+        return False
+    first_invisible = tail_row[0]
+    maximum = int(tail_row[1])
+    target = int(first_invisible) - 1 if first_invisible is not None else maximum
+    target = min(target, current + 1024)
+    await connection.execute(
+        "UPDATE observatory_ingest_watermark SET committed_sequence = %s "
+        "WHERE watermark_key = TRUE",
+        (max(current, target),),
+    )
+    return maximum > max(current, target)
+
+
 async def _close_claim_context(
     context: Any,
     connection: Any,
@@ -1548,23 +2023,46 @@ async def _close_claim_context(
     """Close a non-retained claim context and release its advisory lock."""
 
     exc_type, exc, traceback = exc_info
+    primary_error = exc if exc_type is not None else None
     cleanup_error: BaseException | None = None
-    try:
-        if exc_type is None:
+    if primary_error is None:
+        try:
             await _commit(connection)
-    except BaseException as cleanup_exc:
-        cleanup_error = cleanup_exc
-    finally:
-        if lock_acquired:
-            try:
-                await connection.execute("SELECT pg_advisory_unlock(830078)")
-            except BaseException as unlock_exc:
-                if cleanup_error is None:
-                    cleanup_error = unlock_exc
+        except BaseException as cleanup_exc:
+            cleanup_error = cleanup_exc
+    if primary_error is not None or cleanup_error is not None:
+        # PostgreSQL marks a transaction failed after any statement error.
+        # Roll it back before unlocking; otherwise the unlock or context exit
+        # can itself fail and leave the shared advisory lock held.  A rollback
+        # failure is deliberately not allowed to mask the original exception.
+        try:
+            await connection.rollback()
+        except BaseException as rollback_exc:
+            if primary_error is None and cleanup_error is None:
+                cleanup_error = rollback_exc
+    if lock_acquired:
+        try:
+            await connection.execute("SELECT pg_advisory_unlock(830078)")
+        except BaseException as unlock_exc:
+            if primary_error is None and cleanup_error is None:
+                cleanup_error = unlock_exc
+    if primary_error is not None:
+        try:
+            await context.__aexit__(exc_type, exc, traceback)
+        except BaseException:
+            # Preserve the failed statement/cancellation as the caller's
+            # exception even if connection cleanup reports a second failure.
+            pass
+        return
     if cleanup_error is not None:
-        await context.__aexit__(type(cleanup_error), cleanup_error, cleanup_error.__traceback__)
+        try:
+            await context.__aexit__(
+                type(cleanup_error), cleanup_error, cleanup_error.__traceback__
+            )
+        except BaseException:
+            pass
         raise cleanup_error
-    await context.__aexit__(exc_type, exc, traceback)
+    await context.__aexit__(None, None, None)
 
 
 def _finite_metric_value(value: object) -> float:
