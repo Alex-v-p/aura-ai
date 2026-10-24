@@ -24,6 +24,8 @@ metrics:
   - observatory_ingest_storage_duration_ms
   - observatory_ingest_worker_heartbeat_age_ms
   - observatory_ingest_backlog_count
+  - observatory_ingest_reconciliation_count
+  - observatory_ingest_reconciliation_duration_ms
 metric_semantics:
   telemetry_ingest_accepted_count: Metadata observations accepted by the idempotent ingest boundary.
   telemetry_ingest_rejected_count: Contract-invalid observations rejected without persistence.
@@ -37,6 +39,8 @@ metric_semantics:
   observatory_ingest_storage_duration_ms: Bounded duration of the Observatory storage port operation.
   observatory_ingest_worker_heartbeat_age_ms: Bounded age of the last content-free ingest-worker heartbeat.
   observatory_ingest_backlog_count: Count of Observatory-owned pending storage receipts.
+  observatory_ingest_reconciliation_count: Bounded recovery outcomes for stale pending receipts.
+  observatory_ingest_reconciliation_duration_ms: Bounded duration of one visibility recovery pass.
 metric_definitions:
   - name: telemetry_ingest_accepted_count
     type: counter
@@ -134,6 +138,22 @@ metric_definitions:
     trace: visibility_reconciliation
     correlation: ingest_sequence
     export: prometheus
+  - name: observatory_ingest_reconciliation_count
+    type: counter
+    unit: receipts
+    labels: [outcome]
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
+  - name: observatory_ingest_reconciliation_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: worker_instance
+    export: prometheus
 evaluators:
   - metadata_observation_contract_rejection
   - metadata_v2_allowlist
@@ -142,6 +162,8 @@ evaluators:
   - observatory_service_isolation
   - observatory_ingest_quality
   - observatory_self_monitoring
+  - observatory_ingest_crash_window_recovery
+  - observatory_snapshot_visibility_consistency
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:

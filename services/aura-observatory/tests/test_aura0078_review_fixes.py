@@ -949,6 +949,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_ingest_storage_duration_ms",
                 "observatory_ingest_worker_heartbeat_age_ms",
                 "observatory_ingest_backlog_count",
+                "observatory_ingest_reconciliation_count",
+                "observatory_ingest_reconciliation_duration_ms",
             }
         elif manifest_id == "aura.observatory.telemetry_storage":
             expected_metrics = ingestion_metrics - {"telemetry_ingest_duration_ms"}
@@ -956,6 +958,8 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
                 "observatory_ingest_visibility_lag_count",
                 "observatory_ingest_storage_duration_ms",
                 "observatory_ingest_backlog_count",
+                "observatory_ingest_reconciliation_count",
+                "observatory_ingest_reconciliation_duration_ms",
             }
             assert "telemetry_ingest_duration_ms" not in manifest["metric_semantics"]
         elif manifest_id == "aura.observatory.query_api":

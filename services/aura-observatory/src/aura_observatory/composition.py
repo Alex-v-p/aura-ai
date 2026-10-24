@@ -77,7 +77,7 @@ from aura_observatory.evaluation_storage import (
     ArtifactStorageService,
     EvaluationDeletionService,
 )
-from aura_observatory.ingest import TelemetryIngestService
+from aura_observatory.ingest import IngestReconciliationService, TelemetryIngestService
 from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import EvaluationTransportPort, ObservatoryQueryPort
 from aura_observatory.query import ObservatoryHealthProjector, ObservatoryQueryService
@@ -424,6 +424,14 @@ def _evaluation_live_publisher(settings: Settings) -> Any:
 def build_ingest_service(settings: Settings) -> TelemetryIngestService:
     """Compose production adapters; memory adapters are intentionally test-only."""
 
+    return build_ingest_runtime(settings)[0]
+
+
+def build_ingest_runtime(
+    settings: Settings,
+) -> tuple[TelemetryIngestService, IngestReconciliationService]:
+    """Compose ingest and its bounded crash-window recovery companion."""
+
     catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
     id_registry = PostgresObservationIdRegistry(
         lambda: postgres_connection(settings.database_url),
@@ -436,14 +444,25 @@ def build_ingest_service(settings: Settings) -> TelemetryIngestService:
         password=settings.clickhouse_password,
         id_registry=id_registry,
     )
-    return TelemetryIngestService(
+    metrics = _production_metrics(settings)
+    service = TelemetryIngestService(
         observations,
         catalog,
         credential=settings.ingest_credential(),
         max_batch_size=settings.ingest_max_batch_size,
         health_port=catalog,
-        metrics=_production_metrics(settings),
+        metrics=metrics,
     )
+    reconciler = IngestReconciliationService(
+        id_registry,
+        observations,
+        batch_size=settings.ingest_reconciliation_batch_size,
+        timeout_seconds=settings.ingest_reconciliation_timeout_seconds,
+        pass_timeout_seconds=settings.ingest_reconciliation_pass_timeout_seconds,
+        health_port=catalog,
+        metrics=metrics,
+    )
+    return service, reconciler
 
 
 def build_operations_repository(settings: Settings, *, testing: bool = False, metrics: Any | None = None) -> OperationsRepository:
@@ -1023,6 +1042,7 @@ __all__ = [
     "build_auth",
     "build_health_projector",
     "build_ingest_service",
+    "build_ingest_runtime",
     "build_query_service",
     "build_evaluation_query_service",
     "build_evaluation_artifact_storage",

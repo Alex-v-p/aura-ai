@@ -269,6 +269,25 @@ def _clickhouse_time(value: datetime) -> str:
     return _sql(normalized)
 
 
+def _decode_detail_cursor(value: str) -> tuple[int | None, datetime, str]:
+    """Decode legacy detail cursors and the optional immutable fence."""
+
+    observed_at, observation_id = decode_cursor(value)
+    snapshot: int | None = None
+    try:
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        decoded = json.loads(raw)
+        data = cast(dict[str, object], decoded) if isinstance(decoded, dict) else {}
+        if data.get("snapshot") is not None:
+            candidate = data["snapshot"]
+            if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate < 0:
+                raise ValueError("invalid cursor")
+            snapshot = candidate
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("invalid cursor") from exc
+    return snapshot, observed_at, observation_id
+
+
 _DIMENSION_STATUS_SQL = (
     "lowerUTF8(coalesce(nullIf(dimensions['outcome'], ''), nullIf(dimensions['status'], '')))"
 )
@@ -2272,6 +2291,33 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             return None
         return int(row[0]) if row else None
 
+    async def _detail_snapshot_sequence(self, cursor_snapshot: int | None) -> int | None:
+        """Return a fresh, non-expandable fence for a detail page.
+
+        A continuation cursor is a lower-bound pagination position, never an
+        authority to widen the visibility snapshot.  Production instances
+        must fail closed when the watermark cannot be read; test and in-memory
+        stores may intentionally omit the fence through an override.
+        """
+
+        try:
+            watermark = await self._committed_watermark()
+        except Exception as exc:
+            raise StorageUnavailableError(
+                "Observatory visibility watermark is unavailable"
+            ) from exc
+        if (
+            watermark is None
+            and type(self)._committed_watermark is ProductionObservatoryStore._committed_watermark
+            and type(self)._query_rows is ProductionObservatoryStore._query_rows
+        ):
+            raise StorageUnavailableError("Observatory visibility watermark is unavailable")
+        if watermark is None:
+            return cursor_snapshot
+        if cursor_snapshot is None:
+            return watermark
+        return min(watermark, cursor_snapshot)
+
     async def _analytics_retention_boundary(self, lower: datetime, upper: datetime) -> bool:
         """Detect whether a completed deletion overlaps the observed-time window.
 
@@ -2703,9 +2749,10 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     ) -> dict[str, Any] | None:
         if not 1 <= limit <= 10000:
             raise ValueError("page size must be between 1 and 10000")
+        cursor_snapshot: int | None = None
         after = ""
         if cursor:
-            cursor_at, cursor_id = decode_cursor(cursor)
+            cursor_snapshot, cursor_at, cursor_id = _decode_detail_cursor(cursor)
             after = (
                 " AND (observed_at, observation_id) > (toDateTime64("
                 + _clickhouse_time(cursor_at)
@@ -2713,6 +2760,12 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 + _sql(cursor_id)
                 + ")"
             )
+        snapshot_sequence = await self._detail_snapshot_sequence(cursor_snapshot)
+        fence = (
+            " AND ingest_sequence <= " + str(snapshot_sequence)
+            if snapshot_sequence is not None
+            else ""
+        )
         rows = await self._query_rows(
             "SELECT observation_id, observed_at, schema_version, kind, component_id, "
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
@@ -2722,6 +2775,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "agent_revision, prompt_bundle_revision, policy_revision "
             "FROM observations WHERE run_id = "
             + _sql(run_id)
+            + fence
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
             + str(limit + 1)
@@ -2734,7 +2788,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         result = run_dict(run_id, items, newest, include_spans=True)
         result["partial"] = truncated
         result["nextCursor"] = (
-            encode_cursor(items[-1].observed_at, items[-1].observation_id) if truncated else None
+            encode_cursor(items[-1].observed_at, items[-1].observation_id, snapshot_sequence)
+            if truncated
+            else None
         )
         return result
 
@@ -2743,9 +2799,10 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     ) -> dict[str, Any] | None:
         if not 1 <= limit <= 10000:
             raise ValueError("page size must be between 1 and 10000")
+        cursor_snapshot: int | None = None
         after = ""
         if cursor:
-            cursor_at, cursor_id = decode_cursor(cursor)
+            cursor_snapshot, cursor_at, cursor_id = _decode_detail_cursor(cursor)
             after = (
                 " AND (observed_at, observation_id) > (toDateTime64("
                 + _clickhouse_time(cursor_at)
@@ -2753,6 +2810,12 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 + _sql(cursor_id)
                 + ")"
             )
+        snapshot_sequence = await self._detail_snapshot_sequence(cursor_snapshot)
+        fence = (
+            " AND ingest_sequence <= " + str(snapshot_sequence)
+            if snapshot_sequence is not None
+            else ""
+        )
         rows = await self._query_rows(
             "SELECT observation_id, observed_at, schema_version, kind, component_id, "
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
@@ -2762,6 +2825,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "agent_revision, prompt_bundle_revision, policy_revision "
             "FROM observations WHERE trace_id = "
             + _sql(trace_id)
+            + fence
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
             + str(limit + 1)
@@ -2788,7 +2852,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "partial": partial or truncated,
             "spans": span_tree,
             "nextCursor": (
-                encode_cursor(items[-1].observed_at, items[-1].observation_id)
+                encode_cursor(items[-1].observed_at, items[-1].observation_id, snapshot_sequence)
                 if truncated
                 else None
             ),

@@ -108,8 +108,27 @@ class ClaimOutcome(StrEnum):
     PENDING = "pending"
 
 
+@dataclass(frozen=True, slots=True)
+class PendingObservationReceipt:
+    """Content-free receipt candidate eligible for visibility recovery."""
+
+    observation_id: str
+    ingest_sequence: int
+
+
 class ObservationStore(Protocol):
     async def insert_observation(self, observation: MetadataObservation) -> InsertOutcome: ...
+
+
+class ObservationPresenceStore(Protocol):
+    """Bounded, content-free ClickHouse presence probes for reconciliation."""
+
+    async def existing_observations(
+        self,
+        receipts: Sequence[PendingObservationReceipt],
+        *,
+        timeout_seconds: float,
+    ) -> set[str]: ...
 
 
 class EvaluationArtifactMetadataPort(Protocol):
@@ -176,6 +195,20 @@ class ObservationIdRegistry(Protocol):
     async def mark_ingest_visible(self, sequence: int) -> None: ...
 
     async def abort(self, observation_id: str) -> None: ...
+
+
+class ObservationReconciliationRegistry(Protocol):
+    """Additional durable seam used only by the crash-window reconciler."""
+
+    async def stale_pending_receipts(
+        self, *, limit: int, now: datetime | None = None
+    ) -> list[PendingObservationReceipt]: ...
+
+    async def reconcile_visible(self, observation_id: str, sequence: int) -> bool: ...
+
+    async def advance_visibility(self) -> bool: ...
+
+    async def visibility_snapshot(self) -> Mapping[str, int | float | None]: ...
 
 
 class ObservatoryCatalog(Protocol):
@@ -751,8 +784,11 @@ __all__ = [
     "ClaimOutcome",
     "DeletionResult",
     "InsertOutcome",
+    "PendingObservationReceipt",
     "ObservationIdRegistry",
+    "ObservationReconciliationRegistry",
     "ObservationStore",
+    "ObservationPresenceStore",
     "ObservatoryCatalog",
     "ObservatoryHealthPort",
     "NullObservatoryHealthPort",

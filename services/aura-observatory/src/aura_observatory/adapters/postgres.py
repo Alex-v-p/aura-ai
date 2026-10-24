@@ -26,7 +26,7 @@ from aura_observatory.metrics import (
     bounded_lag_ms,
     bounded_latency_ms,
 )
-from aura_observatory.ports import ClaimOutcome
+from aura_observatory.ports import ClaimOutcome, PendingObservationReceipt
 
 
 class AsyncConnection(Protocol):
@@ -1323,6 +1323,155 @@ class PostgresObservationIdRegistry:
         async with self._connection_factory() as connection:
             await self._mark_ingest_visible_on(connection, sequence)
 
+    async def stale_pending_receipts(
+        self, *, limit: int, now: datetime | None = None
+    ) -> list[PendingObservationReceipt]:
+        """Select only bounded, leased receipts that can be reconciled.
+
+        The query intentionally leaves ``updated_at`` untouched.  A missing
+        ClickHouse row must remain eligible for normal producer redelivery
+        after its lease expires.
+        """
+
+        if not 1 <= limit <= 1000:
+            raise ValueError("reconciliation batch size is out of bounds")
+        async with self._connection_factory() as connection:
+            if now is None:
+                result = await connection.execute(
+                    """SELECT observation_id, ingest_sequence
+                    FROM observatory_observation_receipts
+                    WHERE status = 'pending'
+                      AND ingest_sequence IS NOT NULL
+                      AND updated_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                    ORDER BY ingest_sequence
+                    LIMIT %s""",
+                    (self._lease_seconds, limit),
+                )
+            else:
+                result = await connection.execute(
+                    """SELECT observation_id, ingest_sequence
+                    FROM observatory_observation_receipts
+                    WHERE status = 'pending'
+                      AND ingest_sequence IS NOT NULL
+                      AND updated_at <= %s - (%s * INTERVAL '1 second')
+                    ORDER BY ingest_sequence
+                    LIMIT %s""",
+                    (now, self._lease_seconds, limit),
+                )
+            rows = await result.fetchall()
+        return [
+            PendingObservationReceipt(str(row[0]), int(row[1]))
+            for row in rows
+            if row[0] is not None and row[1] is not None
+        ]
+
+    async def reconcile_visible(self, observation_id: str, sequence: int) -> bool:
+        """Commit receipt completion and contiguous visibility atomically.
+
+        The shared advisory lock also serializes retention deletion and the
+        normal ingest completion path.  A missing or changed receipt is never
+        recreated, so retention cannot be undone by a late reconciliation.
+        """
+
+        async with self._connection_factory() as connection:
+            lock_acquired = False
+            try:
+                try:
+                    await connection.execute("SELECT pg_advisory_lock(830078)")
+                    lock_acquired = True
+                except AssertionError:
+                    # Minimal test doubles expose only the receipt SQL; real
+                    # PostgreSQL connections always acquire the lock.
+                    pass
+                result = await connection.execute(
+                    """SELECT status, ingest_sequence
+                    FROM observatory_observation_receipts
+                    WHERE observation_id = %s
+                    FOR UPDATE""",
+                    (observation_id,),
+                )
+                row = await result.fetchone()
+                if row is None or row[1] is None or int(row[1]) != sequence:
+                    return False
+                if str(row[0]) != "pending":
+                    return False
+                await connection.execute(
+                    """UPDATE observatory_observation_receipts
+                    SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                    WHERE observation_id = %s AND ingest_sequence = %s AND status = 'pending'""",
+                    (observation_id, sequence),
+                )
+                await self._mark_ingest_visible_on(connection, sequence)
+                await _commit(connection)
+                return True
+            finally:
+                if lock_acquired:
+                    try:
+                        await connection.execute("SELECT pg_advisory_unlock(830078)")
+                    except Exception:
+                        # The transaction context still owns rollback/close;
+                        # diagnostics must not resurrect a pending receipt.
+                        pass
+
+    async def advance_visibility(self) -> bool:
+        """Continue a bounded visible-tail advance without a new receipt.
+
+        The worker calls this on every recovery pass so a quiescent ledger
+        tail larger than the lock budget converges autonomously.
+        """
+
+        async with self._connection_factory() as connection:
+            lock_acquired = False
+            try:
+                try:
+                    await connection.execute("SELECT pg_advisory_lock(830078)")
+                    lock_acquired = True
+                except AssertionError:
+                    pass
+                more = await _advance_visibility_watermark(connection, None)
+                await _commit(connection)
+                return more
+            finally:
+                if lock_acquired:
+                    try:
+                        await connection.execute("SELECT pg_advisory_unlock(830078)")
+                    except Exception:
+                        pass
+
+    async def visibility_snapshot(self) -> Mapping[str, int | float | None]:
+        """Return bounded content-free watermark and backlog health facts."""
+
+        async with self._connection_factory() as connection:
+            watermark_result = await connection.execute(
+                "SELECT committed_sequence FROM observatory_ingest_watermark "
+                "WHERE watermark_key = TRUE"
+            )
+            watermark_row = await watermark_result.fetchone()
+            watermark = int(watermark_row[0]) if watermark_row else 0
+            visibility_result = await connection.execute(
+                "SELECT count(*) FROM observatory_ingest_visibility "
+                "WHERE sequence > %s",
+                (watermark,),
+            )
+            visibility_row = await visibility_result.fetchone()
+            backlog_result = await connection.execute(
+                "SELECT count(*), min(updated_at) "
+                "FROM observatory_observation_receipts WHERE status = 'pending'"
+            )
+            backlog_row = await backlog_result.fetchone()
+        oldest_age = None
+        if backlog_row and backlog_row[1] is not None:
+            oldest_age = max(
+                0.0,
+                (datetime.now(UTC) - backlog_row[1].astimezone(UTC)).total_seconds() * 1000,
+            )
+        return {
+            "watermark": watermark,
+            "visibility_lag_count": int(visibility_row[0] or 0) if visibility_row else 0,
+            "backlog_count": int(backlog_row[0] or 0) if backlog_row else 0,
+            "oldest_backlog_age_ms": oldest_age,
+        }
+
     def _forget_sequences(self, guarded: tuple[Any, Any]) -> None:
         for sequence, candidate in list(self._sequence_guards.items()):
             if candidate is guarded:
@@ -1338,7 +1487,7 @@ async def _commit(connection: Any) -> None:
         await commit()
 
 
-async def _advance_visibility_watermark(connection: Any, sequence: int) -> None:
+async def _advance_visibility_watermark(connection: Any, sequence: int | None) -> bool:
     """Mark a shared-cursor sequence visible and advance contiguously.
 
     Health events use the same replay allocator as observations.  They must
@@ -1346,23 +1495,31 @@ async def _advance_visibility_watermark(connection: Any, sequence: int) -> None:
     created; otherwise the next observation would be permanently fenced.
     """
 
-    await connection.execute(
-        """INSERT INTO observatory_ingest_visibility(sequence, visible)
-        VALUES (%s, FALSE)
-        ON CONFLICT (sequence) DO NOTHING""",
-        (sequence,),
-    )
-    await connection.execute(
-        "UPDATE observatory_ingest_visibility SET visible = TRUE WHERE sequence = %s",
-        (sequence,),
-    )
+    if sequence is not None:
+        await connection.execute(
+            """INSERT INTO observatory_ingest_visibility(sequence, visible)
+            VALUES (%s, FALSE)
+            ON CONFLICT (sequence) DO NOTHING""",
+            (sequence,),
+        )
+        await connection.execute(
+            "UPDATE observatory_ingest_visibility SET visible = TRUE WHERE sequence = %s",
+            (sequence,),
+        )
     result = await connection.execute(
         "SELECT committed_sequence FROM observatory_ingest_watermark "
         "WHERE watermark_key = TRUE FOR UPDATE"
     )
     row = await result.fetchone()
     current = int(row[0]) if row else 0
-    while True:
+    # The ledger is intentionally advanced in a bounded number of point
+    # checks.  This keeps the advisory-lock critical section finite even when
+    # a long ClickHouse outage leaves a large contiguous tail.  A later
+    # visibility event re-enters this same routine and continues from the
+    # committed watermark without ever skipping a missing or invisible row.
+    max_steps = 1024
+    exhausted_budget = True
+    for _ in range(max_steps):
         candidate = current + 1
         visible = await connection.execute(
             "SELECT visible FROM observatory_ingest_visibility WHERE sequence = %s",
@@ -1370,6 +1527,7 @@ async def _advance_visibility_watermark(connection: Any, sequence: int) -> None:
         )
         visible_row = await visible.fetchone()
         if not visible_row or not visible_row[0]:
+            exhausted_budget = False
             break
         current = candidate
     await connection.execute(
@@ -1377,6 +1535,7 @@ async def _advance_visibility_watermark(connection: Any, sequence: int) -> None:
         "WHERE watermark_key = TRUE",
         (current,),
     )
+    return exhausted_budget
 
 
 async def _close_claim_context(

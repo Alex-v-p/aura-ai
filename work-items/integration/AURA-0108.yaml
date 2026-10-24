@@ -1,0 +1,64 @@
+agent: integration_maintainer
+work_item: AURA-0108
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0108-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0108-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0108-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0108-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0108.yaml
+checks:
+  passed:
+    - >-
+      The Observatory implementation and test handoffs were read and confirmed
+      complete; all four required specialist reviews are PASS with no unresolved
+      findings.
+    - >-
+      The exact staged slice contains only authorized AURA-0108 paths,
+      including this integration report. Overlapping AURA-0098 changes in
+      ports.py, composition.py, and the rest of the shared worktree remain
+      unstaged.
+    - >-
+      Archived work-item validation, explicit changed-path validation,
+      repository-shape, module-registry, import-boundary, service-isolation,
+      contract-change, observability, baseline-protection, and staged diff
+      checks passed.
+    - >-
+      Focused AURA-0108 and amended AURA-0078 manifest regressions passed:
+      61 tests passed with one pre-existing Authlib deprecation warning.
+    - >-
+      Observatory Ruff and Pyright checks passed with zero errors, warnings,
+      or informations.
+    - >-
+      A single focused Conventional Commit checkpoint is created for the
+      reviewed, validated AURA-0108 slice; no push is performed.
+  failed:
+    - >-
+      The full Observatory suite reported 1270 passed, 38 skipped, and 6
+      failures that are outside AURA-0108: four known AURA-0104 migration
+      inventory/idempotency baseline assertions and two AURA-0098 full-stack
+      runner-shape assertions overlap in the shared dirty worktree (the suite
+      summary contains six total failures because the migration assertions
+      overlap across three tests). No AURA-0108 test failed.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation, acceptance, and governance files. They were not staged,
+    modified, or claimed as AURA-0108.
+  - >-
+    The full Observatory suite retains the known AURA-0104 migration baseline
+    failures and AURA-0098 runner-shape failures until those owners complete
+    their work; this integration does not weaken or update those baselines.

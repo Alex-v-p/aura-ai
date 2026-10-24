@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import secrets
 from collections.abc import Awaitable, Mapping
+from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from time import monotonic, perf_counter
 from typing import Any, cast
 
@@ -15,6 +20,8 @@ from aura_observatory.metrics import IngestCounters, IngestHealth, ObservatoryMe
 from aura_observatory.ports import (
     InsertOutcome,
     NullObservatoryHealthPort,
+    ObservationPresenceStore,
+    ObservationReconciliationRegistry,
     ObservationStore,
     ObservatoryCatalog,
     ObservatoryHealthPort,
@@ -27,6 +34,302 @@ class InvalidCredential(PermissionError):
 
 class IngestPayloadError(ValueError):
     """The request envelope cannot be interpreted as a bounded batch."""
+
+
+class ReconciliationOutcome(StrEnum):
+    COMPLETED = "completed"
+    MISSING = "missing"
+    RACED = "raced"
+    FAILED = "failed"
+
+
+_RECONCILIATION_PHASE: contextvars.ContextVar[tuple[str, str]] = contextvars.ContextVar(
+    "observatory_reconciliation_phase",
+    default=("postgresql", "database_failure"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationSummary:
+    """Bounded metadata-only outcome of one recovery pass."""
+
+    completed: int = 0
+    missing: int = 0
+    raced: int = 0
+    failed: int = 0
+    duration_ms: float = 0.0
+
+    def as_dict(self) -> dict[str, int | float]:
+        return {
+            "completed": self.completed,
+            "missing": self.missing,
+            "raced": self.raced,
+            "failed": self.failed,
+            "duration_ms": self.duration_ms,
+        }
+
+
+class IngestReconciliationService:
+    """Recover response-loss windows without receiving observation content."""
+
+    def __init__(
+        self,
+        registry: ObservationReconciliationRegistry,
+        presence_store: ObservationPresenceStore,
+        *,
+        batch_size: int = 100,
+        timeout_seconds: float = 5.0,
+        pass_timeout_seconds: float = 15.0,
+        health_port: ObservatoryHealthPort | None = None,
+        metrics: ObservatoryMetrics | None = None,
+    ) -> None:
+        if not 1 <= batch_size <= 1000:
+            raise ValueError("reconciliation batch size is out of bounds")
+        if not 0 < timeout_seconds <= 30:
+            raise ValueError("reconciliation timeout is out of bounds")
+        if not 0 < pass_timeout_seconds <= 60:
+            raise ValueError("reconciliation pass timeout is out of bounds")
+        self.registry = registry
+        self.presence_store = presence_store
+        self.batch_size = batch_size
+        self.timeout_seconds = timeout_seconds
+        self.pass_timeout_seconds = pass_timeout_seconds
+        self.health_port = health_port or NullObservatoryHealthPort()
+        self.metrics = metrics
+
+    async def reconcile_once(
+        self, *, now: datetime | None = None
+    ) -> dict[str, int | float]:
+        """Run one bounded pass; provider failures never terminate the worker."""
+
+        started = perf_counter()
+        trace_context = getattr(self.metrics, "trace_context", None) if self.metrics else None
+        context = cast(Any, trace_context)() if callable(trace_context) else nullcontext()
+        phase_token = _RECONCILIATION_PHASE.set(("postgresql", "database_failure"))
+        try:
+            with context:
+                try:
+                    return await asyncio.wait_for(
+                        self._reconcile_once(now=now), timeout=self.pass_timeout_seconds
+                    )
+                except TimeoutError:
+                    duration_ms = max(0.0, (perf_counter() - started) * 1000.0)
+                    dependency, _ = _RECONCILIATION_PHASE.get()
+                    self._record_outcome(ReconciliationOutcome.FAILED)
+                    self._record_component_span(
+                        duration_ms=duration_ms,
+                        outcome="timeout",
+                        dependency=dependency,
+                        error_code="timeout",
+                    )
+                    if self.metrics is not None:
+                        self.metrics.record(
+                            "observatory_ingest_reconciliation_duration_ms", duration_ms
+                        )
+                    return ReconciliationSummary(failed=1, duration_ms=duration_ms).as_dict()
+        finally:
+            _RECONCILIATION_PHASE.reset(phase_token)
+
+    async def _reconcile_once(
+        self, *, now: datetime | None = None
+    ) -> dict[str, int | float]:
+        """Perform the pass body inside the outer whole-pass deadline."""
+
+        started = perf_counter()
+        completed = missing = raced = failed = 0
+        _RECONCILIATION_PHASE.set(("postgresql", "database_failure"))
+        try:
+            receipts = await self.registry.stale_pending_receipts(
+                limit=self.batch_size, now=now
+            )
+        except Exception:
+            failed = 1
+            receipts = []
+            self._record_component_span(
+                duration_ms=max(0.0, (perf_counter() - started) * 1000.0),
+                outcome="failure",
+                dependency="postgresql",
+                error_code="database_failure",
+            )
+            self._record_outcome(ReconciliationOutcome.FAILED, failed)
+            return await self._finish(started, completed, missing, raced, failed)
+
+        self._record_component_span(
+            duration_ms=max(0.0, (perf_counter() - started) * 1000.0),
+            outcome="success",
+            dependency="postgresql",
+        )
+
+        if receipts:
+            _RECONCILIATION_PHASE.set(("clickhouse", "transport_unavailable"))
+            probe_started = perf_counter()
+            try:
+                present = await self.presence_store.existing_observations(
+                    receipts, timeout_seconds=self.timeout_seconds
+                )
+            except Exception:
+                failed = len(receipts)
+                self._record_component_span(
+                    duration_ms=max(0.0, (perf_counter() - probe_started) * 1000.0),
+                    outcome="failure",
+                    dependency="clickhouse",
+                    error_code="transport_unavailable",
+                    component_id="aura.observatory.telemetry_storage",
+                )
+                self._record_outcome(ReconciliationOutcome.FAILED, failed)
+                return await self._finish(started, completed, missing, raced, failed)
+            self._record_component_span(
+                duration_ms=max(0.0, (perf_counter() - probe_started) * 1000.0),
+                outcome="complete" if present else "no_data",
+                dependency="clickhouse",
+                component_id="aura.observatory.telemetry_storage",
+            )
+            commit_started = perf_counter()
+            _RECONCILIATION_PHASE.set(("postgresql", "database_failure"))
+            for receipt in receipts:
+                if receipt.observation_id not in present:
+                    missing += 1
+                    self._record_outcome(ReconciliationOutcome.MISSING)
+                    continue
+                try:
+                    recovered = await self.registry.reconcile_visible(
+                        receipt.observation_id, receipt.ingest_sequence
+                    )
+                except Exception:
+                    failed += 1
+                    self._record_outcome(ReconciliationOutcome.FAILED)
+                    continue
+                if recovered:
+                    completed += 1
+                    self._record_outcome(ReconciliationOutcome.COMPLETED)
+                else:
+                    raced += 1
+                    self._record_outcome(ReconciliationOutcome.RACED)
+            self._record_component_span(
+                duration_ms=max(0.0, (perf_counter() - commit_started) * 1000.0),
+                outcome="failure"
+                if failed
+                else ("partial" if raced or missing else "complete"),
+                dependency="postgresql",
+                error_code="database_failure" if failed else None,
+                component_id="aura.observatory.telemetry_storage",
+            )
+        continuation = getattr(self.registry, "advance_visibility", None)
+        if callable(continuation):
+            continuation_started = perf_counter()
+            _RECONCILIATION_PHASE.set(("postgresql", "database_failure"))
+            try:
+                more = bool(await cast(Any, continuation)())
+            except Exception:
+                failed += 1
+                self._record_outcome(ReconciliationOutcome.FAILED)
+                self._record_component_span(
+                    duration_ms=max(0.0, (perf_counter() - continuation_started) * 1000.0),
+                    outcome="failure",
+                    dependency="postgresql",
+                    error_code="database_failure",
+                    component_id="aura.observatory.telemetry_storage",
+                )
+            else:
+                self._record_component_span(
+                    duration_ms=max(0.0, (perf_counter() - continuation_started) * 1000.0),
+                    outcome="partial" if more else "complete",
+                    dependency="postgresql",
+                    component_id="aura.observatory.telemetry_storage",
+                )
+        _RECONCILIATION_PHASE.set(("postgresql", "database_failure"))
+        return await self._finish(started, completed, missing, raced, failed)
+
+    async def reconcile(self, *, now: datetime | None = None) -> dict[str, int | float]:
+        """Compatibility alias for worker and deterministic acceptance seams."""
+
+        return await self.reconcile_once(now=now)
+
+    def _record_outcome(self, outcome: ReconciliationOutcome, amount: int = 1) -> None:
+        if self.metrics is None or amount <= 0:
+            return
+        self.metrics.record(
+            "observatory_ingest_reconciliation_count",
+            amount,
+            labels={"outcome": outcome.value},
+        )
+
+    def _record_component_span(
+        self,
+        *,
+        duration_ms: float,
+        outcome: str,
+        dependency: str | None = None,
+        error_code: str | None = None,
+        component_id: str = "aura.observatory.telemetry_ingestion",
+    ) -> None:
+        """Emit only finite causal recovery metadata; never capture payloads."""
+
+        if self.metrics is None:
+            return
+        record_span = getattr(self.metrics, "record_component_span", None)
+        if not callable(record_span):
+            return
+        try:
+            record_span(
+                component_id=component_id,
+                component_version="1.0.0",
+                deployment_id=self.metrics.deployment_id,
+                operation="recover",
+                duration_ms=duration_ms,
+                outcome=outcome,
+                dependency=dependency,
+                error_code=error_code,
+            )
+        except (TypeError, ValueError, AttributeError):
+            return
+
+    async def _finish(
+        self, started: float, completed: int, missing: int, raced: int, failed: int
+    ) -> dict[str, int | float]:
+        duration_ms = max(0.0, (perf_counter() - started) * 1000.0)
+        if self.metrics is not None:
+            self.metrics.record("observatory_ingest_reconciliation_duration_ms", duration_ms)
+        try:
+            snapshot = await self.registry.visibility_snapshot()
+        except Exception:
+            self._record_component_span(
+                duration_ms=max(0.0, (perf_counter() - started) * 1000.0),
+                outcome="failure",
+                dependency="postgresql",
+                error_code="database_failure",
+                component_id="aura.observatory.telemetry_storage",
+            )
+            snapshot: Mapping[str, int | float | None] = {}
+        if snapshot:
+            watermark = _bounded_int(snapshot.get("watermark"))
+            lag_count = _bounded_int(snapshot.get("visibility_lag_count"))
+            backlog_count = _bounded_int(snapshot.get("backlog_count"))
+            oldest_age = snapshot.get("oldest_backlog_age_ms")
+            oldest_value = float(oldest_age) if isinstance(oldest_age, (int, float)) else None
+            await _safe_health_call(
+                self.health_port.record_visibility(
+                    watermark, lag_count, backlog_count, oldest_value
+                )
+            )
+            if self.metrics is not None:
+                set_metric = getattr(self.metrics, "set", None)
+                if callable(set_metric):
+                    set_metric("observatory_ingest_visibility_lag_count", lag_count)
+                    set_metric("observatory_ingest_backlog_count", backlog_count)
+        return ReconciliationSummary(
+            completed=completed,
+            missing=missing,
+            raced=raced,
+            failed=failed,
+            duration_ms=duration_ms,
+        ).as_dict()
+
+
+def _bounded_int(value: object) -> int:
+    if not isinstance(value, (int, float)):
+        return 0
+    return max(0, min(2_147_483_647, int(value)))
 
 
 class TelemetryIngestService:
@@ -285,4 +588,11 @@ def _extract_records(payload: Any, *, max_batch_size: int = 5000) -> list[Mappin
     return [cast(Mapping[str, Any], record) for record in records]
 
 
-__all__ = ["IngestPayloadError", "InvalidCredential", "TelemetryIngestService"]
+__all__ = [
+    "IngestPayloadError",
+    "InvalidCredential",
+    "IngestReconciliationService",
+    "ReconciliationOutcome",
+    "ReconciliationSummary",
+    "TelemetryIngestService",
+]

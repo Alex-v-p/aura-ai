@@ -9,13 +9,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 
 from aura_observatory.contract import MetadataObservation
-from aura_observatory.ports import ClaimOutcome, InsertOutcome, ObservationIdRegistry
+from aura_observatory.ports import (
+    ClaimOutcome,
+    InsertOutcome,
+    ObservationIdRegistry,
+    PendingObservationReceipt,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _CLICKHOUSE_ERROR_CLASSES = (
@@ -93,6 +99,71 @@ class ClickHouseObservationStore:
             await self.id_registry.abort(observation.observation_id)
             raise
         return InsertOutcome.ACCEPTED
+
+    async def existing_observations(
+        self,
+        receipts: Sequence[PendingObservationReceipt],
+        *,
+        timeout_seconds: float,
+    ) -> set[str]:
+        """Probe a bounded set of immutable identity/sequence pairs.
+
+        Only the two opaque key columns are selected.  This keeps crash-window
+        recovery content-free while making the provider request independently
+        timeout-bounded from the normal ingest path.
+        """
+
+        if not receipts:
+            return set()
+        if not 1 <= len(receipts) <= 1000:
+            raise ValueError("presence probe batch is out of bounds")
+        if not 0 < timeout_seconds <= 30:
+            raise ValueError("presence probe timeout is out of bounds")
+        pairs = ",".join(
+            "(" + _sql_literal(receipt.observation_id) + "," + str(receipt.ingest_sequence) + ")"
+            for receipt in receipts
+        )
+        statement = (
+            "SELECT observation_id, ingest_sequence FROM observations WHERE "
+            "(observation_id, ingest_sequence) IN (" + pairs + ")"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.post(
+                    self.endpoint,
+                    params={"database": self.database},
+                    auth=(self.user, self.password),
+                    content=statement + " FORMAT JSONEachRow",
+                )
+                response.raise_for_status()
+        except httpx.HTTPStatusError:
+            raise
+        except (httpx.HTTPError, OSError, TimeoutError):
+            raise
+        expected_sequences: dict[str, set[int]] = {}
+        for receipt in receipts:
+            expected_sequences.setdefault(receipt.observation_id, set()).add(
+                receipt.ingest_sequence
+            )
+        present: set[str] = set()
+        for line in response.text.splitlines():
+            try:
+                row = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            row_value = cast(dict[str, Any], row)
+            observation_id = row_value.get("observation_id")
+            ingest_sequence = row_value.get("ingest_sequence")
+            if (
+                isinstance(observation_id, str)
+                and isinstance(ingest_sequence, int)
+                and not isinstance(ingest_sequence, bool)
+                and ingest_sequence in expected_sequences.get(observation_id, set())
+            ):
+                present.add(observation_id)
+        return present
 
 
 def clickhouse_row(payload: dict[str, Any], *, ingest_sequence: int = 0) -> dict[str, Any]:
@@ -173,6 +244,14 @@ def _clickhouse_error_details(response: httpx.Response) -> tuple[str, str]:
         if pattern.search(body):
             return code, message
     return code, "unclassified_error"
+
+
+def _sql_literal(value: str) -> str:
+    """Quote one bounded opaque identifier without logging or retaining it."""
+
+    if not re.fullmatch(r"[0-9a-fA-F-]{1,128}", value):
+        raise ValueError("invalid observation identifier")
+    return "'" + value.replace("'", "''") + "'"
 
 
 __all__ = ["ClickHouseObservationStore", "clickhouse_row"]

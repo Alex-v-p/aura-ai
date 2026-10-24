@@ -45,6 +45,8 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
         "aura.observatory.alerting",
         "aura.observatory.incidents",
         "aura.observatory.annotations",
+        "aura.observatory.telemetry_ingestion",
+        "aura.observatory.telemetry_storage",
     }
 )
 # The legacy duration metric is an evaluation-specific compatibility surface.
@@ -537,6 +539,7 @@ class ObservatoryMetrics:
             "observatory_comparison_duration_ms",
             "observatory_auth_callback_duration_ms",
             "observatory_ingest_storage_duration_ms",
+            "observatory_ingest_reconciliation_duration_ms",
             "observatory_evaluation_artifact_operation_duration_ms",
             "observatory_evaluation_deletion_duration_ms",
             "observatory_evaluation_result_lag_seconds",
@@ -557,6 +560,8 @@ class ObservatoryMetrics:
         "observatory_ingest_storage_duration_ms",
         "observatory_ingest_worker_heartbeat_age_ms",
         "observatory_ingest_backlog_count",
+        "observatory_ingest_reconciliation_count",
+        "observatory_ingest_reconciliation_duration_ms",
         "observatory_query_freshness_lag_ms",
         "observatory_query_duration_ms",
         "observatory_comparison_duration_ms",
@@ -644,6 +649,8 @@ class ObservatoryMetrics:
         "observatory_ingest_storage_duration_ms": set(),
         "observatory_ingest_worker_heartbeat_age_ms": set(),
         "observatory_ingest_backlog_count": set(),
+        "observatory_ingest_reconciliation_count": {"outcome"},
+        "observatory_ingest_reconciliation_duration_ms": set(),
         "observatory_query_freshness_lag_ms": set(),
         "observatory_query_duration_ms": {"resource"},
         "observatory_query_outcome": {"resource", "outcome"},
@@ -790,6 +797,7 @@ class ObservatoryMetrics:
             "complete",
             "stale",
             "no_data",
+            "raced",
         },
         "operation": {
             "store",
