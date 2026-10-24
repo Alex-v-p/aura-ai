@@ -37,8 +37,9 @@ checks:
       regression selection passed 178 cases with one pre-existing Authlib
       deprecation warning. Ruff, Pyright, and scoped diff checks passed.
     - >-
-      A single focused Conventional Commit checkpoint is created for this
-      reviewed and validated AURA-0110 slice; no push is performed.
+      The reviewed product slice is checkpointed in b4bc9e0, and this exact
+      final security verdict is recorded in a follow-up governance checkpoint;
+      no push is performed.
   failed:
     - >-
       The repository-wide changed-path validator cannot be run against the

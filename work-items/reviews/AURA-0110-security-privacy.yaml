@@ -3,24 +3,33 @@ work_item: AURA-0110
 verdict: PASS
 checked:
   - >-
-    Verified the projector admits only the two exact closed reference shapes,
-    rejects partial, hybrid, duplicate, additional-key, malformed, and
-    sensitive values, and emits only the canonical resourceId and
-    resourceVersion fields.
+    Verified `_project_version` is restored to its prior grammar-only behavior
+    and all non-reference call sites retain their existing validation
+    semantics.
   - >-
-    Verified UUID and version validation occurs before canonical projection,
-    invalid values are converted to the bounded stored-dataset error, and
-    supplied identifiers, versions, secret-bearing values, and provider
-    diagnostics are not echoed in errors or responses.
+    Verified `_project_reference_version` alone applies the authoritative
+    delimiter-bounded exclusions for owner, identity, credential, bearer,
+    token, secret, password, private, content, endpoint, URL, URI, filename,
+    and path segments.
   - >-
-    Verified the focused case and suite tests cover both accepted spellings,
-    non-mutating projection, replay/list/detail equivalence, sensitive-value
-    rejection, and contract-shaped canonical output.
+    Verified both exact accepted reference shapes canonicalize to only
+    `resourceId` and `resourceVersion`.
   - >-
-    Verified the change is Observatory-local: it introduces no Core import,
-    Aura Web reference, browser communication, shared database access,
-    credential path, migration, contract, routing, authorization, retention,
-    or persistence change.
+    Verified partial, mixed, duplicate, additional-key, malformed UUID,
+    non-canonical UUID, invalid-version, overlength, and sensitive-value
+    references fail closed with only `stored dataset is unavailable`.
+  - >-
+    Verified direct execution rejected all 14 authoritative sensitive markers
+    without exposing supplied values.
+  - >-
+    Verified the non-reference regression preserves prior evaluator-version
+    behavior, resolving the scope-expansion finding.
+  - >-
+    Verified no authentication, authorization, identity, retention,
+    credential, telemetry, Core, frontend, deployment, migration, contract,
+    or cross-product boundary changed.
+  - >-
+    Focused verification passed with 73 tests; Ruff and Pyright passed.
 findings: []
 risks: []
 unresolved: []
