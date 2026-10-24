@@ -34,6 +34,13 @@ _CURSOR_PREFIX = "ev1."
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _COMPONENT_ID = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+# Keep this delimiter-bounded exclusion aligned with the authoritative
+# evaluation-definition admission policy.  It prevents sensitive segments
+# without rejecting benign values that merely contain the same characters.
+_PRIVATE_SEGMENT = re.compile(
+    r"(?:^|[._:+-])(owner|identity|credential|bearer|token|secret|password|private|content|endpoint|url|uri|filename|path)(?:$|[._:+-])",
+    re.IGNORECASE,
+)
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _CAPTURE_CLASSES = {
     "metadata_only",
@@ -255,6 +262,15 @@ def _project_version(value: object, name: str) -> str:
     return result
 
 
+def _project_reference_version(value: object, name: str) -> str:
+    """Validate a resource-reference version and its content exclusion."""
+
+    result = _project_version(value, name)
+    if _PRIVATE_SEGMENT.search(result) is not None:
+        raise EvaluationQueryError(f"stored {name} is unavailable")
+    return result
+
+
 def _project_timestamp(value: object, name: str) -> str:
     if value is None:
         raise EvaluationUnavailable(f"stored {name} is unavailable")
@@ -281,13 +297,27 @@ def _project_enum(
 def _project_reference(value: object, name: str) -> dict[str, str]:
     if not isinstance(value, Mapping):
         raise EvaluationQueryError(f"stored {name} is unavailable")
-    resource_id = value.get("resourceId")
-    version = value.get("resourceVersion")
+
+    # Definitions are persisted with the domain spelling while an older
+    # observatory-v1 read model may already contain the API spelling.  Keep
+    # this compatibility boundary deliberately closed: accepting a partial
+    # or hybrid map would make it impossible to tell which representation was
+    # actually stored and could leak arbitrary fields through a projection.
+    keys = set(value)
+    if keys == {"id", "version"}:
+        resource_id = value.get("id")
+        version = value.get("version")
+    elif keys == {"resourceId", "resourceVersion"}:
+        resource_id = value.get("resourceId")
+        version = value.get("resourceVersion")
+    else:
+        raise EvaluationQueryError(f"stored {name} is unavailable")
+
     if not isinstance(resource_id, str) or not isinstance(version, str):
         raise EvaluationQueryError(f"stored {name} is unavailable")
     try:
-        checked_id = _safe_uuid(resource_id, f"{name}.resourceId")
-        checked_version = _safe_identifier(version, f"{name}.resourceVersion")
+        checked_id = _safe_uuid(resource_id, f"{name}.id")
+        checked_version = _project_reference_version(version, f"{name}.version")
     except EvaluationQueryError as exc:
         raise EvaluationQueryError(f"stored {name} is unavailable") from exc
     return resource_ref(checked_id, checked_version)

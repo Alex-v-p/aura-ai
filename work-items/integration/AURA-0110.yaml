@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0110
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0110-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0110-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0110.yaml
+checks:
+  passed:
+    - >-
+      The Observatory worker handoff was read and confirms the implementation
+      stayed within the approved evaluation query and focused-test ownership
+      zone without a worker commit.
+    - >-
+      Both required specialist reviews are PASS with no findings or unresolved
+      blockers. The security/privacy review confirms closed projection,
+      bounded errors, content-free output, and Observatory-only scope.
+    - >-
+      The staged slice is limited to the AURA-0110 projector, focused tests,
+      handoff, reviews, archived work item, and integration report. Shared
+      AURA-0098 changes remain unstaged and unclaimed.
+    - >-
+      Work-item validation, explicit six-path changed-path validation,
+      repository shape, module registry, Python import boundaries,
+      service isolation, contract-change, and baseline-protection checks
+      passed. Contract and baseline checks correctly reported no applicable
+      changes.
+    - >-
+      Focused AURA-0110 tests passed 73 cases; the AURA-0093/AURA-0095
+      regression selection passed 178 cases with one pre-existing Authlib
+      deprecation warning. Ruff, Pyright, and scoped diff checks passed.
+    - >-
+      A single focused Conventional Commit checkpoint is created for this
+      reviewed and validated AURA-0110 slice; no push is performed.
+  failed:
+    - >-
+      The repository-wide changed-path validator cannot be run against the
+      shared checkout without reporting unrelated dirty AURA-0098 paths. The
+      required worker run recorded that failure; explicit AURA-0110 path
+      validation passed during integration.
+    - >-
+      The full Observatory suite reported 1365 passed, 43 skipped, and six
+      failures outside AURA-0110: four migration-0015 protected-baseline
+      assertions and two AURA-0098 full-stack runner-shape assertions. These
+      pre-existing failures were preserved and not weakened.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation, acceptance, and governance files. They were not staged,
+    modified, or claimed as AURA-0110.
+  - >-
+    The full Observatory suite retains the known migration-0015 baseline and
+    AURA-0098 runner-shape failures until their owners complete that work.

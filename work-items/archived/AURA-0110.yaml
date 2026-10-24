@@ -1,0 +1,140 @@
+id: AURA-0110
+title: Normalize evaluation resource-reference projections
+status: integrated
+change_class: bugfix
+intent: >
+  Restore Observatory suite and case reads by accepting the two intentional
+  internal resource-reference representations at the evaluation query
+  boundary while continuing to emit one closed canonical observatory-v1
+  response shape.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0093.yaml
+    - work-items/archived/AURA-0095.yaml
+    - Persisted evaluation domain definitions represent ResourceReference as the closed keys id and version, while a previously projected observatory-v1 read model represents the same reference as resourceId and resourceVersion.
+    - The evaluation query boundary accepts either complete closed representation for suite and case projection and always returns the existing canonical resourceId and resourceVersion API representation.
+    - Partial hybrid duplicate or additional-key reference maps remain invalid even when their overlapping values agree. Invalid values retain the existing bounded query error behavior and never expose stored data or provider diagnostics.
+    - This is a query-projection compatibility correction only. Definition admission persistence public contracts storage schema and API routing remain unchanged.
+    - AURA-0098 retains ownership of composed public-suite acceptance. This item corrects only the proven query projection failure and may not edit its harness.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-003
+ownership_zones:
+  - services.aura-observatory.evaluation-query-projection
+  - evaluation.observatory-resource-reference-compatibility
+  - delivery.aura0110
+allowed_paths:
+  - work-items/active/AURA-0110.yaml
+  - work-items/archived/AURA-0110.yaml
+  - work-items/handoffs/AURA-0110-*.yaml
+  - work-items/reviews/AURA-0110-*.yaml
+  - work-items/integration/AURA-0110.yaml
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/tests/test_aura0110_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/adapters/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - evaluation-v1
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: evaluation.query
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Projection accepts only two exact closed key sets and must not admit arbitrary stored fields or pass them through to owner responses.
+    - UUID and version values remain validated before canonical projection; malformed partial hybrid duplicate and additional-key references fail closed with bounded messages that contain no supplied value.
+    - Canonical responses remain content-free definition metadata and exclude prompts responses artifacts credentials endpoints owner identity arbitrary attributes and provider diagnostics.
+    - The correction remains entirely inside Observatory and does not read Core state add cross-product communication or change authentication authorization retention or browser persistence behavior.
+  data_classes:
+    - evaluation_definition_metadata
+    - opaque_resource_identifiers
+    - content_free_error_metadata
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Case and suite projections accept a complete persisted domain reference containing exactly id and version and canonicalize it to exactly resourceId and resourceVersion.
+  - Case and suite projections continue to accept a complete already-projected reference containing exactly resourceId and resourceVersion and return the same canonical two-key representation.
+  - List and detail query paths produce identical canonical references for either accepted internal representation and remain valid against the unchanged observatory-v1 EvaluationResourceReference schema.
+  - A reference containing any mixture of domain and projected keys fails closed even when all supplied values agree; maps containing both complete representations are also rejected.
+  - Missing keys nulls non-strings invalid or non-canonical UUIDs invalid versions and additional keys are rejected with the existing bounded stored-reference error classification and no raw value or provider detail.
+  - The projector does not mutate stored mappings and does not synthesize missing identifiers versions or fallback values.
+  - Dataset evaluator suite and case fields outside ResourceReference projection retain their existing closed validation ordering pagination state and unavailable behavior.
+  - Focused tests cover both accepted representations for cases and suites canonical output list/detail equivalence and malformed partial mixed duplicate additional-key and sensitive-value rejection.
+  - The AURA-0098 public suite request no longer fails because its PostgreSQL-persisted dataset reference uses id and version; composed acceptance remains owned by AURA-0098.
+  - No Core Aura Web Observatory frontend adapter entrypoint contract migration deploy dependency service metric evaluator protected baseline or retention change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0110.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0110.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0110.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0110.yaml
+  - UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0110_*.py
+  - UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0110_*.py
+  - UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/tests/test_aura0110_*.py
+  - UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/tests/test_aura0110_*.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

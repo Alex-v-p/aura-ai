@@ -1,0 +1,45 @@
+agent: observatory_worker
+work_item: AURA-0110
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: AURA-0110-observatory
+scope:
+  ownership_zone: evaluation.observatory-resource-reference-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/tests/test_aura0110_resource_references.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {components: [], metrics_added: []}
+verification:
+  passed:
+    - "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0110.yaml"
+    - "python3 tooling/architecture/validate-repository-shape.py"
+    - "python3 tooling/architecture/validate-module-registry.py"
+    - "python3 tooling/architecture/validate-import-boundaries.py"
+    - "python3 tooling/architecture/validate-service-isolation.py"
+    - "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0110.yaml (skipped: no contract changes)"
+    - "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0110.yaml (skipped: no protected changes)"
+    - "UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0110_*.py (73 passed)"
+    - "UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0110_*.py (178 passed)"
+    - "UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pytest -q (111 passed, 22 skipped)"
+    - "UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/tests/test_aura0110_*.py"
+    - "UV_CACHE_DIR=/tmp/aura-0110-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/tests/test_aura0110_*.py"
+    - "git diff --check"
+  failed:
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0110.yaml: pre-existing dirty AURA-0098 deployment, frontend, Observatory, documentation, and work-item paths are outside AURA-0110 allowed_paths"
+  not_run: []
+decisions:
+  - "The query projector accepts only exactly {id, version} or exactly {resourceId, resourceVersion}; every partial, hybrid, duplicate, additional, malformed, or sensitive reference fails closed."
+  - "Both accepted forms are validated as canonical UUID plus the exact EvaluationVersion grammar and a reference-specific delimiter-bounded admission sensitive-segment rule, then emitted as exactly resourceId/resourceVersion."
+  - "The shared version projector remains grammar-only for non-reference fields; focused coverage preserves an otherwise contract-shaped evaluatorVersion of private while reference versions reject the sensitive segment."
+  - "No Core, Aura Web, frontend, contract, migration, adapter, entrypoint, service, metric, evaluator, baseline, or retention paths were changed."
+risks:
+  - "The required changed-path validator cannot pass until unrelated shared AURA-0098 dirt is integrated or isolated by its owner."
+unresolved: []
