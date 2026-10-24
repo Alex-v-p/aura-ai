@@ -27,6 +27,7 @@ from aura_observatory.evaluation_query import (
     _instant_filter,
     _json_mapping,
     _required_uuid,
+    iso,
     page,
     project_definition,
     resource_ref,
@@ -43,6 +44,61 @@ def _clickhouse_timestamp(value: object) -> str:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise EvaluationQueryError("cursor is invalid")
     return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _canonical_cursor_instant(value: object) -> str | None:
+    """Return one public UTC representation for a cursor instant.
+
+    Cursor timestamps may be read from PostgreSQL/ClickHouse rows or from a
+    legacy opaque cursor.  Accept both aware datetime values and parseable
+    aware ISO/RFC3339 strings, but never let a naive or malformed value reach
+    a provider query.  ``iso`` is the shared public serializer for the final
+    RFC3339 ``T``/``Z`` representation.
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise EvaluationQueryError("cursor is invalid") from exc
+    else:
+        raise EvaluationQueryError("cursor is invalid")
+    try:
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise EvaluationQueryError("cursor is invalid")
+        canonical = iso(parsed.astimezone(UTC))
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise EvaluationQueryError("cursor is invalid") from exc
+    if canonical is None:
+        raise EvaluationQueryError("cursor is invalid")
+    return canonical
+
+
+def _canonical_clickhouse_score_instant(value: object) -> str:
+    """Canonicalize a trusted ClickHouse UTC DateTime64 score value.
+
+    ClickHouse's JSON format commonly returns UTC ``DateTime64`` values with
+    a space separator and no offset.  That representation is provider data,
+    not client cursor input, so the missing offset is explicitly interpreted
+    as UTC at this boundary before using the shared cursor serializer.
+    """
+
+    if not isinstance(value, str):
+        raise EvaluationUnavailable("stored score timestamp is unavailable")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        canonical = _canonical_cursor_instant(parsed)
+    except (EvaluationQueryError, ValueError, TypeError, OverflowError) as exc:
+        raise EvaluationUnavailable("stored score timestamp is unavailable") from exc
+    if canonical is None:
+        raise EvaluationUnavailable("stored score timestamp is unavailable")
+    return canonical
 
 
 def _stored_simple_provenance(value: object) -> dict[str, str]:
@@ -291,17 +347,16 @@ def _decode_storage_cursor(
         or not isinstance(cursor_kind, (str, type(None)))
     ):
         raise EvaluationQueryError("cursor is invalid")
-    try:
-        snapshot = datetime.fromisoformat(snapshot_raw.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise EvaluationQueryError("cursor is invalid") from exc
-    if snapshot.tzinfo is None:
-        raise EvaluationQueryError("cursor is invalid")
     if timestamp_raw is not None and not isinstance(timestamp_raw, str):
         raise EvaluationQueryError("cursor is invalid")
+    snapshot_text = _canonical_cursor_instant(snapshot_raw)
+    if snapshot_text is None:
+        raise EvaluationQueryError("cursor is invalid")
+    snapshot = datetime.fromisoformat(snapshot_text.replace("Z", "+00:00"))
+    timestamp = _canonical_cursor_instant(timestamp_raw)
     return {
         "snapshotAt": snapshot.astimezone(UTC),
-        "timestamp": timestamp_raw,
+        "timestamp": timestamp,
         "identifier": identifier,
         "version": version,
         "kind": cursor_kind,
@@ -321,12 +376,16 @@ def _encode_storage_cursor(state: Mapping[str, object], row: Mapping[str, object
     version = row.get("_cursorVersion") if kind == "regressions" else None
     if version is None and kind == "regressions":
         version = row.get("regressionVersion")
+    snapshot_at = _canonical_cursor_instant(state.get("snapshotAt"))
+    if snapshot_at is None:
+        raise EvaluationQueryError("cursor is invalid")
+    cursor_timestamp = _canonical_cursor_instant(timestamp)
     raw = json.dumps(
         {
             "v": 2,
             "kind": kind,
-            "snapshotAt": str(state["snapshotAt"]).replace("+00:00", "Z"),
-            "timestamp": str(timestamp) if timestamp is not None else None,
+            "snapshotAt": snapshot_at,
+            "timestamp": cursor_timestamp,
             "identifier": str(row.get({
                 "datasets": "datasetId", "cases": "caseId", "suites": "suiteId",
                 "evaluators": "evaluatorId", "jobs": "jobId", "attempts": "attemptId",
@@ -495,7 +554,7 @@ class PostgresEvaluationQueryBackend:
         return {
             "items": rows,
             "nextCursor": next_cursor,
-            "snapshotAt": str(state["snapshotAt"]).replace("+00:00", "Z"),
+            "snapshotAt": _canonical_cursor_instant(state["snapshotAt"]),
             "partial": False,
         }
 
@@ -600,7 +659,7 @@ class PostgresEvaluationQueryBackend:
             "nextCursor": _encode_storage_cursor(state, items[-1], "history")
             if len(items) == limit and items
             else None,
-            "snapshotAt": str(state["snapshotAt"]).replace("+00:00", "Z"),
+            "snapshotAt": _canonical_cursor_instant(state["snapshotAt"]),
             "partial": False,
         }
 
@@ -1216,10 +1275,10 @@ class PostgresEvaluationQueryBackend:
                 "(observed_at < {cursor_timestamp:DateTime64(6)} OR "
                 "(observed_at = {cursor_timestamp:DateTime64(6)} AND score_id < {cursor_id:UUID}))"
             )
-            try:
-                cursor_time = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise EvaluationQueryError("cursor is invalid") from exc
+            cursor_text = _canonical_cursor_instant(timestamp)
+            if cursor_text is None:
+                raise EvaluationQueryError("cursor is invalid")
+            cursor_time = datetime.fromisoformat(cursor_text.replace("Z", "+00:00"))
             params["cursor_timestamp"] = _clickhouse_timestamp(cursor_time)
             params["cursor_id"] = str(identifier)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
@@ -1301,13 +1360,13 @@ class PostgresEvaluationQueryBackend:
                 "uncertainty": uncertainty,
                 "scoreDisposition": str(raw.get("score_disposition")),
                 "provenance": _stored_runner_execution_provenance(provenance_value),
-                "createdAt": str(raw.get("observed_at")),
+                "createdAt": _canonical_clickhouse_score_instant(raw.get("observed_at")),
             })
         return page(items, cursor=None, limit=max(1, len(items))) | {
             "nextCursor": _encode_storage_cursor(cursor_state, items[-1], "scores")
             if len(items) == limit and items
             else None,
-            "snapshotAt": str(cursor_state["snapshotAt"]).replace("+00:00", "Z"),
+            "snapshotAt": _canonical_cursor_instant(cursor_state["snapshotAt"]),
             "partial": False,
         }
 

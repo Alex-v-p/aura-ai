@@ -1,0 +1,37 @@
+agent: security_privacy_reviewer
+work_item: AURA-0111
+verdict: PASS
+checked:
+  - >-
+    Verified the change is confined to Observatory's evaluation query adapter
+    and its focused tests; no Core, Aura Web, frontend, deployment, contract,
+    migration, authentication, authorization, retention, or cross-product
+    boundary changed.
+  - >-
+    Verified untrusted cursor decoding remains closed, kind-bound,
+    size-bounded, canonical-base64 validated, duplicate-key rejecting, and
+    fail-closed for malformed, naive, non-string, and invalid timestamp
+    values before PostgreSQL or ClickHouse access.
+  - >-
+    Verified offset normalization changes only the representation of an
+    already-admitted aware instant; it does not add query filters, identifiers,
+    payload fields, provider text, credentials, endpoints, owner identity, or
+    content to responses, logs, metrics, or errors.
+  - >-
+    Verified trusted ClickHouse timestamp projection accepts only the bounded
+    provider timestamp shape, interprets its timezone-less DateTime64 value as
+    UTC at the provider boundary, and exposes only the existing canonical
+    createdAt/cursor fields; invalid values retain the bounded unavailable
+    classification.
+  - >-
+    Verified legacy valid cursors remain readable while newly emitted page
+    snapshots and successor cursor timestamps use the canonical RFC3339
+    UTC representation, without changing pagination fences, ordering,
+    identifiers, or detail projections.
+  - >-
+    Focused AURA-0111 tests, the AURA-0095 backend regression selection,
+    Ruff, Pyright, and scoped whitespace validation passed as recorded by the
+    implementation handoff and general review.
+findings: []
+risks: []
+unresolved: []

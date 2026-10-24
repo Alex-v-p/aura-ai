@@ -1,0 +1,54 @@
+agent: observatory_worker
+work_item: AURA-0111
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.evaluation-query-adapter+evaluation.observatory-utc-instant-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/tests/test_aura0111_evaluation_query.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0111.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0111.yaml --path services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py --path services/aura-observatory/tests/test_aura0111_evaluation_query.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0111.yaml (no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0111.yaml (no baseline changes)
+    - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0111_*.py (11 passed, including provider-shaped two-page ClickHouse score pagination)
+    - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0111_*.py (71 passed, 9 skipped; one shared-worktree baseline failure)
+    - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/tests/test_aura0111_*.py
+    - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/tests/test_aura0111_*.py
+    - git diff --check
+    - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests (1375 passed, 43 skipped; six shared-worktree baseline failures)
+  failed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0111.yaml without --path is blocked by pre-existing AURA-0098 and other dirty paths outside AURA-0111 allowed_paths
+  not_run: []
+decisions:
+  - Reused the public evaluation_query.iso serializer after validating cursor instants are aware and parseable.
+  - Added one adapter-local canonical cursor instant boundary that normalizes offset-aware values to UTC RFC3339 with T and Z, preserving fractional seconds.
+  - Kept client cursor decoding strictly aware/fail-closed; separately normalized trusted ClickHouse UTC DateTime64 score-row values with a space separator to UTC before cursor encoding.
+  - Canonicalized both newly emitted snapshotAt/timestamp values and decoded legacy cursor timestamp state; malformed and naive values retain the fixed cursor error before provider access.
+  - Kept detail projections, query predicates, pagination ordering, identifiers, versions, filters, and provider error classification unchanged.
+  - No Core, Aura Web, frontend, public contract, migration, entrypoint, deploy, dependency, metric, evaluator, baseline, or retention change.
+risks:
+  - The shared checkout contains unrelated AURA-0098 and later integrated work; integration must stage only the two AURA-0111 paths and preserve all other edits.
+  - The full Observatory suite still reflects shared-worktree migration and harness expectations for pre-existing changes, recorded in verification rather than altered here.
+unresolved:
+  - None within the AURA-0111 ownership zone; required reviewer verification and parent integration remain.
