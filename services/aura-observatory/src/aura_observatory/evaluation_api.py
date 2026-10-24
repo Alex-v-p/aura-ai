@@ -849,13 +849,18 @@ def _project_definition_replay(
                 "provenance", "state", "createdAt",
         }
     )
+    suite_optional_fields = frozenset({"components", "variantBindings", "limits"})
     if kind == "dataset":
         expected_fields = dataset_fields
     elif kind == "suite":
-        expected_fields = suite_fields
+        expected_fields = suite_fields | suite_optional_fields
     else:
         raise EvaluationUnavailable("stored definition replay is unavailable")
-    if set(replay.keys()) != set(expected_fields):
+    replay_keys = set(replay.keys())
+    if kind == "suite":
+        if not set(suite_fields) <= replay_keys <= set(expected_fields):
+            raise EvaluationUnavailable("stored definition replay is unavailable")
+    elif replay_keys != set(expected_fields):
         raise EvaluationUnavailable("stored definition replay is unavailable")
     if replay.get("schemaVersion") != 1 or replay.get("resourceType") != kind:
         raise EvaluationUnavailable("stored definition replay is unavailable")
@@ -872,11 +877,6 @@ def _project_definition_replay(
         internal = dict(replay)
         if kind == "dataset":
             internal["scopes"] = replay.get("scopeIds")
-        else:
-            internal["limits"] = {
-                "maxCases": replay.get("caseBudget"),
-                "timeoutMs": replay.get("timeoutMs"),
-            }
         projected = project_definition(internal, state=cast(str, state))
     except (EvaluationQueryError, TypeError, ValueError) as exc:
         raise EvaluationUnavailable("stored definition replay is unavailable") from exc

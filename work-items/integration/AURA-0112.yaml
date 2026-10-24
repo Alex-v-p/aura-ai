@@ -1,0 +1,47 @@
+agent: delivery_lead
+work_item: AURA-0112
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0112-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0112-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0112.yaml
+checks:
+  passed:
+    - >-
+      Focused AURA-0112 verification passed 39 tests, including recursive
+      OpenAPI validation for legacy and enriched suite projections.
+    - >-
+      AURA-0110 compatibility plus AURA-0112 passed 121 tests; the broader
+      attributable regression passed 190 tests with 9 skips.
+    - >-
+      Ruff, Pyright, work-item validation, explicit changed-path validation,
+      import and service isolation, contract and baseline protection, YAML,
+      and diff checks passed.
+    - >-
+      Both required independent reviewers returned PASS with no unresolved
+      findings after the owning worker corrected their findings.
+  failed:
+    - >-
+      The broader shared suite retains one unrelated migration inventory
+      assertion expecting version 14 while the checkout contains migration 15.
+    - >-
+      Unfiltered changed-path and repository-shape checks remain affected by
+      unrelated dirty AURA-0098 paths and retained ignored browser artifacts;
+      the AURA-0112 paths passed explicit scoped validation.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    changes. The AURA-0112 checkpoint must stage only its implementation and
+    governance paths.
+  - >-
+    Full composed browser acceptance remains owned by AURA-0098 and must be
+    rerun against this corrected projection before AURA-0098 can close.

@@ -42,6 +42,12 @@ _PRIVATE_SEGMENT = re.compile(
     re.IGNORECASE,
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_REVISION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_EVALUATION_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_REVISION_PRIVATE_SEGMENT = re.compile(
+    r"(?:^|[._:+-])(owner|identity|credential|bearer|token|secret|password|private|content|hash|digest|endpoint)(?:$|[._:+-])",
+    re.IGNORECASE,
+)
 _CAPTURE_CLASSES = {
     "metadata_only",
     "hashed",
@@ -323,6 +329,169 @@ def _project_reference(value: object, name: str) -> dict[str, str]:
     return resource_ref(checked_id, checked_version)
 
 
+_SUITE_COMPONENT_FIELDS = frozenset(
+    {"componentId", "componentVersion", "codeRevision", "imageDigest", "configurationRevision"}
+)
+_SUITE_VARIANT_FIELDS = frozenset(
+    {
+        "variantId",
+        "components",
+        "model",
+        "configurationRevision",
+        "promptRevision",
+        "policyRevision",
+        "deploymentRevision",
+    }
+)
+_SUITE_MODEL_FIELDS = frozenset({"modelId", "modelVersion", "modelDigest"})
+_SUITE_LIMIT_FIELDS = frozenset(
+    {
+        "timeoutMs",
+        "maxConcurrency",
+        "maxAttempts",
+        "maxCases",
+        "maxInputBytes",
+        "maxOutputBytes",
+        "maxTokens",
+    }
+)
+_SUITE_LIMIT_BOUNDS: dict[str, tuple[int, int]] = {
+    "timeoutMs": (100, 86_400_000),
+    "maxConcurrency": (1, 64),
+    "maxAttempts": (1, 10),
+    "maxCases": (1, 100_000),
+    "maxInputBytes": (0, 1_073_741_824),
+    "maxOutputBytes": (0, 1_073_741_824),
+    "maxTokens": (0, 100_000_000),
+}
+
+
+def _suite_unavailable(name: str) -> EvaluationUnavailable:
+    return EvaluationUnavailable(f"stored suite {name} is unavailable")
+
+
+def _suite_closed(value: object, fields: frozenset[str], name: str) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != set(fields):
+        raise _suite_unavailable(name)
+    return dict(cast(Mapping[str, object], value))
+
+
+def _project_suite_component(value: object, name: str) -> dict[str, str]:
+    item = _suite_closed(value, _SUITE_COMPONENT_FIELDS, name)
+    component_id = item.get("componentId")
+    if not isinstance(component_id, str) or _COMPONENT_ID.fullmatch(component_id) is None:
+        raise _suite_unavailable(name)
+    try:
+        component_version = _project_version(item.get("componentVersion"), f"{name}.componentVersion")
+    except EvaluationQueryError as exc:
+        raise _suite_unavailable(name) from exc
+    revisions: dict[str, str] = {}
+    for field_name in ("codeRevision", "configurationRevision"):
+        value = item.get(field_name)
+        if (
+            not isinstance(value, str)
+            or _REVISION_ID.fullmatch(value) is None
+            or _REVISION_PRIVATE_SEGMENT.search(value) is not None
+        ):
+            raise _suite_unavailable(name)
+        revisions[field_name] = value
+    digest = item.get("imageDigest")
+    if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
+        raise _suite_unavailable(name)
+    return {
+        "componentId": component_id,
+        "componentVersion": component_version,
+        "codeRevision": revisions["codeRevision"],
+        "imageDigest": digest,
+        "configurationRevision": revisions["configurationRevision"],
+    }
+
+
+def _project_suite_components(value: object, name: str) -> tuple[list[dict[str, str]], list[str]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
+        raise _suite_unavailable(name)
+    components = [_project_suite_component(item, f"{name}[{index}]") for index, item in enumerate(value)]
+    component_ids = [item["componentId"] for item in components]
+    if len(set(component_ids)) != len(component_ids):
+        raise _suite_unavailable(name)
+    return components, component_ids
+
+
+def _project_suite_model(value: object, name: str) -> dict[str, str]:
+    item = _suite_closed(value, _SUITE_MODEL_FIELDS, name)
+    model_id = item.get("modelId")
+    if (
+        not isinstance(model_id, str)
+        or len(model_id) > 193
+        or _EVALUATION_ID.fullmatch(model_id) is None
+        or _PRIVATE_SEGMENT.search(model_id) is not None
+    ):
+        raise _suite_unavailable(name)
+    try:
+        model_version = _project_version(item.get("modelVersion"), f"{name}.modelVersion")
+    except EvaluationQueryError as exc:
+        raise _suite_unavailable(name) from exc
+    model_digest = item.get("modelDigest")
+    if not isinstance(model_digest, str) or _DIGEST.fullmatch(model_digest) is None:
+        raise _suite_unavailable(name)
+    return {"modelId": model_id, "modelVersion": model_version, "modelDigest": model_digest}
+
+
+def _project_suite_variant(value: object, name: str) -> dict[str, object]:
+    item = _suite_closed(value, _SUITE_VARIANT_FIELDS, name)
+    components, _component_ids = _project_suite_components(item.get("components"), f"{name}.components")
+    variant_id = item.get("variantId")
+    if (
+        not isinstance(variant_id, str)
+        or _EVALUATION_ID.fullmatch(variant_id) is None
+        or _PRIVATE_SEGMENT.search(variant_id) is not None
+    ):
+        raise _suite_unavailable(name)
+    model = _project_suite_model(item.get("model"), f"{name}.model")
+    revisions: dict[str, str] = {}
+    for field_name in (
+        "configurationRevision",
+        "promptRevision",
+        "policyRevision",
+        "deploymentRevision",
+    ):
+        revision = item.get(field_name)
+        if (
+            not isinstance(revision, str)
+            or _REVISION_ID.fullmatch(revision) is None
+            or _REVISION_PRIVATE_SEGMENT.search(revision) is not None
+        ):
+            raise _suite_unavailable(name)
+        revisions[field_name] = revision
+    return {
+        "variantId": variant_id,
+        "components": components,
+        "model": model,
+        **revisions,
+    }
+
+
+def _project_suite_variants(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 16:
+        raise _suite_unavailable("variantBindings")
+    variants = [_project_suite_variant(item, f"variantBindings[{index}]") for index, item in enumerate(value)]
+    variant_ids = [str(item["variantId"]) for item in variants]
+    if len(set(variant_ids)) != len(variant_ids):
+        raise _suite_unavailable("variantBindings")
+    return variants
+
+
+def _project_suite_limits(value: object) -> dict[str, int]:
+    item = _suite_closed(value, _SUITE_LIMIT_FIELDS, "limits")
+    result: dict[str, int] = {}
+    for field_name, (lower, upper) in _SUITE_LIMIT_BOUNDS.items():
+        field_value = item.get(field_name)
+        if type(field_value) is not int or not lower <= field_value <= upper:
+            raise _suite_unavailable(f"limits.{field_name}")
+        result[field_name] = field_value
+    return result
+
+
 def project_definition(
     payload: Mapping[str, object], *, state: str = "active"
 ) -> dict[str, object]:
@@ -414,54 +583,137 @@ def project_definition(
         dataset = cast(Mapping[str, object], payload.get("dataset", {}))
         if not dataset:
             raise EvaluationUnavailable("stored suite dataset reference is unavailable")
+        dataset_ref = _project_reference(dataset, "dataset")
         evaluators = payload.get("evaluators")
         evaluator_items: list[dict[str, object]] = []
         if isinstance(evaluators, Sequence) and not isinstance(evaluators, (str, bytes)):
             for item in evaluators:
-                if not isinstance(item, Mapping):
-                    raise EvaluationQueryError("stored suite evaluators are unavailable")
-                evaluator_items.append(
-                    {
-                        "evaluatorId": _project_text(
-                            item.get("evaluatorId"), "evaluatorId"
-                        ),
-                        "evaluatorVersion": _project_version(
-                            item.get("evaluatorVersion"), "evaluatorVersion"
-                        ),
-                        "kind": _project_text(item.get("kind"), "kind"),
-                    }
+                item = _suite_closed(
+                    item,
+                    frozenset({"evaluatorId", "evaluatorVersion", "kind"}),
+                    "evaluators",
                 )
-        limits = payload.get("limits")
-        if not isinstance(limits, Mapping):
-            raise EvaluationUnavailable("stored suite limits are unavailable")
-        limits_map = cast(Mapping[str, object], limits)
-        components = payload.get("components")
-        component_ids = payload.get("componentIds")
-        if isinstance(components, Sequence) and not isinstance(components, (str, bytes)):
-            component_ids = [
-                cast(Mapping[str, object], item).get("componentId")
-                for item in components
-                if isinstance(item, Mapping)
-            ]
-        return {
+                try:
+                    evaluator_items.append(
+                        {
+                            "evaluatorId": _safe_uuid(item.get("evaluatorId"), "evaluatorId"),
+                            "evaluatorVersion": _project_version(
+                                item.get("evaluatorVersion"), "evaluatorVersion"
+                            ),
+                            "kind": _project_enum(
+                                item.get("kind"), "kind", {"deterministic", "local_judge"}
+                            ),
+                        }
+                    )
+                except EvaluationQueryError as exc:
+                    raise _suite_unavailable("evaluators") from exc
+        else:
+            raise _suite_unavailable("evaluators")
+        if not 1 <= len(evaluator_items) <= 32:
+            raise _suite_unavailable("evaluators")
+
+        projected_components: list[dict[str, str]] | None = None
+        derived_component_ids: list[str] | None = None
+        if "components" in payload:
+            projected_components, derived_component_ids = _project_suite_components(
+                payload.get("components"), "components"
+            )
+        component_ids_value = payload.get("componentIds")
+        if derived_component_ids is not None:
+            if component_ids_value is not None:
+                try:
+                    checked_component_ids = _project_strings(
+                        component_ids_value, "componentIds", maximum=32
+                    )
+                except EvaluationQueryError as exc:
+                    raise _suite_unavailable("componentIds") from exc
+                if (
+                    len(set(checked_component_ids)) != len(checked_component_ids)
+                    or checked_component_ids != derived_component_ids
+                ):
+                    raise _suite_unavailable("componentIds")
+            component_ids = derived_component_ids
+        else:
+            try:
+                component_ids = _project_strings(component_ids_value, "componentIds", maximum=32)
+            except EvaluationQueryError as exc:
+                raise _suite_unavailable("componentIds") from exc
+            if (
+                not component_ids
+                or len(set(component_ids)) != len(component_ids)
+                or any(_COMPONENT_ID.fullmatch(item) is None for item in component_ids)
+            ):
+                raise _suite_unavailable("componentIds")
+
+        projected_limits: dict[str, int] | None = None
+        raw_limits = payload.get("limits")
+        # Before the enriched suite projection existed, the query read model
+        # retained only these two summary values under ``limits``.  Treat that
+        # exact shape as the legacy summary encoding; every other present
+        # limits object must be the complete authoritative contract shape.
+        legacy_summary_limits = (
+            "components" not in payload
+            and "variantBindings" not in payload
+            and isinstance(raw_limits, Mapping)
+            and set(raw_limits) == {"maxCases", "timeoutMs"}
+        )
+        legacy_summary_values = (
+            cast(Mapping[str, object], raw_limits) if legacy_summary_limits else None
+        )
+        if "limits" in payload and not legacy_summary_limits:
+            projected_limits = _project_suite_limits(payload.get("limits"))
+        case_budget_value = payload.get(
+            "caseBudget",
+            (
+                projected_limits.get("maxCases")
+                if projected_limits is not None
+                else legacy_summary_values["maxCases"]
+                if legacy_summary_values is not None
+                else None
+            ),
+        )
+        timeout_value = payload.get(
+            "timeoutMs",
+            (
+                projected_limits.get("timeoutMs")
+                if projected_limits is not None
+                else legacy_summary_values["timeoutMs"]
+                if legacy_summary_values is not None
+                else None
+            ),
+        )
+        if type(case_budget_value) is not int or not 1 <= case_budget_value <= 100_000:
+            raise _suite_unavailable("caseBudget")
+        if type(timeout_value) is not int or not 100 <= timeout_value <= 86_400_000:
+            raise _suite_unavailable("timeoutMs")
+        if projected_limits is not None and (
+            projected_limits["maxCases"] != case_budget_value
+            or projected_limits["timeoutMs"] != timeout_value
+        ):
+            raise _suite_unavailable("limits")
+
+        result: dict[str, object] = {
             "schemaVersion": 1,
             "resourceType": "suite",
             "suiteId": _required_uuid(payload.get("suiteId"), "suiteId"),
             "suiteVersion": _project_version(payload.get("suiteVersion"), "suiteVersion"),
-            "dataset": _project_reference(dataset, "dataset"),
+            "dataset": dataset_ref,
             "evaluators": evaluator_items,
-            "componentIds": _project_strings(component_ids, "componentIds", maximum=32),
-            "caseBudget": _project_integer(
-                payload.get("caseBudget", limits_map.get("maxCases")), "caseBudget"
-            ),
-            "timeoutMs": _project_integer(
-                payload.get("timeoutMs", limits_map.get("timeoutMs")), "timeoutMs"
-            ),
+            "componentIds": component_ids,
+            "caseBudget": case_budget_value,
+            "timeoutMs": timeout_value,
             "retentionMode": "manual_only",
             "provenance": prov,
             "state": state,
             "createdAt": created_at,
         }
+        if projected_components is not None:
+            result["components"] = projected_components
+        if "variantBindings" in payload:
+            result["variantBindings"] = _project_suite_variants(payload.get("variantBindings"))
+        if projected_limits is not None:
+            result["limits"] = projected_limits
+        return result
     raise EvaluationQueryError("stored definition type is unavailable")
 
 
