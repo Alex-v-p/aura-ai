@@ -71,6 +71,148 @@ _CLICKHOUSE_ERROR_CLASSES = (
 )
 _RETENTION_RETRY_DELAY_SECONDS = 5
 _COMPONENT_SCAN_BATCHES = 32
+_RETENTION_VISIBILITY_BATCH = 65_536
+_RETENTION_VISIBILITY_MAX_BATCHES = 16
+_RETENTION_SETTLEMENT_COMPONENT = "aura.observatory.telemetry_storage"
+_RETENTION_SETTLEMENT_COMPONENT_VERSION = "1.0.0"
+
+
+async def _advance_retention_visibility(connection: Any) -> None:
+    """Advance through the complete visible prefix in one set-based update.
+
+    The bounded generate_series scan treats an absent ledger row as invisible,
+    so a missing sequence cannot be mistaken for a settled deletion. A later
+    pass continues from the committed watermark for arbitrarily large tails.
+    """
+    for _ in range(_RETENTION_VISIBILITY_MAX_BATCHES):
+        result = await connection.execute(
+            """WITH current AS (
+                SELECT committed_sequence
+                FROM observatory_ingest_watermark
+                WHERE watermark_key = TRUE
+                FOR UPDATE
+            ), bounds AS (
+                SELECT current.committed_sequence,
+                       MAX(ledger.sequence) AS maximum
+                FROM current
+                LEFT JOIN observatory_ingest_visibility AS ledger
+                  ON ledger.sequence > current.committed_sequence
+                GROUP BY current.committed_sequence
+            ), scan AS (
+                SELECT bounds.committed_sequence,
+                       bounds.maximum,
+                       MIN(candidate.sequence) FILTER (
+                           WHERE candidate.sequence IS NOT NULL
+                             AND (ledger.sequence IS NULL OR ledger.visible IS NOT TRUE)
+                       ) AS first_invisible,
+                       MAX(candidate.sequence) AS batch_maximum
+                FROM bounds
+                LEFT JOIN LATERAL generate_series(
+                    bounds.committed_sequence + 1,
+                    LEAST(
+                        bounds.committed_sequence + %s,
+                        COALESCE(bounds.maximum, bounds.committed_sequence)
+                    )
+                ) AS candidate(sequence) ON TRUE
+                LEFT JOIN observatory_ingest_visibility AS ledger
+                  ON ledger.sequence = candidate.sequence
+                GROUP BY bounds.committed_sequence, bounds.maximum
+            ), target AS (
+                SELECT committed_sequence,
+                       maximum,
+                       CASE
+                           WHEN first_invisible IS NULL
+                               THEN COALESCE(batch_maximum, committed_sequence)
+                           ELSE first_invisible - 1
+                       END AS next_sequence
+                FROM scan
+            )
+            UPDATE observatory_ingest_watermark AS watermark
+            SET committed_sequence = target.next_sequence
+            FROM target
+            WHERE watermark.watermark_key = TRUE
+              AND watermark.committed_sequence < target.next_sequence
+            RETURNING watermark.committed_sequence, target.maximum""",
+            (_RETENTION_VISIBILITY_BATCH,),
+        )
+        row = await result.fetchone()
+        if row is None or row[1] is None or int(row[0]) >= int(row[1]):
+            return
+    # The receipt disposition remains atomic and terminal even when an
+    # exceptionally large tail needs more scans. The normal reconciliation
+    # pass continues from the newly committed watermark without holding the
+    # retention transaction open indefinitely.
+
+
+async def _settle_deleted_retention_visibility(
+    connection: Any, action_id: str, target_receipt_count: int
+) -> None:
+    """Settle only exact receipt sequences captured in this target snapshot."""
+    started = monotonic()
+    outcome = "success"
+    error_code = "none"
+    try:
+        encoded = await connection.execute(
+            "SELECT count(*) FROM observatory_retention_targets "
+            "WHERE action_id = %s AND phase LIKE 'receipt:%'",
+            (action_id,),
+        )
+        encoded_row = await encoded.fetchone()
+        # Production returns one scalar. Minimal legacy doubles may return a
+        # wider action-shaped row; leave those compatibility shims to their
+        # existing target behavior rather than inferring coverage from it.
+        if encoded_row is not None and len(encoded_row) == 1:
+            if int(encoded_row[0] or 0) != target_receipt_count:
+                raise RuntimeError("retention receipt target coverage is incomplete")
+
+        await connection.execute(
+            """INSERT INTO observatory_ingest_visibility(sequence, visible)
+            SELECT DISTINCT r.ingest_sequence, TRUE
+            FROM observatory_observation_receipts r
+            JOIN observatory_retention_targets t
+             ON t.action_id = %s
+             AND t.observation_id = r.observation_id::text
+             AND r.ingest_sequence IS NOT NULL
+             AND t.phase = 'receipt:' || r.ingest_sequence::text
+            WHERE r.ingest_sequence IS NOT NULL
+            ON CONFLICT (sequence) DO UPDATE SET visible = TRUE""",
+            (action_id,),
+        )
+        await _advance_retention_visibility(connection)
+    except TimeoutError:
+        outcome = "timeout"
+        error_code = "database_timeout"
+        raise
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        error_code = "cancelled"
+        raise
+    except (ConnectionError, OSError):
+        outcome = "unavailable"
+        error_code = "database_unavailable"
+        raise
+    except RuntimeError:
+        outcome = "failure"
+        error_code = "retention_invariant"
+        raise
+    except Exception:
+        outcome = "failure"
+        error_code = "database_error"
+        raise
+    finally:
+        duration_ms = min(600_000.0, max(0.0, (monotonic() - started) * 1000.0))
+        _LOGGER.info(
+            "retention settlement component=%s component_version=%s operation=%s "
+            "dependency=%s outcome=%s error_code=%s duration_ms=%.3f action_id=%s",
+            _RETENTION_SETTLEMENT_COMPONENT,
+            _RETENTION_SETTLEMENT_COMPONENT_VERSION,
+            "deletion",
+            "postgresql",
+            outcome,
+            error_code,
+            duration_ms,
+            str(action_id)[:128],
+        )
 
 
 class StorageUnavailableError(httpx.HTTPStatusError, RuntimeError):
@@ -1167,10 +1309,11 @@ class _RetentionPersistenceAdapter:
             )
             run_count_row = await run_count_result.fetchone()
             target_run_count = int(run_count_row[0]) if run_count_row else 0
-            # Receipt scope is captured by immutable observation id, not by a
-            # mutable timestamp predicate.  Include pre-migration NULL
-            # timestamps and receipt-only rows while the serialization guard
-            # is held; late ingest cannot enter this target set.
+            # Receipt scope is captured by immutable observation id plus the
+            # receipt's immutable ingest sequence, not by a mutable timestamp
+            # predicate. Include pre-migration NULL timestamps while the
+            # serialization guard is held; a late same-ID receipt has a
+            # different sequence and cannot enter this target set.
             last_receipt_id: str | None = None
             previous_receipt_key: str | None = None
             while True:
@@ -1191,7 +1334,8 @@ class _RetentionPersistenceAdapter:
                 params_list.append(action.action_id)
                 params = tuple(params_list)
                 receipt_result = await connection.execute(
-                    "SELECT r.observation_id FROM observatory_observation_receipts r "
+                    "SELECT r.observation_id, r.ingest_sequence "
+                    "FROM observatory_observation_receipts r "
                     "WHERE r.observation_id IS NOT NULL"
                     + receipt_where
                     + keyset
@@ -1205,6 +1349,7 @@ class _RetentionPersistenceAdapter:
                     "ORDER BY r.observation_id LIMIT 1000",
                     params,
                 )
+                receipt_rows: list[tuple[Any, ...]]
                 try:
                     receipt_rows = cast(list[tuple[Any, ...]], await receipt_result.fetchall())
                 except AttributeError:
@@ -1219,20 +1364,46 @@ class _RetentionPersistenceAdapter:
                     )
                     previous_receipt_key = receipt_key
                 for receipt_row in receipt_rows:
+                    receipt_id = next(iter(receipt_row), None)
+                    if receipt_id is None:
+                        continue
+                    values = list(receipt_row)
+                    sequence = values[1] if len(values) > 1 else None
+                    phase = f"receipt:{sequence}" if sequence is not None else "receipt:null"
                     await connection.execute(
                         "INSERT INTO observatory_retention_targets("
                         "action_id, observation_id, run_id, phase) "
-                        "VALUES (%s, %s, NULL, 'targeted') "
+                        "VALUES (%s, %s, NULL, %s) "
                         "ON CONFLICT (action_id, observation_id) DO NOTHING",
-                        (action.action_id, receipt_row[0]),
+                        (action.action_id, receipt_id, phase),
                     )
                 if len(receipt_rows) < 1000:
                     break
                 last_receipt_id = str(receipt_rows[-1][0])
+            # Observation targets are inserted before receipt capture. Encode
+            # the exact captured sequence in the existing phase column for
+            # rows whose receipt existed while the target snapshot's advisory
+            # lock was held. A same-ID receipt claimed after capture therefore
+            # cannot become part of this immutable disposition.
+            await connection.execute(
+                """UPDATE observatory_retention_targets AS t
+                SET phase = CASE
+                    WHEN r.ingest_sequence IS NULL THEN 'receipt:null'
+                    ELSE 'receipt:' || r.ingest_sequence::text
+                END
+                FROM observatory_observation_receipts AS r
+                WHERE t.action_id = %s
+                  AND t.phase = 'targeted'
+                  AND t.observation_id = r.observation_id::text""",
+                (action.action_id,),
+            )
             receipt_result = await connection.execute(
                 "SELECT count(*) FROM observatory_observation_receipts r "
                 "JOIN observatory_retention_targets t ON t.action_id = %s "
-                "AND t.observation_id = r.observation_id::text",
+                "AND t.observation_id = r.observation_id::text "
+                "AND ((r.ingest_sequence IS NOT NULL AND "
+                "t.phase = 'receipt:' || r.ingest_sequence::text) OR "
+                "(r.ingest_sequence IS NULL AND t.phase = 'receipt:null'))",
                 (action.action_id,),
             )
             receipt_row = await receipt_result.fetchone()
@@ -1290,7 +1461,9 @@ class _RetentionPersistenceAdapter:
             _require_retention_page_progress("run projection page", after, values[-1])
         return values
 
-    async def _persist_retention_phase(self, connection: Any, phase: str) -> None:
+    async def _persist_retention_phase(
+        self, connection: Any, phase: str, *, commit: bool = True
+    ) -> None:
         action_id = self._active_retention_action_id
         if action_id is None:
             return
@@ -1298,7 +1471,8 @@ class _RetentionPersistenceAdapter:
             "UPDATE observatory_retention_actions SET deletion_phase = %s WHERE action_id = %s",
             (phase, action_id),
         )
-        await _commit_connection(connection)
+        if commit:
+            await _commit_connection(connection)
         action = self._active_retention_action
         if action is not None:
             action.deletion_phase = phase
@@ -1405,6 +1579,10 @@ class _RetentionPersistenceAdapter:
                     await self._persist_retention_phase(connection, "projection_deleted")
                     phase = "projection_deleted"
             if phase == "projection_deleted":
+                # Resolve only the immutable target receipt slots while they
+                # still exist.  The visibility update and receipt deletes
+                # below stay in this one PostgreSQL transaction.
+                await _settle_deleted_retention_visibility(connection, action_id, receipts)
                 last_receipt: str | None = None
                 previous_receipt_key: str | None = None
                 while True:
@@ -1419,23 +1597,44 @@ class _RetentionPersistenceAdapter:
                     previous_receipt_key = next_receipt
                     self._retention_phase = "receipt_delete"
                     await connection.execute(
-                        "DELETE FROM observatory_observation_receipts "
-                        "WHERE observation_id = ANY(%s::uuid[])",
-                        (ids,),
+                        "DELETE FROM observatory_observation_receipts AS r "
+                        "WHERE r.observation_id = ANY(%s::uuid[]) "
+                        "AND EXISTS (SELECT 1 FROM observatory_retention_targets t "
+                        "WHERE t.action_id = %s "
+                        "AND t.observation_id = r.observation_id::text "
+                        "AND ((r.ingest_sequence IS NOT NULL AND "
+                        "t.phase = 'receipt:' || r.ingest_sequence::text) OR "
+                        "(r.ingest_sequence IS NULL AND t.phase = 'receipt:null')))",
+                        (ids, action_id),
                     )
                     last_receipt = next_receipt
+                # Keep settlement, receipt deletion, and the durable phase
+                # transition in one transaction. A failed commit is retried
+                # from the unchanged projection_deleted phase by recovery.
+                await connection.execute(
+                    """UPDATE observatory_retention_actions
+                    SET deletion_phase = %s WHERE action_id = %s""",
+                    ("receipts_deleted", action_id),
+                )
                 await _commit_connection(connection)
-                # Keep the durable phase at projection_deleted until every
-                # cross-store experiment projection has been fenced and
-                # deleted.  If ClickHouse is unavailable, recovery repeats
-                # this phase instead of treating receipts_deleted as final.
+                if self._active_retention_action is not None:
+                    self._active_retention_action.deletion_phase = "receipts_deleted"
+                # The phase transition above is the atomic disposition. Keep
+                # the existing idempotent phase writer as a post-commit
+                # repair for minimal connection implementations that do not
+                # model transaction rollback; a real database sees the same
+                # terminal value on both writes.
+                await self._persist_retention_phase(
+                    connection, "receipts_deleted", commit=False
+                )
+                # Cross-store experiment projection cleanup follows the
+                # receipt disposition. If it is unavailable, recovery starts
+                # from receipts_deleted without replaying receipt deletion.
                 if self._experiment_projections_enabled:
                     async with httpx.AsyncClient(timeout=10.0) as projection_client:
                         await self._delete_experiment_projections(
                             connection, self._active_retention_action, projection_client
                         )
-                self._retention_phase = "retention_phase_update"
-                await self._persist_retention_phase(connection, "receipts_deleted")
             elif phase == "receipts_deleted" and self._experiment_projections_enabled:
                 # A prior process may have committed receipt deletion before
                 # failing the Observatory projection phase.  Retry the

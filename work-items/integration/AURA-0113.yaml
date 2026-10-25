@@ -1,0 +1,89 @@
+agent: integration_maintainer
+work_item: AURA-0113
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0113-architecture.yaml
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0113-general.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0113-observability.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0113-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0113.yaml
+  - work-items/integration/AURA-0113.yaml
+checks:
+  passed:
+    - >-
+      The complete AURA-0113 implementation handoff was read; it reports no
+      unresolved items, no commit claims, no contract or migration changes,
+      and the authorized implementation paths are respected.
+    - >-
+      All four required independent reviews returned PASS with no findings or
+      unresolved blocks; each handoff and review document passed its JSON
+      schema validation.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0113.yaml passed before archival, and the
+      equivalent archived work-item validation also passed.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0113.yaml passed before archival, and the
+      equivalent archived changed-path validation passed for the eight owned
+      paths.
+    - >-
+      Repository shape, module registry, Python import boundaries, service
+      isolation, observability obligations, contract-change protection, and
+      baseline protection checks passed.
+    - >-
+      The focused AURA-0113 suite passed 11 tests. Ruff and Pyright passed for
+      the changed adapter and focused regression tests, and git diff --check
+      passed.
+    - >-
+      The live local runtime accepted fresh run
+      b37eff71-d4c8-4013-89c4-f98d06f93689, auto-appeared in Observatory
+      without manual refresh,
+      transitioned to Succeeded, and opened as Complete Trace. PostgreSQL
+      reported pending receipts at zero and the visibility watermark caught
+      up to the allocated sequence.
+    - >-
+      The reviewed slice is limited to Observatory retention visibility
+      settlement and its governance records; no Aura Core, Aura Web, frontend,
+      contract, migration, deployment, provider, capture-policy, or baseline
+      path was changed.
+  failed:
+    - >-
+      The required focused AURA-0080/AURA-0108/AURA-0109 regression selection
+      completed with 160 passed and 5 skipped but retained one pre-existing
+      failure in test_populated_migrations_are_rerunnable_without_duplicate_objects:
+      migration 0015 contains an ALTER TABLE DROP CONSTRAINT statement that
+      the protected assertion expects to contain IF NOT EXISTS.
+    - >-
+      The full Observatory suite completed with 1426 passed and 43 skipped,
+      with six pre-existing failures: the migration-0015 rerunnable assertion,
+      two AURA-0087 full-stack runner-shape assertions, and three AURA-0094/
+      AURA-0095 migration-inventory assertions that still expect version 14
+      while migration 0015 exists. No AURA-0113 test failed.
+
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The six shared-suite failures remain owned by the migration and AURA-0087/
+    AURA-0094/AURA-0095 work that introduced those baselines; this integration
+    does not weaken or update protected checks.
+  - >-
+    Legacy in-flight retention actions without immutable receipt sequence
+    markers remain fail-closed at projection_deleted and require explicit
+    operator recovery, as documented by the implementation handoff.
+  - >-
+    The local runtime proof validates live visibility after recovery; it does
+    not claim that full-content evidence capture is enabled, because the
+    installation remains metadata-only by policy.
