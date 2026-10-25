@@ -54,7 +54,7 @@ describe('observatory metadata boundaries', () => {
     expect(isCurrentLoadSequence(4, 4)).toBe(true);
   });
 
-  it('coalesces a high-frequency SSE burst and guarantees a trailing snapshot refresh', async () => {
+  it('coalesces a high-frequency SSE burst and guarantees a trailing snapshot refresh (AURA-0116)', async () => {
     const coordinator = new LiveRefreshCoordinator();
     let serverVersion = 0;
     let visibleVersion = 0;

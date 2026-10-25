@@ -489,6 +489,7 @@ type FixtureOptions = {
     | 'unavailable-marker';
   comparisonRecovers?: boolean;
   runsEmpty?: boolean;
+  multipleRuns?: boolean;
   reconcileRuns?: boolean;
   runAppearsAfterAttempts?: number;
   replaceRunAfterAttempts?: number;
@@ -694,7 +695,11 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       }
       await route.fulfill({
         json: {
-          items: options.runsEmpty || laggingRunCatalogue || delayedRunCatalogue ? [] : options.comparisonFailure ? [run, comparisonRun] : [staleRunIdentity ? staleCatalogueRun : run],
+          items: options.runsEmpty || laggingRunCatalogue || delayedRunCatalogue
+            ? []
+            : options.multipleRuns || options.comparisonFailure
+              ? [run, comparisonRun]
+              : [staleRunIdentity ? staleCatalogueRun : run],
           nextCursor: null,
           snapshotAt: observedAt,
           latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
@@ -780,6 +785,20 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       await route.fulfill({ json: delayedTrace ? { ...runDetail(), traceId: null } : runDetail() });
       return;
     }
+    if (path.endsWith(`/runs/${comparisonRunId}`)) {
+      await defer('run');
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
+      return;
+    }
     if (path.endsWith(`/traces/${traceId}`)) {
       traceRequests.push(undefined);
       const currentTraceRequest = traceRequests.length - 1;
@@ -788,6 +807,16 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         return;
       }
       await route.fulfill({ json: traceDetail() });
+      return;
+    }
+    if (path.endsWith(`/traces/${comparisonRun.traceId}`)) {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
       return;
     }
     if (path.endsWith('/components') && request.method() === 'GET') {
@@ -1512,6 +1541,63 @@ async function openDestination(page: Page, label: string, keyboard = false): Pro
 async function expectNoA11yViolations(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page }).include('app-root').analyze();
   expect(results.violations).toEqual([]);
+}
+
+async function installRunInvalidationBridge(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    let source: { emit: (runId: string) => void } | null = null;
+    class RunInvalidationEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readyState = RunInvalidationEventSource.CONNECTING;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: Event) => void) | null = null;
+      onerror: (() => void) | null = null;
+      private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+      private closed = false;
+      constructor(url: string) {
+        if (!url.includes('/evaluation/') && !url.includes('/operations/')) {
+          source = { emit: (runId: string): void => this.emit(runId) };
+        }
+        setTimeout(() => {
+          if (this.closed) return;
+          this.readyState = RunInvalidationEventSource.OPEN;
+          this.onopen?.();
+        }, 0);
+      }
+      addEventListener(eventName: string, listener: (event: Event) => void): void {
+        const listeners = this.listeners.get(eventName) ?? [];
+        listeners.push(listener);
+        this.listeners.set(eventName, listeners);
+      }
+      emit(runId: string): void {
+        if (this.closed) return;
+        const event = new MessageEvent('observation.changed', {
+          data: JSON.stringify({
+            eventType: 'observation.changed',
+            resourceType: 'run',
+            resourceId: runId,
+          }),
+        });
+        this.listeners.get('observation.changed')?.forEach((listener) => listener(event));
+        this.onmessage?.(event);
+      }
+      close(): void {
+        this.closed = true;
+        this.readyState = RunInvalidationEventSource.CLOSED;
+      }
+    }
+    Object.defineProperty(window, 'EventSource', {
+      configurable: true,
+      writable: true,
+      value: RunInvalidationEventSource,
+    });
+    Object.defineProperty(window, 'emitRunInvalidation', {
+      configurable: true,
+      value: (runId: string) => source?.emit(runId),
+    });
+  });
 }
 
 test.describe('Observatory Web mocked browser acceptance', () => {
@@ -2959,6 +3045,348 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(page.locator('observatory-trace').getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
   });
 
+  test('AURA-0116 keeps the selected run visible during a burst and settles one trailing refresh', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let source: { emit: (eventName: string) => void } | null = null;
+      class BurstEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = BurstEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: Event) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+        private closed = false;
+        constructor(url: string) {
+          if (!url.includes('/evaluation/') && !url.includes('/operations/')) {
+            source = { emit: (eventName: string): void => this.emit(eventName) };
+          }
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = BurstEventSource.OPEN;
+            this.onopen?.();
+          }, 0);
+        }
+        addEventListener(eventName: string, listener: (event: Event) => void): void {
+          const listeners = this.listeners.get(eventName) ?? [];
+          listeners.push(listener);
+          this.listeners.set(eventName, listeners);
+        }
+        emit(eventName: string): void {
+          if (this.closed) return;
+          const event = new Event(eventName);
+          this.listeners.get(eventName)?.forEach((listener) => listener(event));
+          this.onmessage?.(event);
+        }
+        close(): void {
+          this.closed = true;
+          this.readyState = BurstEventSource.CLOSED;
+        }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: BurstEventSource });
+      Object.defineProperty(window, 'emitRunInvalidations', {
+        configurable: true,
+        value: (count: number) => {
+          for (let index = 0; index < count; index += 1) source?.emit('observation.changed');
+        },
+      });
+    });
+
+    await openFixture(page);
+    let detailRequests = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstRequestBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondRequestBlocked = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      detailRequests += 1;
+      const version = detailRequests;
+      if (version === 1) await firstRequestBlocked;
+      if (version === 2) await secondRequestBlocked;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          durationMs: version === 1 ? 5000 : 7000,
+          finishedAt: version === 1 ? '2026-10-15T09:00:00.000Z' : '2026-10-15T09:00:02.000Z',
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => detailRequests).toBe(1);
+
+    await page.evaluate(() => {
+      (window as unknown as { emitRunInvalidations: (count: number) => void }).emitRunInvalidations(24);
+    });
+    releaseFirst();
+
+    const trace = page.locator('observatory-trace');
+    await expect.poll(() => detailRequests, { timeout: 10_000 }).toBe(2);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('5.00 s');
+    await expect(trace.locator('.run-card .status')).toHaveText(/succeeded/i);
+
+    releaseSecond();
+    await expect(trace.getByText('7.00 s', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // A burst must not fan out into one request per invalidation, and the
+    // trailing response must be the latest projection after the burst.
+    await page.waitForTimeout(250);
+    expect(detailRequests).toBe(2);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0116 preserves a live invalidation during the final reconciliation attempt', async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => {
+      let source: { emit: (eventName: string) => void } | null = null;
+      class FinalAttemptEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = FinalAttemptEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: Event) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+        private closed = false;
+        constructor(url: string) {
+          if (!url.includes('/evaluation/') && !url.includes('/operations/')) source = { emit: (eventName: string): void => this.emit(eventName) };
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = FinalAttemptEventSource.OPEN;
+            this.onopen?.();
+          }, 0);
+        }
+        addEventListener(eventName: string, listener: (event: Event) => void): void {
+          const listeners = this.listeners.get(eventName) ?? [];
+          listeners.push(listener);
+          this.listeners.set(eventName, listeners);
+        }
+        emit(eventName: string): void {
+          if (this.closed) return;
+          const event = new Event(eventName);
+          this.listeners.get(eventName)?.forEach((listener) => listener(event));
+          this.onmessage?.(event);
+        }
+        close(): void { this.closed = true; this.readyState = FinalAttemptEventSource.CLOSED; }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: FinalAttemptEventSource });
+      Object.defineProperty(window, 'emitFinalRunInvalidation', {
+        configurable: true,
+        value: (): void => source?.emit('observation.changed'),
+      });
+    });
+
+    const traceRequests: number[] = [];
+    let releaseFinalResponse!: () => void;
+    const finalResponseBlocked = new Promise<void>((resolve) => { releaseFinalResponse = resolve; });
+    await openFixture(page);
+    await page.route(`**/api/v1/traces/${traceId}`, async (route) => {
+      traceRequests.push(Date.now());
+      if (traceRequests.length < 31) {
+        await route.abort('failed');
+        return;
+      }
+      if (traceRequests.length === 31) {
+        await page.evaluate(() => (window as unknown as { emitFinalRunInvalidation: () => void }).emitFinalRunInvalidation());
+        await finalResponseBlocked;
+      }
+      await route.fulfill({ json: { ...traceDetail(), partial: false } });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => traceRequests.length).toBe(1);
+
+    for (let attempt = 0; attempt < 29; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+      await expect.poll(() => traceRequests.length).toBe(attempt + 2);
+    }
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect.poll(() => traceRequests.length).toBe(31);
+
+    const trace = page.locator('observatory-trace');
+    releaseFinalResponse();
+    await page.evaluate(() => Promise.resolve());
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(trace.locator('[aria-label="Loading the selected run inspector"]')).toHaveCount(0);
+    await expect(trace.locator('#selected-run-title')).toHaveText(runId);
+    await expect(trace.getByRole('heading', { name: traceId, exact: true })).toBeVisible();
+    await expect(trace.locator('.trace-card')).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Trace lineage unavailable', exact: true })).toHaveCount(0);
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect.poll(() => traceRequests.length).toBe(32);
+    expect(traceRequests.length).toBe(32);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0116 fences a late completion from a previously selected run', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    await openFixture(page, { multipleRuns: true });
+    let aRequests = 0;
+    let bRequests = 0;
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const aBlocked = new Promise<void>((resolve) => { releaseA = resolve; });
+    const bBlocked = new Promise<void>((resolve) => { releaseB = resolve; });
+
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      aRequests += 1;
+      await aBlocked;
+      await route.fulfill({ json: runDetail() });
+    });
+    await page.route(`**/api/v1/runs/${comparisonRunId}`, async (route) => {
+      bRequests += 1;
+      await bBlocked;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
+    });
+    await page.route(`**/api/v1/traces/${comparisonRun.traceId}`, async (route) => {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => aRequests).toBe(1);
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await expect.poll(() => bRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    releaseB();
+
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId, { timeout: 10_000 });
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    releaseA();
+    await page.waitForTimeout(250);
+
+    expect(aRequests).toBe(1);
+    expect(bRequests).toBe(1);
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+  });
+
+  test('AURA-0116 fences a queued refresh after switching away from run A', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    await openFixture(page, { multipleRuns: true });
+    let aRequests = 0;
+    let bRequests = 0;
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      aRequests += 1;
+      await route.fulfill({ json: runDetail() });
+    });
+    await page.route(`**/api/v1/runs/${comparisonRunId}`, async (route) => {
+      bRequests += 1;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
+    });
+    await page.route(`**/api/v1/traces/${comparisonRun.traceId}`, async (route) => {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => aRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(runId);
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await page.waitForTimeout(100);
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await expect.poll(() => bRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+
+    // The queued A timer is now past its two-second delay, but its run identity
+    // is fenced and must not issue a second A request or replace B.
+    await page.waitForTimeout(2_250);
+    expect(aRequests).toBe(1);
+    expect(bRequests).toBe(1);
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+  });
+
+  test('AURA-0116 drops a pending selected-run refresh when the session expires', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { expireNextRuns: true });
+    let detailRequests = 0;
+    let releaseRefresh!: () => void;
+    const refreshBlocked = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      detailRequests += 1;
+      if (detailRequests === 2) await refreshBlocked;
+      await route.fulfill({ json: runDetail() });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => detailRequests).toBe(1);
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => detailRequests).toBe(2);
+
+    fixture.expireSession();
+    await page.locator('observatory-runs form').evaluate((form) => {
+      if (!(form instanceof HTMLFormElement)) throw new Error('Runs form is unavailable');
+      form.requestSubmit();
+    });
+    await expect(
+      page.getByRole('heading', { name: 'Your Observatory session expired', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toHaveCount(0);
+
+    releaseRefresh();
+    await page.waitForTimeout(250);
+    expect(detailRequests).toBe(2);
+    await expect(page.locator('observatory-trace .run-card')).toHaveCount(0);
+    await expect(page.getByText(runId, { exact: true })).toHaveCount(0);
+  });
+
   test('stops initial trace reconciliation after its bounded recovery window', async ({ page }) => {
     await page.clock.install();
     const fixture = await openFixture(page, { traceUnavailable: true });
@@ -2981,6 +3409,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       await page.evaluate(() => Promise.resolve());
     }
     expect(fixture.traceRequests.length).toBe(requestsAtWindowEnd);
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('[aria-label="Loading the selected run inspector"]')).toHaveCount(0);
+    await expect(
+      trace.getByRole('heading', { name: 'Trace lineage unavailable', exact: true }),
+    ).toBeVisible();
   });
 
   test('reconciles a named observation.changed SSE event beyond the initial REST snapshot', async ({

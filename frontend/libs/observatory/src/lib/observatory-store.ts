@@ -45,6 +45,10 @@ export class ObservatoryStore {
   private runsViewActive = false;
   private selectedRunReconciliationTimer: ReturnType<typeof setTimeout> | null = null;
   private selectedRunReconciliationAttempts = 0;
+  /** The active selected-run request owns the next invalidation; do not supersede it. */
+  private selectedRunLoadInFlightSequence: number | null = null;
+  private selectedRunRefreshPending = false;
+  private selectedRunRetryPending = false;
   private loadSequence = 0;
   private openRunSequence = 0;
   private authGeneration = 0;
@@ -176,6 +180,7 @@ export class ObservatoryStore {
   }
   private async loadSelectedRun(runId: string, preserveSelectedRun: boolean): Promise<void> {
     const sequence = ++this.openRunSequence;
+    this.selectedRunLoadInFlightSequence = sequence;
     this.selectedRunState.set('loading');
     this.selectedRunError.set(null);
     try {
@@ -188,7 +193,10 @@ export class ObservatoryStore {
       this.selectedRun.set({ detail, trace });
       const retryScheduled = needsSelectedRunReconciliation(detail, trace) && this.queueSelectedRunReconciliation(runId);
       this.selectedRunState.set(retryScheduled ? 'loading' : needsSelectedRunReconciliation(detail, trace) ? 'error' : 'ready');
-      if (!needsSelectedRunReconciliation(detail, trace)) this.resetSelectedRunReconciliation();
+      // A live invalidation can arrive while either snapshot request is in
+      // flight. Preserve that pending bit through a converged response so the
+      // finally block can schedule exactly one trailing projection refresh.
+      if (!needsSelectedRunReconciliation(detail, trace)) this.resetSelectedRunReconciliation(false);
       if (!retryScheduled && needsSelectedRunReconciliation(detail, trace)) this.selectedRunError.set('The selected run trace is not available yet.');
     } catch (error) {
       if (sequence !== this.openRunSequence) return;
@@ -205,6 +213,15 @@ export class ObservatoryStore {
       const retryScheduled = retryNeeded && this.queueSelectedRunReconciliation(runId);
       this.selectedRunState.set(retryScheduled ? 'loading' : 'error');
       if (!retryScheduled && retryNeeded) this.selectedRunError.set('The selected run trace is not available yet.');
+    } finally {
+      if (this.selectedRunLoadInFlightSequence === sequence) {
+        this.selectedRunLoadInFlightSequence = null;
+        if ((this.selectedRunRefreshPending || this.selectedRunRetryPending) && this.selectedRunId() === runId && !this.sessionRequired()) {
+          this.selectedRunRefreshPending = false;
+          this.selectedRunRetryPending = false;
+          this.queueSelectedRunReconciliation(runId);
+        }
+      }
     }
   }
   /** Compare exactly two in-memory selections; no route, storage, or URL state is used. */
@@ -303,7 +320,7 @@ export class ObservatoryStore {
     if (event.type !== 'heartbeat') this.queueLiveRefresh();
     if (event.type === 'observation.changed' || event.type === 'retention.changed' || event.type === 'snapshot') {
       const selectedRunId = this.selectedRunId();
-      if (selectedRunId) this.queueSelectedRunReconciliation(selectedRunId);
+      if (selectedRunId) this.queueSelectedRunReconciliation(selectedRunId, true);
     }
     if (event.type === 'health.changed') this.queueHealthHistory();
     if (this.analytics().catalogue || this.analytics().snapshot) this.queueAnalyticsRefresh();
@@ -455,12 +472,29 @@ export class ObservatoryStore {
   }
 
   /** Retry an initially unavailable selected-run projection for the same bounded recovery window. */
-  private queueSelectedRunReconciliation(runId: string): boolean {
+  private queueSelectedRunReconciliation(runId: string, fromLiveInvalidation = false): boolean {
     // The initial detail/trace load is intentionally still marked loading when
     // it discovers a projection gap. The timer is the concurrency gate; using
     // selectedRunState here would reject the first retry and strand the run in
     // an error state after a single trace request.
-    if (this.selectedRunReconciliationTimer || this.selectedRunReconciliationAttempts >= MAX_RUN_RECONCILIATION_ATTEMPTS || this.sessionRequired() || this.selectedRunId() !== runId) return false;
+    if (this.sessionRequired() || this.selectedRunId() !== runId) return false;
+    if (this.selectedRunLoadInFlightSequence !== null) {
+      if (fromLiveInvalidation) {
+        // A live event is external to the bounded self-reconciliation window.
+        // Preserve it even while the final allowed retry is in flight so a
+        // successful final snapshot still receives one trailing refresh.
+        this.selectedRunRefreshPending = true;
+        return true;
+      }
+      // Projection-gap recovery is the bounded retry itself. It may ask the
+      // finally boundary to schedule the next attempt, but it must not bypass
+      // the cap or turn the terminal attempt back into loading.
+      if (this.selectedRunReconciliationAttempts >= MAX_RUN_RECONCILIATION_ATTEMPTS) return false;
+      this.selectedRunRetryPending = true;
+      return true;
+    }
+    if (this.selectedRunReconciliationAttempts >= MAX_RUN_RECONCILIATION_ATTEMPTS) return false;
+    if (this.selectedRunReconciliationTimer) return false;
     this.selectedRunReconciliationAttempts += 1;
     this.selectedRunReconciliationTimer = setTimeout(() => {
       this.selectedRunReconciliationTimer = null;
@@ -470,10 +504,12 @@ export class ObservatoryStore {
     return true;
   }
 
-  private resetSelectedRunReconciliation(): void {
+  private resetSelectedRunReconciliation(clearPending = true): void {
     if (this.selectedRunReconciliationTimer) clearTimeout(this.selectedRunReconciliationTimer);
     this.selectedRunReconciliationTimer = null;
     this.selectedRunReconciliationAttempts = 0;
+    if (clearPending) this.selectedRunRefreshPending = false;
+    if (clearPending) this.selectedRunRetryPending = false;
   }
 
   private queueCatalogRefresh(): void {

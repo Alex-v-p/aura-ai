@@ -1,0 +1,111 @@
+id: AURA-0116
+title: Coalesce selected-run live refreshes
+status: integrated
+change_class: bugfix
+intent: >
+  Ensure a selected Observatory run finishes loading while correlated live
+  telemetry continues to arrive, then refresh it once with the latest state.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - work-items/archived/AURA-0115.yaml
+    - Live invalidations for one selected run are coalesced behind its in-flight snapshot instead of superseding it repeatedly.
+    - Aura Web remains unchanged and contains no Observatory reference, dependency, route, link, or browser communication.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-001
+  - OBS-002
+ownership_zones:
+  - frontend.observatory.store
+  - evaluation.selected-run-refresh
+  - delivery.aura0116
+allowed_paths:
+  - work-items/active/AURA-0116.yaml
+  - work-items/archived/AURA-0116.yaml
+  - work-items/handoffs/AURA-0116-*.yaml
+  - work-items/reviews/AURA-0116-*.yaml
+  - work-items/integration/AURA-0116.yaml
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - frontend/libs/platform/**
+  - tooling/architecture/**
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - observatory-v1 existing RunDetail and TraceDetail reads
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: frontend-store
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.live_updates
+  required_metrics: []
+  required_evaluators:
+    - observatory_web_live_reconciliation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: false
+  concerns:
+    - Existing metadata-only requests and in-memory state are unchanged.
+  data_classes:
+    - operational_metadata
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A selected run's first detail and trace snapshot becomes visible even when live invalidations arrive faster than the snapshot completes.
+  - Invalidations received during an in-flight selected-run load coalesce into at most one trailing refresh using the latest projection.
+  - Manual selection of another run makes any prior run's in-flight or queued refresh unable to overwrite the new selection.
+  - Loading, stale, disconnected, and retry behavior remain truthful and existing disclosure state is preserved.
+  - Aura Web contracts backend services deployment topology and browser persistence remain unchanged.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0116.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0116.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0116.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0116.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0116.yaml
+  - cd frontend && corepack pnpm exec nx test observatory
+  - cd frontend && corepack pnpm exec nx lint observatory
+  - cd frontend && AURA_OBSERVATORY_WEB_E2E_APP_PORT=4311 corepack pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project desktop --grep AURA-0116
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
