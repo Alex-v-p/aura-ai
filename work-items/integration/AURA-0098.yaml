@@ -1,0 +1,119 @@
+agent: integration_maintainer
+work_item: AURA-0098
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0098-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0098-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0098-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0098-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0098-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0098.yaml
+checks:
+  passed:
+    - >-
+      Active AURA-0098, all five implementation handoffs, all five refreshed
+      review verdicts, and this integration report validate against their
+      repository schemas.
+    - >-
+      The core_worker handoff confirms Core/Observatory import and persistence
+      isolation, bounded asynchronous telemetry failure behavior, and the
+      explicit evaluation-runner NATS outage boundary. Its focused Core tests
+      passed; no Core production change was invented for this work item.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0098.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml passed for all 52 changed paths.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0098.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0098.yaml passed with the expected no-change
+      result; protected baselines and thresholds were not modified.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0098.yaml passed with no contract changes.
+    - >-
+      bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+      deploy/compose/run-evaluation-orchestration-e2e.sh
+      deploy/compose/e2e/core-availability.sh
+      deploy/compose/e2e/test_core_availability_safety.sh
+      deploy/compose/e2e/test_diagnostic_categories.sh passed.
+    - docker compose --profile observatory config --quiet passed.
+    - docker compose --profile observatory --profile checks config --quiet passed.
+    - >-
+      Scoped AURA-0098 Python lint passed. The all-scope Ruff command reports
+      one pre-existing import-order error in contracts/tests/test_evaluation_v1.py,
+      outside this item's allowed paths and owned by integrated evaluation work.
+    - uv run pyright services/aura-core services/aura-observatory passed with zero diagnostics.
+    - >-
+      Focused Core tests passed (78 tests) and focused Observatory resilience,
+      orchestration, and score-projection tests passed (45 tests), with one
+      existing Authlib deprecation warning.
+    - >-
+      bash deploy/compose/e2e/test_core_availability_safety.sh passed its
+      fail-closed intermediate-failure, session-status, credential-argv,
+      operations-metric, and raw-response diagnostic checks.
+    - >-
+      bash deploy/compose/e2e/test_diagnostic_categories.sh passed its
+      metadata-only adversarial diagnostic classifier check.
+    - git diff --check passed.
+    - >-
+      Recorded worker/reviewer evidence reports the complete Python test
+      suite, frontend lint/unit/production/Storybook checks, and 306-test
+      desktop/tablet/mobile browser matrix green before integration.
+    - >-
+      The recorded exit-zero foundation Compose acceptance remains valid and
+      is intentionally not rerun for the reduced scope. It covers the real
+      Core-to-Collector-to-Observatory path, runner-ledger gate,
+      authenticated run/trace/analytics flow, privacy, retention, and cleanup.
+    - >-
+      The recorded exit-zero evaluation-orchestration harness remains valid
+      and covers deterministic success, cancellation, deadlines, duplicate
+      delivery, scheduler and transport recovery, Core independence, and
+      metadata-only evidence.
+    - >-
+      The corrected frontend owner handoff and refreshed General and UX
+      reviews record the selected-run reconciliation fix and exact responsive
+      regression evidence.
+    - >-
+      `pnpm --dir frontend nx e2e observatory-web-e2e` passed all 387 desktop,
+      tablet, and mobile tests after the frontend correction.
+  failed:
+    - >-
+      The all-scope Ruff command reports one pre-existing import-order error in
+      contracts/tests/test_evaluation_v1.py, outside this item's allowed paths
+      and owned by integrated evaluation work. Scoped AURA-0098 Python lint
+      passed; the unrelated file was not modified or weakened.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+    - >-
+      Live evaluation browser completion, owner operations, session reset, and
+      exhaustive dependency outage/restart behavior remain explicitly deferred
+      from the reduced AURA-0098 scope.
+    - >-
+      The unrelated all-scope Ruff import-order failure remains outside
+      AURA-0098 and must be handled by its owning work item; it must not be
+      changed as part of this integration.
+    - >-
+      The shared worktree remains dirty by design because unrelated work is
+      present. Integration stages only the reviewed AURA-0098 paths.

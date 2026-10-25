@@ -1,0 +1,92 @@
+agent: contract_steward
+work_item: AURA-0081
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0081_auth_contract
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: contracts.openapi.observatory-v1 and frontend.platform.observatory-api-client
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - work-items/handoffs/AURA-0081-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward after the Delivery Lead amended AURA-0081 to authorize these exact contract and generated-client paths; no concurrent contract author was assigned
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added the existing anonymous GET /api/v1/auth/login initiator as startOwnerLogin with a bounded same-origin return_to query, an explicit anonymous security override, and typed 307 Location metadata; the provider-facing callback remains excluded.
+        - Added GET /api/v1/auth/me as getOwnerSession with a closed data-minimized OwnerSession response containing only the ephemeral anti-CSRF value.
+        - Added the existing POST /api/v1/auth/logout command as logoutOwnerSession with the required X-Observatory-CSRF header, empty 204 success, and typed anti-CSRF denial.
+        - Taught the deterministic transport generator to describe successful no-content responses as responseMode none and regenerate logoutOwnerSession with a void response.
+        - Added contract invariants for anonymous login and local return paths, callback exclusion, redirect metadata, operation identity, a CSRF-only response shape, owner-identity exclusion, CSRF constraints, empty logout response, and logout request/header behavior.
+  compatibility_notes:
+    - The three operations document already-deployed Observatory BFF routes; existing observatory-v1 operations, fields, request requirements, and response types are unchanged.
+    - The additions are new operations and one new response schema, so existing consumers remain source- and wire-compatible within observatory-v1 1.0.0.
+    - Owner identity remains excluded from every contract response. The CSRF value is confined to the authentication control-plane response and remains excluded from observations, queries, SSE payloads, telemetry, URLs, generated behavior, and browser persistence.
+    - The generated client remains transport-only: it adds types and operation descriptors but no login, logout, authorization, retry, persistence, or feature-state policy.
+  producers:
+    - Aura Observatory owner BFF GET /api/v1/auth/login endpoint
+    - Aura Observatory owner BFF GET /api/v1/auth/me endpoint
+    - Aura Observatory owner BFF POST /api/v1/auth/logout endpoint
+  consumers:
+    - Observatory Web session gateway and owner shell
+    - Observatory Web unit, browser, and full-stack acceptance tests
+    - Observatory OpenAPI compatibility and generated-client drift checks
+  rollout:
+    - Regenerate and deploy Observatory Web against the additive client after the existing Observatory API; no backend rollout or migration is required because both routes already exist.
+    - Replace hand-authored frontend auth endpoint strings and response types with getOwnerSession, logoutOwnerSession, and OwnerSession from the generated client.
+    - Derive the sign-in navigation href from OBSERVATORY_API_OPERATIONS.startOwnerLogin.pathTemplate and URLSearchParams for an optional local return_to; navigate the browser to that same-origin href rather than executing it as a fetch.
+    - Keep OwnerSession and its CSRF value in memory only, clear them on logout or unauthorized responses, and return undefined for the generated no-content logout response rather than parsing JSON.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0081.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0081.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0081.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - cd frontend && pnpm exec nx run observatory-api-client:generate
+    - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - UV_CACHE_DIR=/tmp/aura-0081-auth-contract-uv timeout --signal=KILL 90s prlimit --as=536870912 --cpu=75 -- uv run pytest services/aura-observatory/tests/test_aura0079_auth.py services/aura-observatory/tests/test_aura0079_identity_regressions.py -q (15 passed, one existing Authlib deprecation warning)
+    - implementation-handoff.schema.json validation for work-items/handoffs/AURA-0081-contracts.yaml
+    - git diff --check for the contract-owned paths
+  failed: []
+  not_run:
+    - The complete frontend and full-stack acceptance suites remain assigned to the frontend and test/evaluation owners.
+    - No backend runtime tests beyond the focused existing auth suite were needed because backend behavior was not changed.
+decisions:
+  - Kept contract id observatory-v1 and version 1.0.0 because this is an additive documentation of existing endpoints, not a breaking protocol revision.
+  - Used the shared X-Observatory-CSRF parameter so logout and retention retain one same-origin anti-CSRF header contract.
+  - Modeled login initiation as an anonymous browser-navigation descriptor with a void/no-content transport type because its successful result is an HTTP 307 redirect, not a JSON response.
+  - Kept the OIDC callback outside observatory-v1 because it is a provider-facing server endpoint rather than an application-owned browser client operation.
+  - Represented logout as a bodyless command with a void response and responseMode none, preventing generated transports from attempting JSON parsing on HTTP 204.
+  - Kept the OwnerSession shape independently closed and minimized to csrfToken; subject, display name, provider tokens, issuer, session identifiers, cookie values, expiry data, roles, and arbitrary claims remain excluded.
+risks:
+  - A consuming transport must explicitly honor responseMode none; treating every successful operation as JSON would fail on the logout 204 response.
+  - The CSRF token is intentionally browser-readable for same-origin state changes, so consumers must retain it in memory only and clear it on logout or unauthorized responses.
+unresolved:
+  - Observatory Web has adopted generated session and logout operations; its frontend owner still needs to derive sign-in navigation from startOwnerLogin instead of hard-coding the login path.

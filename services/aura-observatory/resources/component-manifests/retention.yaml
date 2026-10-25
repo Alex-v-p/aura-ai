@@ -1,0 +1,48 @@
+component:
+  id: aura.observatory.retention
+  version: 1.0.0
+  owner: observatory.retention
+  category: observability
+input:
+  schema: observatory-v1-retention
+  replayable: false
+output:
+  schema: observatory-retention-status-v1
+metrics:
+  - observatory_retention_action_count
+  - observatory_retention_deleted_count
+  - observatory_retention_failure_count
+metric_definitions:
+  - name: observatory_retention_action_count
+    type: gauge
+    unit: actions
+    labels: [action, status]
+    dependencies: [postgresql, clickhouse]
+    trace: retention_action
+    correlation: action_id
+    export: prometheus
+  - name: observatory_retention_deleted_count
+    type: counter
+    unit: observations
+    labels: [action]
+    dependencies: [postgresql, clickhouse]
+    trace: retention_action
+    correlation: action_id
+    export: prometheus
+  - name: observatory_retention_failure_count
+    type: gauge
+    unit: failures
+    labels: [action, failure_code]
+    dependencies: [postgresql, clickhouse]
+    trace: retention_action
+    correlation: action_id
+    export: prometheus
+evaluators:
+  - observatory_retention_idempotency
+  - observatory_retention_preservation
+  - observatory_web_retention_workflow
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [action, status]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]

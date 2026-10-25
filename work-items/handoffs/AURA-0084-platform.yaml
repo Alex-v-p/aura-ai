@@ -1,0 +1,117 @@
+agent: platform_worker
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0082_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: platform.observatory-edge
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - compose.yaml
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/docker/observatory-web.nginx.conf
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role platform_worker --path
+      compose.yaml --path deploy/compose/run-observatory-full-stack-e2e.sh --path
+      deploy/docker/observatory-web.nginx.conf --path
+      deploy/compose/test_topology.py --path
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0084.yaml (skipped: no protected
+      baseline changes)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py
+      --work-item work-items/active/AURA-0084.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - >-
+      python3 -m pytest deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      -q (7 passed)
+    - >-
+      python3 -m pytest deploy/compose/test_topology.py -k
+      'observatory_full_stack_runner_supplies_owner_login_and_outage_phase or
+      local_http_replaces_all_host_state_with_project_scoped_named_volumes or
+      observatory_web_is_a_loopback_only_production_shell' -q (3 passed,
+      38 deselected)
+    - >-
+      python3 -m pytest deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py -q (48 passed)
+    - >-
+      .venv/bin/python -m ruff check deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py (passed)
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - >-
+      docker compose --env-file .env --env-file .env.local-http -f compose.yaml
+      -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml
+      --profile local-identity --profile observatory config --quiet (passed)
+    - >-
+      docker compose --env-file .env --env-file .env.local-http -f compose.yaml
+      -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml
+      --profile local-identity --profile local-http-bootstrap --profile
+      observatory config --quiet (passed)
+    - >-
+      Rendered Compose commands confirm durable Observatory session Valkey
+      persistence and unchanged memory-only Core Valkey semantics.
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      nginx -t (the nginx binary is unavailable in this environment; the
+      shipped configuration is covered by executable Python assertions)
+    - >-
+      The remaining AURA-0084 service, frontend, browser, and full-stack
+      checks remain owned by their respective workers and integration phase;
+      this worker did not start Docker or execute the full-stack runner.
+decisions:
+  - >-
+    Observatory nginx now forwards X-Forwarded-Host from $http_host, matching
+    the existing Host header and preserving the browser authority's explicit
+    non-default port for origin-less EventSource requests.
+  - >-
+    The Observatory API's strict origin validation was left unchanged. Both
+    the deployment topology and runtime-wiring regression require the port-
+    preserving header and reject the former $host behavior.
+  - >-
+    Observatory session Valkey uses its pinned valkey:8.1-alpine image with
+    bounded RDB snapshots and append-only persistence on the existing
+    service-owned /data volume. Core aura-valkey remains --save "" --appendonly
+    no; its cache semantics were not changed.
+  - >-
+    The local HTTP overlay inherits the shipped durable Observatory session
+    command and does not inject a test-only override. The full-stack runner's
+    preservation phase uses scoped Compose down without volumes followed by
+    scoped up; its reset phase removes only the disposable Observatory session
+    volume before verifying old-cookie rejection and reauthentication.
+risks:
+  - >-
+    Native nginx syntax validation could not run because nginx is not
+    installed in the validation environment; container-level acceptance
+    remains with the integration phase.
+  - >-
+    Docker lifecycle and browser acceptance were not run by this worker;
+    integration must verify the normal-down session preservation and
+    reset/reauthentication flow.
+unresolved: []

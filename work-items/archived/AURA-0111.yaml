@@ -1,0 +1,138 @@
+id: AURA-0111
+title: Canonicalize evaluation query instants
+status: integrated
+change_class: bugfix
+intent: >
+  Make Observatory production evaluation collection snapshots and opaque
+  cursor instants use the unchanged RFC3339 UTC representation required by
+  observatory-v1 so valid evaluation pages are accepted by the existing UI.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0095.yaml
+    - work-items/archived/AURA-0096.yaml
+    - Production evaluation query timestamps exposed as observatory-v1 UtcInstant values use RFC3339 with a T date-time separator and UTC Z suffix; str(datetime) is not a public serializer.
+    - Every evaluation collection page path and newly encoded keyset cursor uses one bounded UTC-instant serializer. Aware non-UTC inputs are normalized to UTC without changing their instant.
+    - Existing legacy opaque cursors remain readable when their timestamps are otherwise valid, but every newly returned cursor and page snapshot is canonical.
+    - Naive malformed non-string or otherwise invalid cursor timestamps retain the existing bounded cursor error behavior and never reach provider queries.
+    - This is a production query-adapter correction only. Public schemas API routing query semantics storage contracts and frontend validation remain unchanged.
+    - AURA-0098 retains ownership of composed browser acceptance. This item corrects only the proven timestamp serialization failure and may not edit its harness.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-023
+ownership_zones:
+  - services.aura-observatory.evaluation-query-adapter
+  - evaluation.observatory-utc-instant-compatibility
+  - delivery.aura0111
+allowed_paths:
+  - work-items/active/AURA-0111.yaml
+  - work-items/archived/AURA-0111.yaml
+  - work-items/handoffs/AURA-0111-*.yaml
+  - work-items/reviews/AURA-0111-*.yaml
+  - work-items/integration/AURA-0111.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/tests/test_aura0111_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: evaluation.query
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Cursor decoding remains closed kind-bound size-bounded duplicate-key rejecting and canonical-base64 validated before any provider query.
+    - Timestamp normalization must not add query filters identifiers payload fields provider text credentials endpoints owner identity or content to responses logs metrics or errors.
+    - Malformed naive and out-of-contract timestamps fail with the existing fixed cursor error rather than reflecting the supplied cursor or decoded payload.
+    - The correction remains entirely inside Observatory and does not change Core communication authentication authorization retention browser persistence or storage ownership.
+  data_classes:
+    - evaluation_definition_metadata
+    - opaque_cursor_state
+    - content_free_error_metadata
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Every production evaluation collection response serializes snapshotAt with an RFC3339 T separator and UTC Z suffix for definition job attempt result artifact review calibration qualification deletion regression history and score pages.
+  - Newly encoded collection and history cursors serialize snapshotAt and any timestamp keyset value as canonical RFC3339 UTC instants and never as the space-separated result of str(datetime).
+  - An aware timestamp with a non-UTC offset is normalized to the equivalent UTC instant before page or cursor serialization; fractional-second precision remains deterministic and compatible with the existing UtcInstant schema.
+  - A cursor emitted from the first page round-trips through decode and produces later pages under the same normalized snapshot fence for every cursor-bearing PostgreSQL collection family and the ClickHouse score family.
+  - Existing valid legacy history cursors remain readable and their successor cursors and page snapshots are emitted in the canonical format.
+  - Missing malformed oversized non-canonical-base64 duplicate-key naive and invalid timestamp cursor states fail closed with the existing bounded cursor error before PostgreSQL or ClickHouse access.
+  - Detail reads remain unchanged because they expose resource timestamps through their existing field projectors and do not invent snapshotAt or cursor state.
+  - Pagination ordering kind binding snapshot fencing identifier and version tie-breakers limits filters partial flags and provider error classification remain unchanged.
+  - Focused tests cover all four snapshotAt serialization sites collection history and score cursor payloads UTC and offset-aware inputs fractional seconds legacy continuation and malformed or naive timestamp rejection.
+  - The AURA-0098 evaluation UI no longer rejects a production collection page because snapshotAt contains a space separator; composed browser acceptance remains owned by AURA-0098.
+  - No Core Aura Web Observatory frontend application query module entrypoint contract migration deploy dependency service metric evaluator protected baseline or retention change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0111.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0111.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0111.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0111.yaml
+  - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0111_*.py
+  - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0111_*.py
+  - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/tests/test_aura0111_*.py
+  - UV_CACHE_DIR=/tmp/aura-0111-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/tests/test_aura0111_*.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

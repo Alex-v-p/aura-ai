@@ -1,0 +1,14 @@
+{
+  "name": "observatory-web-e2e",
+  "projectType": "application",
+  "sourceRoot": "apps/observatory-web-e2e/src",
+  "tags": ["scope:observatory-web", "type:e2e"],
+  "targets": {
+    "e2e": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "playwright test --config apps/observatory-web-e2e/playwright.config.ts"
+      }
+    }
+  }
+}

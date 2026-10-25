@@ -1,0 +1,85 @@
+agent: integration_maintainer
+work_item: AURA-0083
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0083-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0083-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0083-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0083-ux-ui.yaml
+  - reviewer: platform_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0083-platform.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0083-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0083.yaml
+checks:
+  passed:
+    - >-
+      Work-item, implementation-handoff, and review-verdict schema validation
+      passed for AURA-0083, both implementation handoffs, and all four reviews.
+    - >-
+      AURA-0083 work-item validation and changed-path validation passed for all
+      14 pre-archive changed paths within the approved ownership scope.
+    - >-
+      Repository-shape, service-isolation, shell syntax, and git diff hygiene
+      validation passed.
+    - >-
+      Compose topology suite passed all 41 tests, including explicit frontend
+      subnet, Observatory identity alias, relay validation, cleanup, and signal
+      lifecycle coverage.
+    - >-
+      Architecture tooling unit suite passed all 52 tests under bounded
+      resources.
+    - >-
+      Handoff evidence confirms merged Compose configuration, separate
+      Core/Observatory identity clients and callbacks, healthy readiness probes,
+      protected model inventory, and exactly 12 provider models through the
+      configured Core relay.
+    - >-
+      Browser acceptance evidence confirms separate authenticated Observatory
+      and Core owner sessions, successful Observatory callback recovery, and a
+      12-model authenticated Core selector matching provider inventory.
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Docker Compose configuration rendering was not rerun by integration per
+      the explicit no-Docker instruction; the platform and test handoffs record
+      successful rendered-graph checks.
+    - >-
+      Canonical local-http launcher startup and the required login curl were not
+      rerun by integration per the explicit no-Docker instruction; the test
+      handoff records successful live startup, readiness, login, and browser
+      acceptance.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No integration commit was created because this task explicitly requires the
+    reviewed working tree to remain uncommitted. The reviewed slice is ready
+    for the Delivery Lead's focused Conventional Commit.
+  - >-
+    AURA-0084 should address the UX/UI follow-ups for sanitized callback
+    recovery and state-specific signed-out/focus recovery; the UX/UI review
+    found no AURA-0083-introduced blocker.
+  - >-
+    Runtime evidence covers the disposable local stack and the configured
+    provider relay; integration did not mutate Docker resources.
+  - >-
+    The optional observability validator is outside AURA-0083.required_checks
+    and reports that aura.identity and observatory.identity have no component
+    manifests and that no metrics or evaluators are declared. No scope
+    expansion or check weakening was made; resolve this governance follow-up if
+    those identifiers are intended to be observable.

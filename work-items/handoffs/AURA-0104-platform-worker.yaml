@@ -1,0 +1,81 @@
+agent: platform_worker
+work_item: AURA-0104
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: /tmp/aura-0104-prereq.kMq0RY
+scope:
+  ownership_zone: deploy.observatory-api-object-storage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0104_acceptance_capabilities.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - bash -n deploy/compose/local-http.sh
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0104.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0104.yaml
+    - AURA-0104 deployment capability tests (3 passed)
+    - Existing Observatory Garage bootstrap shell and grant regression tests (3 passed)
+    - docker compose --profile observatory config --quiet with stable synthetic deployment inputs
+    - Rendered Compose inspection confirmed the API has only the private Observatory object-storage network, file-backed API identity, and completed API bootstrap dependency
+    - git diff --check
+  failed:
+    - >-
+      The broader deploy topology run had two failures caused by unrelated
+      pre-existing dirty-tree changes in the full-stack runner: its existing
+      assertions still expected the old fixture wording and network allocation
+      text. No runner file was changed in this ownership zone.
+    - >-
+      Four AURA-0100 local-http merged-Compose tests could not render because
+      this isolated checkout has no operator .env/AURA_STATE_ROOT and therefore
+      lacks the required stable URL and encrypted state-root inputs.
+  not_run:
+    - docker compose startup or Garage integration (explicitly excluded by task)
+decisions:
+  - >-
+    Added observatory-api-garage-bootstrap as a one-shot, fail-closed
+    verifier that provisions a distinct API key on the existing Observatory
+    evaluation bucket, denies read and owner permissions, and requires the
+    compact W permission plus exactly one expected bucket grant.
+  - >-
+    Injected API Garage credentials only through Docker file secrets and wired
+    the API to the existing evaluation object-store settings. The API joins
+    only observatory-object-storage for Garage access; it does not receive Core,
+    worker, judge, or evaluation-runner identities and does not join
+    aura-object-storage.
+  - >-
+    Made observatory-api wait for observatory-api-garage-bootstrap to complete,
+    while that bootstrap waits for the existing observatory-garage-bootstrap
+    bucket/layout gate. The local-http overlay mirrors the private Garage
+    volumes and API network without host state mounts.
+  - >-
+    Extended local-http's managed secret generation and safe rotation with
+    API-specific Garage paths, preserving 0600, no-follow, bounded credential
+    validation, atomic replacement, and silent output behavior.
+risks:
+  - >-
+    The API identity is intentionally write-only. Any future API-side delete or
+    read path must remain worker-owned or receive a separately reviewed
+    least-privilege capability; this platform slice does not broaden its grant.
+  - >-
+    The disposable full-stack launcher still needs its own API secret fixture
+    and override wiring in its separate ownership zone before a fresh full-stack
+    run can consume the new required API bootstrap dependency.
+unresolved:
+  - >-
+    Parent integration must coordinate the full-stack runner's fixture and
+    override additions with this Compose contract and rerun the composed stack
+    after all AURA-0104 ownership zones are integrated.

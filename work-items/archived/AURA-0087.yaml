@@ -1,0 +1,200 @@
+id: AURA-0087
+title: Add bounded Observatory operational analytics
+status: integrated
+change_class: contract
+intent: >
+  Give the Observatory owner bounded, privacy-preserving operational trends and
+  focused model, queue, retrieval, tool, memory, and automation views without
+  widening production telemetry capture or coupling Aura Core to Observatory.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Use only the existing metadata-observation v1 fields and closed dimensions; do not add arbitrary attributes or change Core telemetry in this work item.
+    - Keep high-cardinality analytical reads in Observatory ClickHouse behind the existing query port; do not create another data authority or hydrate unbounded observation history in the application process.
+    - Use allowlisted UTC windows, bucket sizes, measurements, units, filters, facets, groupings, series counts, point counts, scan limits, and execution limits rather than accepting a general-purpose query language.
+    - Aggregate a measurement only within one declared unit and expose percentile method, sample count, partial state, freshness, and unavailable signals explicitly; never infer saturation, quality, retryability, or success from absent telemetry.
+    - Existing SSE remains a metadata-only invalidation channel; analytical series are fetched through owner-authorized bounded REST snapshots and are never embedded in event URLs or persisted by the browser.
+    - The existing aura.observatory.query_api manifest may receive content-only evaluator declarations for this work item; no component identity metric dependency capture retention cardinality service or deployment declaration may change.
+    - Follow the repository-pinned ClickHouse 25.8, Angular 22, OpenAPI 3.1, and WCAG 2.2 guidance linked from the authoritative technology stack; no dependency or image change is authorized.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v1/metadata-observation.schema.json
+feature_references:
+  - OBS-014
+  - OBS-015
+  - OBS-016
+  - OBS-017
+  - OBS-018
+  - OBS-020
+  - OBS-021
+  - OBS-022
+  - OBS-023
+ownership_zones:
+  - contracts.observatory-api
+  - services.aura-observatory.operational-analytics
+  - services.aura-observatory.component-query
+  - frontend.observatory.operational-analytics
+  - evaluation.observatory-analytics
+allowed_paths:
+  - work-items/active/AURA-0087.yaml
+  - work-items/archived/AURA-0087.yaml
+  - work-items/handoffs/AURA-0087-*.yaml
+  - work-items/reviews/AURA-0087-*.yaml
+  - work-items/integration/AURA-0087.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/src/observatory*.stories.ts
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/resources/component-manifests/retention.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - contracts/telemetry/**
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: operational-analytics
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_query_freshness_lag_ms
+  required_evaluators:
+    - operational_analytics_bounds
+    - operational_analytics_semantics
+    - operational_analytics_accessibility
+    - observatory_self_monitoring
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Analytics accept only allowlisted fields from the closed metadata-only observation contract and never expose prompts responses memories documents filenames tool arguments results credentials endpoints bearer tokens owner identity or arbitrary attributes.
+    - Owner authorization applies to every analytics resource and filters remain bounded validated and parameterized so dimension values cannot alter ClickHouse queries or create unbounded work.
+    - Error analysis exposes bounded error classes and aggregate outcomes only; it never exposes exception messages stack traces provider payloads input cohorts or source content.
+    - Sparse or missing measurements appear as unavailable rather than being inferred from another signal and small cohorts are not expanded with observation-level identifiers.
+    - Authenticated analytics responses and chart data remain memory-only and are excluded from Workbox browser storage URLs screenshots test artifacts and metadata SSE payloads.
+    - Retention immediately affects subsequent analytics snapshots and no derived browser or service cache may preserve deleted observation data.
+  data_classes:
+    - operational_telemetry_metadata
+    - aggregate_operational_metrics
+    - deployment_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The backward-compatible observatory-v1 REST contract exposes a defined metric catalogue and bounded operational analytics query resources with explicit UTC snapshot time window bucket unit sample count freshness partial-state and unavailable-signal semantics.
+  - Every analytics request uses an allowlisted measurement and unit with a default 24-hour UTC window a maximum 31-day window deterministic bucket selection no more than 200 points per series no more than 12 returned series and bounded facets groups scans and execution time.
+  - ClickHouse performs time bucketing percentile throughput outcome error and saturation aggregation through purpose-built parameterized adapter queries; the application process never loads or sorts an unbounded observation table.
+  - Latency summaries expose p50 p90 p95 and p99 with a documented stable method and sample count while throughput uses an explicit rate interval and no response combines incompatible measurement units.
+  - Error analysis groups only bounded metadata such as component operation provider errorClass outcome and deployment and represents unknown missing and partially retained data without returning exception text payloads identifiers or arbitrary dimensions.
+  - Saturation and focused model queue retrieval tool memory and automation summaries are populated only from their declared measurements; unsupported signals are identified as unavailable rather than synthesized and every value carries a clear unit.
+  - The analytics query service reports duration outcome and observation freshness through existing bounded Observatory self-monitoring without logging request values query text or telemetry content.
+  - Existing manual retention removes source observations from all subsequent analytical summaries and series while component and deployment definitions remain unaffected; stale in-flight browser responses cannot restore deleted data.
+  - Observatory Web provides a Metric explorer plus focused model queue retrieval tool memory and automation views with bounded time controls filter summaries freshness and partial-data explanations.
+  - Every chart has an adjacent semantically equivalent table clear title unit legend tooltip or focused detail and non-colour status labels; all filters series selection and detail access are keyboard operable with visible focus.
+  - Charts and tables reflow at mobile tablet desktop 200 percent and 400 percent zoom support light and dark themes preserve reading order and usable tables and remove nonessential animation under prefers-reduced-motion.
+  - Browser behavior covers loading empty sparse partial stale disconnected malformed rejected and service-unavailable responses provides bounded retry and never persists authenticated API or chart data.
+  - REST refresh after metadata-only SSE invalidation updates affected analytics without credentials filters or series data in event URLs and reconnect catch-up cannot produce an unbounded refresh loop.
+  - Unit contract adapter privacy retention frontend accessibility mocked-browser and real full-stack tests cover bucket boundaries percentile semantics throughput zero-versus-unavailable error grouping out-of-order and late data mixed units scan limits injection attempts sparse signals responsive layouts keyboard use screen-reader alternatives reduced motion and Core usability while Observatory is stopped.
+  - No Core module telemetry contract database migration dependency package image protected golden result or repository baseline changes are introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0087.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0087.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0087.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0087.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0087.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+  - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/storybook.config.ts
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

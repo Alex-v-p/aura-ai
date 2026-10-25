@@ -1,0 +1,10 @@
+agent: observability_steward
+work_item: AURA-0081
+verdict: PASS
+checked:
+  - Per-resource loading, empty, stale, partial, disconnected, rejected-data, and unavailable states remain distinct and metadata-only.
+  - Named SSE events reconcile persisted observations through REST and preserve reconnect and catch-up behavior.
+  - Generation guards prevent stale trace, component-health, retention, and logout continuations from repopulating invalid state.
+  - Full-stack evaluators correlate component identity, latency, and outcome and cover cutoff deletion, purge-all, catalogue preservation, and Core outage isolation.
+  - Component manifests retain stable dependencies, trace boundaries, metrics, evaluators, replay declarations, manual retention, and bounded metadata labels.
+findings: []

@@ -1,0 +1,68 @@
+component:
+  id: aura.observatory.deterministic_evaluators
+  version: 1.0.0
+  owner: observatory.deterministic_evaluators
+  category: evaluation
+input:
+  schema: typed-replay-evidence-v1
+  replayable: true
+output:
+  schema: evaluation-score-metadata-v1
+  replayable: true
+dependencies:
+  - evaluation_definition_state
+  - clickhouse
+metrics:
+  - observatory_evaluator_execution_count
+  - observatory_evaluator_duration_ms
+  - observatory_evaluator_outcome_count
+  - observatory_evaluator_incomplete_evidence_count
+metric_semantics:
+  observatory_evaluator_execution_count: Bounded evaluator executions by fixed evaluator family.
+  observatory_evaluator_duration_ms: Bounded deterministic evaluator duration.
+  observatory_evaluator_outcome_count: Finite evaluator outcomes by fixed family and outcome.
+  observatory_evaluator_incomplete_evidence_count: Count of explicit missing or partial evidence outcomes.
+metric_definitions:
+  - name: observatory_evaluator_execution_count
+    type: counter
+    unit: evaluations
+    labels: [evaluator_kind, outcome]
+    dependencies: [evaluation_definition_state]
+    trace: deterministic_evaluator
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluator_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [evaluator_kind]
+    dependencies: [evaluation_definition_state]
+    trace: deterministic_evaluator
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluator_outcome_count
+    type: counter
+    unit: outcomes
+    labels: [evaluator_kind, outcome]
+    dependencies: [evaluation_definition_state, clickhouse]
+    trace: deterministic_evaluator
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluator_incomplete_evidence_count
+    type: counter
+    unit: outcomes
+    labels: [evaluator_kind, evidence_status]
+    dependencies: [evaluation_definition_state]
+    trace: deterministic_evaluator
+    correlation: service
+    export: prometheus
+evaluators:
+  - deterministic_evaluator_repeatability
+  - deterministic_evaluator_negative_cases
+  - deterministic_evaluator_privacy
+  - evaluation_score_privacy
+  - evaluation_core_boundary_isolation
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [evaluator_kind, outcome, evidence_status]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity, exception, error_message]

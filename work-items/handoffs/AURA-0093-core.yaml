@@ -1,0 +1,49 @@
+agent: core_worker
+work_item: AURA-0093
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0093_core
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: aura-core.public-evaluator-ports,aura-core.runtime-replay-projections
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+  - work-items/handoffs/AURA-0093-core.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0093.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0093.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_conversation_attachments.py -q (64 passed, 3 skipped)
+    - PYTHONPATH=src UV_CACHE_DIR=/tmp/aura-uv-cache uv run python public document evaluator export smoke check (passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0093 repository, Observatory, migration, and integration checks remain owned by their respective workers and the integration maintainer.
+    - No new AURA-0093 Core tests were required because the change only re-exports existing tested evaluator seams.
+decisions:
+  - Existing document evaluators already provide deterministic metadata-only scoring, stable evaluator and component versions, and bounded public replay behavior; no implementation change was needed in evaluation.py or runtime/replay.
+  - Exported the document evaluator maps, result type, and deterministic evaluator functions from the document package boundary so composition can use a stable Core-owned API without importing implementation internals.
+  - Kept attachment evaluator.py as its already-registered public evaluator API; the attachment package boundary intentionally does not import that module because the module registry does not declare that package dependency.
+  - Kept ReplayRegistry exact component/version lookup unchanged; unknown or non-replayable components continue to fail closed and no replayable flags were changed.
+  - Kept the evaluation runner transport unchanged. Core does not emit raw content, evaluator configuration, scores, or provider details, and Observatory remains the authority for definition and score persistence.
+  - No Core component manifests required modification because the existing document and attachment manifests already declare the relevant evaluator identities and metadata-only capture policy; the AURA-0093 Observatory manifests own the new evaluator-definition declarations.
+risks:
+  - Cross-service orchestration still needs to map bounded runner/runtime measurements into Observatory TypedReplayEvidence without importing aura_core or widening the runner transport; that mapping is outside this Core ownership slice.
+  - The existing attachment processing component remains non-replayable because private image bytes are not safely captured; its metadata-only evaluators remain available for authorized fixture projections without changing that boundary.
+unresolved: []

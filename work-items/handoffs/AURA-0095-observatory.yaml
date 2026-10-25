@@ -1,0 +1,334 @@
+agent: observatory_worker
+work_item: AURA-0095
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0095_observatory
+  worktree: shared
+scope:
+  ownership_zone: services.aura-observatory.evaluation-query-api-command-cli-live-events
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  - services/aura-observatory/resources/component-manifests/evaluation-api.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-artifact-storage.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-deletion.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - tooling/architecture/modules.yaml
+  - services/aura-observatory/migrations/postgresql/versions/0011_evaluation_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0008_evaluation_api_provenance.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-calibration.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/tests/test_aura0095_backend.py
+  - services/aura-observatory/tests/test_aura0095_backend_comprehensive.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_clickhouse_integration.py
+  - services/aura-observatory/tests/test_aura0093_definitions.py
+  - work-items/active/AURA-0095.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+  files:
+    - services/aura-observatory/migrations/postgresql/versions/0011_evaluation_live_events.sql
+    - services/aura-observatory/migrations/clickhouse/versions/0008_evaluation_api_provenance.sql
+observability:
+  components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_live
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.evaluation_deletion
+    - aura.observatory.calibration
+  metrics_added:
+    - observatory_evaluation_api_operation_count
+    - observatory_evaluation_live_event_count
+    - observatory_evaluation_live_replay_lag_seconds
+    - observatory_evaluation_operation_duration_ms
+  span_components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_deletion
+    - aura.observatory.live_updates
+verification:
+  passed:
+    - uv run ruff check services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_live.py services/aura-observatory/src/aura_observatory/entrypoints/api/app.py services/aura-observatory/src/aura_observatory/entrypoints/cli.py services/aura-observatory/tests/test_aura0095_backend.py
+    - uv run pyright services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_live.py services/aura-observatory/src/aura_observatory/entrypoints/api/app.py services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - uv run pyright services/aura-observatory (0 errors)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py -q (27 passed)
+    - AURA_AURA0095_POSTGRES_URL against a scoped cached postgres:17-alpine container: uv run pytest services/aura-observatory/tests/test_aura0095_postgres_integration.py -q (4 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0080_api.py services/aura-observatory/tests/test_aura0084_auth_recovery.py -q (66 passed, 3 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0094_calibration.py -q (159 passed)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (24 paths passed)
+    - git diff --check
+    - PYTHONPATH=services/aura-observatory/src uv run python -c 'from aura_observatory.entrypoints.api.app import create_app; assert create_app(testing=False).state.evaluation.query.backend.__class__.__name__ == "PostgresEvaluationQueryBackend"'
+    - uv run pytest contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py -q (12 passed)
+    - uv run pytest services/aura-observatory/tests -q (1103 passed, 18 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0094_contract.py -q (93 passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml --role observatory_worker (5 owned implementation/manifest/test paths passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed after evaluation_api manifest and bounded metrics registration)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend_comprehensive.py -q (25 passed)
+    - uv run ruff check services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/metrics.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - uv run pytest tooling/architecture/tests/test_validate_observability.py -q (8 passed, 52 subtests)
+    - cached clickhouse/clickhouse-server:25.8 scoped container: AURA_AURA0094_CLICKHOUSE_URL=... AURA_AURA0094_CLICKHOUSE_PASSWORD=... uv run pytest services/aura-observatory/tests/test_aura0094_clickhouse_integration.py -q (7 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0093_migration.py services/aura-observatory/tests/test_aura0094_contract.py services/aura-observatory/tests/test_aura0094_calibration.py services/aura-observatory/tests/test_aura0094_judges.py -q (187 passed)
+    - implementation-handoff.schema.json validation (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py -q (51 passed)
+    - uv run pytest services/aura-observatory/tests -q (1128 passed, 19 skipped)
+    - PYTHONPATH=services/aura-observatory/src ./.venv/bin/pytest -q services/aura-observatory/tests (1128 passed, 19 skipped, 2 warnings)
+    - AURA_AURA0095_POSTGRES_URL against scoped cached postgres:17-alpine container: .venv pytest test_aura0095_postgres_integration.py (4 passed)
+    - AURA_AURA0094_CLICKHOUSE_URL against scoped cached clickhouse-server:25.8 container: .venv pytest test_aura0095_clickhouse_integration.py (1 passed)
+    - ./.venv/bin/ruff check changed Observatory backend modules after ClickHouse timestamp fix (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory after ClickHouse timestamp fix (0 errors)
+    - ./.venv/bin/pytest services/aura-observatory/tests -q after final backend correction (1128 passed, 19 skipped, 2 warnings)
+    - scoped cached postgres:17-alpine AURA-0095 live migration/restart tests after case-insensitive inventory update (4 passed)
+    - scoped cached clickhouse-server:25.8 AURA-0095 provenance round-trip/privacy test (1 passed)
+    - ./.venv/bin/ruff check final backend/adapters/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors)
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/evaluation_calibration.py services/aura-observatory/src/aura_observatory/entrypoints/cli.py services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/evaluation_calibration.py services/aura-observatory/src/aura_observatory/entrypoints/cli.py services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py (0 errors)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (30 passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_backend_comprehensive.py::test_evaluation_sse_emits_post_connect_event_and_bounded_heartbeat (1 passed; runtime duration-bearing live_replay and live spans asserted)
+    - AURA_AURA0095_POSTGRES_URL against a scoped cached postgres:17-alpine container: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (6 passed; fresh/upgrade/rerun, populated job list/detail, SSE restart/catch-up, lineage selectors, retry, and audit preservation)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1135 passed, 21 skipped, 2 warnings) after final runner-provenance, query-boundary, live-span, and retention-lineage corrections
+    - AURA_AURA0095_POSTGRES_URL against a scoped cached postgres:17-alpine container: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (8 passed; dataset/suite descendant attempt/result notifications, repeat completion, unique completion audit, and preservation boundaries)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1135 passed, 23 skipped, 2 warnings) after dataset/suite lineage and terminal completion-idempotency correction
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py services/aura-observatory/tests/test_aura0095_postgres_integration.py (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py services/aura-observatory/tests/test_aura0095_postgres_integration.py (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - git diff --check (passed)
+    - uv run pyright services/aura-observatory (0 errors, 0 warnings; evaluator fixture and private projector test-only typing blockers resolved)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (77 passed, 1 warning)
+    - ./.venv/bin/ruff check services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (passed)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0093_definitions.py (104 passed, 1 warning)
+    - scoped cached postgres:17-alpine AURA_AURA0095_POSTGRES_URL: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed; tokenless initial and takeover completion rejected without state mutation)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1138 passed, 25 skipped, 2 warnings)
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed; 65 paths)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+    - ./.venv/bin/ruff check final backend/adapters/tests (passed)
+    - ./.venv/bin/pyright final backend/adapters/tests (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_postgres_integration.py (34 passed, 9 skipped; closed ledger phases, lease_lost mapping, correlated binding-validation spans)
+    - scoped cached postgres:17-alpine AURA_AURA0095_POSTGRES_URL: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed; claim/replay/takeover phases and restart-safe lease behavior)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1138 passed, 25 skipped, 2 warnings)
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed; 65 paths)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed) after typed command-ledger port wiring and exact stale-takeover tuple fencing; conflicting resource retries leave the original lease unchanged
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1138 passed, 25 skipped, 2 warnings)
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed; 65 paths)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0090_storage.py (67 passed, 1 skipped)
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_definitions.py services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py (passed)
+    - ./.venv/bin/pyright targeted authoritative projection/filter/retention modules (0 errors)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1128 passed, 19 skipped, 2 warnings) after strict projection, closed filters, nullable queued worker, SSE metric, and retention-lineage corrections
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0090_storage.py (141 passed, 1 skipped)
+    - scoped cached postgres:17-alpine with AURA_AURA0095_POSTGRES_URL: test_aura0095_postgres_integration.py (6 passed), including populated job list/detail, lineage deletion, audit preservation, migration rerun, and SSE restart replay
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1135 passed, 21 skipped, 2 warnings) after runner-provenance, raw-query-boundary, retention-lineage, and live-span corrections
+    - ./.venv/bin/ruff check final backend/adapters/metrics/tests (passed)
+    - ./.venv/bin/pyright final backend/adapters/metrics/tests (0 errors)
+    - ./.venv/bin/ruff check changed Observatory backend modules (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors after request trace context typing fix)
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed after authoritative provenance validator and fixture corrections)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors after authoritative provenance validator correction)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (102 passed, 1 warning)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_clickhouse_integration.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py against scoped cached clickhouse-server:25.8 (8 passed, 1 warning)
+    - AURA_AURA0095_POSTGRES_URL against scoped cached postgres:17-alpine: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1136 passed, 25 skipped, 2 warnings) after final backend and migration corrections
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (64 changed paths validated)
+    - ./.venv/bin/python tooling/architecture/validate-module-registry.py (passed)
+    - ./.venv/bin/python tooling/architecture/validate-service-isolation.py (passed)
+    - ./.venv/bin/python tooling/architecture/validate-import-boundaries.py (passed)
+    - ./.venv/bin/python tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - uv run pyright services/aura-observatory/src services/aura-observatory/tests (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py (passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1128 passed, 19 skipped, 2 warnings) after authoritative projection, strict runner DTO, request-trace, SSE preflight, and retention corrections
+    - ./.venv/bin/ruff check targeted backend/adapters/migrations tests (passed)
+    - ./.venv/bin/pyright targeted backend/adapters (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-service-isolation.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py (76 passed, 1 warning) after exact five-field binding, closed replay projection, and telemetry regression coverage
+    - scoped cached postgres:17-alpine with AURA_AURA0095_POSTGRES_URL: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed), including single pending claimant, restart replay, and concurrent completion
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1137 passed, 25 skipped, 2 warnings)
+    - scoped cached clickhouse-server:25.8 with AURA_AURA0094_CLICKHOUSE_URL: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_clickhouse_integration.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py (8 passed, 1 warning)
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1137 passed, 25 skipped, 2 warnings) after malformed durable replay JSON is mapped to content-free storage-unavailable handling
+    - ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0093_definitions.py (44 passed) covering complete/subset case selection, foreign cases, suite case budgets, and narrowed/broadened execution limits
+    - scoped cached postgres:17-alpine with AURA_AURA0095_POSTGRES_URL: ./.venv/bin/pytest -q services/aura-observatory/tests/test_aura0095_postgres_integration.py (10 passed), including expired-lease takeover, old-claim completion rejection, renewal, and receipt replay after restart
+    - ./.venv/bin/pytest -q services/aura-observatory/tests (1138 passed, 25 skipped, 2 warnings) after fenced definition-claim recovery and authoritative job case/limit validation
+    - ./.venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml (passed; 65 paths)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml (skipped: no protected baseline or threshold changes detected)
+    - git diff --check (passed)
+  failed: []
+  not_run:
+    - Live PostgreSQL/Garage provider acceptance and browser/Storybook checks remain integration-environment checks.
+    - Full live continuous evaluation SSE paging/reconnect and provider-unavailable acceptance remain integration-environment checks.
+decisions:
+  - Added an explicit query service and content-free DTO projections with deterministic bounded cursors rather than exposing domain repositories or ORM rows.
+  - Reused existing definition, orchestration, calibration, artifact-deletion, owner-session, CSRF, and idempotency boundaries; added only the authorized forward-only 0011 migration.
+  - Kept authenticated REST responses and live events no-store and metadata-only. Evaluation live events use the same-origin SSE endpoint and durable PostgreSQL Last-Event-ID catch-up in production; the in-memory event store remains explicit test composition only.
+  - The CLI exposes only bounded collection/history metadata and serializes through the same query service; it does not bypass authorization or print content/object locations.
+  - Production composition wires the API façade to a PostgreSQL/ClickHouse-backed query port; the in-memory reference read model is test-only and is never selected by non-testing app construction.
+  - Production composition now rejects construction of the evaluation API with a durable query backend unless a durable live-event port is supplied, preventing an in-memory SSE fallback.
+  - AURA-0095 observability evaluator declarations are attached to the affected evaluation component manifests so the work-item observability validator covers API authorization, CSRF/idempotency, bounded queries, SSE isolation, and browser recovery obligations.
+  - Durable deletion idempotency conflicts preserve the application conflict type and map to the closed observatory-v1 HTTP 409 response; same-key same-command replay remains unchanged.
+  - Query and live PostgreSQL/ClickHouse/httpx I/O remains in registered adapter modules; application modules expose ports, DTOs, projections, and use cases only.
+  - CLI reads require the explicit local operator boundary `AURA_OBSERVATORY_LOCAL_OPERATOR=1`, then invoke public application read use cases and return finite content-free failure codes; no provider or owner credential is accepted or printed.
+  - Qualification revocation replay evidence uses the forward-only 0011 content-free PostgreSQL ledger, preserving exact key/fingerprint replay across restart without altering the pre-existing qualification table.
+  - Orchestration, calibration, and deletion provider/storage failures are translated at the application boundary to retryable unavailable outcomes; idempotency conflicts remain typed conflicts and are exposed as HTTP 409.
+  - Durable projections do not manufacture job/artifact/review provenance, counts, versions, digests, or identifiers; missing authoritative fields return bounded unavailable responses. Calibration and qualification provenance is read only from persisted provenance columns.
+  - The persisted live-event cursor query is assembled as one parameterized SQL statement with its static table fragment, bound Last-Event-ID lookup, deterministic sequence ordering, and a 1000-row cap.
+  - Evaluation job/result/artifact/deletion/calibration/review/qualification transitions publish through optional shared durable live-event callbacks; provider notification failures are swallowed after the authoritative state commit.
+  - REST evaluation events are dedicated to /api/v1/evaluation/events; the operational /api/v1/events stream remains unchanged and does not replay evaluation events.
+  - Destructive evaluation deletion accepts only the corrected kind-discriminated body and DELETE_EVALUATION_ARTIFACTS confirmation; conflicting idempotency keys map to 409.
+  - Stored score/result projections no longer fabricate zero digests, unknown revisions, empty provenance, or UUID placeholders; unavailable required score/result metadata is reported as a bounded provider-unavailable result.
+  - Added forward-only ClickHouse 0008 metadata columns for component revisions/digests, trusted provenance markers, and a closed execution-provenance envelope; the writer persists supplied authoritative values and the query adapter reads them without content-bearing fields.
+  - Definition commands now validate the complete dataset/suite request tree against the observatory-v1 closed schemas before domain admission, including nested cases, evaluator references, component bindings, limits, and provenance.
+  - Definition projections now explicitly select scalar and nested fields for dataset, case, evaluator, and suite resources; arbitrary stored provenance or nested definition keys are never forwarded.
+  - Definition projections validate stored timestamps and closed enum/scalar values before returning them, reporting malformed stored metadata as bounded unavailable data rather than leaking or coercing nested values.
+  - Registered aura.observatory.evaluation_api with bounded operation/live-event/replay-lag metrics. Runtime recording is injected into the API service and remains fail-open so telemetry sink/provider failures cannot alter request behavior.
+  - Unified durable history reads across definition, lifecycle, result, artifact, deletion, and local-judge audit sources with a shared snapshot/keyset tuple; all projections remain content-free and bounded.
+  - Added a replay fence to the dedicated evaluation SSE stream: fully paged catch-up is counted as replay, subsequent events as live, and poll/wait/disconnect failures are finite fail-open outcomes.
+  - API request trace context now propagates a validated traceparent/X-Trace-Id into Problem traceId and component spans without accepting arbitrary identifiers.
+  - ClickHouse DateTime64 cursor parameters are formatted as UTC wall-clock values, preserving keyset pagination on CH 25.8 while rejecting malformed cursor timestamps.
+  - SubmitEvaluationJobRequest and collection filters are closed and bounded before application invocation; exact result/artifact reads now map durable provider failures to retryable 503 responses through the instrumented application query port.
+  - Review, calibration, and artifact projections use persisted joins and explicit closed reconstruction; missing owning metadata remains unavailable rather than being filled with current timestamps, worker names, zero counts, or synthetic digests.
+  - Deletion completion removes only ordinary notification projections selected by the authorized command and preserves evaluation_deletion audit evidence.
+  - AURA-0095 now authorizes additive PostgreSQL worker-component and review-provenance columns in 0011. Attempts expose only the persisted runner component, and review queries use exact persisted review provenance rather than calibration-result provenance.
+  - Definition projections fail closed when stored provenance or created timestamps are absent; result/score execution provenance is recursively reconstructed from an allowlisted contract shape with no dictionary passthrough.
+  - Runner submission and qualification DTOs now recursively close capture authorization, limits, artifact references, reproducibility, model, and provider fields; local judge qualification requires exactly local_ollama without endpoint fields.
+  - Dedicated evaluation SSE performs a durable preflight page before response headers, records bounded page/replay/poll/wait/live/disconnect spans, and maps initial provider failure to typed 503.
+  - Definition projection now requires persisted source/scope/capture/count/evaluator/suite-limit facts and rejects legacy rows with missing values; dataset count is explicitly persisted for new definition rows.
+  - Collection filters are closed per resource kind and use resource-specific enums, rejecting completed jobs, queued results, cloud judges, destroyed artifacts, and unknown keys before query execution.
+  - Queued attempts expose a nullable workerComponentId until the claim transaction persists the stable runner component; non-queued rows without that authoritative worker are unavailable. The OpenAPI/generated-client nullable shape remains a contract-steward follow-up.
+  - Retention selector SQL now follows bounded job/dataset/suite lineage through authoritative child tables, deletes ordinary child notifications, and preserves evaluation_deletion rows and unrelated notifications.
+  - Job list/detail and admitted-job production reads now project the exact runner execution provenance persisted under envelope.data, preserving runner definition-reference spelling without deriving a simpler provenance.
+  - Collection and history routes reject unknown and repeated raw query keys before query execution; pagination keys are part of each closed per-resource allowlist.
+  - Deletion target snapshots now persist artifact/job/dataset/suite lineage before artifact metadata removal, allowing later completion retries to remove related ordinary notifications without deleting unrelated or evaluation_deletion rows.
+  - Added allowlisted live_replay and live span operations; replay/live spans retain bounded duration and content-free dependency attribution.
+  - Dataset and suite retention now follows selected jobs through authoritative attempts and result receipts before matching dependent projections; ordinary descendants are removed while deletion audits and unrelated notifications remain.
+  - Deletion completion is a terminal idempotent transition with a unique completed-audit index; retries return the persisted count without repeating audit or notification effects.
+  - Dataset and suite creation now use the authorized 0011 PostgreSQL command ledger with operation/resource binding, canonical request fingerprint, bounded replay metadata, restart-safe exact replay, and typed conflict on key reuse; concurrent completion is conflict-safe.
+  - Attempt collection uses an ascending `(created_at, attempt_id)` keyset with a snapshot fence, while deletion collection uses descending `(requested_at, command_id)` keysets and the same fence; inserts after page one cannot change the bounded result set.
+  - Job admission validates the selected suite's exact dataset/version, evaluator/version, provenance, and component bindings against authoritative stored definitions; fabricated or mismatched bindings are rejected before orchestration.
+  - ClickHouse 0008 acceptance now writes a complete self-consistent execution-provenance envelope and verifies the closed projected shape. Legacy score rows remain accepted at the write boundary for upgrade compatibility but are explicitly unavailable to authoritative AURA-0095 projections.
+  - Structured provenance validation permits the contract's `promptRevision` metadata field while continuing to reject raw content and sensitive fields; storage/orchestration/query failures retain generic service-unavailable mapping, while only the local-judge failure vocabulary carries bounded provider categories.
+  - Durable definition command claims now persist a per-attempt claim token and claim timestamp in PostgreSQL. Exactly one concurrent claimant may admit a dataset or suite; nonclaimants receive a bounded retryable unavailable result and cannot run admission side effects.
+  - Definition idempotency replay is reconstructed through the closed dataset/suite projector and is accepted only when its exact schema, resource identifier, version, and persisted fields match the ledger binding; unknown or nested arbitrary keys fail closed.
+  - Job admission compares the complete five-field component binding (identifier, version, code revision, image digest, configuration revision), exact target binding, and exactly one selected persisted evaluator binding; duplicate, extra, missing, or mismatched bindings are rejected.
+  - Definition-ledger begin/replay/conflict/completion outcomes and execution-binding accepted/invalid/not-found/unavailable outcomes use fixed allowlisted metrics and spans, bounded durations, PostgreSQL dependency attribution, and the active request trace without identifiers or payload labels.
+  - Definition command ownership is a fenced 120-second PostgreSQL lease. A stale pending claim can be atomically taken over by one retry, the previous token cannot complete it, and active work renews the lease between bounded admission steps; completed receipts clear ownership fields.
+  - Job binding admission now loads the authoritative dataset and suite, distinguishes complete selection from a proper subset, verifies every selected case is joined to the exact dataset/version, enforces the suite case budget, and permits only execution-limit values less than or equal to the persisted suite limits (with maxCases covering the selected set).
+  - Definition command begin, complete, and renew are now required methods on the typed `EvaluationDefinitionRepository` inward port. Application code invokes those methods directly; production and in-memory adapters implement them, with no dynamic lookup or silent non-durable fallback.
+  - Stale lease takeover predicates on idempotency key, operation, request fingerprint, resource identifier, resource version, pending status, and expiry. A conflicting retry cannot mutate claim ownership; only an exact matching retry may recover the expired command.
+  - Definition command ledger telemetry uses only the closed claim, takeover, renewal, replay, and completion phases. Renewal loss and stale-token completion emit allowlisted lease_lost; database_failure is reserved for storage exceptions. Phase, outcome, error code, duration, and request trace are bounded and content-free.
+  - Binding validation is timed from the application boundary through the authoritative definition checks and emits exactly one correlated definition-component terminal span for accepted, invalid, not-found, or unavailable outcomes, including malformed case and execution-limit inputs.
+  - Definition completion now requires a non-empty claim token through the typed repository and application ports. PostgreSQL always predicates the completion update on that token; missing or mismatched tokens fail closed before mutation, including after stale-lease takeover. In-memory and production adapters enforce the same boundary.
+  - Kept the private replay-projector regression explicitly test-only with a line-scoped Pyright suppression, while typing the evaluator fixture access with a bounded cast; no product behavior or public contract changed.
+risks:
+  - Durable PostgreSQL projections now cover definitions, jobs, attempts, results, artifacts, reviews, calibrations, qualifications, deletion status, and history; ClickHouse scores use a bounded parameterized query. Cached PG17 and CH25.8 live checks pass; browser/composed-provider acceptance remains an integration-environment check.
+  - The authorized 0011 ledger has a monotonic sequence, UUID Last-Event-ID lookup, bounded catch-up, metadata-only closed columns, and no automatic deletion policy.
+unresolved: []

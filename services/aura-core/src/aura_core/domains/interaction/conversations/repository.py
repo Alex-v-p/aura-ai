@@ -504,7 +504,15 @@ class SqlConversationRepository:
         text: str,
         state: MessageState,
     ) -> Message | None:
-        row = await session.get(MessageRow, message_id, with_for_update=True)
+        # ``_message`` also renders normalized attachment links.  Explicitly
+        # hydrate that relationship while loading each streamed chunk so the
+        # async repository never falls back to implicit relationship IO.
+        row = await session.get(
+            MessageRow,
+            message_id,
+            options=[selectinload(MessageRow.attachment_links)],
+            with_for_update=True,
+        )
         if row is None:
             return None
         row.content += text

@@ -1,0 +1,55 @@
+agent: integration_maintainer
+work_item: AURA-0091
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0091-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0091-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0091-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0091-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0091-test-evaluation.yaml (PASS; test_evaluation_engineer)
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and all five required review verdicts
+      validate against their schemas; every review is PASS with no findings
+      and every handoff has no unresolved item.
+    - >-
+      Archived AURA-0091 work-item validation, changed-path validation across
+      43 paths, observability validation, repository-shape, module-registry,
+      service-isolation, baseline-protection, and contract-change validation
+      passed or reported their expected protected-baseline skip.
+    - >-
+      Core Ruff and Pyright passed with zero errors or warnings; the focused
+      AURA-0091 Core/evaluation/system suite passed 64 tests with 3 expected
+      PostgreSQL-gated skips.
+    - >-
+      AURA-0091 deployment topology and legacy Compose topology suites passed
+      33 focused tests and 49 legacy tests; Bash syntax and git diff checks
+      passed.
+    - >-
+      The final serialized Docker Desktop acceptance recorded by the platform
+      handoff passed healthy startup, metadata-only OTLP delivery through the
+      Collector and Observatory ingest path, outage independence, Core
+      recovery, durable redelivery/restart, ACL and privacy checks, artifact
+      integrity/deletion, and scoped teardown.
+    - >-
+      The latest full Core evidence recorded by the reviewed handoffs is 1147
+      passed and 106 skipped with the existing Authlib deprecation warning.
+    - >-
+      No protected golden results, repository baselines, unrelated paths,
+      external systems, or pushed branches were changed.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Three focused PostgreSQL-dependent tests remain skipped when the isolated
+    database URL is absent locally; the final disposable Docker Desktop run
+    supplied the migrated SQL and recovery evidence.
+  - >-
+    The artifact object-store protocol retains a narrow async-iterator typing
+    concern at the test boundary; it is covered by runtime-compatible fakes
+    and does not widen a production interface.

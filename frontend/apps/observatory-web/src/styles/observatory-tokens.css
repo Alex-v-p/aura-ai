@@ -1,0 +1,117 @@
+/* Observatory-only presentation contract. Keep these tokens product-neutral
+ * within Observatory and do not move them into the shared Aura UI library. */
+:root {
+  --obs-canvas: #f4f0ec;
+  --obs-canvas-deep: #e9e1da;
+  --obs-surface: #fffdfb;
+  --obs-surface-raised: #ffffff;
+  --obs-surface-subtle: #f7f2ee;
+  --obs-surface-tint: #f0e4e0;
+  --obs-ink: #292522;
+  --obs-ink-soft: #615954;
+  --obs-ink-faint: #7e746e;
+  --obs-line: #ded4cd;
+  --obs-line-strong: #b9aaa0;
+  --obs-accent: #a95568;
+  --obs-accent-strong: #823b4e;
+  --obs-accent-soft: #f2d9de;
+  --obs-on-accent: #ffffff;
+  --obs-focus: #1769a6;
+  --obs-success: #277a55;
+  --obs-success-surface: #e5f2e9;
+  --obs-success-text: #1b5c40;
+  --obs-warning: #a76d15;
+  --obs-warning-surface: #fff2d5;
+  --obs-warning-text: #6d4810;
+  --obs-danger: #b34050;
+  --obs-danger-surface: #fbe8eb;
+  --obs-danger-text: #862c3c;
+  --obs-info: #2f6f9f;
+  --obs-info-surface: #e5f1f9;
+  --obs-info-text: #245777;
+  --obs-radius-sm: .35rem;
+  --obs-radius-md: .6rem;
+  --obs-radius-lg: .9rem;
+  --obs-shadow-sm: 0 1px 2px rgb(56 39 32 / .08);
+  --obs-shadow-md: 0 12px 30px rgb(56 39 32 / .12);
+  --obs-space-1: .25rem;
+  --obs-space-2: .5rem;
+  --obs-space-3: .75rem;
+  --obs-space-4: 1rem;
+  --obs-space-5: 1.5rem;
+  --obs-space-6: 2rem;
+  --obs-space-7: 2.5rem;
+  --obs-space-8: 3rem;
+  --obs-page-gutter: clamp(1rem, 2.8vw, 3.25rem);
+  --obs-page-top: clamp(1.5rem, 3vw, 2.5rem);
+  --obs-section-gap: clamp(1.75rem, 3vw, 2.5rem);
+  --obs-control-max: 66rem;
+  --obs-prose-max: 48rem;
+  --obs-content-max: 100rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --obs-canvas: #191517;
+    --obs-canvas-deep: #151312;
+    --obs-surface: #282321;
+    --obs-surface-raised: #302a27;
+    --obs-surface-subtle: #352e2a;
+    --obs-surface-tint: #493137;
+    --obs-ink: #f6eef1;
+    --obs-ink-soft: #d0c2bb;
+    --obs-ink-faint: #b0a19a;
+    --obs-line: #554942;
+    --obs-line-strong: #827169;
+    --obs-accent: #df8da0;
+    --obs-accent-strong: #efacba;
+    --obs-accent-soft: #56303b;
+    --obs-on-accent: #24141b;
+    --obs-focus: #8bc7f7;
+    --obs-success: #73d39c;
+    --obs-success-surface: #1b3d2c;
+    --obs-success-text: #b0edc8;
+    --obs-warning: #e9b65f;
+    --obs-warning-surface: #493814;
+    --obs-warning-text: #ffdda1;
+    --obs-danger: #ff8999;
+    --obs-danger-surface: #4c222b;
+    --obs-danger-text: #ffc2ca;
+    --obs-info: #8bc8f4;
+    --obs-info-surface: #1d384d;
+    --obs-info-text: #b9e0ff;
+    --obs-shadow-sm: 0 1px 2px rgb(0 0 0 / .25);
+    --obs-shadow-md: 0 14px 34px rgb(0 0 0 / .28);
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --obs-canvas: Canvas;
+    --obs-canvas-deep: Canvas;
+    --obs-surface: Canvas;
+    --obs-surface-raised: Canvas;
+    --obs-surface-subtle: Canvas;
+    --obs-surface-tint: Highlight;
+    --obs-ink: CanvasText;
+    --obs-ink-soft: CanvasText;
+    --obs-ink-faint: CanvasText;
+    --obs-line: ButtonText;
+    --obs-line-strong: ButtonText;
+    --obs-accent: Highlight;
+    --obs-accent-strong: Highlight;
+    --obs-accent-soft: Highlight;
+    --obs-on-accent: HighlightText;
+    --obs-focus: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}

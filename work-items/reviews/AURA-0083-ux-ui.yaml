@@ -1,0 +1,49 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0083
+verdict: PASS
+checked:
+  - >-
+    Browser acceptance completed the separate Observatory and Core owner
+    login flows, returned to the expected product origins, and exposed usable
+    authenticated states with explicit sign-out controls.
+  - >-
+    The authenticated Core model selector displayed exactly 12 provider
+    models, matching the configured provider and relay inventories; no
+    AURA-0083-introduced user-interface blocker was identified.
+  - >-
+    The infrastructure-only change preserves the existing product surfaces
+    and does not introduce a new frontend component or interaction contract.
+findings:
+  - severity: medium
+    rule: AURA-0084 follow-up; not an AURA-0083 blocker
+    summary: Add sanitized callback recovery for owner login failures.
+    evidence:
+      files:
+        - work-items/handoffs/AURA-0083-tests.yaml
+        - deploy/compose/local-http.yaml
+      symbols:
+        - browser owner-login callback recovery
+        - AURA-0084 sanitized callback recovery
+    impact: >-
+      A future callback failure should provide a safe, actionable recovery
+      state without exposing provider or authorization details.
+    required_correction: >-
+      Track and implement the sanitized callback recovery behavior in AURA-0084;
+      no correction is required for the AURA-0083 infrastructure scope.
+  - severity: medium
+    rule: AURA-0084 follow-up; not an AURA-0083 blocker
+    summary: Add state-specific signed-out and focus recovery behavior.
+    evidence:
+      files:
+        - work-items/handoffs/AURA-0083-tests.yaml
+        - README.md
+      symbols:
+        - authenticated session expiration state
+        - AURA-0084 signed-out and focus recovery
+    impact: >-
+      Session loss should explain the signed-out state and return keyboard
+      focus predictably so the owner can recover without ambiguity.
+    required_correction: >-
+      Track and implement state-specific signed-out and focus recovery in
+      AURA-0084; no correction is required for the AURA-0083 infrastructure
+      scope.

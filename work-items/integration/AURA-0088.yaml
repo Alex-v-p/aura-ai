@@ -1,0 +1,54 @@
+agent: integration_maintainer
+work_item: AURA-0088
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0088-general.yaml (PASS; existing artifact)
+  - work-items/reviews/AURA-0088-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0088-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0088-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0088-ux-ui.yaml (PASS; aura_ux_ui_reviewer)
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts (contract-synchronized transport client)
+checks:
+  passed:
+    - >-
+      All ten architecture and repository validators passed: work-item,
+      changed-paths, repository-shape, module-registry, service-isolation,
+      frontend-boundaries, observability, baseline-protection,
+      contract-changes, and generated-sync.
+    - >-
+      Core Ruff, Pyright, settings tests, and telemetry tests passed: 114
+      passed, 1 skipped.
+    - >-
+      Observatory Ruff, Pyright, and the complete Observatory test suite
+      passed: 489 passed, 3 skipped, 2 warnings.
+    - >-
+      Observatory and Observatory Web lint and unit targets passed, the
+      Observatory Web production build passed, and the Storybook production
+      build passed.
+    - >-
+      Compose topology passed all 44 tests, Compose configuration validation
+      passed, and git diff --check passed.
+    - >-
+      The mocked browser acceptance suite passed all 204 tests across desktop,
+      tablet, and mobile coverage, including comparison refresh, retention,
+      keyboard, responsive, and accessibility scenarios.
+    - >-
+      The repository-scoped full-stack acceptance script exited 0. It covered
+      the real Core-to-Collector-to-Observatory SSE and comparison path,
+      retention deletion, preserved-session restart, reset and reauthentication,
+      and Core usability after Observatory was stopped; disposable project and
+      network cleanup left no retained E2E resources.
+    - >-
+      Full-stack migration acceptance covered fresh, upgrade, and idempotent
+      ClickHouse schema application; the late immutable target-ledger deletion
+      counts and bounded SSE comparison-refresh fixes passed their regressions.
+    - >-
+      All five AURA-0088 review artifacts validate against the review-verdict
+      schema and report PASS with no findings.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks: []

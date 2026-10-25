@@ -1,0 +1,83 @@
+agent: observatory_worker
+work_item: AURA-0108
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.telemetry-ingestion+telemetry-storage+query-snapshots
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/test_aura0108_reconciliation.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+  metrics_added:
+    - observatory_ingest_reconciliation_count
+    - observatory_ingest_reconciliation_duration_ms
+    - observatory_ingest_visibility_lag_count
+    - observatory_ingest_backlog_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0108.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0108.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0108.yaml (no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0108.yaml (no baseline changes)
+    - git diff --check
+    - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0108_*.py
+    - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0108_*.py
+    - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pyright services/aura-observatory
+    - 76 focused legacy Observatory query/ingest regression tests passed
+    - test_aura0078_review_fixes.py::test_module_registry_and_component_manifests_describe_the_same_service_surface
+    - test_aura0108_reconciliation.py (20 focused tests, including exact identity-plus-sequence presence validation, cursor tampering, watermark outage fail-closed behavior, blocked-worker liveness, autonomous visible-tail convergence, truthful interim/final health, per-pass trace isolation, and phase-accurate timeout attribution)
+    - AURA-0108 focused plus AURA-0078, AURA-0080, and AURA-0085 regression selection: 191 passed; one unrelated migration-idempotency assertion remains outside this work item
+    - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src services/aura-observatory/tests/test_aura0108_reconciliation.py services/aura-observatory/tests/test_aura0078_review_fixes.py
+    - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory
+    - git diff --check
+  failed:
+    - validate-changed-paths is blocked by pre-existing AURA-0098 dirty paths outside AURA-0108 allowed_paths
+    - full Observatory suite retains only unrelated AURA-0098/AURA-0104 dirty-worktree baseline failures outside this amended AURA-0108 scope
+  not_run:
+    - full Observatory suite was not rerun after the in-scope manifest expectation amendment; the formerly failing in-scope regression now passes
+decisions:
+  - Added a separate ObservationReconciliationRegistry port so existing ObservationIdRegistry test and memory adapters remain source-compatible.
+  - Reconciliation probes only opaque observation_id and ingest_sequence pairs and uses a bounded provider timeout.
+  - PostgreSQL reconciliation holds the existing service advisory lock and commits receipt completion plus contiguous visibility advancement in one transaction; missing or retention-deleted receipts are never recreated.
+  - Detail cursors preserve the existing opaque shape while carrying an optional committed ingest fence; legacy cursors remain accepted.
+  - ClickHouse presence results are admitted only when both returned observation_id and ingest_sequence match the bounded requested receipt pairs.
+  - Detail continuation fences are clamped to a freshly read committed watermark; production watermark lookup failures fail closed, while explicit test/in-memory query overrides may omit the fence.
+  - Reconciliation startup runs beside queue intake, heartbeat, and stop handling; each pass has a validated whole-pass deadline and bounded advisory-lock watermark advancement.
+  - Every recovery pass invokes a bounded visibility continuation, allowing a quiescent visible tail larger than one lock budget to converge without a new producer event; lag counts all ledger rows beyond the committed watermark until convergence.
+  - Each pass enters a fresh metrics trace context, and timeout spans attribute the active PostgreSQL, ClickHouse, or health phase rather than assuming one dependency.
+  - Recovery emits bounded metadata-only causal component spans for PostgreSQL selection/commit and ClickHouse presence phases across the telemetry-ingestion and telemetry-storage component identities using stable dependency, outcome, error, and trace identities.
+  - No migration, public contract, Core import, Core database read, frontend change, or new deployable was introduced.
+risks:
+  - The shared checkout contains unrelated uncommitted AURA-0098 and integrated AURA-0104 changes; integration must preserve those edits and review the overlapping composition/ports files carefully.
+  - The exact manifest-surface regression expectations were amended within the approved AURA-0108 test scope and now cover both required reconciliation metrics.
+unresolved:
+  - Parent integration must rerun the required review and full-suite governance checks; no product-owned AURA-0108 implementation finding remains.

@@ -1,0 +1,104 @@
+agent: test_evaluation_engineer
+work_item: AURA-0087
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-analytics
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0087_test_evaluation.py
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - work-items/handoffs/AURA-0087-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0087-tests-uv uv run pytest
+      services/aura-observatory/tests/test_aura0087_test_evaluation.py -q
+      (7 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0087-tests-uv uv run ruff check
+      tests/test_aura0087_test_evaluation.py (passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0087-tests-uv uv run pyright (0 errors, 0
+      warnings)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0087-tests-uv uv run pytest
+      services/aura-observatory/tests -q from the repository root (388 passed,
+      1 skipped, 2 warnings)
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0087.yaml (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0087.yaml --role test_evaluation_engineer --path
+      services/aura-observatory/tests/test_aura0087_test_evaluation.py --path
+      frontend/apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - >-
+      cd frontend && NODE_OPTIONS=--max-old-space-size=512 timeout --signal=KILL
+      45s pnpm exec tsc --noEmit --ignoreConfig --target ES2022 --module
+      NodeNext --moduleResolution NodeNext --types node --strict --skipLibCheck
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - >-
+      cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec eslint
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed)
+    - git diff --check (passed)
+  failed: []
+  not_run:
+    - >-
+      The repository-required service-directory pytest invocation retains a
+      pre-existing cwd assumption in test_aura0079_identity_regressions.py;
+      the complete suite passed from repository root, where compose.yaml is
+      available.
+    - >-
+      Post-change mocked browser execution and the real Compose full-stack run
+      remain integration-owned. The prior frontend worker's mocked browser
+      suite passed 132 cases before this test-only full-stack assertion; this
+      worker validated the new full-stack spec by TypeScript compilation and
+      ESLint only.
+decisions:
+  - >-
+    Added only independent test/evaluation coverage. No production code,
+    OpenAPI source, generated client, migration, dependency, manifest,
+    telemetry contract, threshold, golden result, protected baseline, or Core
+    path was changed.
+  - >-
+    Added UTC/DST boundary and late/out-of-order event coverage, exact
+    quantile interpolation assertions, measured-zero versus no-data semantics,
+    finite error-class/unavailable-signal assertions, ClickHouse query bound
+    and privacy assertions, typed storage failure propagation, and exact-once
+    analytics query metric checks.
+  - >-
+    Extended the existing real Core-to-browser acceptance path to open the
+    Analytics workspace after a real run, verify a bounded aggregate and its
+    semantic table, and assert that analytics output remains content-free.
+  - >-
+    Kept all fixtures synthetic and metadata-only. Adapter tests capture the
+    generated statement without contacting ClickHouse and assert execution,
+    scan, series, point, and sensitive-field bounds directly.
+risks:
+  - >-
+    The new browser assertion requires a real Core run to emit an
+    operation_duration_ms observation before the aggregate table becomes
+    visible; the full-stack runner must execute it in its existing disposable
+    Compose environment.
+  - >-
+    Full browser execution was not repeated by this worker after the test-only
+    assertion because the configured webServer cannot start in the restricted
+    environment; integration should run the existing host-level browser and
+    Compose checks.
+unresolved: []

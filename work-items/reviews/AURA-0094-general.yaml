@@ -1,0 +1,90 @@
+agent: general_reviewer
+work_item: AURA-0094
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, authoritative evaluation-v1 contract,
+    current diff, all implementation handoffs, prior general verdict,
+    PostgreSQL migration and opt-in integration test, calibration and judge
+    services, composition, artifact authorization, worker dispatch, and the
+    focused regression tests. No reviewed implementation, test, contract,
+    migration, deploy, handoff, or work-item file was edited.
+  - >-
+    Verified the fresh-migration correction. Migration 0010 now creates
+    observatory_local_judge_calibration_definitions and
+    observatory_local_judge_calibration_results before the provenance ALTER;
+    later duplicate CREATE IF NOT EXISTS declarations are harmless on exact
+    rerun. The test worker independently records PostgreSQL 17 fresh apply and
+    exact rerun as 2 passed in an isolated project-local schema.
+  - >-
+    Verified the prior-calibration-result execution path. LocalJudgeService no
+    longer passes request.result_id into qualification lookup. Composition
+    resolves a qualification by the complete immutable dataset, suite,
+    evaluator, judge, model, prompt, rubric, artifact, and calibration scope,
+    then separately loads the qualification's persisted
+    calibration_result_id. The service compares that eligible advisory result
+    against the current immutable scope before permitting calibrated_enabled.
+  - >-
+    Re-verified qualification/revocation behavior. Production qualification
+    loads the prior durable CalibrationResult, compares its exact model,
+    dataset, suite, evaluator, prompt/rubric artifacts, seed, budget,
+    calibration, and result identities, and persists the authoritative row.
+    Qualification replay after revocation returns revoked state, while an
+    exact repeated revocation is idempotent and does not duplicate the state
+    transition.
+  - >-
+    Verified controlled-replay authorization. The common purpose allowlist now
+    includes controlled_replay, while the role matrix limits it to
+    intended_use=input with evaluation_input classification; prompt, rubric,
+    comment, and non-input classifications remain denied.
+  - >-
+    Verified lossless closed projections for local-judge definitions,
+    calibration labels and results, human reviews, qualifications, and scores.
+    Required identifiers, versions, model and artifact digests, finite values,
+    seed, budget, provenance, state, authorization, and canonical UTC
+    timestamps are retained, strict-validated, and accepted by evaluation-v1.
+    PostgreSQL result and qualification loaders reconstruct the persisted
+    metadata without raw content or provider locations.
+  - >-
+    Verified the final evaluator/calibration identity correction. Executable
+    local-judge definitions preserve an evaluator identity distinct from the
+    judge definition and carry the exact calibration_id through PostgreSQL,
+    request decoding, qualification, and score provenance. Production strict
+    admission rejects legacy or mismatched identities instead of synthesizing
+    authority.
+  - >-
+    Verified exact execution provenance. Strict CalibrationReport and
+    Qualification validation requires the complete closed budget, fixed zero
+    temperature, bounded seed and limits; LocalJudgeService compares both
+    qualification and referenced CalibrationResult seed/budget to the admitted
+    definition before enabling calibrated output.
+  - >-
+    Verified the final telemetry corrections. PostgreSQL, Garage, Ollama, and
+    ClickHouse boundaries emit bounded dependency spans with shared
+    correlation, calibration claim persistence failures transition through the
+    explicit recovery path, and worker shutdown flushes the configured
+    exporter without leaking content or provider details.
+  - >-
+    Traced production enqueue and dispatch again. PostgreSQL derives bounded
+    local work from admitted durable definitions and artifact joins, the
+    evaluation worker invokes the composed judge/calibration services, and
+    completion/failure remains lease-checked without affecting Core or normal
+    Observatory readiness.
+  - >-
+    Re-ran the complete focused AURA-0094 implementation and deployment suite
+    after the owner-decision amendment: 214 passed and 5 opt-in live-database
+    tests skipped. Work-item validation, changed-path validation for all 53
+    changed paths, and git diff --check pass. The previously reviewed
+    application corrections remain covered without reopening resolved
+    findings.
+  - >-
+    Verified the amended owner authority against the completed platform
+    handoff and deployment topology. The judge network remains internal and
+    fail-closed, proxy variables are cleared, the provider origin is bounded,
+    provider availability is excluded from Core and Observatory readiness,
+    and no sidecar, host networking, privileged capability, or general egress
+    was added. Under the explicit 2026-10-21 decision, provider-unavailable is
+    an accepted AURA-0094 availability limitation and real reachability is
+    deferred to a later governed deployment decision and AURA-0098 acceptance;
+    it is therefore no longer a blocking general-review finding.
+findings: []

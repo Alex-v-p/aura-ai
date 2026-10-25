@@ -1,0 +1,685 @@
+agent: platform_worker
+work_item: AURA-0098
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0098_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.compose.observatory-acceptance, deploy.compose.evaluation-resilience, docs.observatory-operator-runbook
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/e2e/core-availability.sh
+  - deploy/compose/e2e/test_core_availability_safety.sh
+  - deploy/compose/e2e/diagnostic-categories.sh
+  - deploy/compose/e2e/test_diagnostic_categories.sh
+  - deploy/compose/e2e/test_evaluation_orchestration_override.sh
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/provider.yaml
+  - deploy/compose/e2e/test_full_stack_capture_boundary.sh
+  - deploy/compose/e2e/test_full_stack_definition_fixture.sh
+  - deploy/compose/e2e/test_full_stack_artifact_fixture.sh
+  - deploy/compose/e2e/test_full_stack_observability_path.sh
+  - deploy/compose/e2e/test_full_stack_evaluator_boundary.sh
+  - deploy/compose/e2e/test_full_stack_acceptance_scope.sh
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/run-evaluation-orchestration-e2e.sh
+  - docs/runbooks/observatory-reliability.md
+  - docs/README.md
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0098.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0098.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0098.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0098.yaml
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh deploy/compose/run-evaluation-orchestration-e2e.sh deploy/compose/e2e/core-availability.sh
+    - bash deploy/compose/e2e/test_core_availability_safety.sh (passed fail-closed phase, nested public-surface failure regression, 401-vs-5xx session regression, session-credential argv regression, operations-metric causal-gate check, and raw ClickHouse-body diagnostic scan)
+    - docker compose --profile observatory config --quiet
+    - uv run pytest deploy/compose/e2e/test_fake_provider.py (1 passed)
+    - git diff --check
+    - >-
+      Added a bounded pre-browser transaction gate in
+      run-observatory-full-stack-e2e.sh that uses the composed
+      aura-evaluation-runner identity and password, verifies SELECT access to
+      all three Core runner ledger tables, exercises the runner's INSERT and
+      UPDATE paths for attempts and terminal outbox plus INSERT for
+      cancellations, and rolls the transaction back. The gate suppresses raw
+      database diagnostics and fails closed before Playwright can consume the
+      aggregate browser timeout.
+    - >-
+      bash deploy/compose/e2e/test_full_stack_evaluator_boundary.sh passed,
+      including the runner-identity gate markers and pre-browser ordering.
+    - >-
+      bash -n deploy/compose/run-observatory-full-stack-e2e.sh,
+      docker compose --profile observatory --profile checks config --quiet,
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0098.yaml, and git diff --check
+      passed after the gate addition. The full composed browser runner was
+      intentionally not re-run in this platform slice.
+    - >-
+      Added the explicit AURA_OBSERVATORY_ACCEPTANCE_SCOPE gate. Unset,
+      default, and full select the complete acceptance matrix; foundation is
+      the only reduced mode; every other value fails closed before creating
+      disposable state. Foundation preserves normal setup, all applicable
+      pre-browser gates including the runner-ledger identity transaction,
+      browser Scenario 1, post-browser retention/privacy evidence, scan-boundary
+      cleanup, and project-scoped cleanup, then exits before evaluation
+      Scenarios 2-6 and the outage matrix.
+    - >-
+      bash deploy/compose/e2e/test_full_stack_acceptance_scope.sh passed its
+      static ordering, strict-value, Scenario 1 filter, and foundation early
+      exit regression. The full composed browser runner was intentionally not
+      re-run in this platform slice.
+    - >-
+      Diagnosed the foundation post-browser exit: optional Prometheus query
+      samples were allowed to return successful empty stdout and were then
+      passed to a JSON parser. Foundation now skips those full-matrix-only
+      query samples and the shared optional sampler normalizes empty output to
+      explicit unavailable evidence; required Core/ingest boundary sampling,
+      browser retention evidence, scan cleanup, and privacy scanning remain
+      enforced.
+    - >-
+      Re-ran bash syntax, the acceptance-scope regression (including an empty
+      optional response normalization reproduction), the evaluator-boundary
+      regression, Compose profile config, changed-path validation, and git
+      diff --check. All passed; no full stack rerun was performed.
+    - >-
+      Diagnosed the remaining foundation post-browser TypeError to the
+      full-matrix-only ClickHouse scan-boundary cleanup body: a one-element
+      Python tuple was passed as httpx content, producing the bounded
+      httpx/httpcore bytes-like-object error after the scan itself succeeded.
+      The full path now uses a string body, while foundation records the
+      scan-boundary probe as explicitly not sampled and proceeds to its
+      required privacy evidence and cleanup/exit path.
+    - >-
+      The acceptance-scope regression now directly reproduces the tuple-body
+      TypeError, verifies the corrected string body, checks the foundation
+      not-sampled branch, and structurally proves the cleanup trap and
+      foundation exit precede the full matrix. Bash, evaluator-boundary,
+      Compose config, changed-path validation, and diff checks passed.
+    - >-
+      Updated the observability-path static regression to follow the current
+      capture_optional_metric_snapshot wrapper and its full-versus-foundation
+      semantics, without weakening required Core/Collector/visibility metric
+      assertions. The observability-path regression, foundation scope
+      regression, bash syntax, changed-path validation, and git diff --check
+      all passed.
+    - bash deploy/compose/e2e/test_diagnostic_categories.sh (passed adversarial source-content isolation check)
+    - bash deploy/compose/e2e/test_evaluation_orchestration_override.sh
+    - >-
+      The orchestration trace regression now uses a bounded 4096-row
+      metadata-only verification window so post-recovery spans cannot evict
+      the required transport-failure evidence; the duplicate post-recovery
+      trace probe was removed without changing coverage thresholds.
+    - docker compose --profile observatory --profile checks config --quiet
+    - docker compose -f deploy/compose/e2e/provider.yaml config --quiet
+    - >-
+      bash -n passed for all owned shell launchers and the shared outage probe;
+      ast.parse passed for all 17 embedded Python probes in
+      deploy/compose/e2e/core-availability.sh and all embedded probes in the
+      full-stack and evaluation harnesses.
+    - >-
+      The final static correction keeps query-api health, definition, and
+      Prometheus metric families on the same manifest and requires a positive
+      bounded sample, labelled resource/outcome, and numeric outcome value.
+      PostgreSQL degradation uses the authenticated query-api definition
+      surface and requires a bounded 5xx response.
+    - >-
+      Shell-level transition tests passed for Collector stale/degraded and
+      recovery snapshots, including an adversarial unchanged before/after
+      snapshot that fails closed.
+    - >-
+      Static outage probes now assert the existing query-api component's
+      bounded health summary, evaluator/metric declarations, and actual
+      duration samples plus labelled outcome samples from the same manifest;
+      PostgreSQL/ClickHouse degradation, session reauthentication, API
+      unreachability, and Web unreachability are asserted on their affected
+      internal/public surfaces where available.
+    - >-
+      Extracted E2E seed Python with ast.parse and checked the generated
+      synthetic component manifest shape without starting Docker services.
+    - >-
+      The full-stack overlay statically wires file-backed observatory ingest
+      credentials to Core API/worker/scheduler and starts the existing
+      evaluation worker, scheduler, and Core evaluation runner on scoped
+      database, object-store, ClickHouse, NATS, ingest, and fixture-provider
+      networks without host networking.
+    - >-
+      The outage harness syntax and recovery path passed static review: all
+      Observatory-owned outage phases invoke an authenticated Core normal-run
+      browser probe, while shared aura-nats uses a truthful degraded-readiness
+      assertion and probes Core only after broker recovery.
+    - >-
+      Corrected the component recovery probe to parse Prometheus text as text
+      rather than JSON, use aura.observatory.query_api consistently for health,
+      definitions, and metric families, and require bounded samples, labels,
+      and outcomes. PostgreSQL outage coverage now calls the authenticated
+      query-api definition surface and requires a bounded 5xx response.
+    - >-
+      Session outage coverage now creates a real owner session before stopping
+      the session store, verifies that the authenticated session becomes
+      unavailable while the store is stopped, then verifies the same session
+      and CSRF metadata recover after restart and removes it through the
+      application-owned session backend.
+    - >-
+      Collector outage coverage captures the authenticated overview's bounded
+      intake-lag, visibility-watermark, worker-heartbeat, backlog, and
+      corresponding Prometheus metric surfaces before stopping the Collector,
+      requires a stale/degraded lag/heartbeat/watermark/backlog transition
+      during the outage, and requires a healthy signal improvement after
+      restart. An unchanged snapshot fails closed.
+    - >-
+      The full-stack harness now mounts an ignored E2E-only synthetic component
+      manifest, runs the existing sync-manifests CLI, admits deterministic
+      evaluator/dataset/case/suite definitions through Observatory's typed
+      application boundary, and enables the evaluation browser phase only after
+      that bounded seed succeeds.
+    - >-
+      The final outage probes sample Core telemetry exporter retry/drop
+      counters before, during, and after Collector failure, require a causal
+      ingest heartbeat/lag transition with numeric Prometheus samples, and
+      fail closed when the before/after snapshot is unchanged.
+    - >-
+      Fixture Ollama outage coverage exercises the public Core conversation
+      workflow: it requires bounded provider-unavailable admission or a
+      provider terminal error while the fixture is stopped, then runs the
+      authenticated Core workflow again after provider recovery.
+    - >-
+      The shared-NATS phase verifies bounded degraded readiness and recovery,
+      then records an explicit blocker because no authorized Observatory
+      ingest query exists for Core's evaluation_runner_nats_recovery_count;
+      Observatory /metrics is not scraped as a cross-service substitute.
+    - >-
+      Artifact preflight and the optional authorized browser operations
+      workflow use bounded metric samples. Artifact operation evidence is
+      compared with a baseline; operations recovery is blocked unless that
+      browser workflow is explicitly enabled and seeded, then requires a
+      causal post-workflow increment. The scheduler phase requires a numeric
+      heartbeat sample where the public metrics surface exposes it; missing
+      evidence is aggregated as a blocker.
+    - >-
+      Garage, evaluation-worker, and evaluation-scheduler prerequisites are
+      aggregated at the top-level result. These phases never print
+      recovery=passed when an owner-authorized heartbeat, artifact, or lease
+      signal is unavailable.
+    - >-
+      Dependency and judge outage phases use explicit return guards for every
+      failure-capable step so conditional invocation cannot disable errexit and
+      reach a false recovery=passed line. Nested public-surface, Core, metric,
+      Collector, provider, API, and Web transition helpers propagate their
+      status explicitly. The focused shell regression injects intermediate
+      failures and verifies the phase status and output.
+    - >-
+      Observatory owner-session probes deliver the live credential through
+      docker exec stdin, never argv or environment, and revoke it in a
+      finally-path. A valid session-store outage must return a bounded 5xx;
+      accepting 401 would falsely classify it as expiration. The focused
+      adversarial test records docker argv, rejects 401, and checks that a
+      sentinel credential is absent.
+    - >-
+      Evaluation orchestration invokes a service-owned dependency-metric probe
+      after the real NATS recovery/result path. It validates finite values and
+      fixed operation/outcome labels and requires PostgreSQL success and
+      evaluation-NATS publication samples without printing labels or content.
+    - >-
+      Artifact metrics use a pre-workflow baseline and require a strict
+      post-workflow increment. Operations recovery is never accepted from a
+      historical positive sample: the harness records a precise blocker when
+      its authorized browser workflow is not enabled, or otherwise compares
+      the exact pre/post bounded operation/outcome series. Scheduler heartbeat
+      recovery compares before, stopped, and restarted age samples and treats
+      missing samples as an explicit capability blocker.
+    - >-
+      The full-stack browser command propagates
+      AURA_OBSERVATORY_OPERATIONS_FULL_STACK explicitly. The default path
+      records observatory_operations_recovery_count:authorized-browser-
+      workflow-not-enabled as a capability blocker; only an explicitly
+      enabled seeded workflow may establish the exact baseline and causal
+      increment.
+    - >-
+      ClickHouse preflight failures expose only HTTP status and finite
+      allowlisted client/server/unexpected-status categories. Raw response
+      bodies are not included in failure, cleanup, or diagnostic messages;
+      successful JSON metric responses retain their existing bounded parsing.
+    - >-
+      Fixture Ollama outage handling accepts only bounded provider-specific
+      problem code/category fields with retryable=true, then requires a
+      successful provider-backed Core operation after restart. A generic 422 or
+      503 is not treated as provider evidence.
+    - >-
+      The final platform pass requires the ingest heartbeat, artifact
+      operation, and scheduler heartbeat samples to be finite numeric
+      Prometheus samples where their authorized public surfaces exist.
+      Operations recovery is checked only under its explicitly enabled seeded
+      workflow; otherwise its capability blocker is required. Core's
+      evaluation-runner NATS recovery remains an explicit blocker until an
+      authorized Observatory ingest query exists.
+    - >-
+      Scheduler scale sequencing regression passed: bash -n, the focused
+      evaluation orchestration override test, Docker Compose profile config,
+      changed-path validation, and git diff --check. The test asserts the
+      completed-migration/health barrier and the --no-deps two-replica command.
+    - >-
+      The full-stack artifact seed now derives each declared byteCount from its
+      exact payload and passes that same length to ArtifactUpload alongside its
+      SHA-256 digest. The focused artifact-fixture regression, bash syntax,
+      embedded Python AST parsing, Compose config, and git diff --check passed.
+    - >-
+      The full-stack public definition seed now matches the current closed
+      evaluator and suite projections: stale captureAuthorization fields were
+      removed while dataset/case authorization fields remain explicit. The
+      definition-fixture regression and bash syntax checks passed.
+      The focused Observatory definition/evaluator/dataset/suite test selection
+      also passed (189 passed, 5 skipped).
+    - >-
+      The owner-authorized one-off API probe now targets the running
+      observatory-api Compose service rather than its own loopback. The focused
+      capture-boundary regression verifies the service URL, Origin, cookie,
+      CSRF, and public admission routes; shell syntax and diff checks passed.
+    - >-
+      The full-stack harness now label-checks and refreshes only its exact
+      disposable ClickHouse volumes, probes authenticated observations-table
+      usability after readiness and immediately before browser execution, and
+      correlates a real Core public run to an authenticated Observatory run
+      detail with observations. The probe also checks monotonic bounded Core
+      exporter retry/drop and Observatory ingest counters. Focused observability
+      regression, Core safety regression, bash syntax, embedded AST, Compose
+      config, changed-path, work-item, and diff checks passed.
+    - >-
+      Browser failure handling now captures the frontend-e2e exit status,
+      independently attempts bounded Core exporter and Observatory
+      ingest/Collector samples, emits the content-free browser-stage delta when
+      samples are available, and returns the original browser status before
+      scan-boundary or operations phases. The focused regression injects a
+      failing browser command and proves both post-samples execute while status
+      17 remains nonzero.
+    - >-
+      Visibility diagnostics now retain the existing metadata-only
+      aura.telemetry.health counters for accepted, failed, retried, dropped,
+      retained, abandoned, and export-failure state, validating finite
+      monotonic snapshots and emitting their browser-stage deltas. When the
+      pinned Collector's private self-metrics expose the allowlisted sent,
+      send-failed, or retry-exhausted span counters, bounded deltas are emitted
+      without labels, endpoints, or content; absent families remain optional.
+      Focused Core-availability and observability regressions, shell syntax,
+      embedded AST parsing, and diff checks passed.
+    - >-
+      Added the distinct MetadataMetrics `rejected` health counter to the
+      finite, monotonic Core capture and browser-stage delta, alongside
+      exporter drops and failures. The focused regression verifies the field
+      is captured and checked without exposing telemetry content.
+    - >-
+      Corrected browser-stage diagnosis to capture the actual UUID emitted by
+      the browser's Core admission through a separate mode-0600 disposable
+      Node-side result file, never Playwright storage state. The harness now
+      records Core API and worker exporter baselines plus a Collector baseline
+      before Playwright, samples both processes afterward, and on browser
+      failure emits only target-correlated status/count/sequence evidence:
+      authenticated REST list/detail, PostgreSQL receipt status and ingest
+      sequence, ClickHouse exact run-row presence and sequence range, the
+      committed watermark, and pending/invisible reconciliation state. The
+      pre-browser visibility-probe UUID is no longer used as a browser target.
+      Focused ordering/status regressions, shell syntax, heredoc parsing, and
+      diff checks passed.
+    - >-
+      Corrected the disposable target validator to the closed Aura identifier
+      pattern `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`.
+      It now accepts arbitrary version/variant nibbles used by Core's
+      deterministic UUID-shaped IDs, while retaining lowercase canonical
+      validation, bounded length, path rejection, and the mode-0600 file
+      channel. Focused regression coverage accepts known `350c/d997` and
+      arbitrary-nibble IDs and rejects uppercase/path-like/malformed values.
+    - >-
+      Added timeline-safe browser diagnosis without changing phase limits: the
+      primary serial Core-to-browser scenario now has a bounded local 1,800s
+      total budget covering its three retained Core runs and Observatory
+      visibility/trace/analytics/retention windows. Failure diagnostics record
+      monotonic admission, Core response/terminal, visibility wait/result,
+      final REST probe, and first public detail-200 timing. Target diagnostics
+      now include receipt claimed/updated timestamp ranges, watermark samples,
+      Collector queue occupancy samples, and the bounded detail-200 monotonic
+      timestamp. Focused AST/shell ordering and budget regressions passed.
+    - >-
+      Added optional bounded public Observatory query-outcome and histogram
+      count samples around the primary browser phase. These are supporting
+      diagnostics only, remain content-free, validate finite nondecreasing
+      totals when available, and never replace the rendered Analytics
+      assertion or browser-target correlation.
+    - >-
+      The browser acceptance now applies the same bounded 60-second run
+      visibility wait plus one 15-second public reload/re-entry recovery to
+      comparison and purge runs. Each later run updates the disposable target
+      channel before selection, and failed recovery emits bounded REST status
+      diagnostics without inflating phase limits or contacting Core again.
+    - >-
+      Corrected target ClickHouse diagnostics to keep aggregate, kind, trace,
+      expected-trace, and row probes within one live five-second AsyncClient
+      context, with a four-second server execution cap. Each stage now emits
+      bounded status, elapsed milliseconds, response bytes, and aggregate
+      fields with explicit timeout/status/empty/shape outcomes; no response
+      body is emitted. Focused client-lifecycle, classification, privacy,
+      shell, AST, Compose, work-item, changed-path, handoff-schema, and diff
+      checks passed.
+  failed:
+    - >-
+      A full-stack rerun passed generated Compose parsing/configuration,
+      created the explicit network set, and reached Core API/NATS startup.
+      The run was intentionally stopped before the long browser/outage phase;
+      no end-to-end acceptance result is claimed.
+    - >-
+      The bounded evaluation harness rerun created all disposable private
+      networks without the previous Docker default-pool exhaustion, but
+      observatory-migrate exited 1 before the orchestration probes. The
+      privacy-safe cleanup diagnostics now show PostgreSQL error 42P01:
+      relation "observatory_migration_ledger" does not exist while applying
+      the Observatory PostgreSQL migration set. The ledger is referenced by
+      migrations 0013/0014 but is not created by the packaged PostgreSQL
+      migrations; this is a product migration defect outside the platform
+      ownership zone, not a harness network/configuration defect. Cleanup
+      removed the exact disposable project resources.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml reports the concurrent
+      frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      edit outside this platform worker's allowed paths; this worker did not
+      modify that file.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0098.yaml remains blocked by the active work
+      item's pre-existing missing component manifests and required evaluator
+      and metric declarations; this platform/docs slice adds no production
+      component or metric and cannot repair those outside-zone declarations.
+  not_run:
+    - shellcheck (not installed in the environment)
+    - full-stack browser/outage acceptance after the generated-config check
+      (the long run was stopped after Core API/NATS startup; no full result is
+      claimed)
+    - real local-judge adapter/artifact/score outage and recovery acceptance
+      (blocked by the missing authorized local-judge application admission port
+      described in the decisions)
+    - >-
+      Runtime component/span/metric assertions target the existing instrumented
+      aura.observatory.query_api component. ClickHouse outages require its
+      owner component-health route to return bounded 503 degradation;
+      PostgreSQL outages require its authenticated definition/application
+      surface to return a bounded 5xx; session outage requires reauthentication;
+      API and Web outages require their internal health surfaces to be
+      unreachable. Recovery requires component summary, evaluator/metric
+      declarations, and actual query duration/outcome samples.
+    - >-
+      No owner-authorized public route currently exposes evaluation worker or
+      scheduler heartbeat age, backlog, or stale state. Their phases still
+      stop and restart each service independently and prove Core normal-run
+      independence plus Observatory surface recovery; exact worker/scheduler
+      signal assertions remain a product/API prerequisite, not a declaration-
+      only claim.
+    - >-
+      No owner-authorized public Garage artifact admission or local-judge
+      execution route exists. Garage and fixture-judge adapter/score outage
+      evidence therefore remains the independent application-boundary
+      prerequisite already recorded above; provider health alone is not used
+      as evidence.
+    - full Python, frontend, browser, and aggregate architecture checks (owned by aggregate integration)
+decisions:
+  - >-
+    MetadataMetrics `rejected` remains separate from exporter drop/failure
+    counters in the harness output so run-correlated admission rejection is
+    not misclassified as transport loss.
+  - >-
+    Collector queue evidence is opportunistic and private: only exact
+    allowlisted span counter families are summed for the observatory exporter;
+    unavailable families produce no claim and never become a synthetic
+    success. Core health counters remain the authoritative metadata-only
+    boundary for browser-stage localization.
+  - >-
+    Browser acceptance diagnostics must survive a failed browser/detail probe;
+    conditional status capture is scoped only to the frontend-e2e command.
+    Post-browser exporter and ingest/Collector counter sampling is attempted
+    independently, while the original Playwright status retains precedence
+    over diagnostic failures and later acceptance phases.
+  - >-
+    The million-row scan-boundary workload is intentionally scheduled after
+    browser acceptance and is isolated from the browser's ClickHouse visibility
+    state. Its synchronous cleanup remains fail-closed and does not weaken the
+    scan-limit assertion.
+  - >-
+    The pre-browser visibility probe uses a stage-specific idempotency key so
+    the post-storage-cleanup probe cannot silently replay an earlier run. The
+    browser-stage delta reports only bounded numeric counters, the disposable
+    project label, and the opaque correlated run ID.
+  - >-
+    Added one shared shell probe for Core liveness plus an authenticated
+    memory-only session check, so each disposable dependency outage uses the
+    same boundary assertion without duplicating Core logic.
+  - >-
+    Added bounded stop/restart/recovery phases for Collector, Observatory
+    PostgreSQL, ClickHouse, shared aura-nats, Garage, Observatory session
+    storage, and the deterministic fixture Ollama service. Observatory-owned
+    phases complete a real authenticated Core normal run while the dependency
+    is stopped. Shared aura-nats is tested as Core infrastructure: readiness
+    must return a sanitized degraded response while stopped, then Core is
+    probed only after broker recovery. NATS has no Compose healthcheck, so its
+    recovery signal is running state plus Core readiness.
+  - >-
+    Kept fixture state, credentials, volumes, networks, and logs project
+    scoped. The runbook documents the repository launchers, bounded diagnosis,
+    privacy-safe evidence rules, reset behavior, and accepted host-Ollama
+    limitation without exposing credentials or changing normal deployment
+    state.
+  - >-
+    Evaluation worker and scheduler outage phases now explicitly assert that
+    the Core evaluation runner remains available before and after each
+    restart, while retaining the existing lease, redelivery, NATS, and
+    PostgreSQL recovery probes.
+  - >-
+    The disposable harness keeps AURA_OBSERVATORY_EVALUATION_FULL_STACK at 0
+    until its in-stack seed succeeds. It uses the existing sync-manifests CLI
+    and typed EvaluationDefinitionService application ports, not direct SQL or
+    a new public contract; immutable fingerprints make reruns idempotent and
+    conflicting fixture state fails closed.
+  - >-
+    Both disposable harnesses inspect current Docker IPAM before allocation,
+    choose a collision-free /24 for the frontend and three collision-free
+    /28s for the remaining statically-addressed networks, then extend that
+    allocation to every network in each fixture's Compose graph. The full
+    network overlay covers the Core, Observatory, edge, cache, egress, and
+    frontend networks; the provider attachment remains external. A
+    repository-scoped flock is held through Compose startup so concurrent
+    harnesses cannot select the same free pool.
+  - >-
+    The evaluation harness removes only exact generated-project networks in
+    its cleanup fallback, preserving unrelated Compose resources after a
+    partial network-create failure.
+  - >-
+    Both harnesses now emit only inspected service state plus finite,
+    allowlisted diagnostic category names and counts. They never print source
+    log lines, values, environments, requests, credentials, or evaluation
+    content. An adversarial classifier test proves source-content isolation.
+  - >-
+    The fixture provider now has a separate deterministic judge service and
+    Observatory local-judge origin points only to that service. Core's model
+    provider remains independently stoppable; the judge outage phase performs
+    a real authenticated Core normal-run probe but fails independently with an
+    explicit missing-admission-port blocker; the harness then continues with
+    API/Web outage phases.
+  - >-
+    The E2E synthetic component manifest declares bounded operation count,
+    latency, and error-class metrics with explicit trace boundary and run
+    correlation semantics. The seed validates those declarations before the
+    evaluation phase is enabled.
+  - >-
+    The synthetic component remains a disposable definition/evaluator binding;
+    runtime assertions target the existing fully instrumented
+    aura.observatory.query_api component rather than claiming that the
+    synthetic fixture emits production telemetry.
+  - >-
+    All disposable fixture credentials are generated per invocation with local
+    cryptographic randomness and written only to mode-0600 ignored secret
+    files; no deterministic credential literal is needed for the acceptance
+    stack.
+  - >-
+    The requested real local-judge round trip cannot currently be wired in this
+    platform zone without inventing a contract or using SQL: the API registers
+    only collection reads for evaluators/artifacts and job submission, with no
+    owner application route to admit a local-judge definition, authorized
+    artifact/reference, or local work item. The existing
+    PostgresJudgeDefinitionRepository.create and artifact reserve/store ports
+    are worker/storage adapters, not a public admission boundary; authorization
+    rows have no application writer. The harness reports this exact blocker and
+    does not substitute provider /healthz for adapter/score proof.
+  - >-
+    The existing public Observatory contract exposes persisted ingest health but
+    not Collector identity/availability. The harness therefore uses the
+    available causal signals: it captures a pre-stop snapshot, requires an
+    outage-sensitive stale/degraded lag/heartbeat/watermark/backlog transition,
+    and requires a healthy post-restart improvement; it does not invent a
+    Collector identity field.
+  - >-
+    The existing public Observatory contract does not expose evaluation worker
+    or scheduler lease health. The harness nevertheless performs separate
+    bounded stop/restart phases and authenticated Core normal-run probes; a
+    public self-monitoring route is required before heartbeat/backlog/stale
+    outage claims can be added. Those phases deliberately do not substitute
+    query-api health as worker or scheduler evidence.
+  - >-
+    Garage has no owner-authorized artifact admission/availability surface in
+    the existing application contract. Its outage phase therefore proves Core
+    independence and bounded restart only, and records the missing public
+    dependency signal without substituting query-api or provider health.
+  - >-
+    The public metrics endpoint is the only accepted evidence boundary for
+    persisted artifact, operations, scheduler, and evaluation-runner samples.
+    If a required family is absent or lacks a bounded numeric/labelled sample,
+    the harness records a capability blocker and cannot claim full-stack
+    acceptance; it does not read worker databases or raw logs as a substitute.
+  - >-
+    Missing Garage artifact, evaluation-worker recovery, and
+    evaluation-scheduler heartbeat signals are accumulated by capability name
+    while the remaining independent outage phases continue. A recovery=passed
+    line is emitted only after that phase's public signal is present; the
+    final matrix result exits non-zero with the complete blocker list.
+  - >-
+    Both disposable harnesses now generate distinct API Garage credentials,
+    inject them through file-backed Compose secrets, mount the API bootstrap
+    job, and attach the API to the private Observatory object-storage network.
+    The API bootstrap remains an exact write-only grant check and is a startup
+    dependency rather than a best-effort probe.
+  - >-
+    The full-stack runner performs an owner-session, CSRF-protected public
+    capture-authorization admission before enabling the browser evaluation
+    phase. The request is idempotent and emits only a bounded status line;
+    cookies, CSRF values, and content never enter diagnostics.
+risks:
+  - >-
+    The full-stack browser/outage matrix was not completed in this worker
+    handoff because it is a long Docker Desktop acceptance phase; integration
+    must run it with one disposable stack and bounded timeouts.
+  - >-
+    Work-item-wide observability validation remains dependent on manifests and
+    evaluator/metric declarations owned by other AURA-0098 implementation
+    zones.
+  - >-
+    The changed-path validator currently reports the concurrent frontend
+    observatory-experiments.spec.ts edit as outside this platform worker's
+    allowed paths; the file is not modified by this zone and must be handled
+    by the owning frontend worker before aggregate validation.
+  - >-
+    Garage artifact operations, evaluation-worker and scheduler health, local
+    judge provider-failure admission, and Core evaluation-runner NATS recovery
+    ingest remain explicit blocked prerequisites. Operations recovery is also
+    an explicit blocker by default because the authorized browser workflow is
+    not enabled or seeded in this work item. The runbook capability matrix
+    distinguishes verified, blocked, and not-exercised paths; no
+    provider-health or historical metric sample is promoted to recovery proof.
+  - >-
+    Both disposable harnesses now generate distinct API Garage credentials,
+    inject them through ignored mode-0600 file-backed Compose secrets, mount
+    observatory-api-garage-bootstrap, and attach observatory-api to the
+    private observatory-object-storage network. The API bootstrap remains
+    fail-closed, write-only, and a startup dependency.
+  - >-
+    The Observatory full-stack runner performs an owner-session and
+    CSRF-protected public capture-authorization admission before enabling the
+    browser evaluation phase. The request is idempotent and diagnostics emit
+    only a bounded status; cookies, CSRF values, credentials, and content are
+    never printed.
+  - >-
+    The evaluation orchestration harness now fixture-binds the local-judge
+    Garage credentials and overrides observatory-judge-garage-bootstrap with
+    the disposable Garage data/config volumes, preventing fallback to operator
+    .secrets or a missing /run/garage-config/garage.toml.
+  - >-
+    Full-stack artifact fixtures use exact stream byte counts at both the
+    public multipart admission boundary and the direct authorized storage
+    fixture boundary; digest and byte-count integrity remain production checks.
+  - >-
+    The public definition fixture follows the current closed schema: evaluator
+    and suite derive metadata-only authorization defaults, while synthetic
+    dataset and case payloads retain their explicit authorization projections.
+  - >-
+    The public capture-authorization, artifact, and evaluator admissions run
+    from a one-off API container over the internal observatory-api service
+    boundary while preserving the configured public Origin and owner
+    cookie/CSRF headers.
+    - >-
+      ClickHouse diagnosis remains evidence-seeking: the harness does not claim
+      that retained regular Aura state caused the prior Code 722 observation. It
+      starts with fresh label-owned disposable ClickHouse volumes, uses bounded
+      table usability probes, and requires a fresh project-correlated
+      Core-to-Collector-to-Observatory visibility result before browser claims.
+      The visibility probe now emits bounded exporter/ingest deltas together
+      with the disposable Compose project and run correlation, localizing a
+      fresh failure to Core export, Collector ingest, or Observatory visibility
+      without exposing content. All newly added Python heredoc probes attach
+      Docker exec stdin explicitly, and the focused regression rejects empty
+      correlation output before JSON parsing. Core and Observatory visibility,
+      ClickHouse, and ingest probes now invoke the production `uv run python`
+      runtime; a bounded import prerequisite fails closed if redis/httpx or
+      the service package is unavailable.
+    - >-
+      The two-replica scheduler phase now verifies the completed initial
+      observatory migration and healthy PostgreSQL/scheduler state before using
+      Compose's --no-deps scale operation. The mandatory initial migration
+      barrier is unchanged, while the focused regression prevents a later scale
+      from re-evaluating the one-shot migration service.
+    - >-
+      Corrected the full-stack ordering barrier after ClickHouse diagnosis:
+      the 1,000,001-row scan-boundary fixture is isolated in a synchronous,
+      finally-cleaned post-browser phase, while the pre-browser row-shape probe
+      no longer mutates the scan boundary. The real Core-to-Collector-to-
+      Observatory visibility probe now runs fresh immediately before browser
+      launch after evaluation-storage cleanup, with a distinct idempotency key.
+      Bounded Core exporter and Observatory ingest deltas are captured around
+      the browser stage and correlated only to the opaque probe run ID.
+    - >-
+      bash -n deploy/compose/run-observatory-full-stack-e2e.sh and
+      bash deploy/compose/e2e/test_full_stack_observability_path.sh passed,
+      including ordering/barrier assertions, embedded Python AST parsing for
+      all 15 heredocs, and git diff --check.
+    - >-
+      Browser-stage exporter diagnostics now distinguish cumulative counters
+      from drainable gauges: retained and Collector queueSize are validated
+      as finite nonnegative before/after samples, while true counters retain
+      per-process monotonic checks and lifecycle-reset handling. The focused
+      observability regression accepts gauge drain and rejects same-instance
+      cumulative regression. The browser visibility catch now records bounded
+      reload duration and continues when a stale initial snapshot recovers.
+    - >-
+      Extended the bounded browser-stage Collector evidence with enqueue
+      failures, metric-point sent/failed counters, queue capacity, and bounded
+      utilization. Target diagnostics now report ClickHouse kind/span/metric
+      aggregates, distinct trace/span counts, bounded top trace IDs, expected
+      public trace correlation, and pending receipt sequence relation to the
+      target range/watermark. Focused privacy, bounds, ordering, shell,
+      Compose, and AST checks passed.
+unresolved: []

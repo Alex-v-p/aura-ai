@@ -1,0 +1,11 @@
+agent: observability_steward
+work_item: AURA-0093
+verdict: PASS
+checked:
+  - Stable typed manifests, finite metric and span allowlists, metadata-only capture, manual retention, and privacy-safe exports.
+  - Exactly one evaluator invocation and component-only duration sample before score persistence, with outcome measurements and a successful evaluation span.
+  - Separate bounded ClickHouse write-failure telemetry that preserves completed evaluator measurements.
+  - Sanitized PostgreSQL DefinitionStorageError handling as database_failure without validation-rejection inflation.
+  - Complete score, retrieval, threshold, evidence, reproducibility, and provenance metadata through ClickHouse migration 0006.
+  - Service-level observability regressions, work-item and observability validators, Ruff, and Pyright.
+findings: []

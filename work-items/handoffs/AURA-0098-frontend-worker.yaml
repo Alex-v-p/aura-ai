@@ -1,0 +1,845 @@
+agent: frontend_worker
+work_item: AURA-0098
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0098_frontend_fix
+  worktree: shared
+scope:
+  ownership_zone: frontend.observatory.full-stack-browser-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-dto-adapter.spec.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-dto-adapter.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - work-items/handoffs/AURA-0098-frontend-worker.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Reproduced the mobile-only timeout in the metadata-only evaluation SSE
+      test: the fixture observed one experiment REST request and the desktop
+      duplicate-load assumption was not stable across browser projects.
+    - >-
+      Updated the browser acceptance to require an initial authenticated
+      experiment snapshot, a fixture-triggered native EventSource event,
+      product-driven authoritative refresh, native reconnect, bounded
+      Last-Event-ID handling, and rendered privacy-safe workspace state.
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      -g 'metadata-only evaluation SSE and catches up with Last-Event-ID'
+      (desktop, tablet, and mobile: 3 passed).
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      --project=mobile -g 'metadata-only evaluation SSE and catches up with
+      Last-Event-ID' (passed during reproduction validation).
+    - >-
+      Added real-stack browser emulation in the existing single full-stack
+      scenario: reduced motion, forced colors, 390px responsive layout,
+      horizontal-overflow check, and keyboard focus visibility. Destructive
+      retention confirmation now uses focus plus Enter in the shared helper;
+      no additional full-stack projects were added.
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      -g 'metadata-only evaluation SSE and catches up with Last-Event-ID'
+      (desktop, tablet, and mobile: 3 passed after the product reconciliation
+      and reconnect-deduplication changes).
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      (all 15 desktop, tablet, and mobile tests passed).
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/observatory/src/lib/features/experiments/experiment-workspace.store.spec.ts
+      libs/observatory/src/lib/observatory-store.spec.ts (30 tests passed).
+    - >-
+      cd frontend && pnpm exec eslint
+      libs/observatory/src/lib/observatory-store.ts
+      libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+      libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+      (passed).
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --pretty false -p tsconfig.json
+      (passed after product changes).
+    - >-
+      cd frontend && pnpm exec playwright test
+      --config apps/observatory-web-e2e/full-stack.config.ts --list
+      (five composed scenarios discovered).
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --pretty false -p tsconfig.json
+    - git diff --check
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0098.yaml
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+      (passed after normalizing the native SSE fixtures).
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+      apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      -g 'Last-Event-ID|identity-store outage' --workers=1
+      (desktop, tablet, and mobile: native reconnect and identity-store outage
+      recovery evidence passed).
+    - >-
+      Diagnosed the first real Core-to-browser run-list timeout: the Observatory
+      page had an authenticated SSE connection, but its initial in-memory run
+      catalogue can predate the asynchronous Core telemetry flush. The public
+      REST snapshot remained authoritative; no frontend filter or run-ID
+      correlation defect was found in the owning zone.
+    - >-
+      Updated full-stack.spec.ts to re-enter the public Observatory Runs view
+      once after a stale catalogue timeout, then emit bounded REST diagnostics
+      (HTTP status, item count, and target presence) without reading Core or
+      exposing response content. A missing target remains a truthful
+      ingestion/platform failure rather than being masked by the browser.
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --pretty false -p tsconfig.json
+      (passed after the bounded run-list reconciliation change).
+    - >-
+      cd frontend && pnpm exec eslint
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed).
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/observatory-web-e2e/src/full-stack.spec.ts (passed).
+    - >-
+      cd frontend && pnpm exec playwright test
+      --config apps/observatory-web-e2e/full-stack.config.ts --list
+      (six composed scenarios discovered).
+    - >-
+      Added bounded run-catalogue reconciliation: when the authoritative
+      overview count exceeds the independently materialized catalogue, the
+      Observatory store retries the metadata list at most three times and
+      cancels reconciliation once projections converge or the owner session
+      ends.
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/observatory/src/lib/observatory-store.spec.ts (29 tests passed,
+      including the projection-lag guard).
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      --config apps/observatory-web-e2e/playwright.config.ts
+      -g 'reconciles (REST snapshot|a lagging)|filters runs and opens|Runs and
+      Trace empty' --project=desktop (4 passed, including the lagging
+      catalogue browser regression).
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --pretty false -p tsconfig.json
+      (passed after the reconciliation change).
+    - >-
+      cd frontend && pnpm exec eslint
+      libs/observatory/src/lib/observatory-models.ts
+      libs/observatory/src/lib/observatory-store.ts
+      libs/observatory/src/lib/observatory-store.spec.ts (passed with only
+      existing non-null assertion warnings).
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml (validated 45 shared-worktree paths).
+    - >-
+      Added a stale-catalogue browser regression: when the authoritative run
+      page is cached but a subsequent list refresh fails, the target run
+      remains rendered and actionable while the stale notice is visible.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4301 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'keeps authoritative cached runs visible
+      when a refresh becomes stale' --workers=1 (desktop, tablet, and mobile:
+      3 passed).
+    - >-
+      pnpm --dir frontend nx test observatory (48 tests passed).
+    - >-
+      pnpm --dir frontend nx lint observatory (passed; five pre-existing
+      warnings, no errors).
+    - >-
+      pnpm --dir frontend nx build observatory-web --configuration=production
+      (passed).
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml (validated 46 shared-worktree paths).
+    - >-
+      Preserved same-run selected detail and trace state during refreshes;
+      trace rendering now keeps cached waterfall evidence visible while a
+      refresh is loading or unavailable and exposes an accessible status copy
+      with retry.
+    - >-
+      Added a browser regression that successfully loads a trace, retries the
+      same selected run with the trace endpoint unavailable, and verifies the
+      cached waterfall plus the unavailable status remain visible.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4302 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'keeps the selected trace visible when its
+      refresh becomes unavailable' --workers=1 (desktop, tablet, and mobile:
+      3 passed).
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4303 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'filters runs and opens a partial trace|keeps
+      authoritative cached runs visible|keeps the selected trace visible'
+      --workers=1 (9 passed across desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 tests passed), nx lint
+      observatory (passed with five existing warnings), TypeScript noEmit, and
+      production observatory-web build (all passed).
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml (validated 47 shared-worktree paths),
+      plus git diff --check.
+    - >-
+      Extended disconnected run reconciliation through the existing
+      LiveRefreshCoordinator: empty or unavailable run projections now retry
+      at a fixed 500 ms cadence for at most 12 attempts, coalescing live and
+      reconciliation refreshes and stopping on convergence/session loss.
+    - >-
+      Added a deterministic mocked-browser regression where SSE aborts, the
+      overview count is initially zero, and the run projection exposes the
+      target only after five list requests; the target and disconnected status
+      both remain observable without browser persistence.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4305 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'reconciles a delayed run while SSE remains
+      disconnected|reconciles REST snapshot with SSE|reconciles a lagging run
+      catalogue' --workers=1 (9 passed across desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 tests passed) and nx lint
+      observatory (passed with five existing warnings).
+    - >-
+      pnpm --dir frontend exec tsc --noEmit --pretty false -p tsconfig.json,
+      nx build observatory-web --configuration=production,
+      validate-changed-paths.py --work-item work-items/active/AURA-0098.yaml,
+      and git diff --check (all passed).
+    - >-
+      Extended disconnected run recovery to a fixed two-second cadence with a
+      30-attempt (60-second) cap, while routing each retry through
+      LiveRefreshCoordinator; target availability, live reconnect, and session
+      sign-out cancel the pending recovery window.
+    - >-
+      Added a Playwright clock regression that advances the disconnected
+      recovery one interval at a time, verifies a late empty projection stops
+      at the initial request plus 30 retries, and confirms no further requests
+      occur after the cap. The delayed-target regression now resolves after
+      the former six-second window.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4308 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'reconciles a delayed run while SSE remains
+      disconnected|stops disconnected run reconciliation' --workers=1 (6
+      passed across desktop, tablet, and mobile).
+    - >-
+      Re-ran pnpm --dir frontend nx test observatory (48 passed), nx lint
+      observatory (passed with five existing warnings), TypeScript noEmit, and
+      git diff --check (all passed).
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4309 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'reconciles a lagging run catalogue|reconciles
+      a delayed run while SSE remains disconnected' --workers=1 (6 passed
+      across desktop, tablet, and mobile after reconnect cancellation).
+    - >-
+      Added bounded initial selected-run reconciliation: unavailable detail or
+      trace projections retry at the shared two-second/30-attempt window, are
+      cancelled on run replacement, sign-out, or successful trace availability,
+      and never auto-retry a previously rendered trace refresh failure.
+    - >-
+      Added accessible disconnected/loading copy for an initial trace
+      projection and retained the existing manual Retry trace action after
+      the bounded window; valid empty traces remain terminal and are not
+      retried.
+    - >-
+      Added deterministic delayed-first-trace and Playwright-clock cap
+      regressions. The delayed first request recovers on the next bounded
+      attempt, while a permanently unavailable initial trace stops at the
+      request cap with no later requests.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4316 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'delayed first trace projection|stops initial
+      trace reconciliation|keeps the selected trace visible' --workers=1
+      (9 passed across desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 passed), nx lint observatory
+      (passed with five existing warnings), TypeScript noEmit, production
+      observatory-web build, changed-path validation, and git diff --check all
+      passed after the initial trace reconciliation changes.
+    - >-
+      Removed transport-open cancellation from run reconciliation: EventSource
+      open callbacks no longer reset the bounded recovery timer or attempt
+      budget, and manual reconnect preserves the active window until a
+      successful catalogue refresh converges it.
+    - >-
+      When an overview is already available, live errors now use the bounded
+      catalogue timer as the sole recovery driver; they cannot bypass the cap
+      with repeated immediate snapshots. Initial sessions without an overview
+      retain the normal live refresh path.
+    - >-
+      Added a fake-timer browser EventSource fixture that repeatedly opens and
+      errors while the run identity remains stale, plus convergence and cap
+      regressions. The convergence test fails with the former open-reset
+      behavior; the cap test verifies no requests continue after 30 retries.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4323 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'keeps run recovery alive|caps run recovery'
+      --workers=1 (6 passed across desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 passed), targeted ESLint,
+      TypeScript noEmit, and git diff --check all passed after the SSE flap
+      lifecycle correction.
+    - >-
+      pnpm --dir frontend nx build observatory-web --configuration=production
+      (passed after the SSE flap lifecycle correction).
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml (validated 47 shared-worktree paths),
+      YAML handoff parsing, and git diff --check all passed.
+    - >-
+      Added ObservatoryStore.activateRunsView() and deactivateRunsView(): a
+      Runs activation resets the prior bounded generation, schedules one
+      immediate authoritative snapshot through LiveRefreshCoordinator, and
+      starts a fresh capped disconnected retry window. Sign-out and view
+      destruction cancel pending reconciliation state.
+    - >-
+      ObservatoryRunsComponent now observes its host visibility transitions in
+      memory and invokes activation once per hidden-to-visible transition;
+      repeated change detection does not restart recovery. MutationObserver
+      cleanup and deactivation are registered with the component destroy hook.
+    - >-
+      Added a delayed-target regression where the initial 60-second recovery
+      window caps before the target exists, then Runs activation starts a new
+      generation and converges. The regression fails when activation is
+      removed and passes with the implementation.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4326 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'reconciles REST snapshot with SSE|reconciles
+      a delayed run while SSE remains disconnected|reconciles an equal-length
+      catalogue|stops disconnected identity|starts a fresh Runs reconciliation'
+      --workers=1 (15 passed across desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 passed), production
+      observatory-web build, targeted ESLint, TypeScript noEmit, git diff --check,
+      and changed-path validation all passed after the Runs activation fix.
+    - >-
+      Updated only full-stack.spec.ts trace inspection to wait 75 seconds for
+      the accessible Trace waterfall, matching the existing 60-second product
+      reconciliation budget without changing product retry behavior or other
+      assertions. Timeout failure now reports only path, connection state, and
+      bounded waterfall/span match counts.
+    - >-
+      Full-stack ESLint, Prettier, TypeScript noEmit, Playwright full-stack
+      test listing (six scenarios), and git diff --check all passed. The
+      disposable full-stack stack was unavailable for an execution rerun.
+    - >-
+      Hardened createCoreRun's Conversation Options interaction with a
+      bounded three-attempt accessible open loop. Each attempt asserts the
+      dialog is visible before querying the Model control; click-loss during
+      composer replacement is retried without force-clicks or sleeps, and the
+      final error includes bounded button/dialog diagnostics.
+    - >-
+      Preserved exact coreModel selection and added a 15-second visible Model
+      control assertion after dialog admission. No Aura Web or shared frontend
+      library code was changed.
+    - >-
+      pnpm --dir frontend exec eslint
+      apps/observatory-web-e2e/src/full-stack.spec.ts, Prettier check, TypeScript
+      noEmit, git diff --check, and full-stack Playwright --list (six composed
+      scenarios discovered) all passed. The disposable full-stack stack was
+      not available for an execution rerun in this worker.
+    - >-
+      Corrected disconnected run-catalogue reconciliation to remain active for
+      the bounded 60-second recovery window regardless of cached item count or
+      identity. Reconciliation remains coalesced through the live coordinator
+      and resets on live reconnect, sign-out, and healthy convergence.
+    - >-
+      Added an equal-length identity replacement fixture and regressions: a
+      stale cached run is replaced by the target after delayed list requests,
+      while a permanently stale equal-length catalogue stops after the initial
+      request plus 30 bounded retries.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4317 pnpm --dir frontend nx e2e
+      observatory-web-e2e --grep 'equal-length catalogue|stops disconnected
+      identity|reconciles REST snapshot with SSE' --workers=1 (9 passed across
+      desktop, tablet, and mobile).
+    - >-
+      pnpm --dir frontend nx test observatory (48 passed), nx lint observatory
+      (passed with five existing warnings), TypeScript noEmit, production
+      observatory-web build, changed-path validation, and git diff --check all
+      passed after the identity-reconciliation correction.
+    - >-
+      Diagnosed the current Core-run admission blocker at the composer
+      boundary: the existing ConversationPanel exposes
+      data-conversation-ready only after authenticated model and default-agent
+      hydration, while the browser test interacted after textarea visibility
+      alone. Added the bounded readiness assertion before model selection and
+      filling, preserving the send-enabled assertion.
+    - >-
+      pnpm --dir frontend exec tsc --noEmit --pretty false -p tsconfig.json,
+      eslint apps/observatory-web-e2e/src/full-stack.spec.ts, and prettier
+      --check apps/observatory-web-e2e/src/full-stack.spec.ts all passed after
+      the composer-readiness correction.
+    - >-
+      pnpm --dir frontend exec playwright test
+      --config apps/observatory-web-e2e/full-stack.config.ts --list passed with
+      all six composed scenarios discovered.
+    - >-
+      Hardened Runs route activation in the Observatory feature library: the
+      mounted-but-hidden workspace now checks its host visibility at the
+      Angular view boundary as well as through the existing attribute observer.
+      Activation remains idempotent and delegates to the existing bounded,
+      cancellable in-memory reconciliation generation; Aura Web composition
+      and cross-product boundaries were not changed.
+    - >-
+      Added a browser regression with a disconnected stream, a capped stale
+      equal-length catalogue, an authoritative REST response, and suppressed
+      MutationObserver delivery. It proves that entering Runs still projects
+      the authoritative run button instead of retaining the stale projection.
+      The focused reconciliation suite passed all 24 desktop, tablet, and
+      mobile cases.
+    - >-
+      pnpm --dir frontend exec eslint
+      libs/observatory/src/lib/features/runs/runs.component.ts
+      apps/observatory-web-e2e/src/observatory-web.spec.ts; TypeScript noEmit;
+      production observatory-web build; git diff --check; and
+      AURA_WORK_ITEM=AURA-0098 python3
+      tooling/architecture/validate-changed-paths.py all passed.
+    - >-
+      Final focused rerun of the authoritative Runs activation regression with
+      MutationObserver unavailable passed on desktop, tablet, and mobile (3
+      passed), confirming the view-boundary fallback remains the only route
+      activation dependency exercised by this fix.
+    - >-
+      Diagnosed the durable-target failure: a same-count successful catalogue
+      response while SSE was open cleared the reconciliation timer even though
+      the selected Runs view could still be showing an older identity. Added a
+      view-owned bounded recovery flag; it keeps the 60-second generation
+      active through those responses and cancels it when the view is hidden or
+      the owner session ends.
+    - >-
+      Added an SSE-open, no-event regression where the initial one-item
+      catalogue is a non-target and the target becomes available after
+      activation. The exact target button renders in all three viewports. The
+      regression fails without the active-view reconciliation condition, while
+      no polling window or assertion timeout was increased.
+    - >-
+      pnpm --dir frontend nx test observatory (48 passed), nx lint observatory
+      (passed with five existing warnings), TypeScript noEmit, production
+      observatory-web build, focused 12-case Runs reconciliation browser suite,
+      git diff --check, and handoff YAML validation all passed.
+    - >-
+      Diagnosed the selected-run projection gap: a successful getRun response
+      with traceId=null was treated as terminal ready state, so later
+      observation invalidations refreshed only the catalogue and never retried
+      the selected detail. Added bounded selected-run reconciliation for
+      unmaterialized traces, deduplicated invalidation scheduling, terminal cap
+      error state, and reset/cancellation on trace materialization, selection,
+      sign-out, or view lifecycle boundaries.
+    - >-
+      Added the selected-run trace-materialization unit regression and a
+      metadata-only browser regression whose initial detail has no traceId,
+      then an observation.changed invalidation causes the same run's trace and
+      spans to render without navigation. The focused trace suite passed all 6
+      desktop, tablet, and mobile cases; the regression fails when selected
+      reconciliation and invalidation scheduling are removed.
+    - >-
+      Final verification: pnpm --dir frontend nx test observatory (49 passed),
+      nx lint observatory (five existing warnings, zero errors), TypeScript
+      noEmit, production observatory-web build, git diff --check, and YAML
+      validation all passed.
+    - >-
+      Added an in-flight selected-run guard so an observation invalidation
+      cannot schedule a second detail request while the current detail/trace
+      request is still loading; the selected-trace unit and desktop browser
+      regression remained green after this correction.
+    - >-
+      Corrected the closed Observatory analytics metric allowlist to include
+      the versioned public metric evaluation_runner_nats_recovery_count. Added
+      parser coverage for that metric while retaining rejection of unknown and
+      private markers. Observatory unit tests (49 passed), lint (five existing
+      warnings, zero errors), TypeScript noEmit, production build, and the
+      focused analytics browser suite (3 desktop, tablet, and mobile cases)
+      all passed.
+    - >-
+      Rechecked the evaluation dataset parser against the canonical public
+      Observatory DTO after the full-stack failure. The parser correctly
+      rejects the malformed page timestamp (space separator) as unsupported
+      metadata; the attempted persisted-domain compatibility projection and
+      its synthetic regressions were superseded and removed once the upstream
+      query serializer defect was identified. No frontend parser relaxation
+      remains.
+    - >-
+      After removing the superseded projection, pnpm --dir frontend nx test
+      observatory passed 49 tests; nx lint observatory passed with the existing
+      five warnings; TypeScript noEmit and the production observatory-web build
+      passed; and the existing evaluation browser acceptance passed on desktop,
+      tablet, and mobile (3 cases). git diff --check and handoff YAML parsing
+      also passed.
+    - >-
+      Diagnosed the suite-selection timeout as initial evaluation-load
+      starvation: each live evaluation event aborted the shared initial request
+      generation before the authoritative catalogue could materialize. Live
+      refreshes are now deduplicated in memory while the initial snapshot is
+      loading, replayed after it settles, and cleared on session reset.
+    - >-
+      Added a deterministic browser regression with a bounded SSE metadata
+      burst and delayed suite responses. It fails before the fix because the
+      dataset row never materializes, then passes after the fix with the
+      seeded suite action completing and aria-pressed=true across desktop,
+      tablet, and mobile. The existing authoritative evaluation workflow also
+      passed across desktop, tablet, and mobile (6 cases total).
+    - >-
+      pnpm --dir frontend nx test observatory (49 passed), nx lint observatory
+      (five existing warnings, zero errors), targeted ESLint for the store and
+      evaluation browser fixture, TypeScript noEmit, production build, focused
+      responsive browser checks, and git diff --check all passed.
+    - >-
+      Diagnosed the post-load suite timeout as a separate evaluation SSE replay
+      starvation path. The public evaluation-events stream can replay up to
+      1,000 historical metadata events; the workspace previously started a new
+      aborting catalogue request for every event after data already existed.
+      Catalogue loads now defer live invalidations while any snapshot request
+      is in flight, then a bounded in-memory 50ms coalescer drains each
+      affected resource once at a time while replay continues.
+    - >-
+      Added a responsive browser regression that starts with a missing suite,
+      delivers a 500-event metadata replay burst, and makes the suite appear
+      only on a later authoritative response. The suite row and
+      `aria-pressed=true` selection complete while the burst is still active
+      on desktop, tablet, and mobile (3 passed); this is the post-load case
+      not covered by the earlier initial-load regression.
+    - >-
+      Targeted ESLint and the focused responsive browser regression passed
+      after the post-load coalescing correction. The disposable full-stack
+      rerun remains externally gated by the Compose owner stack and was not
+      claimed as passed here.
+    - >-
+      Closed the reset race in the serialized live-refresh drain with a
+      monotonic in-memory epoch. Store clear/sign-out now invalidates the
+      already-captured resource batch, preventing later resource requests or
+      state writes after reset. The focused responsive browser regression
+      queues suite and evaluator refreshes, signs out while the delayed first
+      request is active, and proves request counts stop after the signed-out
+      state (3 passed).
+    - >-
+      Re-ran the combined evaluation regressions across desktop, tablet, and
+      mobile: 12 passed. Observatory unit tests remained 49 passed; lint,
+      targeted ESLint, TypeScript noEmit, and git diff --check passed, with
+      only the existing five lint warnings.
+    - >-
+      Diagnosed the persisted-suite projection mismatch: the Observatory
+      provider emits the contract-required summary shape with componentIds,
+      caseBudget, and timeoutMs, while components, variantBindings, and limits
+      are optional response fields. The adapter's exact-key predicate had
+      accidentally required components and limits, rejecting every real suite
+      page despite HTTP 200 and causing the workspace to render no row.
+    - >-
+      Narrowed the suite adapter to require only the closed summary fields,
+      allow each contract-defined optional combination, and validate optional
+      component, variant, model, revision, and execution-limit shapes without
+      inferring missing authoritative data. Added parser coverage using the
+      exact provider-shaped projection and rejection of unknown fields, plus a
+      responsive browser regression that renders and selects the same
+      provider-shaped suite. The focused browser regression passed on desktop,
+      tablet, and mobile (3 cases).
+    - >-
+      pnpm --dir frontend nx test observatory (51 passed after the optional
+      combination additions; the focused adapter suite passed 7 tests),
+      targeted ESLint, TypeScript noEmit, and the provider-projection browser
+      regression (3 passed) all passed. No full-stack run was executed.
+    - >-
+      Corrected EvaluationEvaluator projection parsing to require only the
+      contract-required fields while accepting every allowed combination of
+      optional rubricVersion and calibrationVersion fields. Unknown fields,
+      malformed optional versions, invalid component identifiers, and missing
+      required fields remain rejected.
+    - >-
+      Added exact provider-shaped evaluator adapter coverage with all four
+      optional-field combinations and malformed/unknown-field rejection;
+      focused evaluation-dto-adapter.spec.ts passed 8 tests.
+    - >-
+      Added a rendered evaluator selection regression using the exact
+      provider-shaped projection. The focused Playwright test passed on
+      desktop, tablet, and mobile (3 passed).
+    - >-
+      Focused evaluator adapter and browser changes passed targeted ESLint,
+      TypeScript noEmit, Observatory production build, changed-path
+      validation (51 paths), and git diff --check.
+    - >-
+      pnpm --dir frontend nx test observatory --skip-nx-cache passed all 52
+      Observatory tests, including the 8 evaluator adapter tests.
+    - >-
+      Diagnosed the terminal-job omission: the public EvaluationJob contract
+      uses EvaluationRunnerExecutionProvenance with definition references
+      shaped as {id, version}, while the adapter incorrectly applied the
+      result/score provenance parser requiring {resourceId, resourceVersion}.
+      The raw terminal detail endpoint therefore succeeded while list-page
+      parsing discarded the job before Jobs-table rendering.
+    - >-
+      Added a dedicated closed runner-provenance parser for EvaluationJob,
+      preserving canonical resource-reference parsing for results, scores,
+      and other execution projections. The adapter spec now covers the exact
+      provider-shaped terminal job and rejects the wrong reference shape.
+    - >-
+      Updated the evaluation browser fixture to the exact provider job shape;
+      the authoritative submit, terminal refresh, and Jobs-table assertion
+      passed on desktop, tablet, and mobile (3 passed).
+    - >-
+      Re-ran targeted ESLint, TypeScript noEmit, Observatory unit tests (52
+      passed), Observatory production build, changed-path validation (51
+      paths), YAML parsing, and git diff --check after the job correction.
+    - >-
+      Diagnosed the remaining composed job-row omission as a live
+      reconciliation race rather than another contract-shape mismatch: after
+      a valid submit response, an authoritative list snapshot can temporarily
+      omit the newly admitted job, and an evaluation SSE refresh can abort the
+      active poll before the list converges. The workspace previously rendered
+      no submitted row and stopped polling in that window.
+    - >-
+      The evaluation store now upserts the exact parsed submit response into
+      its ephemeral Jobs page, retains the active job while later list pages
+      catch up, and re-arms bounded polling after an evaluation-job live
+      refresh aborts an in-flight poll. No browser persistence, API contract,
+      backend, Core, or Aura Web changes were made.
+    - >-
+      Added a provider-shaped live browser regression that emits an
+      evaluation-job SSE invalidation while the first four Jobs list snapshots
+      omit the submitted job, then exposes the terminal succeeded row once the
+      authoritative list catches up. The regression passed on desktop, tablet,
+      and mobile (3 passed).
+    - >-
+      Targeted ESLint, focused evaluator adapter tests (8 passed), all
+      Observatory unit tests (52 passed), production Observatory build,
+      responsive Playwright regression, changed-path validation (51 paths),
+      and git diff --check passed. TypeScript noEmit was attempted for the
+      library and app configs but remains blocked by three pre-existing casts in
+      observatory-store.spec.ts (RunPage, TraceDetail, and health-history test
+      fixtures).
+    - >-
+      Added bounded full-stack browser diagnostics around the unresolved
+      terminal-job assertion. The existing public response observer now records
+      GET job-list status, page keys, item counts, target presence, bounded
+      item/provenance key shapes, and target status; the submit response records
+      only status, identifier presence, and bounded schema keys. On a rendered
+      row failure, the browser records bounded DOM row text/count, active tab,
+      metrics, notices, terminal status, and the captured request summaries.
+      No job IDs, prompt content, credentials, or response values beyond the
+      target identifier/status are persisted in the diagnostic artifact.
+    - >-
+      Full-stack Playwright discovery still reports all six tests, targeted
+      ESLint passes with the existing unrelated warning, and git diff --check
+      passes. A disposable owner-authenticated rerun is required to populate
+      the new `evaluation-job-diagnostic.json`; no production correction was
+      made without that exact evidence.
+    - >-
+      The retained live diagnostic proved the submitted 202 job was rejected
+      before store reconciliation: it contained the expected closed job keys
+      and runner provenance, but no subsequent Jobs GET occurred and the DOM
+      remained `No jobs are available.`. The provider's exact mixed job shape
+      uses a resource-shaped top-level suite `{resourceId, resourceVersion}`
+      and runner-shaped `{id, version}` references only inside provenance.
+      Updated the adapter and browser fixture to preserve that distinction.
+    - >-
+      Added direct adapter coverage that accepts the exact mixed provider job
+      shape and rejects swapped top-level/provenance suite references.
+      Focused adapter tests passed (8), the authoritative evaluation browser
+      route passed on desktop/tablet/mobile (3), and the live list-lag
+      regression passed on desktop/tablet/mobile (3). Full Observatory tests
+      (52), lint, production build, changed-path validation, and git diff
+      --check passed.
+    - >-
+      Matched the frontend UUID guard to the published Observatory contract:
+      canonical lowercase 8-4-4-4-12 hexadecimal syntax is required, while
+      RFC version and variant marker bits are intentionally not required.
+      Added exact live deterministic job-ID coverage, malformed and uppercase
+      rejection coverage, and used that live ID in the responsive evaluation
+      browser fixture. The adapter suite passed (9), the full Observatory
+      unit suite passed (53), Observatory lint passed with five pre-existing
+      warnings, the production Observatory build passed, and the authoritative
+      evaluation browser route passed on desktop/tablet/mobile (3).
+    - >-
+      AURA_WORK_ITEM=AURA-0098 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml passed for 51 shared-worktree paths;
+      focused git diff --check passed.
+    - >-
+      Corrected the mixed job projection after backend inspection: the
+      top-level suite is `{resourceId, resourceVersion}`, while only nested
+      runner provenance uses `{id, version}`. Adapter tests now accept the
+      exact mixed shape and reject swapped shapes. Focused adapter tests (9),
+      the full Observatory unit suite (53), Observatory lint (five existing
+      warnings), and the responsive authoritative evaluation route (3,
+      desktop/tablet/mobile) all passed.
+    - >-
+      Fixed bounded selected-run reconciliation starvation: the initial trace
+      load is still `loading` when it discovers a projection gap, so the
+      state value cannot be used to reject scheduling. The existing timer,
+      attempt cap, selected-run identity, session guard, and reset paths remain
+      the concurrency and cancellation controls. The exact trace recovery
+      regressions passed across desktop/tablet/mobile (6), Observatory unit
+      tests passed (53), lint passed with five pre-existing warnings, and the
+      production Observatory build passed.
+  failed:
+    - >-
+      The first complete observatory-experiments run before the product fix
+      exposed the invalidation race (13 passed and the strict SSE test failed
+      across projects); the subsequent complete run passed all 15 tests after
+      the owning product-zone correction.
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/observatory-web-e2e/src/observatory-experiments.spec.ts: failed
+      against the file's pre-existing compact formatting. Running --write
+      would rewrite the entire fixture and create an unrelated noisy diff, so
+      that formatting was deliberately not introduced in this test-only fix.
+    - >-
+      AURA_WORK_ITEM=AURA-0098 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml was blocked by unrelated shared-worktree
+      edits in services/aura-observatory/adapters/evaluation_query.py and the
+      active AURA-0111 work item; neither file was modified by this correction.
+    - >-
+      The final changed-path validation remains blocked by an unrelated
+      shared-worktree work item, work-items/active/AURA-0112.yaml, which is
+      outside AURA-0098 allowed_paths; no AURA-0112 file was modified here.
+    - >-
+      Prettier --check remains red for the two evaluator adapter files; the
+      same check also fails against their HEAD versions, so formatting was not
+      introduced by this correction and no broad formatter rewrite was made.
+  not_run: []
+decisions:
+  - >-
+    Gated only the first fixture event until the workspace has mounted, then
+    asserted the native SSE event causes a second authoritative GET and a
+    visible variant-count change. This removes desktop-specific duplicate-load
+    timing while proving product invalidation.
+  - >-
+    Let the browser's native EventSource reconnect after the fixture stream
+    closes. A loopback SSE fixture emits a fixed event ID, rejects catch-up
+    without that exact Last-Event-ID header, and keeps the accepted connection
+    open; teardown closes all native connections.
+  - >-
+    Preserved authenticated snapshot checks, metadata-only event schema,
+    rendered private-content exclusions, and one composed full-stack project;
+    added only in-scenario media, responsive, focus, and keyboard assertions.
+  - >-
+    The ExperimentWorkspaceComponent now performs the authoritative reload for
+    every newly delivered evaluation revision even while the live stream is
+    transiently disconnected, then restores the disconnected state if the
+    stream is still unavailable after the response. ObservatoryStore ignores
+    duplicate persisted evaluation event IDs so native reconnect replay cannot
+    create a request/render loop.
+  - >-
+    Initial evaluation metadata remains authoritative while live invalidations
+    are deferred; after the snapshot settles, each affected resource type is
+    reconciled once through the existing in-memory gateway path. No event data,
+    browser persistence, or cross-product dependency was introduced.
+  - >-
+    Evaluation live replay invalidations are coalesced in the owning workspace
+    store and drained serially through the existing generated gateway. The
+    coalescer is bounded to one in-memory resource set and a short fixed delay;
+    it is cleared on session reset and never persists or changes Core behavior.
+  - >-
+    A monotonic drain epoch makes session/reset boundaries authoritative even
+    when a refresh batch has already been copied for serial processing; stale
+    batches cannot issue later resource requests or repopulate feature state.
+  - >-
+    Suite list/detail projection is summary-only in the current Observatory
+    provider; the frontend preserves optional components and limits only when
+    they are actually supplied. Job admission continues to require those
+    authoritative fields and never reconstructs them from componentIds or
+    timeout/case summaries.
+  - >-
+    Evaluator list projection follows the versioned contract's closed required
+    shape: optional rubric and calibration versions are preserved only when
+    present, never synthesized, and do not prevent selection of the real
+    provider projection.
+  - >-
+    Job projections preserve their mixed generated response types: the
+    top-level suite is an Observatory resource reference, while nested runner
+    provenance uses definition references. The frontend does not normalize
+    either shape and validates each at its owning adapter boundary.
+  - >-
+    A submitted job is an accepted owner action and is therefore projected
+    immediately from the already-validated submit response. Later list
+    snapshots remain authoritative for status and replace the optimistic
+    entry; while the active job is absent from a lagging snapshot, its last
+    validated in-memory state is retained so live polling cannot starve.
+  - >-
+    The live provider response is the owning evidence for the submitted job
+    projection: its top-level suite reference is `{resourceId,
+    resourceVersion}`, while the admitted runner definition and nested runner
+    provenance use `{id, version}`. The frontend now keeps the two shapes
+    distinct and rejects swapped forms; no backend or contract change was
+    made in this frontend slice.
+risks:
+  - >-
+    The native loopback fixture depends on browser support for loopback
+    EventSource during the focused Playwright projects; it is bounded by
+    explicit connection teardown and does not expose content or credentials.
+  - >-
+    The focused stale-catalogue regression uses a disposable browser fixture
+    and does not alter the public Observatory contract or browser persistence
+    behavior.
+  - >-
+    The composed full-stack browser run was not re-executed in this frontend
+    worker because it requires the disposable owner-authenticated stack. The
+    bounded catalogue reconciliation is ready for the live rerun; if its
+    final REST diagnostic still reports rest_contains_target=false, the
+    remaining defect is outside this frontend ownership zone.
+  - >-
+    The composer readiness correction is test-only: it waits for the existing
+    Core product readiness contract and does not change Aura Web behavior or
+    weaken the send-enabled assertion.
+  - >-
+    The full-stack evaluation failure is upstream in the query adapter's page
+    snapshotAt RFC3339 serialization: a space separator is rejected by the
+    strict frontend parser. The backend correction supersedes the attempted
+    frontend persisted-domain projection; the canonical parser remains
+    unchanged and no Core or Aura Web dependency was added.
+  - >-
+    The current backend detail endpoint also routes persisted suites through
+    the summary-only project_definition() projection, so selecting a summary
+    suite alone cannot satisfy job admission until an authoritative detail
+    contract supplies components and limits. This worker intentionally did
+    not paper over that missing data or fabricate it client-side.
+  - >-
+    The composed owner-authenticated full-stack rerun was not executed in this
+    worker. The new regression covers the proven frontend omission/race with
+    exact provider-shaped job data; final stack confirmation remains with the
+    integration/test owner.
+  - >-
+    Observatory deterministic IDs are intentionally generated from raw digest
+    bytes and the versioned contract plus AURA-0078 regression accept canonical
+    UUID syntax without RFC marker bits. Backend generation therefore remains
+    unchanged; the frontend parser now follows that public contract while
+    still rejecting uppercase, malformed, and noncanonical values.
+  - >-
+    Selected-run reconciliation remains bounded by the existing 30-attempt,
+    two-second timer window. The timer itself prevents concurrent loads; the
+    loading state is no longer treated as a scheduling veto because it is the
+    expected state during the initial gap-discovery path.
+unresolved:
+  - >-
+    Live AURA-0098 acceptance must rerun with the disposable Core and
+    Observatory stack to distinguish delayed ingestion from a platform
+    telemetry/query failure. Frontend checks are complete and no backend or
+    deploy-harness changes are authorized by this handoff.

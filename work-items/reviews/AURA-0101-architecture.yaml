@@ -1,0 +1,27 @@
+agent: architecture_guardian
+work_item: AURA-0101
+verdict: PASS
+checked:
+  - >-
+    Reviewed the amended AURA-0101 scope, Core adapter diff, NATS entrypoint
+    ACL diff, evaluator manifest declaration, tests, and implementation
+    handoffs.
+  - >-
+    Confirmed AURA_RUNS remains Core-owned and the adapter performs only
+    bounded create-race reconciliation or in-place subject addition; it does
+    not delete streams, reassign subjects, or introduce a bootstrap authority.
+  - >-
+    Confirmed the normal Core identity receives the exact current-client
+    JetStream matrix required by the five configured durable/filter pairs,
+    while evaluation bootstrap retains only its separately used legacy
+    subjects and non-Core identities receive no normal Core authority.
+  - >-
+    Confirmed the change stays within existing module boundaries, public
+    provider APIs, and the declared observability evaluator manifest; no ADR,
+    contract migration, dependency, or cross-service persistence access is
+    required.
+  - >-
+    Reviewed the final live fresh and repeated startup evidence and focused
+    tests supplied by the general and observability reviewers; no
+    architectural finding remains.
+findings: []

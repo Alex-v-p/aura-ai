@@ -1,0 +1,43 @@
+agent: general_reviewer
+work_item: AURA-0087
+verdict: PASS
+checked:
+  - >-
+    Formalized the final architecture_guardian PASS verdict without
+    impersonating that specialist role; independently re-read the approved
+    work item, architecture handover, module boundaries, applicable accepted
+    ADRs, implementation handoffs, current diff, and final execution paths.
+  - >-
+    Confirmed the additive observatory-v1 contract and generated Angular
+    client remain transport-only, Observatory owns the implementation and
+    data path, no Core code or tables are referenced, and no migration,
+    dependency, image, deployable, protected baseline, or new authority is
+    introduced.
+  - >-
+    Confirmed AnalyticsRequest and operational_analytics_query are explicit
+    inward-port types, production composition uses the ClickHouse query port,
+    and the bounded reference adapter is restricted to deterministic
+    memory/local composition rather than an unbounded production fallback.
+  - >-
+    Confirmed the production adapter uses one source limited to 1000001 rows,
+    consumes at most the first 1000000 analytical rows, applies finite series,
+    point, breakdown, execution, and physical-read bounds, and does not run a
+    second source scan for late-data evidence.
+  - >-
+    Confirmed the former blocking scan-path finding is corrected: the adapter
+    uses ClickHouse read_overflow_mode, classifies only the analytics-local
+    HTTP 408/code 159 tuple as a conservative scan_limit partial snapshot,
+    and propagates the source-global late-data window marker independently of
+    the aggregate response LIMIT.
+  - >-
+    Reviewed parent execution evidence that pinned ClickHouse 25.8 passed
+    direct and ProductionObservatoryStore quantileExact parity and a real
+    1000001-row scan-boundary query returned scan_limit partial state; the
+    repository-scoped real Core/SSE/retention/session/reset/Core-isolation
+    full-stack scenario also passed.
+  - >-
+    Reviewed the final service result of 417 passed with environment-gated
+    provider tests skipped as declared, the final focused review result of 46
+    passed and 2 skipped, and successful Ruff, Pyright, architecture
+    validators, generated-sync, boundary, baseline, and diff checks.
+findings: []

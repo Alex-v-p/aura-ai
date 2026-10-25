@@ -1,0 +1,108 @@
+agent: core_worker
+work_item: AURA-0098
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0098_core_handoff
+  worktree: shared
+scope:
+  ownership_zone: services.aura-core.evaluation-acceptance, services.aura-core.telemetry-resilience
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0098-core-worker.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.platform.telemetry_export
+    - aura.evaluation.runner
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Audited the active AURA-0098 work item, architecture handover, system
+      context, module boundaries, and Observatory/evaluation specification.
+      The documented boundary requires Core to export policy-filtered
+      metadata and execute controlled evaluation requests while normal Core
+      requests remain independent of Observatory availability.
+    - >-
+      Inspected all Core source references for direct Observatory imports,
+      private-module access, or Core-table access. No ``aura_observatory``
+      import or Observatory persistence access exists in services/aura-core;
+      the remaining Observatory strings are bounded OTLP configuration and
+      exporter documentation only.
+    - >-
+      Inspected the API, worker, and scheduler composition roots. Their
+      telemetry lifecycle starts a bounded background exporter and does not
+      perform Collector or Observatory network I/O on startup; exporter queue
+      pressure and transport failures are counted/dropped without entering
+      Core request, readiness, worker, or scheduling paths.
+    - >-
+      Inspected the isolated evaluation-runner composition and Compose wiring.
+      Its NATS and evaluation object-storage dependencies are scoped to the
+      controlled evaluation runner; normal Core API/worker/scheduler paths do
+      not wait for or query Observatory. A shared evaluation-bus outage is a
+      bounded runner dependency failure, not a normal-run availability claim.
+    - >-
+      uv run pytest -q services/aura-core/tests/test_telemetry.py -k
+      'aura0079_otlp or aura0084_otlp or aura0088_otlp' (8 passed, 82
+      deselected)
+    - >-
+      uv run pytest -q services/aura-core/tests/test_aura0092_nats_diagnostics.py
+      (3 passed)
+    - >-
+      uv run pytest -q services/aura-core/tests/test_aura0093_core.py (4
+      passed)
+    - >-
+      uv run pytest -q services/aura-core/tests/test_aura0091_core.py
+      services/aura-core/tests/test_aura0091_evaluation.py (63 passed)
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0098.yaml (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0098.yaml (passed; 37 changed paths validated)
+    - >-
+      python3 tooling/architecture/validate-service-isolation.py (passed)
+    - >-
+      python3 tooling/architecture/validate-repository-shape.py (passed)
+  failed: []
+  not_run:
+    - >-
+      Full composed outage acceptance was not run by this bounded Core audit;
+      aggregate integration owns that disposable-stack phase.
+decisions:
+  - >-
+    No Core production change is required for AURA-0098. Existing public
+    telemetry and evaluation-runner boundaries already provide the authorized
+    isolation and bounded failure behavior, so adding a Core change would
+    widen scope without evidence of a defect.
+  - >-
+    Core's optional OTLP exporter remains an independent asynchronous sink;
+    Collector/Observatory outage evidence must use its retry/drop counters
+    and must not be represented as a Core readiness dependency.
+  - >-
+    The evaluation runner's own NATS outage is reported as a bounded explicit
+    evaluation dependency failure. It must not be generalized into a claim
+    that normal Core runs remain available while Core's evaluation bus is
+    stopped.
+risks:
+  - >-
+    AURA-0098 full-stack acceptance remains dependent on external Observatory
+    prerequisites outside this ownership zone, including the known
+    observatory-migration-ledger migration defect and unavailable authorized
+    public evidence for some worker/scheduler/artifact and Core evaluation
+    NATS recovery metrics. These are recorded by the platform/integration
+    handoffs and are not repairable by a Core-only audit under migration and
+    contract restrictions.
+  - >-
+    The focused tests provide deterministic boundary evidence; real Docker
+    outage recovery still requires the aggregate disposable-stack harness.
+unresolved:
+  - >-
+    Aggregate AURA-0098 acceptance must retain the explicit blocker for any
+    missing authorized Observatory query surface rather than scraping or
+    fabricating Core-owned recovery evidence.

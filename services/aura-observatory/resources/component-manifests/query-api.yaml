@@ -1,0 +1,121 @@
+component:
+  id: aura.observatory.query_api
+  version: 1.0.0
+  owner: observatory.query_api
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1
+dependencies:
+  - postgresql
+  - clickhouse
+  - oidc_provider
+  - login_state_store
+  - session_store
+metrics:
+  - observatory_query_duration_ms
+  - observatory_query_outcome
+  - observatory_auth_callback_duration_ms
+  - observatory_auth_callback_outcome
+  - observatory_query_freshness_lag_ms
+  - observatory_comparison_duration_ms
+  - observatory_comparison_outcome
+  - observatory_comparison_partial_count
+  - observatory_comparison_unavailable_marker_count
+metric_definitions:
+  - name: observatory_query_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [resource]
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_query_outcome
+    type: counter
+    unit: occurrences
+    labels: [resource, outcome]
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_auth_callback_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [stage, outcome]
+    dependencies: [oidc_provider, login_state_store, session_store]
+    trace: auth_callback
+    correlation: request_id
+    export: prometheus
+  - name: observatory_auth_callback_outcome
+    type: counter
+    unit: occurrences
+    labels: [stage, outcome]
+    dependencies: [oidc_provider, login_state_store, session_store]
+    trace: auth_callback
+    correlation: request_id
+    export: prometheus
+  - name: observatory_query_freshness_lag_ms
+    type: gauge
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: query_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_outcome
+    type: counter
+    unit: occurrences
+    labels: [outcome]
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_partial_count
+    type: counter
+    unit: occurrences
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+  - name: observatory_comparison_unavailable_marker_count
+    type: counter
+    unit: occurrences
+    labels: []
+    dependencies: [clickhouse]
+    trace: comparison_request
+    correlation: request_id
+    export: prometheus
+evaluators:
+  - component_manifest_completeness
+  - component_dependency_integrity
+  - observatory_self_monitoring
+  - observatory_query_contract
+  - observatory_web_accessibility
+  - observatory_full_stack_trace
+  - observatory_outage_core_isolation
+  - observatory_auth_recovery
+  - operational_analytics_bounds
+  - operational_analytics_semantics
+  - operational_analytics_accessibility
+  - metadata_v2_allowlist
+  - run_comparison_bounds
+  - trace_alignment_semantics
+  - correlation_marker_privacy
+  - run_comparison_accessibility
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [resource, outcome, stage]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, access_token, refresh_token, id_token, credential, authorization, password, nonce, code, state, issuer, subject, owner_identity]

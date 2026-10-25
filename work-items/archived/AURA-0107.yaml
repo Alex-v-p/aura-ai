@@ -1,0 +1,135 @@
+id: AURA-0107
+title: Restore PostgreSQL evaluation case admission
+status: integrated
+change_class: bugfix
+intent: >
+  Let production PostgreSQL admit the first valid evaluation case declared by
+  an immutable dataset version by checking the stored dataset declaration
+  rather than the not-yet-created derived membership row, while preserving
+  transactional membership, version conflicts, idempotency, audits, privacy,
+  and public contract compatibility.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0093.yaml
+    - work-items/archived/AURA-0095.yaml
+    - The immutable dataset version stored in Observatory PostgreSQL is authoritative for its declared case identifiers; the dataset-case membership table is a derived exact-version binding created transactionally with an admitted case.
+    - PostgreSQL case_declared must match the in-memory repository semantics by checking the stored dataset case_ids for the exact dataset identifier and version before create_case.
+    - create_case remains the sole transactional authority for rechecking the immutable declaration locking case identifiers enforcing case-version conflicts inserting the case and membership row and writing content-free audits.
+    - The repair changes no public request response event or repository-port shape and introduces no migration schema service dependency or cross-product access.
+    - AURA-0098 retains ownership of composed PostgreSQL evaluation admission and all remaining resilience acceptance; this item provides only the adapter correction and focused regression evidence.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - EVA-001
+  - EVA-002
+ownership_zones:
+  - services.aura-observatory.evaluation-definition-state
+  - evaluation.observatory-postgres-case-admission
+  - delivery.aura0107
+allowed_paths:
+  - work-items/active/AURA-0107.yaml
+  - work-items/archived/AURA-0107.yaml
+  - work-items/handoffs/AURA-0107-*.yaml
+  - work-items/reviews/AURA-0107-*.yaml
+  - work-items/integration/AURA-0107.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/tests/test_aura0093_definitions.py
+  - services/aura-observatory/tests/test_aura0093_postgres_integration.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - evaluation-v1
+    - observatory-v1
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Case declaration lookup remains scoped to the exact immutable dataset identifier and version and must not accept membership from another dataset version case row or derived membership row.
+    - Admission must continue through dataset-case binding capture authorization and opaque artifact-metadata validation before any case is persisted.
+    - PostgreSQL continues to store only bounded content-free definition and authorization metadata; raw evaluation content credentials endpoints owner identity and provider diagnostics remain excluded.
+    - Transaction rollback idempotent same-fingerprint reuse immutable conflict rejection and content-free accepted duplicate and rejected audits remain unchanged.
+  data_classes:
+    - evaluation_definition_metadata
+    - evaluation_content_authorization_metadata
+    - opaque_artifact_references
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - PostgresEvaluationDefinitionRepository.case_declared returns true only when the requested case identifier is present in the stored case_ids of the exact immutable dataset identifier and version.
+  - A valid first case declared in DatasetDefinition.caseIds can pass EvaluationDefinitionService.admit_case against production-equivalent PostgreSQL state before any derived dataset-case membership row exists.
+  - Missing datasets wrong dataset versions undeclared case identifiers and case identifiers declared only by another dataset version continue to return false and fail closed.
+  - Postgres create_case retains its in-transaction declaration recheck case-identifier locking immutable case-version conflict rules case insert membership insert and accepted duplicate conflict or rejected content-free audits.
+  - Same identifier version and fingerprint retries remain idempotent while a different fingerprint or conflicting case version remains rejected without partial case or membership state.
+  - Existing capture authorization dataset-case binding and artifact metadata validation remain mandatory and no evaluation content enters PostgreSQL logs metrics traces errors or tests.
+  - Focused adapter and isolated PostgreSQL coverage proves first-case admission derived membership creation idempotent replay version conflict rollback and exact dataset-version scoping.
+  - Public evaluation-v1 and observatory-v1 contracts repository protocols migrations metrics and error classifications remain unchanged and compatible.
+  - AURA-0098 is unblocked only for this production PostgreSQL admission deadlock and must still independently pass its composed evaluation workflow and resilience gates.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0107.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0107.yaml
+  - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_migration.py services/aura-observatory/tests/test_aura0093_postgres_integration.py
+  - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_postgres_integration.py
+  - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_postgres_integration.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0107.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0107.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

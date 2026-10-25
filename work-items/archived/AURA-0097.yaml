@@ -1,0 +1,275 @@
+id: AURA-0097
+title: Add Observatory dashboards alerts annotations and incidents
+status: integrated
+change_class: repository_governance
+intent: >
+  Add Observatory-owned reusable dashboards and presets, closed bounded saved
+  queries, durable in-product alert evaluation with grouping suppression and
+  acknowledgement, incident workflows, and content-safe annotations linked to
+  operational and evaluation resources, with accessible owner Web workflows
+  and without external alert delivery or any Core dependency.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0087 owns bounded operational analytics queries and the operational versus quality metric separation consumed by dashboards and alert evaluation.
+    - AURA-0095 owns the owner BFF REST CLI metadata-only SSE generated-client and accessible Observatory evaluation workspace boundaries that this item extends additively.
+    - AURA-0096 owns immutable experiments baselines regressions attribution evidence and history; this item may link to exact opaque versioned identities but may not mutate or duplicate those resources.
+    - PostgreSQL is authoritative for dashboard saved-query alert-rule alert-instance suppression acknowledgement incident annotation audit schedule lease recovery and live-event state.
+    - Dashboards and saved queries persist only closed versioned bounded query definitions composed from observatory-v1 fields. Arbitrary query text SQL expressions attributes dimensions and caller-defined executable filters are prohibited.
+    - Initial alert rules evaluate deterministic bounded latency error saturation quality availability privacy and freshness conditions through existing public query ports. They do not query sibling storage tables directly and never infer unavailable evidence.
+    - Alert evaluation runs as bounded low-priority work in an existing Observatory worker or scheduler entrypoint. It uses PostgreSQL leases idempotent transitions and recovery and may not delay ingest evaluation Core readiness or normal Core activity.
+    - Repeated alert observations group under stable rule resource and bounded grouping-key identities. Suppression is explicit time-bounded or manually cleared state; acknowledgement never erases evidence or resolves an incident implicitly.
+    - Alerts remain inside Observatory. No external notification provider Web Push Home Assistant email webhook cloud delivery routing or credential is selected or implemented.
+    - Incidents use explicit open investigating mitigated resolved and closed transitions with bounded impact severity exact related-alert and evidence references and content-free audit history.
+    - Annotations are owner-authored product data with bounded plain text accepted only through the closed owner-authorized API. They may target exact run deployment experiment regression or incident identities and versions. Annotation text never enters telemetry metrics logs SSE URLs browser persistence alert labels or arbitrary dimensions.
+    - REST snapshots remain authoritative. Additive dashboard alert incident and annotation notifications use a dedicated persisted authenticated same-origin operational SSE ledger and carry metadata-only resource-change envelopes without annotation text.
+    - Authenticated operational data remains memory-only in the browser and is excluded from Workbox Cache Storage localStorage sessionStorage IndexedDB URLs logs screenshots and analytics.
+    - Existing Core databases services telemetry protocol evaluation runner NATS deployment authentication and storage boundaries remain unchanged. Core never depends on these operational workflows or Observatory availability.
+    - Existing architecture authorizes this Observatory-owned scope. Return ADR_REQUIRED if implementation requires external alert delivery a new deployable service Prometheus Loki or Grafana ownership changes Core access automatic baseline mutation shared persistence content-bearing telemetry or a new cross-product dependency.
+    - Material implementation choices use repository-pinned dependencies and current official PostgreSQL OpenAPI Angular accessibility and OWASP guidance without dependency upgrades.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-027
+  - OBS-028
+  - OBS-029
+  - OBS-030
+  - OBS-031
+  - OBS-032
+  - OBS-033
+  - OBS-034
+ownership_zones:
+  - contracts.observatory-v1
+  - services.aura-observatory.dashboards
+  - services.aura-observatory.saved-queries
+  - services.aura-observatory.alerting
+  - services.aura-observatory.incidents
+  - services.aura-observatory.annotations
+  - services.aura-observatory.operational-state-adapters
+  - services.aura-observatory.operational-live-events
+  - services.aura-observatory.worker-orchestration
+  - services.aura-observatory.cli
+  - services.aura-observatory.evaluation-query-adapter
+  - frontend.platform.observatory-api-client
+  - frontend.observatory.operations-workspaces
+  - frontend.observatory.operations-browser-acceptance
+  - repository.module-registration
+  - evaluation.aura0097-tests
+allowed_paths:
+  - work-items/active/AURA-0097.yaml
+  - work-items/archived/AURA-0097.yaml
+  - work-items/handoffs/AURA-0097-*.yaml
+  - work-items/reviews/AURA-0097-*.yaml
+  - work-items/integration/AURA-0097.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - contracts/tests/test_aura0097_*.py
+  - services/aura-observatory/src/aura_observatory/dashboards.py
+  - services/aura-observatory/src/aura_observatory/saved_queries.py
+  - services/aura-observatory/src/aura_observatory/alerting.py
+  - services/aura-observatory/src/aura_observatory/incidents.py
+  - services/aura-observatory/src/aura_observatory/annotations.py
+  - services/aura-observatory/src/aura_observatory/operational_live.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  - services/aura-observatory/src/aura_observatory/adapters/saved_queries.py
+  - services/aura-observatory/src/aura_observatory/adapters/alerting.py
+  - services/aura-observatory/src/aura_observatory/adapters/incidents.py
+  - services/aura-observatory/src/aura_observatory/adapters/annotations.py
+  - services/aura-observatory/src/aura_observatory/adapters/operational_live.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/migrations/postgresql/versions/0014_observatory_operations.sql
+  - services/aura-observatory/resources/component-manifests/dashboards.yaml
+  - services/aura-observatory/resources/component-manifests/saved-queries.yaml
+  - services/aura-observatory/resources/component-manifests/alerting.yaml
+  - services/aura-observatory/resources/component-manifests/incidents.yaml
+  - services/aura-observatory/resources/component-manifests/annotations.yaml
+  - services/aura-observatory/tests/test_aura0097_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - frontend/libs/platform/observatory-api-client/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/**
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - contracts/events/**
+  - contracts/evaluation/**
+  - contracts/openapi/core-v1.yaml
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0011_evaluation_live_events.sql
+  - services/aura-observatory/migrations/postgresql/versions/0012_evaluation_experiments.sql
+  - services/aura-observatory/migrations/postgresql/versions/0013_evaluation_experiment_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/**
+  - deploy/**
+  - infra/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: operations
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.dashboards
+    - aura.observatory.saved_queries
+    - aura.observatory.alerting
+    - aura.observatory.incidents
+    - aura.observatory.annotations
+  required_metrics:
+    - observatory_dashboard_operation_count
+    - observatory_saved_query_operation_count
+    - observatory_alert_evaluation_count
+    - observatory_alert_evaluation_duration_ms
+    - observatory_alert_instance_transition_count
+    - observatory_alert_suppression_count
+    - observatory_alert_acknowledgement_count
+    - observatory_incident_transition_count
+    - observatory_annotation_operation_count
+    - observatory_operations_recovery_count
+  required_evaluators:
+    - operations_contract_compatibility
+    - operations_owner_authorization
+    - saved_query_bounds
+    - alert_rule_determinism
+    - alert_grouping_and_suppression
+    - incident_state_machine
+    - annotation_privacy
+    - operations_browser_accessibility
+    - operations_browser_persistence_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every dashboard saved-query alert suppression acknowledgement incident and annotation route and CLI action is owner-authorized and state changes require CSRF and idempotency with explicit confirmation for destructive or closing actions.
+    - Saved queries and alert rules accept only closed finite fields operators dimensions windows thresholds and grouping keys and cannot carry arbitrary JSON SQL code URLs credentials owner identity or content-derived values.
+    - Annotation text is bounded untrusted owner-authored product data and is returned only by explicit authorized REST snapshots. It is excluded from telemetry metrics logs SSE events URLs browser persistence and alert grouping.
+    - Alert evidence and incident links expose only exact opaque versioned resource identities bounded finite measurements UTC timestamps and content-free hashes; missing partial stale or incompatible evidence is explicit.
+    - Browser state is memory-only and logout auth-generation change and retention completion clear or refresh all affected operational views.
+  data_classes:
+    - dashboard_definition_metadata
+    - saved_query_definition_metadata
+    - alert_rule_metadata
+    - alert_instance_metadata
+    - alert_suppression_metadata
+    - alert_acknowledgement_metadata
+    - incident_metadata
+    - annotation_content
+    - operations_audit_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - observatory-v1 adds backward-compatible closed bounded resources for dashboards presets saved queries alert rules instances suppressions acknowledgements incidents annotations audits and histories with stable IDs UTC timestamps exact versions and finite values.
+  - Dashboard definitions compose a bounded number of versioned panels over existing public analytics comparison regression and health query shapes. System agent module model and regression presets are immutable service-owned definitions while owner dashboards are explicit versioned records.
+  - Saved queries persist only closed typed operational trace metric comparison and regression filters with deterministic canonicalization explicit limits bounded time windows snapshot-stable pagination and no arbitrary expressions attributes or content.
+  - Alert rules deterministically evaluate bounded latency error saturation quality availability privacy and freshness conditions through public query ports with explicit cadence window threshold direction missing-evidence stale partial and disabled states.
+  - Repeated symptoms group under stable content-free bounded identities. Suppression is explicit scoped and time-bounded or manually cleared; acknowledgements are durable idempotent audited and separate from resolution.
+  - Alert evaluation uses an existing Observatory deployable with durable PostgreSQL scheduling leases retry recovery and bounded batches. Failures and backlog are observable and never delay ingest evaluation or Core activity.
+  - Incidents enforce explicit valid state transitions impact severity related-alert and evidence references ownership-free audit records resolution notes and idempotent commands. Invalid concurrent or stale transitions fail deterministically.
+  - Annotations attach only to exact existing run deployment experiment regression or incident identities and versions. Text is bounded validated treated as untrusted and excluded from telemetry metrics logs SSE URLs alert grouping and browser persistence.
+  - PostgreSQL migration is forward-only idempotent from empty and upgraded AURA-0096 state and preserves existing data. No ClickHouse schema change automatic TTL scheduled retention or external delivery is added.
+  - REST CLI and operational SSE remain owner-authorized bounded metadata-only and backward-compatible. Commands have durable restart-safe idempotency deterministic 409 422 503 and terminal behavior; SSE replays resource-change metadata by persisted event ID.
+  - Generated Angular output is reproducible and transport-only. Observatory Web provides responsive keyboard-accessible dashboard composition saved-query management alert triage suppression acknowledgement incident and annotation workflows without importing Aura product features.
+  - Severity and state use text icons and accessible names in addition to colour. Dense dashboards pair charts with tables and clear units; alert grouping reduces repetition; reduced motion high contrast narrow screens and screen-reader navigation remain usable.
+  - Destructive delete suppression-clear incident-close and annotation actions show affected resources require explicit confirmation prevent duplicate submission announce progress restore focus and refresh every affected view.
+  - Browser views distinguish loading empty stale partial disconnected suppressed acknowledged firing recovered resolved rejected unauthorized and unavailable states with actionable in-product recovery and no redirect loops.
+  - Authenticated data remains memory-only and logout auth-generation change retention completion and resource deletion clear or refresh all affected dashboard alert incident annotation and evidence views.
+  - Real-browser acceptance covers presets dashboard composition saved queries alert firing grouping suppression acknowledgement recovery incident lifecycle annotations responsive keyboard triage confirmations SSE reconnect and stale or unavailable recovery.
+  - Core remains usable with Observatory stopped and no Core source migration runner protocol normal request readiness scheduling or deployment dependency changes.
+  - Python lint type and full tests contract compatibility generated-client parity Angular lint unit production and Storybook builds browser accessibility Playwright architecture validators baseline protection migration checks and diff checks pass.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0097.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0097.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0097.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0097.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0097.yaml
+  - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests
+  - uv run pyright services/aura-observatory
+  - uv run pytest services/aura-observatory/tests contracts/tests
+  - pnpm --dir frontend nx lint observatory-web
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - pnpm --dir frontend nx build storybook --configuration=production
+  - pnpm --dir frontend nx e2e observatory-web-e2e
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Alerts are visible and actionable only inside Observatory. External delivery providers channels routing and credentials remain unresolved and out of scope.
+  - Annotation text is bounded owner-authored Observatory product data and not telemetry. Rich text attachments mentions identities and external links are not implemented.
+  - Alert rules use deterministic threshold conditions only. Statistical anomaly detection forecasting probabilistic confidence and automatic incident creation remain unavailable.
+  - AURA-0098 owns complete composed-stack outage browser acceptance and operator documentation. Local Ollama or other provider reachability is an explicitly accepted non-blocking environment risk when all repository-local checks pass.

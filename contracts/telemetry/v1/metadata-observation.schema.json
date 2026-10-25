@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/telemetry/v1/metadata-observation.schema.json",
+  "title": "Aura metadata observation v1",
+  "description": "Closed, content-free operational telemetry accepted by Aura Observatory. Prompts, responses, memories, documents, filenames, tool payloads, credentials, endpoints, bearer tokens, owner identity, captured content, and arbitrary attributes are outside this contract and are rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "observationId",
+    "observedAt",
+    "kind",
+    "component",
+    "operation",
+    "measurement",
+    "dimensions",
+    "deployment",
+    "serviceRole",
+    "capturePolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "observationId": { "$ref": "#/$defs/Uuid" },
+    "observedAt": { "$ref": "#/$defs/Timestamp" },
+    "kind": { "type": "string", "enum": ["metric", "span"] },
+    "component": { "$ref": "#/$defs/ComponentIdentity" },
+    "operation": { "$ref": "#/$defs/OperationName" },
+    "measurement": { "$ref": "#/$defs/Measurement" },
+    "dimensions": { "$ref": "#/$defs/Dimensions" },
+    "trace": { "$ref": "#/$defs/TraceLineage" },
+    "correlation": { "$ref": "#/$defs/Correlation" },
+    "deployment": { "$ref": "#/$defs/DeploymentMetadata" },
+    "serviceRole": {
+      "type": "string",
+      "enum": ["api", "worker", "scheduler", "cli"]
+    },
+    "capturePolicy": { "const": "metadata_only" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "kind": { "const": "span" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "required": ["trace"],
+        "properties": {
+          "trace": {
+            "allOf": [
+              { "$ref": "#/$defs/TraceLineage" },
+              {
+                "type": "object",
+                "required": ["spanId"],
+                "properties": { "spanId": { "$ref": "#/$defs/SpanId" } }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "SafeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "OperationName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9_.-]{0,95}$"
+    },
+    "ComponentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 96,
+          "pattern": "^aura\\.[a-z][a-z0-9_.-]{0,90}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$"
+        }
+      }
+    },
+    "Measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "$ref": "#/$defs/OperationName" },
+        "value": {
+          "type": "number",
+          "minimum": -1000000000000000,
+          "maximum": 1000000000000000,
+          "description": "A finite numeric measurement. The bounds also reject non-finite runtime values in validators that admit them as numbers."
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["count", "milliseconds", "bytes", "ratio", "score"]
+        }
+      }
+    },
+    "DimensionValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$",
+      "description": "A bounded, low-cardinality metadata label. Whitespace, URLs, paths, email-like values, and free-form text are prohibited."
+    },
+    "Dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 11,
+      "properties": {
+        "archiveState": { "$ref": "#/$defs/DimensionValue" },
+        "dependency": { "$ref": "#/$defs/DimensionValue" },
+        "errorClass": { "$ref": "#/$defs/DimensionValue" },
+        "outcome": { "$ref": "#/$defs/DimensionValue" },
+        "provider": { "$ref": "#/$defs/DimensionValue" },
+        "status": { "$ref": "#/$defs/DimensionValue" },
+        "tokenEstimator": { "$ref": "#/$defs/DimensionValue" },
+        "scopeType": { "$ref": "#/$defs/DimensionValue" },
+        "retrievalStage": { "$ref": "#/$defs/DimensionValue" },
+        "degradation": { "$ref": "#/$defs/DimensionValue" },
+        "operation": { "$ref": "#/$defs/DimensionValue" }
+      }
+    },
+    "TraceLineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["traceId"],
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "W3C/OpenTelemetry lowercase 16-byte trace identifier."
+        },
+        "spanId": { "$ref": "#/$defs/SpanId" },
+        "parentSpanId": { "$ref": "#/$defs/SpanId" },
+        "linkedSpanIds": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/SpanId" }
+        }
+      },
+      "dependentRequired": {
+        "parentSpanId": ["spanId"]
+      }
+    },
+    "SpanId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "Correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "runId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "DeploymentMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deploymentId", "gitCommit", "environment", "hostId"],
+      "properties": {
+        "deploymentId": { "$ref": "#/$defs/SafeName" },
+        "gitCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$"
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9_.-]{0,31}$"
+        },
+        "hostId": { "$ref": "#/$defs/SafeName" }
+      }
+    }
+  }
+}

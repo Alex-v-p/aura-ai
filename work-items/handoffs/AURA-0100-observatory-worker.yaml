@@ -1,0 +1,52 @@
+agent: observatory_worker
+work_item: AURA-0100
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: null
+scope:
+  ownership_zone: services.aura-observatory.migrations
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+contracts: {changed: false}
+migrations:
+  changed: true
+  owning_service: aura-observatory
+  summary: >
+    Added the idempotent Observatory-owned PostgreSQL migration ledger
+    prerequisite before the foundation schema, providing the version and
+    applied_at columns required by guarded migration 0013 and 0014 writes.
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0100.yaml
+    - git diff --check
+    - Focused SQL assertions for the ledger definition
+    - Fresh isolated PostgreSQL database applied all ordered migrations transactionally
+    - Full ordered PostgreSQL migration chain rerun completed successfully
+    - Rerun ledger query returned exactly one row for 0013 and one row for 0014
+  failed: []
+  not_run:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0100.yaml (blocked by pre-existing unrelated AURA-0098 working-tree paths)
+    - Docker Compose startup and web redirect checks (owned by platform and evaluation workers)
+decisions:
+  - >
+    Used VARCHAR(128) for the service-owned migration version key and
+    TIMESTAMPTZ with a current-timestamp default, matching the existing
+    guarded INSERT shape and preserving forward-only rerunnable migrations.
+risks:
+  - >
+    The complete supported local-http launch remains dependent on the
+    separate Compose and evaluation ownership zones rebuilding the migration
+    image and validating all service health gates.
+unresolved:
+  - >
+    Repository-wide changed-path validation cannot pass until unrelated
+    pre-existing AURA-0098 paths are handled by their owning work item.

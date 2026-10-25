@@ -47,3 +47,42 @@ entries:
       name: Aura Web
       slug: aura-web
       provider: !KeyOf aura-web-provider
+  # Observatory is a separate OIDC audience and callback boundary.  Its
+  # owner authorization is enforced by the Observatory BFF after token
+  # validation; this provider grants no Aura household permissions.
+  - model: authentik_providers_oauth2.oauth2provider
+    id: aura-observatory-provider
+    identifiers:
+      name: Aura Observatory OIDC
+    attrs:
+      name: Aura Observatory OIDC
+      client_type: confidential
+      client_id: !Env [AURA_OBSERVATORY_AUTHENTIK_CLIENT_ID, aura-observatory]
+      client_secret: !Env [AURA_OBSERVATORY_AUTHENTIK_CLIENT_SECRET, runtime-secret-required]
+      grant_types:
+        - authorization_code
+        - refresh_token
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Env [AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI, https://observatory.example.invalid/api/v1/auth/callback]
+          redirect_uri_type: authorization
+      include_claims_in_id_token: true
+      sub_mode: hashed_user_id
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-offline_access]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      access_code_validity: minutes=1
+      access_token_validity: minutes=5
+      refresh_token_validity: days=30
+  - model: authentik_core.application
+    identifiers:
+      slug: aura-observatory
+    attrs:
+      name: Aura Observatory
+      slug: aura-observatory
+      provider: !KeyOf aura-observatory-provider

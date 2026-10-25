@@ -1,0 +1,108 @@
+agent: test_evaluation_engineer
+work_item: AURA-0090
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.artifact-storage-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - services/aura-observatory/tests/test_aura0090_storage.py
+  - services/aura-observatory/tests/test_aura0090_migrations.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0079_identity_regressions.py
+  - deploy/tests/test_aura0090_topology.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - Tests exercise only the closed metadata and authorized content classifications already defined by the contract.
+    - id: evaluation-events-v1
+      version: 1
+      source: contracts/events/evaluation/v1/evaluation-events.schema.json
+      consumer_boundary:
+        - No event transport or event payload is added; tests require content-free storage and deletion diagnostics.
+migrations:
+  changed: false
+  postgresql: []
+  clickhouse: []
+observability:
+  components:
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_deletion
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory ruff check services/aura-observatory/tests/test_aura0090_storage.py services/aura-observatory/tests/test_aura0090_migrations.py services/aura-observatory/tests/test_aura0078_review_fixes.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory pyright services/aura-observatory/tests/test_aura0090_storage.py services/aura-observatory/tests/test_aura0090_migrations.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0079_identity_regressions.py tests/test_aura0090_storage.py tests/test_aura0090_migrations.py tests/test_aura0078_review_fixes.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright tests/test_aura0079_identity_regressions.py tests/test_aura0090_storage.py tests/test_aura0090_migrations.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q deploy/tests/test_aura0090_topology.py (9 passed)
+    - python3 -m unittest deploy.compose.test_topology (47 passed)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest tests (618 passed, 4 skipped)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q tests/test_aura0090_migrations.py tests/test_aura0090_storage.py (62 passed, 1 skipped)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0090_migrations.py tests/test_aura0090_storage.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright tests/test_aura0090_migrations.py tests/test_aura0090_storage.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0090_storage.py tests/test_aura0078_review_fixes.py tests/test_aura0090_migrations.py tests/test_aura0079_identity_regressions.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright tests/test_aura0090_storage.py tests/test_aura0078_review_fixes.py tests/test_aura0090_migrations.py tests/test_aura0079_identity_regressions.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory ruff check services/aura-observatory/tests/test_aura0090_storage.py (passed after intentional private SigV4 vector-call suppressions)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory pyright services/aura-observatory/tests/test_aura0090_storage.py services/aura-observatory/tests/test_aura0090_migrations.py (0 errors after intentional private SigV4 vector-call suppressions)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0090_migrations.py services/aura-observatory/tests/test_aura0090_storage.py (64 passed, 1 skipped after typing correction)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0090.yaml
+    - python3 -m pytest -q tooling/architecture/tests/test_validate_observability.py tooling/architecture/tests/test_observability.py (11 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q deploy/tests/test_aura0090_*.py (9 passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0090.yaml
+    - git diff --check
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory ruff check services/aura-observatory/tests/test_aura0090_storage.py (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory pyright services/aura-observatory/tests/test_aura0090_storage.py (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0090_migrations.py services/aura-observatory/tests/test_aura0090_storage.py (84 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q deploy/tests/test_aura0090_*.py (9 passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0090.yaml (validated 39 changed paths)
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - cd frontend && env -u AURA_OBSERVATORY_FULL_STACK pnpm exec playwright test --config apps/observatory-web-e2e/full-stack.config.ts --project observatory-full-stack (4 tests skipped as expected; no Docker stack started)
+    - >-
+      bash deploy/compose/run-observatory-full-stack-e2e.sh (status 0; final evidence: /tmp/aura-observatory-e2e-final3.UgUYDY.log) — real selector deletions, score readback, worker restart recovery, browser comparison/privacy/session flows, and Core independence passed.
+  failed: []
+  not_run: []
+decisions:
+  - Added deterministic service tests for bounded streamed upload, authorization, size and digest failure cleanup, malformed input, idempotency, deletion selectors, missing objects, concurrent claims, restart recovery, and bounded failure codes.
+  - Added score validation tests that preserve zero as observed evidence while rejecting missing-value inconsistencies, non-finite values, and cloud judge kinds.
+  - Added static PostgreSQL and ClickHouse migration checks for idempotent forward-only shape, bounded constraints, no content columns, and no automatic TTL.
+  - Added deployment tests proving the Observatory Garage bucket/key and private object network are worker-only, file-backed, and isolated from Core/API/Web/Collector paths.
+  - Updated the pre-existing AURA-0078 manifest expectation to account for the two registered AURA-0090 components and their distinct capture policies.
+  - Added adapter regression coverage for persisted idempotent command replay, selector-snapshot deletion of NULL-reference scores, command validation before snapshot, lease renewal, stale-worker CAS fencing after reclaim (including a reclaimed command with a new token), restart-safe persisted target counts, and success/failure audit outcomes.
+  - Added central ObservatoryMetrics assertions for Prometheus export and rehydrated file persistence, including bounded worker-failure diagnostics without private payloads.
+  - Extended migration checks for the fixed-column PostgreSQL evaluation metric series table and added a cross-instance worker-to-API test proving PostgreSQL aggregation, persisted metric_series reads, Prometheus rendering, bounded labels, and rejection of identifier/content labels.
+  - Added security regressions for exact authorization request/dataset scope and revocation fencing between reserve and publish, SigV4 expected-payload hashing with corrupted-provider cleanup, strict component identifier rejection, and distinct overlapping deletion command idempotence.
+  - Extended topology assertions for write-only Observatory Garage grants, distinct Core/Observatory buckets and credentials, and fail-closed unexpected-grant verification.
+  - Added alias-qualified artifact SELECT regression, optional PostgreSQL authorization creation/revocation/scoped-replay coverage, global live-target ownership overlap coverage, parameterized version/component identifier negatives, and bootstrap pre-existing-read rejection/postcondition checks. The production validator now rejects the reserved content-bearing version segments; all checks are green.
+  - Strengthened the Garage bootstrap regression to require removal attempts for pre-existing read and owner grants, explicit write/read/owner postcondition checks, and fail-closed verification of the final write=true/read=false/owner=false state.
+  - Replaced the metric persistence fake's SELECT/UPDATE sequence with an atomic ON CONFLICT upsert model and asserted concurrent first-write accumulation, API visibility after drain, no double-read/update SQL, bounded queue/drop accounting, typed persistence failure classification, and shutdown flush behavior.
+  - Strengthened component-manifest assertions to require metadata_only capture and the complete prohibited-field set only for the two typed AURA-0090 manifests, while preserving legacy manifest expectations; added nested typed-validator regressions for contract fields.
+  - Added ClickHouse migration compatibility assertions requiring `LowCardinality(Nullable(String))` for both CREATE and MODIFY outcome definitions, rejecting the unsupported reverse nesting, while retaining adapter coverage for observed zero and NULL missing-evidence outcomes.
+  - Added a full-stack fixture regression requiring distinct valid `GK`-format Core and Observatory Garage access keys and verifying fixture secret values are redirected to protected files rather than printed.
+  - Corrected the full-stack artifact authorization seed to enumerate all required non-null request/dataset columns, reuse the matching stable ArtifactUpload IDs, and use the contract-approved `owner_supplied_evaluation` purpose; added static drift coverage for the acceptance INSERT.
+  - Relaxed the comparison request count check to allow SSE-triggered refreshes while asserting every captured comparison URL excludes both run identifiers; browser persistence and route checks remain unchanged.
+  - Deduplicated identical comparison URL/body fingerprints before applying the one-active-plus-one-trailing-refresh bound, then waited a bounded settle window and asserted request-count stability; all captured URLs remain checked for run-ID leakage.
+  - Expanded the real storage fixture to distinct bounded job, dataset, suite, cutoff-old, cutoff-new, and purge-all objects, PostgreSQL rows, and ClickHouse scores. The cutoff command asserts the newer fixture survives; the missing-object job command is retried to prove idempotency.
+  - Added real ClickHouse score readback assertions for bounded job/result/dataset/suite correlations, zero values, and nullable missing evidence before deletion.
+  - Added a stopped-worker durable recovery phase: the final purge command is claimed and persisted in the objects phase with an expired lease, then a restarted worker must complete the immutable target ledger and produce one content-free audit.
+  - Added deterministic cancellation tests for streamed upload and object deletion, proving no available metadata or false completion is visible and that the same persisted target recovers after restart.
+  - Added a bounded synthetic privacy scan: the browser checks the SSE first chunk, resource URLs, and browser storage while the runner scans captured Core/Observatory logs and metrics exposition; failure messages never include the sentinel.
+  - Updated the deployment seed regression to validate the typed multi-fixture parameter tuple and distinct UUID fixture mapping rather than obsolete single-fixture constants.
+  - Added line-local Pyright suppressions only to the two intentional direct `_signed_request` SigV4 vector calls; the storage and migration focused suites remain behaviorally unchanged and pass.
+risks:
+  - Unit fakes intentionally model durable boundary outcomes and cannot prove Garage IAM enforcement or ClickHouse mutation completion; topology and full-stack checks must cover those concerns.
+unresolved: []

@@ -1,0 +1,72 @@
+agent: security_privacy_reviewer
+work_item: AURA-0104
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final AURA-0104 change against its approved work item,
+    architecture handover, Observatory specification, ADR-0013, ADR-0015,
+    ADR-0016, implementation handoffs, production composition, and deployment
+    topology.
+  - >-
+    Verified the new admission mutations retain the Observatory owner-session
+    and audience boundary, same-origin CSRF enforcement, UUID idempotency,
+    closed bounded inputs, content-free diagnostics, and Cache-Control:
+    no-store responses.
+  - >-
+    Verified multipart parsing is incremental with bounded headers and
+    metadata plus a one-megabyte content cap. The admission stream stages at
+    most 64 KiB in memory before an automatically closed temporary spool and
+    does not yield content to Garage until the canonical whole-value secret
+    policy succeeds.
+  - >-
+    Verified literal password, literal token, Unicode-escaped password, AWS
+    credential assignment, PKCS#8 marker, malformed UTF-8, and JSON-shaped
+    text cases fail closed. The authenticated Unicode-escaped route probe
+    returned 422 and its storage port received zero bytes.
+  - >-
+    Verified the corrected spool seeks back to offset zero after canonical
+    validation and replays all chunks. An independent authenticated probe with
+    valid metadata and digest returned 201 for a benign 70,000-byte artifact,
+    and the storage port received all 70,000 bytes byte-for-byte.
+  - >-
+    Verified production ArtifactStorageService independently checks the
+    consumed byte count and SHA-256 digest, publishes only after verification,
+    and performs best-effort object deletion plus durable failed-state
+    recording after stream, integrity, or publication failure.
+  - >-
+    Verified upload admission requires an authoritative, active, non-revoked
+    capture authorization with exact dataset version, capture classification,
+    purpose, context, timestamp, and manual-only retention.
+  - >-
+    Verified local-judge prompt and rubric resolution requires exact artifact
+    ID, version, digest, intended role, availability, non-revocation,
+    retention, media classification, and admitted media type. The production
+    PostgreSQL command adapter and forward-only migration admit the durable
+    create_local_judge_evaluator operation.
+  - >-
+    Verified observatory-api receives a distinct file-backed Garage access key
+    and secret, joins only the private Observatory object-storage network, and
+    depends on a fail-closed bootstrap which grants write, denies read and
+    owner, rejects unexpected bucket grants, and verifies the final compact
+    permission flag is exactly W.
+  - >-
+    Verified the API receives none of the worker, judge, runner, or Core
+    Garage credentials. Local secret provisioning uses distinct default
+    files, no-follow exclusive creation, owner-only permissions,
+    provider-shaped random values, validation of existing files, and
+    content-free bootstrap failure output.
+  - >-
+    Verified no Aura Core or Aura Web product code changed. Changed-path,
+    service-isolation, and frontend-boundary validation passed, preserving
+    product, session, browser-communication, and service-owned data isolation.
+  - >-
+    Ran focused Observatory tests (23 passed), deployment capability tests (4
+    passed), contract tests (20 passed), Ruff, Pyright, shell syntax
+    validation, and git diff --check successfully.
+findings: []
+risks:
+  - >-
+    Full AURA-0098 composed acceptance remains responsible for proving the live
+    Garage permission matrix, temporary-spool lifecycle, PostgreSQL replay
+    across restart, and aborted-upload cleanup against the real services.
+unresolved: []

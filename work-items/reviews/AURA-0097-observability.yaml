@@ -1,0 +1,26 @@
+agent: observability_steward
+work_item: AURA-0097
+verdict: PASS
+checked:
+  - >-
+    Re-verified the declared dashboard, saved-query, alert, incident,
+    annotation, recovery, backlog, lease, and live-update metrics and spans
+    use bounded allowlisted operations, outcomes, dependencies, and failure
+    labels.
+  - >-
+    Confirmed alert evaluation and operational query instrumentation is
+    behavior-neutral, records measured durations, separates PostgreSQL and
+    provider dependencies, maps malformed, unavailable, stale, partial, and
+    incompatible evidence truthfully, and does not emit annotation or query
+    content.
+  - >-
+    Re-ran observability declaration validation, full Python tests, strict
+    telemetry and recovery tests, and diff checks. No unresolved
+    observability finding remains.
+findings: []
+risks:
+  - >-
+    Live sink and database execution remains gated by the repository's
+    explicit AURA-specific integration URL settings; static manifests and
+    real-sink test coverage available in this environment pass.
+unresolved: []

@@ -1,0 +1,52 @@
+component:
+  id: aura.observatory.evaluation_artifact_storage
+  version: 1.0.0
+  owner: observatory.evaluation_artifact_storage
+  category: persistence
+input:
+  schema: authorized-evaluation-artifact-v1
+  replayable: false
+output:
+  schema: evaluation-artifact-metadata-v1
+dependencies:
+  - postgresql
+  - garage
+metrics:
+  - observatory_evaluation_artifact_operation_count
+  - observatory_evaluation_artifact_operation_duration_ms
+metric_semantics:
+  observatory_evaluation_artifact_operation_count: Bounded count of authorized artifact store operations by fixed outcome.
+  observatory_evaluation_artifact_operation_duration_ms: Bounded duration of one streamed artifact operation.
+metric_definitions:
+  - name: observatory_evaluation_artifact_operation_count
+    type: counter
+    unit: operations
+    labels: [operation, outcome]
+    dependencies: [postgresql, garage]
+    trace: artifact_storage
+    correlation: artifact_reference_id
+    export: prometheus
+  - name: observatory_evaluation_artifact_operation_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation]
+    dependencies: [garage]
+    trace: artifact_storage
+    correlation: artifact_reference_id
+    export: prometheus
+evaluators:
+  - evaluation_artifact_authorization
+  - evaluation_artifact_integrity
+  - evaluation_artifact_storage_isolation
+  - evaluation_artifact_content_leakage
+# The artifact itself may be authorized content; this component's
+# observability signal remains metadata-only.
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [operation, outcome]
+  trace_only: [artifact_reference_id]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, bearer, credential, password, private, hash, digest, access_token, refresh_token, id_token, authorization, nonce, code, state, issuer, subject, object_key, owner_identity]
+export:
+  sink: private_garage
+  cadence: per_artifact

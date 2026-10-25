@@ -5,7 +5,7 @@
 ## Identity, security, and privacy
 
 - Household role and membership semantics, including how OIDC claims become Aura household permissions.
-- Retention and encryption periods for memory, files, credentials, recordings, telemetry, and evaluation artifacts.
+- Retention and encryption periods for memory, files, credentials, recordings, telemetry, and other platform data.
 - File-source inclusion, exclusion, authorization, and confirmation rules.
 - Home Assistant allowlists and high-impact action classification.
 - Detailed telemetry and captured-content retention periods.
@@ -21,7 +21,7 @@
 
 ## Providers, clients, and evaluation
 
-- Evaluation judge models, local/cloud policy, and human calibration rules.
+- Exact local Ollama judge inventory, prompts, rubrics, seeds, calibration datasets, and advisory thresholds.
 - Alert delivery provider selection beyond the initial Web Push and Home Assistant channels.
 - Exact wake-word/STT/TTS provider models, voice artifacts/configuration, voice policy, and voice protocol payload details.
 
@@ -41,6 +41,10 @@ The following distinctions are already settled and are not open decisions:
 - Provider-specific examples remain behind ports and adapters unless the architecture identifies a service-owned store or protocol.
 - Core operation does not require a cloud model.
 - The target repository tree does not require every folder or feature to exist immediately.
+- Evaluation content is permitted only in an explicitly owner-authorized controlled evaluation context; ordinary production telemetry remains metadata-only.
+- Evaluation artifacts are retained until an explicitly authorized manual deletion; automatic expiry and background purge are not part of this policy.
+- Deterministic evaluators are preferred and model-assisted judges are restricted to local Ollama; cloud judges are not enabled.
+- Baselines are immutable and require explicit owner promotion from a defined result set; automatic promotion and protected repository baseline mutation are prohibited.
 
 ## Related working summaries
 

@@ -9,6 +9,7 @@ ALLOWED_TOP_LEVEL = {
     ".agents",
     ".aura-work-item",
     ".codex",
+    ".dockerignore",
     ".devcontainer",
     ".github",
     ".gitignore",

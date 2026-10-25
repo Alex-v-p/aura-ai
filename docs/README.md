@@ -79,6 +79,7 @@ Read the technology matrix and only the applicable ADRs for architecture, backen
 ## Operational runbooks
 
 - [Authentik relocation](runbooks/authentik-relocation.md) — move the temporary local identity provider to an external instance while preserving Aura's OIDC issuer and subject boundary.
+- [Observatory reliability and acceptance](runbooks/observatory-reliability.md) — run the disposable full-stack and evaluation resilience harnesses, diagnose bounded outages, and collect privacy-safe evidence.
 
 ## Local platform stack
 
@@ -92,7 +93,25 @@ docker compose up --build --detach --wait aura-core-api aura-core-worker aura-we
 ```
 
 The temporary Authentik deployment is an explicit, optional override. It is
-never interpolated by normal Compose commands. The override defaults to the
+never interpolated by normal Compose commands. For the disposable loopback
+stack, use the single launcher below; it starts Aura, Authentik, and the
+optional Observatory profile together:
+
+```sh
+./deploy/compose/local-http.sh up
+```
+
+Aura is available at `http://aura.localhost:4200`, Observatory at
+`http://observatory.localhost:4300`, and Authentik at
+`http://authentik.localhost:9000`. The launcher uses project-scoped Docker
+named volumes for disposable database, broker, object-store, identity-media,
+and Observatory state so Docker Desktop does not need to share those database
+write paths with the host. `./deploy/compose/local-http.sh down` stops the
+stack while preserving those volumes; `./deploy/compose/local-http.sh reset`
+explicitly removes the disposable volumes and the generated local identity
+subject before the next start. The owner password file is preserved.
+
+The override defaults to the
 verified immutable Authentik 2026.5.7 multi-architecture digest. Operators may
 override `AUTHENTIK_IMAGE` only with another verified digest-qualified image.
 Set stable HTTPS issuer and browser-host inputs, stable OIDC
@@ -114,7 +133,15 @@ OIDC discovery/JWKS and Ollama; the worker receives it only for Ollama. Linux
 hosts map the local Ollama default through Docker's `host-gateway`; configure
 an operator-controlled LAN URL instead when appropriate. The browser-facing,
 database, NATS, and Valkey networks remain internal and no Core provider
-endpoint is host-published. When the optional identity override is selected,
+endpoint is host-published. The browser-facing network reserves
+`AURA_FRONTEND_SUBNET` (default `10.254.241.0/24`) so Docker cannot install an
+overlapping LAN route; override it when that range conflicts with a trusted
+network. If Docker Desktop still cannot route to a remote LAN Ollama host, set
+`AURA_LOCAL_OLLAMA_RELAY_TARGET=192.168.0.40:11434`; the local launcher starts
+a transient user-level `socat` service on `127.0.0.1:11435`, rewrites the local
+Core URL to `http://host.docker.internal:11435`, and stops the service during
+`down` or `reset`. The relay requires `systemd-run`, `systemctl`, and `socat`,
+and never binds the LAN interface. When the optional identity override is selected,
 only the Core API also joins Authentik's control network so it can discover the
 temporary issuer; workers, Core persistence, Valkey, and NATS never join it.
 Nginx access logs record normalized paths without query strings, and Core's
@@ -122,10 +149,12 @@ Uvicorn access log is disabled, so OIDC callback `code` and `state` values do
 not enter ordinary request logs. Core and Authentik use separate nonpersistent,
 password-protected Valkey services and isolated Compose networks; identity
 never shares Aura's cache.
-Every durable PostgreSQL, JetStream, and Authentik media mount requires the
-operator-provided encrypted `AURA_STATE_ROOT`. The normal config command is
-`docker compose config --quiet`; it does not read the optional override or
-require any Authentik variables.
+Every durable PostgreSQL, JetStream, and Authentik media mount in the normal
+Compose and stable HTTPS deployment requires the operator-provided encrypted
+`AURA_STATE_ROOT`. The explicit disposable local HTTP overlay is the sole
+exception and uses project-scoped named volumes as described above. The normal
+config command is `docker compose config --quiet`; it does not read the
+optional override or require any Authentik variables.
 
 ### Disposable full-stack verification
 

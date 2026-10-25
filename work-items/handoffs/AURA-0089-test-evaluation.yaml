@@ -1,0 +1,90 @@
+agent: test_evaluation_engineer
+work_item: AURA-0089
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.contract-verification
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0089_contract.py
+  - services/aura-observatory/tests/test_aura0089_events.py
+  - work-items/handoffs/AURA-0089-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0089_*.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright
+      services/aura-observatory/tests/test_aura0089_*.py (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q
+      services/aura-observatory/tests/test_aura0089_*.py (62 passed)
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0089.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0089.yaml (10 changed paths validated)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0089.yaml (not applicable)
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0089.yaml (no protected changes)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0089.yaml
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Added only contract verification tests within the assigned Observatory test
+    path; no schema, runtime, storage, event transport, API, browser, or
+    deployment behavior was changed.
+  - >-
+    Used a small dependency-free JSON Schema 2020-12 subset runner because the
+    repository's pinned Python environment does not include a schema package;
+    it resolves local references and exercises closed objects, oneOf/anyOf,
+    conditionals, required fields, constants, enums, bounds, patterns, and
+    uniqueness, minProperties, and uuid/date-time formats.
+  - >-
+    Covered valid representatives for all eleven evaluation resources and all
+    four lifecycle events, including local-judge/human-evidence distinctions,
+    reproducibility, provenance, idempotency, manual baselines, and opaque
+    artifact references.
+  - >-
+    Covered negative unknown, missing, conflicting, metadata-only content,
+    untrusted authority, credential, endpoint, object-key, owner-identity,
+    failure-detail, duplicate-reference, duplicate-variant, and type cases;
+    stale fixtures were aligned with UUID-only idempotency and the shared
+    finite failure taxonomy. Production telemetry is asserted to remain
+    metadata_only and independent of evaluation schemas.
+  - >-
+    Added exact and one-past coverage for bounded versions, execution limits,
+    content artifact references, experiment variants, score numbers, lifecycle
+    attempts, and event artifact-reference arrays.
+risks:
+  - >-
+    JSON Schema semantic checks that require cross-resource identity inequality,
+    digest recomputation, and semantic scanning of untrusted content remain
+    producer/consumer responsibilities and are intentionally outside this
+    contract-only verification slice.
+unresolved: []

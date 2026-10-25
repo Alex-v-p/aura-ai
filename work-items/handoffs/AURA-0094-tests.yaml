@@ -1,0 +1,112 @@
+agent: test_evaluation_engineer
+work_item: AURA-0094
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0094_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.local-judge-calibration-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0094_judges.py
+  - services/aura-observatory/tests/test_aura0094_calibration.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_observability.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0094_clickhouse_integration.py
+  - services/aura-observatory/tests/test_aura0094_worker.py
+  - services/aura-observatory/tests/test_aura0094_final_review.py
+  - services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+  - services/aura-observatory/tests/test_aura0090_migrations.py
+  - services/aura-observatory/tests/test_aura0093_score.py
+  - services/aura-observatory/tests/test_aura0089_contract.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - deploy/tests/test_aura0092_topology.py
+  - deploy/tests/test_aura0094_runtime.py
+  - deploy/tests/test_aura0079_observatory_topology.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.local_judges
+    - aura.observatory.calibration
+  metrics_added: []
+verification:
+  passed:
+    - "Focused AURA-0094 regressions: 105 passed, 2 opt-in live-database tests skipped; ensemble exact-scope provenance, durable prior-calibration-result resolution, controlled-replay authorization, ClickHouse score metadata contract, migration ordering, dependency attribution/correlation, and exporter flush are covered."
+    - "uv run ruff check tests/test_aura0094_*.py tests/test_aura0089_contract.py tests/test_aura0078_review_fixes.py tests/test_aura0080_migrations_and_privacy.py tests/test_aura0090_migrations.py tests/test_aura0093_score.py (passed)"
+    - "uv run pyright tests/test_aura0094_*.py (0 errors)"
+    - "AURA-0094 stale score-path expectation was reconciled: incomplete/versionless qualifications remain advisory; a complete exact-scope production score mapping test passes."
+    - "GarageEvaluationObjectStore.read MockTransport boundary coverage passes for success, 401/403/404, redirect, streamed overflow, digest mismatch, timeout, and opaque UUID key derivation."
+    - "Provider failure counter and dependency phase-duration coverage passes for provider timeout, redirect, missing model, resource limit, and all PostgreSQL/Garage/Ollama/ClickHouse judge phases."
+    - "Qualification revoke/replay and exact integer-ppm ensemble mismatch tests pass; comment artifact purpose cross-purpose denial tests pass."
+    - "Per-resource evaluation-v1 negative fixtures pass for private content/provider fields and incomplete ensemble weights."
+    - "uv run ruff check tests/test_aura0094_*.py"
+    - "uv run pyright tests/test_aura0094_*.py"
+    - "AURA_WORK_ITEM=AURA-0094 python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0094.yaml --role test_evaluation_engineer --path services/aura-observatory/tests/test_aura0094_*.py"
+    - "uv run pytest -q tests/test_aura0094_*.py (93 passed, 1 skipped; no AURA_AURA0094_POSTGRES_URL)"
+    - "uv run pytest -q deploy/tests (69 passed)"
+    - "uv run ruff check deploy/tests/test_aura0094_runtime.py"
+    - "uv run pyright deploy/tests/test_aura0094_runtime.py"
+    - "uv run pytest -q tests/test_aura0094_*.py tests/test_aura0089_contract.py tests/test_aura0078_review_fixes.py (112 passed)"
+    - "uv run pytest -q tests/test_aura0094_judges.py::test_local_ollama_model_inventory_is_exact_and_unambiguous (2 passed)"
+    - "uv run pytest -q tests/test_aura0094_*.py tests/test_aura0089_contract.py tests/test_aura0078_review_fixes.py (113 passed)"
+    - "uv run pytest -q deploy/tests/test_aura0092_topology.py deploy/tests/test_aura0094_*.py (17 passed)"
+    - "uv run pytest -q deploy/tests: 68 passed"
+    - "uv run pytest -q tests: 961 passed, 11 skipped, 2 warnings"
+    - "uv run ruff check tests/test_aura0094_*.py and legacy privacy/contract tests (passed)"
+    - "uv run pyright tests/test_aura0094_*.py (0 errors)"
+    - "Production-path final-review regressions: orchestration claim/complete/fail and lease loss, exact action authorization and cross-purpose denial, zero-row revocation, artifact provenance round-trip, score ordering/privacy, and additive contract required/null/enum boundaries (all passed)"
+    - "uv run pytest -q tests/test_aura0078_review_fixes.py tests/test_aura0080_migrations_and_privacy.py tests/test_aura0090_migrations.py tests/test_aura0093_score.py (all passed)"
+    - "uv run pytest -q services/aura-observatory/tests/test_aura0078_review_fixes.py deploy/tests/test_aura0092_topology.py (50 passed)"
+    - "AURA work-item, changed-paths, repository-shape, module-registry, service-isolation, observability, baseline-protection, and contract-change validators passed"
+    - "Independently reproduced live PostgreSQL 17 AURA-0094 migration/round-trip coverage with postgres:17-alpine: 2 passed; exact disposable aura0094-postgres-test container was stopped and removed."
+    - "Focused PostgreSQL fixture-cleanup and final-review regressions: 7 passed, 1 opt-in live-PostgreSQL test skipped when the URL was absent"
+    - "Full Observatory suite after the production corrections: 1001 passed, 12 skipped, 2 warnings; deploy/tests: 69 passed."
+    - "Current full Observatory run after the UTC timestamp correction: 1032 passed, 12 skipped, 2 warnings; deploy/tests: 69 passed."
+    - "Focused Ruff, Pyright, changed-path, observability, and diff checks passed after fixture-cleanup hardening"
+    - "Independently reproduced live ClickHouse 25.8 AURA-0094 integration: fresh migrations through 0007, ledger-gated rerun, score provenance round-trip, content-free column checks, and score validation boundaries passed (7 passed); exact disposable aura0094-clickhouse-test container was removed."
+    - "Focused ClickHouse/score/final-review tests: 17 passed, 1 opt-in ClickHouse test skipped without its URL; Ruff and Pyright passed"
+    - "Latest focused AURA-0094 run after telemetry fixes: 207 passed, 5 opt-in live-database tests skipped; successful read_artifacts now reports dependency=garage."
+    - "Latest live PostgreSQL 17 run with postgres:17-alpine: 5 passed, including production execution/calibration repositories, exact qualification ID/version/model/artifact/calibration/seed/budget scope and owner authorization, concurrent claims/revocation, restart/replay, and worker local-work terminal retry; exact disposable container removed."
+    - "Latest live ClickHouse 25.8 run: 7 passed; exact disposable container removed."
+    - "Latest deploy test suite: 69 passed. Latest Observatory assigned-test Ruff and Pyright runs passed (Pyright 0 errors); the full Observatory suite was 1075 passed, 15 skipped, 2 warnings."
+    - "Worker lifecycle regression confirms one trace correlation across local-work claim and terminal completion/recovery paths."
+  failed: []
+  not_run:
+    - "Live model acceptance is reserved for AURA-0098; provider coverage uses httpx MockTransport"
+    - "Disposable Garage judge bootstrap failed closed because the existing local Garage state was not healthy; exact containers were removed afterward"
+decisions:
+  - "Use httpx MockTransport and in-memory repositories for provider and artifact tests; no network or secret-bearing fixtures are used."
+  - "Keep the missing-model-name assertion so the provider cannot treat a digest-only or ambiguous inventory response as an exact model match."
+  - "Deployment coverage is static and project-local: it verifies down versus reset volume semantics and that the judge identity/network never reaches Core or normal Observatory services."
+  - "Evaluation-v1 is tested as authoritative: Ollama coverage asserts POST /api/show and POST /api/chat, exact model identity, closed response shape, bounded non-streaming transport, and integer-ppm ensemble admission."
+  - "Concurrent judge redelivery, durable failed-claim recovery, score-store retry, human-review idempotency, qualification authorization/revocation, all additive contract resources, and metadata mismatch boundaries are covered with deterministic fakes."
+  - "Legacy privacy tests distinguish permitted prompt/rubric version and opaque provenance fields from prohibited content-bearing columns, payloads, filenames, endpoints, credentials, and identities."
+  - "Pinned Ollama inventory coverage follows current GET /api/tags and chat messages protocol; ensemble fixtures provide durable qualification projections rather than using the legacy all_qualified boolean as authority."
+  - "An opt-in isolated-schema PostgreSQL test now exercises fresh migration, exact 0010 rerun, required tables, content-column exclusion, definition round-trip, and digest constraints; it is skipped when the repository-scoped database URL is absent."
+  - "Worker tests exercise terminal judge and calibration dispatch, completion persistence, optional-provider behavior, and invalid-work fail-closed handling."
+  - "The final review uses the real EvaluationOrchestrationService over a durable-port fake for claim, completion, failure, and lease-loss transitions; it does not substitute a fake service."
+  - "Exact authorization tests require the owner record, purpose, resource identifier, and opaque scope fingerprint for labels, reviews, qualifications, and revocations; cross-purpose and missing comment-artifact authorization are denied."
+  - "Contract tests mutate every required field of each additive evaluation-v1 resource to missing and null, and reject representative invalid enum values without weakening root closure."
+  - "Judge repository tests round-trip intended_use and artifact_version, while production score-path tests assert qualification provenance, advisory/calibrated disposition, content-free fields, and score-before-completion persistence ordering."
+  - "Local-work coverage now validates typed idempotency/conflict rejection, bounded content-free payloads, in-memory enqueue-to-claim-complete/fail terminal transitions, and the PostgreSQL adapter's persisted job/evaluator/definition/artifact derivation query."
+  - "The corrected PostgreSQL producer now preserves prompt/rubric definition references and rejects incomplete or job/dataset/suite-mismatched artifact joins before insertion."
+  - "Live ClickHouse coverage uses a generated database and the production migration ledger protocol; prompt_version and rubric_version remain bounded provenance metadata while exact content-bearing columns are rejected."
+  - "Latest regressions preserve distinct evaluator/judge/calibration identity and exact seed/budget provenance through contract and PostgreSQL round-trips; concurrent revocation and replay after a repository restart must retain revoked truth."
+  - "Exporter lifecycle coverage now exercises normal drain, terminal transport failure, and cancellation cleanup without exposing provider details."
+  - "Telemetry-fix targeted regressions: read_artifacts Garage dependency and NATS-versus-PostgreSQL dependency attribution both passed (2 passed)."
+  - "Post-fix validators passed: changed-paths, repository-shape, module-registry, service-isolation, observability, contract-change classification, and baseline protection."
+  - "The live worker integration uses the production PostgreSQL orchestration and judge execution repositories with a deterministic provider seam; it verifies durable claim, score/result persistence, terminal completion, failure, requeue, and fresh-worker recovery without content-bearing telemetry."
+  - "Table-driven AURA-0094 contract negatives now cover every additive resource across private fields, digest/byte bounds, capture/advisory conditionals, calibration thresholds, and ensemble member/weight boundaries."
+  - "Live PostgreSQL production repository coverage now round-trips execution claims/results, calibration claims/results, labels, reviews, owner actions, and content-free state; it exercises concurrent claims, stale recovery, idempotency conflicts, and fresh repository instances."
+risks:
+  - "Live model acceptance is reserved for AURA-0098; all provider tests use deterministic httpx MockTransport."
+  - "Earlier disposable Garage bootstrap encountered pre-existing local Garage/PostgreSQL state problems and failed closed; exact test containers were removed afterward."
+  - "Live Ollama acceptance remains unavailable in this slice; provider coverage uses httpx MockTransport and live-model acceptance remains reserved for AURA-0098."
+  - "A separate deploy-test Pyright probe reports the pre-existing test-only BaseHTTPRequestHandler.log_message parameter-name override in deploy/tests/test_aura0094_runtime.py; deploy files were outside this test-only correction scope and were not modified."
+unresolved: []

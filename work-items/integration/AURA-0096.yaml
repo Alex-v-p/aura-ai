@@ -1,0 +1,75 @@
+agent: integration_maintainer
+work_item: AURA-0096
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0096-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0096-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0096-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0096-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0096-test-evaluation.yaml (PASS; test_evaluation_engineer)
+  - work-items/reviews/AURA-0096-ux-ui.yaml (PASS; aura_ux_ui_reviewer)
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/migrations/postgresql/versions/0012_evaluation_experiments.sql
+  - services/aura-observatory/migrations/postgresql/versions/0013_evaluation_experiment_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0009_evaluation_regressions.sql
+checks:
+  passed:
+    - >-
+      Four complete implementation handoffs and six PASS review verdicts
+      validated against implementation-handoff.schema.json and
+      review-verdict.schema.json; no review findings remain.
+    - >-
+      Archived work-item semantic validation and changed-path validation
+      passed for all 58 authorized paths; the active AURA-0096 item was
+      archived with status integrated.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0096.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0096.yaml completed with the expected no-change
+      skip; protected golden results and baselines were not modified.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0096.yaml passed before archival.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests passed.
+    - uv run pyright services/aura-observatory passed with zero diagnostics.
+    - >-
+      uv run pytest services/aura-observatory/tests contracts/tests -q passed:
+      1179 passed, 27 explicitly gated integration tests skipped, and 2
+      existing deprecation warnings.
+    - pnpm --dir frontend nx lint observatory-web passed.
+    - pnpm --dir frontend nx test observatory passed: 41 tests.
+    - pnpm --dir frontend nx test observatory-api-client passed: 6 tests.
+    - pnpm --dir frontend nx build observatory-web --configuration=production passed.
+    - pnpm --dir frontend nx build storybook --configuration=production passed.
+    - >-
+      Generated-client parity and contract checks passed; the complete
+      Playwright matrix passed 264 tests across desktop, tablet, and mobile,
+      including experiment, promotion, retention, SSE recovery, responsive,
+      keyboard, and browser-memory isolation coverage.
+    - git diff --check passed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The delivery lead still needs to create the focused Conventional Commit;
+    no commit or push was performed by integration, leaving the reviewed
+    worktree available for that checkpoint.
+  - >-
+    Live PostgreSQL 17 and ClickHouse 25.8 execution against the shared Docker
+    Desktop project remains unavailable because the existing project database
+    containers are unhealthy. Provider-independent tests, static migration
+    checks, and the recorded deterministic integration evidence passed; this
+    is an external environment constraint and not an AURA-0096 code finding.
+  - >-
+    Local Ollama/provider reachability remains the explicitly accepted,
+    non-blocking provider-unavailable limitation; live provider acceptance is
+    deferred to AURA-0098.

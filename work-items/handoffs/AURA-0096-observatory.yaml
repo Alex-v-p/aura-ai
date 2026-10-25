@@ -1,0 +1,213 @@
+agent: observatory_worker
+work_item: AURA-0096
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0096_observatory
+  worktree: shared
+scope:
+  ownership_zone: services.aura-observatory.experiments-baselines-regressions
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/migrations/postgresql/versions/0012_evaluation_experiments.sql
+  - services/aura-observatory/migrations/postgresql/versions/0013_evaluation_experiment_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0009_evaluation_regressions.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-experiments.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-baselines.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-regressions.yaml
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0089_contract.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0096_experiments.py
+  - services/aura-observatory/tests/test_aura0096_worker.py
+  - tooling/architecture/modules.yaml
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+contracts:
+  changed: true
+migrations:
+  changed: true
+  files:
+    - services/aura-observatory/migrations/postgresql/versions/0012_evaluation_experiments.sql
+    - services/aura-observatory/migrations/postgresql/versions/0013_evaluation_experiment_live_events.sql
+    - services/aura-observatory/migrations/clickhouse/versions/0009_evaluation_regressions.sql
+observability:
+  components:
+    - aura.observatory.evaluation_experiments
+    - aura.observatory.evaluation_baselines
+    - aura.observatory.evaluation_regressions
+  metrics_added:
+    - observatory_evaluation_experiment_operation_count
+    - observatory_evaluation_baseline_operation_count
+    - observatory_evaluation_regression_operation_count
+    - observatory_evaluation_regression_duration_ms
+    - observatory_evaluation_regression_outcome_count
+    - observatory_evaluation_attribution_outcome_count
+  span_components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_experiments
+    - aura.observatory.evaluation_regressions
+    - aura.observatory.live_updates
+  span_operations:
+    - evidence_read
+    - evidence_reference_read
+    - fact_projection_write
+verification:
+  passed:
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed)
+    - uv run pyright services/aura-observatory (0 errors)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0096_worker.py services/aura-observatory/tests/test_aura0095_backend.py -q (48 passed, 2 skipped, 1 warning after versioned live publishing and attribution retention coverage)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1179 passed, 27 skipped, 2 warnings after versioned live publishing and attribution retention coverage)
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed)
+    - uv run pyright services/aura-observatory (0 errors)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 52 changed paths)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0096_worker.py -q (47 passed, 2 skipped, 1 warning after exact-version retention, live-event versioning, shared-lock revalidation, and durable projection cleanup)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1178 passed, 27 skipped, 2 warnings after final retention and projection corrections)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed after allowed-path amendment)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 52 changed paths)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed after live-event resource-version support)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests -q (1158 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1178 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py -q (18 passed, 2 skipped) after write-inflight tombstones, shared retention locks, and exact-version retention plans
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed after write-inflight and exact-version retention changes)
+    - uv run pyright services/aura-observatory (0 errors after write-inflight and exact-version retention changes)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 51 changed paths)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0096_experiments.py -q (45 passed, 2 skipped) after versioned live-event storage and exact retention cleanup
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1178 passed, 27 skipped, 2 warnings) after exact history/live/command version cleanup and writer lease revalidation
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py -q (18 passed, 2 skipped)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed after exact command resource-version linkage)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 51 changed paths)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-generated-sync.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-frontend-boundaries.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -q (123 passed, 11 skipped)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1176 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1176 passed, 27 skipped, 2 warnings) after pending-command history repair, complete-threshold outbox terminal handling, and authoritative variant-component validation
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed after typed retention and projection changes)
+    - uv run pyright services/aura-observatory (0 errors after typed retention and projection changes)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 51 changed paths)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py -q (16 passed, 2 skipped)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed after dataset-binding composition)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0096.yaml (passed/skipped: no protected baseline changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: 51 changed paths authorized)
+    - focused in-memory experiment→baseline candidate→manual promotion→regression smoke (passed)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1173 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_worker.py services/aura-observatory/tests/test_aura0092_worker.py -q (6 passed, 1 warning)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1176 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1176 passed, 27 skipped, 2 warnings) after per-cohort evidence, retention-union, capture-boundary, and command-lease corrections
+    - uv run ruff check services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py services/aura-observatory/tests/test_aura0096_worker.py (passed)
+    - uv run pyright services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py (0 errors)
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed)
+    - uv run pyright services/aura-observatory (0 errors)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1176 passed, 27 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py contracts/tests/test_aura0096_experiment_contracts.py -q (21 passed, 2 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py -q (15 passed, 2 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0090_storage.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -q (203 passed, 3 skipped)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0096.yaml (passed/skipped: no protected baseline changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0096.yaml (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0096_worker.py -q (17 passed, 2 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py services/aura-observatory/tests/test_aura0089_contract.py contracts/tests/test_aura0096_experiment_contracts.py -q (64 passed, 2 skipped)
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests (passed)
+    - uv run pyright services/aura-observatory (0 errors)
+  failed:
+    - none
+  not_run:
+    - full fresh/upgraded PostgreSQL and ClickHouse AURA-0096 integration (local Observatory PostgreSQL volume is unhealthy with missing global/pg_filenode.map; ClickHouse migration failure was reproduced on 25.8.33.6 and fixed by removing nullable ORDER BY UUIDs, but rerun is pending healthy databases)
+    - frontend and browser acceptance (owned by frontend/test workers)
+decisions:
+  - Keep experiment, baseline, and regression state Observatory-owned and content-free; source result/score references are opaque identities.
+  - Use PostgreSQL JSON projections for authoritative immutable resources and ClickHouse bounded comparison facts; no Core imports or tables.
+  - Treat persisted result envelopes as an opaque boundary and accept only closed data.provenance metadata with exact suite/evaluator/component/model/deployment/reproducibility/case/result identities; this slice restricts experiment comparison capture to metadata_only.
+  - Record every threshold projection in a PostgreSQL restart-safe outbox and mark it applied only after ClickHouse success; retention selects regression identities from PostgreSQL before deleting ClickHouse facts.
+  - Reconcile projection outbox rows with bounded leases and tombstones so provider failures and retention races remain restart-safe; generic baseline writes stay insert-only and only the fenced promotion operation changes promotion fields.
+  - Route result and score reads through explicit EvaluationResultReferencePort and EvaluationScoreReferencePort boundaries; comparison code does not query sibling-owned tables directly.
+  - Persist canonical capture authorization and execution limits in experiment projections, validate model digests/full component provenance and receipt time ranges, and use stable ClickHouse deduplication tokens for replayed facts.
+  - The dedicated evaluation worker performs one bounded `recover_projection_outbox(limit=16)` startup drain and continues one bounded page per poll interval until shutdown; the task is cancelled with the worker and shares its bounded metrics sink.
+  - Regression operation counters use the manifest-declared operation/outcome label set; public command boundaries emit bounded failure spans and metrics for validation, conflicts, not-found, provider, and storage failures.
+  - Observation cutoff/purge delegates projection identity selection, tombstoning, and PostgreSQL deletion to the typed experiment-retention port before paged ClickHouse fact deletion; no AURA-0096 table SQL remains in the operational query adapter.
+  - Regression attribution identities are deterministic by regression identity/version, so a crash after the immutable resource/outbox commit can replay the same response and finish projection/history recovery.
+  - Evaluation score-reference and experiment-retention boundaries are exported typed ports; deletion composition injects the explicit regression-fact deletion port.
+  - Fence command completion and promotion with the exact unexpired lease token; baseline promotion uniqueness is baseline identity plus version and conflicting owners receive a conflict.
+  - Represent missing or insufficient metric evidence as explicit unavailable/inconclusive outcomes without statistical claims or automatic promotion.
+  - Use the existing owner/CSRF/idempotency boundary and dedicated evaluation SSE ledger for additive routes and notifications.
+  - Preserve the accepted AURA-0096 migration and contract surface despite stale earlier-work-item inventory assertions.
+  - Admit optional, closed suite variantBindings as the authoritative source for model, component, configuration, prompt, policy, and deployment provenance; experiment creation fails closed when no authoritative variant binding exists rather than trusting caller-only provenance.
+  - Add a resource UUID to the durable experiment command ledger so targeted dataset/suite/job retention fences only pending null-replay commands linked to selected resources; suite selectors also remove standalone experiments with no result receipts.
+  - Compare candidate and baseline stable replay controls independently from variant-specific prompt/policy revisions; source receipt range must equal authoritative minimum and maximum receipt timestamps.
+  - Persist a suite-resolved experiment-to-dataset index through the existing definition repository port, allowing dataset retention to remove standalone experiments without querying definition-owned tables.
+  - Evaluate every selected cohort independently with its explicit case set; aggregate threshold facts remain bounded while attribution records only cohorts whose deterministic outcome is regressed or unchanged.
+  - Complete the durable command before ClickHouse projection and rely on pending projection outbox rows for restart-safe fact recovery; no lease renewal is attempted after completion.
+  - Require result capture authorization and suite dataset binding to equal canonical admitted request metadata before baseline or regression evidence is accepted.
+  - Enforce submitted variant component provenance against the selected authoritative suite variant binding, including code, image, and configuration revisions; caller-only component provenance cannot pass admission.
+  - Persist one projection-outbox fact for every threshold, including missing, partial, insufficient, late, and incompatible states, so reconciliation never infers incomplete evidence from absent payload fields; terminal no-row timing uses the actual projection operation start.
+  - Move operational ClickHouse regression-fact deletion behind the typed ExperimentRegressionFactStore port and perform it before PostgreSQL identity deletion, preserving retryable identities across provider outages.
+  - Fence cutoff command replay, promotion replay, lifecycle history, and live events by the exact selected experiment/baseline/regression identities in addition to temporal predicates; cutoff selection includes standalone experiments by resource creation time.
+  - Replace dynamic retention selectors and duplicate projection recovery lookup with typed required ports; command-history reconciliation uses a durable per-command marker and oldest-first bounded pages to drain gaps beyond the latest page.
+  - Keep component failure spans within the allowlisted error vocabulary, mapping domain conflicts/not-found/invalid input to validation and unexpected provider failures to provider_failure.
+  - Repair pending command rows whose immutable resource commit survived a crash: expired pending claims are reconstructed from the service-owned resource JSON, completed with a replay, then reconciled into canonical history; create experiment/baseline commands complete before their history side effect so the durable marker closes the remaining history crash window.
+  - Mark terminal no-row projection outbox entries applied using the claimed lease even when the initial persist call did not supply a lease; non-terminal empty projections fail and remain retryable.
+  - Store the immutable resource version alongside every durable command claim; recovery binds pending resource JSON by exact ID and version rather than selecting a latest row.
+  - Tombstone exact projection IDs before cross-store ClickHouse deletion and retain cleanup_pending rows until exact fact deletion succeeds; compensation never deletes sibling threshold projections.
+  - Persist the operational retention receipts_deleted phase only after the experiment projection owner completes. A recovered receipts_deleted action retries projections before completion, so a provider outage cannot skip the AURA-0096 phase.
+  - Recreate the command resource index with the immutable resource version key so upgrades from the earlier index shape remain query-safe and reruns are idempotent.
+  - Mark every projection write in-flight before ClickHouse insertion and serialize writer, retention fencing, and cleanup by the same regression identity advisory lock; cleanup claims return that identity and hold the lock through exact deletion.
+  - Carry one immutable retention plan of exact resource ID/version pairs through PostgreSQL fencing, version-aware ClickHouse fact deletion, and PostgreSQL finalization; no post-fence selector is recomputed.
+  - Retention regression selection resolves the cutoff against both immutable regression ID and version, preserving newer versions that share an older resource ID.
+  - Projection fences use the same exact regression ID/version pairs as the retention plan; legacy ID-only fencing remains only for compatibility callers outside the fixed operational plan.
+  - Persist live-event resource versions additively in 0013 and clean history, live notifications, and command/replay rows with exact resource ID/version predicates; legacy versionless rows are preserved rather than broadly deleted.
+  - Revalidate the projection row after acquiring the shared regression lock and before ClickHouse insertion, so a retention fence observed before lock acquisition aborts the stale writer.
+  - Thread immutable experiment, baseline, regression, and attribution versions through the application live-event publisher; retention plans carry attribution ID/version pairs so exact cleanup removes derived lifecycle rows without touching newer same-ID versions.
+risks:
+  - Local disposable Observatory PostgreSQL state is currently unhealthy after Compose recreation; no destructive reset was performed by this worker.
+unresolved:
+  - Integration maintainer must recreate only the scoped Observatory database state, rerun PostgreSQL 17 and ClickHouse 25.8 fresh/upgrade/idempotent migrations, and complete live promotion/projection/retention coverage.
+  - Live PostgreSQL 17 and ClickHouse 25.8 fresh/upgrade/idempotent migration and promotion/projection/retention integration remains for the integration maintainer after scoped database recovery; local browser/frontend acceptance remains owned by frontend/test workers.

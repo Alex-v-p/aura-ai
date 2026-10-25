@@ -1,0 +1,185 @@
+id: AURA-0079
+title: Export Core telemetry and deploy the isolated Observatory stack
+status: integrated
+change_class: repository_governance
+intent: >
+  Export already-redacted Core telemetry through an optional independent OTLP
+  path and deploy an opt-in owner-only Observatory stack whose absence or
+  failure cannot affect normal Aura operation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Observatory is an opt-in Compose profile with a separate Authentik client audience owner subject and session boundary.
+    - Owner-approved Observatory state uses the existing encrypted state-root and file-injected secret standard with no application field encryption.
+  contracts:
+    - contracts/telemetry/v1/metadata-observation.schema.json
+feature_references:
+  - OBS-001
+  - OBS-003
+  - OBS-004
+  - OBS-005
+  - OBS-025
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - aura-core.platform.telemetry
+  - aura-core.runtime.configuration
+  - aura-core.entrypoints.composition
+  - aura-observatory.authentication
+  - aura-observatory.runtime.configuration
+  - deployment.compose
+  - deployment.docker
+  - deployment.authentik
+  - evaluation.observatory-export-deployment
+allowed_paths:
+  - work-items/active/AURA-0079.yaml
+  - work-items/archived/AURA-0079.yaml
+  - work-items/handoffs/AURA-0079-*.yaml
+  - work-items/reviews/AURA-0079-*.yaml
+  - work-items/integration/AURA-0079.yaml
+  - pyproject.toml
+  - uv.lock
+  - .env.example
+  - compose.yaml
+  - deploy/authentik/**
+  - deploy/compose/**
+  - deploy/docker/**
+  - deploy/tests/**
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/resources/component-manifests/**
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_observability_lifecycle.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/**
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/tests/**
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/**
+  - services/aura-observatory/migrations/**
+  - frontend/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected:
+    - contracts/telemetry/v1/metadata-observation.schema.json
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: true
+  affected_components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+  required_metrics:
+    - telemetry_export_accepted_count
+    - telemetry_export_failure_count
+    - telemetry_export_dropped_count
+    - telemetry_export_retry_count
+    - telemetry_export_duration_ms
+  required_evaluators:
+    - telemetry_export_metadata_only
+    - telemetry_export_failure_isolation
+    - observatory_deployment_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Core exports only fields accepted by the closed metadata observation contract and never exports user content credentials endpoints or owner identity.
+    - Structured container logging remains independent and an unavailable Collector cannot delay or fail Core startup readiness requests workers or scheduling.
+    - Observatory uses a separate Authentik client audience owner subject session namespace credential and browser origin.
+    - Browser sessions use server-side storage HttpOnly cookies explicit SameSite rotation logout clearing and origin-aware CSRF protection.
+    - All Observatory state uses the required encrypted state root and credentials are injected through files without source log URL or browser exposure.
+    - Observatory databases Collector and ingest boundary remain private and only the browser-facing origin is loopback-published.
+  data_classes:
+    - operational_metadata
+    - opaque_trace_identifiers
+    - opaque_run_identifiers
+    - deployment_metadata
+    - oidc_session_metadata
+    - service_credentials
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Core retains structured container-log export and optionally fans already-redacted batches to the Collector through an independent bounded background sink.
+  - Core export adds only configured deployment git host environment and service-role metadata and produces instances valid under telemetry v1 without user-derived high-cardinality fields.
+  - Collector or Observatory outage produces bounded retry drop and health counters while Core startup readiness HTTP worker and scheduler behavior remain successful.
+  - An opt-in observatory Compose profile provides Observatory API ingest worker migration PostgreSQL ClickHouse dedicated session storage and OpenTelemetry Collector on isolated networks.
+  - Observatory persistent volumes live under AURA_STATE_ROOT and all database OIDC ingest and session credentials use file-backed Compose secrets.
+  - Only the Observatory browser origin is loopback-published at observatory.localhost port 4300 and non-disposable configuration requires stable HTTPS and secure cookies.
+  - Authentik defines a separate Observatory client audience and callback and Observatory authorizes exactly the configured issuer-subject owner without inventing household roles.
+  - Same-origin Observatory BFF login callback session logout and CSRF behavior keeps bearer and refresh credentials server-side and out of browser storage URLs and SSE parameters.
+  - The existing Aura stack remains valid without the observatory profile and no Core database schema frontend feature evaluation judge alert or telemetry content capture is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0079.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0079.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0079.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0079.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0079.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv lock --check
+  - uv run pyright services/aura-core services/aura-observatory
+  - uv run ruff check services/aura-core/src services/aura-core/tests services/aura-observatory deploy
+  - uv run pytest services/aura-core/tests services/aura-observatory/tests deploy/tests
+  - python3 deploy/compose/test_topology.py
+  - docker compose --env-file .env config --quiet
+  - docker compose --env-file .env --profile observatory config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

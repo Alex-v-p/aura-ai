@@ -1,0 +1,72 @@
+agent: observatory_worker
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0084_retention_storage
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.auth-session
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run ruff check
+      src/aura_observatory/adapters/query.py
+      tests/test_aura0080_formal_regressions.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run pyright
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0084-uv uv run pytest
+      services/aura-observatory/tests -q (297 passed, 1 warning)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role observatory_worker --path
+      services/aura-observatory/src/aura_observatory/adapters/query.py --path
+      services/aura-observatory/src/aura_observatory/query.py --path
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Encode all adapter-generated ClickHouse DateTime64 literals as UTC
+    space-separated millisecond timestamps. This keeps the public RFC3339
+    contract unchanged while avoiding parser-sensitive T/Z literals in
+    retention cutoffs, bounded query filters, cursors, and component health.
+  - >-
+    Keep the conversion at the query adapter boundary; stored observations,
+    API timestamps, and Core/Observatory contracts remain unchanged.
+  - >-
+    Compare PostgreSQL UUID receipt identities to VARCHAR retention target
+    identities by casting the UUID to text. This preserves the existing
+    schema and avoids an implicit operator-resolution failure on populated
+    stacks.
+  - >-
+    Failed durable retention actions become eligible for retry only after a
+    fixed five-second delay using the existing completed_at field, preventing
+    a failed action from hot-looping while retaining restart recovery.
+  - >-
+    Receipt keyset and deletion predicates explicitly cast UUID parameters to
+    uuid/uuid[] where needed, keeping all PostgreSQL receipt cleanup paths
+    schema-consistent without a destructive migration.
+risks:
+  - >-
+    The disposable Docker full-stack acceptance could not be rerun in this
+    worker because the sandbox cannot access the host Docker socket; the
+    service-owned regression suite and static checks pass.
+unresolved: []

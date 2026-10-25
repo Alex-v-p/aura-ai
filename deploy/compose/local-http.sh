@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Start Aura with a disposable, loopback-only HTTP Authentik deployment.  This
-# script owns only ignored local state (.env.local-http and one password file);
-# it never edits the tracked .env or emits credentials.
+# Start Aura with a disposable, loopback-only HTTP Authentik deployment. This
+# script owns only the ignored local identity inputs (.env.local-http and one
+# password file), plus the optional loopback Ollama relay; Compose owns the
+# disposable named volumes. It never edits the tracked .env or emits credentials.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 ENV_FILE=${AURA_ENV_FILE:-"$ROOT/.env"}
 LOCAL_ENV_FILE=${AURA_LOCAL_ENV_FILE:-"$ROOT/.env.local-http"}
 COMPOSE=(docker compose --env-file "$ENV_FILE" --env-file "$LOCAL_ENV_FILE" \
   -f "$ROOT/compose.yaml" -f "$ROOT/deploy/compose/local-identity.yaml" \
-  -f "$ROOT/deploy/compose/local-http.yaml" --profile local-identity)
+  -f "$ROOT/deploy/compose/local-http.yaml" --profile local-identity \
+  --profile observatory)
 COMPOSE_BOOTSTRAP=("${COMPOSE[@]}" --profile local-http-bootstrap)
 # Compose gives ambient shell variables precedence over every --env-file.
-# Remove only the fixed local-HTTP identity values so generated .env.local-http
-# remains authoritative for AURA_OWNER_SUBJECT and optional values keep their
-# normal configured precedence.
+# Remove only the fixed local-HTTP identity and relay URL values so generated
+# .env.local-http remains authoritative for owner/relay settings and optional
+# values keep their normal configured precedence.
 COMPOSE_ENV_UNSET=(env
   -u AURA_PUBLIC_ORIGIN
   -u AURA_OIDC_ISSUER
@@ -23,8 +25,15 @@ COMPOSE_ENV_UNSET=(env
   -u AURA_OIDC_CLIENT_ID
   -u AURA_OIDC_REDIRECT_URI
   -u AURA_OWNER_SUBJECT
+  -u AURA_OBSERVATORY_OWNER_SUBJECT
   -u AURA_SECURE_COOKIES
   -u AUTHENTIK_HOST_BROWSER)
+COMPOSE_ENV_UNSET+=( -u AURA_OLLAMA_URL )
+COMPOSE_ENV_UNSET+=( -u AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN )
+
+OLLAMA_RELAY_UNIT=aura-local-ollama-relay.service
+OLLAMA_RELAY_STARTED=0
+OLLAMA_RELAY_URL=
 
 die() {
   printf 'local-http: %s\n' "$1" >&2
@@ -60,6 +69,111 @@ absolute_path() {
     /*) printf '%s' "$1" ;;
     *) printf '%s/%s' "$ROOT" "$1" ;;
   esac
+}
+
+validate_relay_port() {
+  local port=$1
+  [[ "$port" =~ ^[0-9]{1,5}$ ]] || die "AURA_LOCAL_OLLAMA_RELAY_PORT must be 1-5 decimal digits"
+  (( 10#$port >= 1 && 10#$port <= 65535 )) || die "AURA_LOCAL_OLLAMA_RELAY_PORT must be 1-65535"
+}
+
+validate_relay_target() {
+  local target=$1 host port octet octet_a octet_b octet_c octet_d
+  [[ "$target" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$ ]] ||
+    die "AURA_LOCAL_OLLAMA_RELAY_TARGET must be an IPv4 address and port"
+  host=${target%:*}
+  port=${target##*:}
+  IFS=. read -r octet_a octet_b octet_c octet_d <<<"$host"
+  for octet in "$octet_a" "$octet_b" "$octet_c" "$octet_d"; do
+    (( 10#$octet >= 0 && 10#$octet <= 255 )) || die "AURA_LOCAL_OLLAMA_RELAY_TARGET has an invalid IPv4 address"
+  done
+  validate_relay_port "$port"
+  case "$host" in
+    127.*|10.*|192.168.*) ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) ;;
+    *) die "AURA_LOCAL_OLLAMA_RELAY_TARGET must be loopback or RFC1918" ;;
+  esac
+}
+
+validate_local_judge_origin() {
+  local origin=$1 relay_port=${2:-}
+  if [ "$origin" = "http://host.docker.internal:11434" ]; then
+    return 0
+  fi
+  if [ -n "$relay_port" ] && [ "$origin" = "http://host.docker.internal:$relay_port" ]; then
+    return 0
+  fi
+  die "AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN must be the fixed host-gateway Ollama origin or the generated local relay"
+}
+
+stop_ollama_relay() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  if systemctl --user show "$OLLAMA_RELAY_UNIT" >/dev/null 2>&1; then
+    systemctl --user stop "$OLLAMA_RELAY_UNIT" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$OLLAMA_RELAY_UNIT" >/dev/null 2>&1 || true
+  fi
+}
+
+cleanup_failed_up() {
+  local status=$?
+  trap - ERR INT TERM EXIT
+  if [ "$status" -ne 0 ] && [ "$OLLAMA_RELAY_STARTED" -eq 1 ]; then
+    stop_ollama_relay
+    OLLAMA_RELAY_STARTED=0
+  fi
+  return "$status"
+}
+
+cleanup_interrupted_up() {
+  local status=$1
+  trap - ERR INT TERM EXIT
+  if [ "$OLLAMA_RELAY_STARTED" -eq 1 ]; then
+    stop_ollama_relay
+    OLLAMA_RELAY_STARTED=0
+  fi
+  exit "$status"
+}
+
+start_ollama_relay() {
+  local target relay_port target_host target_port target_first_octet
+  local -a relay_command
+  OLLAMA_RELAY_STARTED=0
+  OLLAMA_RELAY_URL=
+  target=$(configured_value AURA_LOCAL_OLLAMA_RELAY_TARGET)
+  stop_ollama_relay
+  [ -n "$target" ] || return 0
+  relay_port=$(configured_value AURA_LOCAL_OLLAMA_RELAY_PORT)
+  relay_port=${relay_port:-11435}
+  validate_relay_target "$target"
+  validate_relay_port "$relay_port"
+  command -v systemd-run >/dev/null 2>&1 || die "AURA_LOCAL_OLLAMA_RELAY_TARGET requires systemd-run"
+  command -v systemctl >/dev/null 2>&1 || die "AURA_LOCAL_OLLAMA_RELAY_TARGET requires systemctl"
+  command -v socat >/dev/null 2>&1 || die "AURA_LOCAL_OLLAMA_RELAY_TARGET requires socat"
+  target_host=${target%:*}
+  target_port=${target##*:}
+  target_first_octet=${target_host%%.*}
+  if (( 10#$target_first_octet == 127 && 10#$target_port == 10#$relay_port )); then
+    die "AURA_LOCAL_OLLAMA_RELAY_TARGET must not self-forward the loopback listener"
+  fi
+  relay_command=(
+    socat
+    "TCP-LISTEN:${relay_port},bind=127.0.0.1,reuseaddr,fork"
+    "TCP:${target_host}:${target_port}"
+  )
+  systemd-run --user --quiet --unit="$OLLAMA_RELAY_UNIT" --collect \
+    --property=Restart=on-failure --property=RestartSec=2s -- \
+    "${relay_command[@]}" ||
+    die "could not start the loopback Ollama relay"
+  OLLAMA_RELAY_STARTED=1
+  trap cleanup_failed_up ERR EXIT
+  trap 'cleanup_interrupted_up 130' INT
+  trap 'cleanup_interrupted_up 143' TERM
+  if ! systemctl --user is-active --quiet "$OLLAMA_RELAY_UNIT"; then
+    stop_ollama_relay
+    OLLAMA_RELAY_STARTED=0
+    die "the loopback Ollama relay did not remain active"
+  fi
+  OLLAMA_RELAY_URL=http://host.docker.internal:$relay_port
 }
 
 ensure_owner_password() {
@@ -116,8 +230,223 @@ while True:
 PY
 }
 
+ensure_local_secret() {
+  local key=$1 kind=$2 configured path default_path managed_default=0
+  configured=$(configured_value "$key")
+  case "$key" in
+    AURA_NATS_BOOTSTRAP_PASSWORD_FILE) default_path=./.secrets/aura-nats-bootstrap-password ;;
+    AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE) default_path=./.secrets/aura-evaluation-runner-database-password ;;
+    AURA_NATS_DISPATCH_PASSWORD_FILE) default_path=./.secrets/aura-nats-dispatch-password ;;
+    AURA_NATS_RUNNER_PASSWORD_FILE) default_path=./.secrets/aura-nats-runner-password ;;
+    AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_API_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-api-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_API_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-api-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-judge-garage-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-judge-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE)
+      default_path=./.secrets/aura-evaluation-runner-garage-access-key
+      managed_default=1
+      ;;
+    AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE)
+      default_path=./.secrets/aura-evaluation-runner-garage-secret-key
+      managed_default=1
+      ;;
+  esac
+  if [ -z "$configured" ]; then
+    configured=$default_path
+  fi
+  path=$(absolute_path "$configured")
+  [ -n "$configured" ] || die "$key must be configured"
+  default_absolute=
+  if [ -n "$default_path" ]; then
+    default_absolute=$(absolute_path "$default_path")
+  fi
+  umask 077
+  mkdir -p "$(dirname -- "$path")"
+  AURA_LOCAL_DEFAULT_SECRET_PATH="$default_absolute" python3 - "$path" "$kind" "$managed_default" <<'PY'
+import os
+import re
+import secrets
+import stat
+import sys
+
+path, kind, managed_default = sys.argv[1:]
+default_absolute = os.environ.get("AURA_LOCAL_DEFAULT_SECRET_PATH", "")
+managed_default = (
+    managed_default == "1"
+    and (not default_absolute or os.path.abspath(path) == os.path.abspath(default_absolute))
+)
+if not hasattr(os, "O_NOFOLLOW"):
+    raise SystemExit("local secret creation requires no-follow filesystem support")
+
+
+def validate_existing() -> None:
+    metadata = os.lstat(path)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit("local secret path must be a regular file")
+    if metadata.st_mode & 0o077 or not metadata.st_mode & 0o400:
+        raise SystemExit("local secret file permissions must be owner-readable only")
+    if metadata.st_size == 0:
+        raise SystemExit("local secret file is empty")
+
+
+def read_bounded(descriptor: int, limit: int) -> bytes:
+    payload = bytearray()
+    while len(payload) <= limit:
+        chunk = os.read(descriptor, limit + 1 - len(payload))
+        if not chunk:
+            break
+        payload.extend(chunk)
+    return bytes(payload)
+
+
+def valid_garage_credential() -> bool:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        limit = 27 if kind == "garage-access" else 65
+        payload = read_bounded(descriptor, limit)
+    finally:
+        os.close(descriptor)
+    if payload.endswith(b"\n"):
+        payload = payload[:-1]
+    pattern = br"GK[0-9a-f]{24}" if kind == "garage-access" else br"[0-9a-f]{64}"
+    return re.fullmatch(pattern, payload) is not None
+
+
+def write_payload(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        offset += os.write(descriptor, payload[offset:])
+    os.fchmod(descriptor, 0o600)
+    os.fsync(descriptor)
+
+
+def rotate_invalid_default_credential() -> None:
+    parent = os.path.dirname(path) or "."
+    basename = os.path.basename(path)
+    if kind == "garage-access":
+        value = "GK" + secrets.token_hex(12)
+    elif kind == "garage-secret":
+        value = secrets.token_hex(32)
+    else:
+        raise SystemExit("unsupported local credential rotation kind")
+    payload = (value + "\n").encode("ascii")
+    temporary_path = None
+    descriptor = None
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    try:
+        for _ in range(32):
+            candidate = os.path.join(
+                parent, f".{basename}.tmp-{secrets.token_hex(16)}"
+            )
+            try:
+                descriptor = os.open(candidate, flags, 0o600)
+            except FileExistsError:
+                continue
+            temporary_path = candidate
+            break
+        if descriptor is None or temporary_path is None:
+            raise SystemExit("could not create a secure temporary Garage credential file")
+        try:
+            write_payload(descriptor, payload)
+        finally:
+            os.close(descriptor)
+            descriptor = None
+        current = os.lstat(path)
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_dev != existing.st_dev
+            or current.st_ino != existing.st_ino
+            or current.st_mode & 0o077
+            or not current.st_mode & 0o400
+        ):
+            raise SystemExit("local secret path changed while rotating Garage credential")
+        os.replace(temporary_path, path)
+        temporary_path = None
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory_descriptor = os.open(parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
+if os.path.lexists(path):
+    validate_existing()
+    if kind in ("garage-access", "garage-secret") and not valid_garage_credential():
+        if not managed_default:
+            raise SystemExit("local Garage credential has an invalid provider format")
+        existing = os.lstat(path)
+        rotate_invalid_default_credential()
+    raise SystemExit(0)
+
+if kind == "garage-access":
+    value = "GK" + secrets.token_hex(12)
+elif kind == "garage-secret":
+    value = secrets.token_hex(32)
+elif kind == "nats":
+    value = secrets.token_urlsafe(32)
+elif kind == "database":
+    value = secrets.token_urlsafe(48)
+else:
+    raise SystemExit("unknown generated local secret kind")
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+descriptor = os.open(path, flags, 0o600)
+try:
+    payload = (value + "\n").encode("utf-8")
+    write_payload(descriptor, payload)
+finally:
+    os.close(descriptor)
+PY
+}
+
+ensure_evaluation_secrets() {
+  ensure_local_secret AURA_NATS_BOOTSTRAP_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_DISPATCH_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_RUNNER_PASSWORD_FILE nats
+  ensure_local_secret AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE database
+  ensure_local_secret AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_API_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_API_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE garage-secret
+}
+
 write_local_environment() {
-  local subject=$1 owner_username owner_name owner_password_file temp
+  local subject=$1 relay_url=${2:-} owner_username owner_name owner_password_file temp
   case $subject in
     ""|*[!A-Za-z0-9._:-]*) die "invalid generated owner subject" ;;
   esac
@@ -127,6 +456,9 @@ write_local_environment() {
   owner_username=${owner_username:-aura-owner}
   owner_name=${owner_name:-Aura Owner}
   owner_password_file=${owner_password_file:-./.secrets/authentik-owner-password}
+  if [ -n "$relay_url" ]; then
+    validate_local_judge_origin "$relay_url" "${relay_url##*:}"
+  fi
   case "$owner_username$owner_name$owner_password_file" in
     *$'\n'*|*$'\r'*) die "local identity values must be single-line values" ;;
   esac
@@ -140,12 +472,17 @@ AURA_OIDC_AUDIENCE=aura-web
 AURA_OIDC_CLIENT_ID=aura-web
 AURA_OIDC_REDIRECT_URI=http://aura.localhost:4200/api/v1/auth/callback
 AURA_OWNER_SUBJECT=$subject
+AURA_OBSERVATORY_OWNER_SUBJECT=$subject
 AURA_SECURE_COOKIES=false
 AUTHENTIK_HOST_BROWSER=http://authentik.localhost:9000
 AUTHENTIK_OWNER_USERNAME=$owner_username
 AUTHENTIK_OWNER_NAME=$owner_name
 AUTHENTIK_OWNER_PASSWORD_FILE=$owner_password_file
 EOF
+  if [ -n "$relay_url" ]; then
+    printf 'AURA_OLLAMA_URL=%s\n' "$relay_url" >>"$temp"
+    printf 'AURA_OBSERVATORY_LOCAL_JUDGE_ORIGIN=%s\n' "$relay_url" >>"$temp"
+  fi
   mv -f "$temp" "$LOCAL_ENV_FILE"
 }
 
@@ -154,36 +491,57 @@ compose() {
 }
 
 bootstrap_owner() {
-  local output subject
+  local output subject relay_url=$1
   output=$("${COMPOSE_ENV_UNSET[@]}" "${COMPOSE_BOOTSTRAP[@]}" run --rm authentik-owner-bootstrap 2>&1) || {
     printf '%s\n' "$output" >&2
     die "Authentik owner bootstrap failed"
   }
   subject=$(printf '%s\n' "$output" | awk -F= '/^AURA_OWNER_SUBJECT=/{value=$2} END{print value}')
   [ -n "$subject" ] || die "owner bootstrap did not return a subject"
-  write_local_environment "$subject"
+  write_local_environment "$subject" "$relay_url"
 }
 
 up() {
+  local relay_url
   [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; copy .env.example to .env first"
   ensure_owner_password
+  ensure_evaluation_secrets
+  start_ollama_relay
+  relay_url=$OLLAMA_RELAY_URL
   # Compose interpolates the whole project before selecting services.  A
   # temporary non-empty subject lets us start Authentik before discovering the
   # real hashed subject; it is replaced atomically after bootstrap.
   if [ ! -f "$LOCAL_ENV_FILE" ]; then
-    write_local_environment bootstrap-pending
+    write_local_environment bootstrap-pending "$relay_url"
   fi
   compose up --build --detach --wait authentik-server authentik-worker
-  bootstrap_owner
+  bootstrap_owner "$relay_url"
   compose up --build --detach --wait
+  trap - ERR INT TERM EXIT
 }
 
 down() {
+  stop_ollama_relay
   [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; copy .env.example to .env first"
   if [ -f "$LOCAL_ENV_FILE" ]; then
     compose down --remove-orphans
   else
     printf 'local-http: no local HTTP environment exists; nothing to stop\n'
+  fi
+}
+
+reset() {
+  stop_ollama_relay
+  [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; copy .env.example to .env first"
+  if [ -f "$LOCAL_ENV_FILE" ]; then
+    # All durable mounts in the disposable overlay are project-scoped named
+    # volumes. This explicit command is the only local launcher operation that
+    # removes them; normal `down` preserves the disposable state.
+    compose down --volumes --remove-orphans
+    rm -f -- "$LOCAL_ENV_FILE"
+    printf 'local-http: disposable state reset; owner password file preserved\n'
+  else
+    printf 'local-http: no local HTTP environment exists; nothing to reset\n'
   fi
 }
 
@@ -205,6 +563,7 @@ verify_idempotency() {
 case ${1:-up} in
   up) up ;;
   down) down ;;
+  reset) reset ;;
   verify-idempotency) verify_idempotency ;;
-  *) die "usage: $0 {up|down|verify-idempotency}" ;;
+  *) die "usage: $0 {up|down|reset|verify-idempotency}" ;;
 esac

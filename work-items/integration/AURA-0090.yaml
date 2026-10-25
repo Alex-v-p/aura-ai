@@ -1,0 +1,66 @@
+agent: integration_maintainer
+work_item: AURA-0090
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0090-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0090-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0090-security.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0090-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0090-test-evaluation.yaml (PASS; test_evaluation_engineer)
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Work-item validation, changed-path validation, repository-shape,
+      module-registry, service-isolation, observability, baseline-protection,
+      and contract-change validation passed; baseline and contract checks
+      reported no applicable changes.
+    - >-
+      Observatory Ruff passed, Pyright reported 0 errors, and the complete
+      Observatory suite passed: 643 passed and 4 skipped.
+    - >-
+      Architecture tooling and repository validators passed; Compose topology
+      tests passed: 49 tests; AURA-0090 deployment topology tests passed: 10
+      tests.
+    - >-
+      Compose configuration rendering with the observatory profile passed,
+      shell syntax checks passed, and git diff --check passed.
+    - >-
+      User-run Docker evidence confirms image build and stack startup reached
+      the Observatory migration phase successfully; the four AURA-0090 delta
+      reviews remain PASS after the migration correction.
+    - >-
+      Final real-stack evidence in
+      `/tmp/aura-observatory-e2e-final3.UgUYDY.log` exited 0 and covered
+      production score discovery/readback, job/dataset/suite/cutoff/purge-all
+      selectors, missing-object idempotency, worker restart recovery,
+      metadata privacy scanning, browser/session lifecycle, and Core
+      independence after Observatory shutdown.
+    - >-
+      The final full-stack browser acceptance passed its real Core-to-SSE
+      scenario, session preservation, reset and reauthentication, and Core
+      usability-after-Observatory-stop phases; teardown completed with only
+      non-product disposable-network cleanup noise.
+    - >-
+      The ClickHouse 25.8 migration correction changed nullable outcome columns
+      from `Nullable(LowCardinality(String))` to
+      `LowCardinality(Nullable(String))`, and the corrected score migration
+      plus rerun tests passed without changing protected baselines.
+    - >-
+      All five current-diff review verdicts are PASS with no findings, and the
+      complete changed-path scope is authorized by AURA-0090.
+  failed:
+    []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The full-stack acceptance used a disposable stack; operators must continue
+    to provision the separate Observatory Garage credentials and encrypted
+    state-root mounts according to the deployment configuration.
+  - >-
+    Evaluation API, orchestration, datasets, judges, experiments, baselines,
+    and browser product workflows remain intentionally deferred to AURA-0091
+    through AURA-0096.

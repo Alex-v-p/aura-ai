@@ -1,0 +1,94 @@
+agent: contract_steward
+work_item: AURA-0080
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0080_contracts
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: contracts.openapi.observatory-v1 and frontend.platform.observatory-api-client
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/README.md
+  - frontend/libs/platform/observatory-api-client/package.json
+  - frontend/libs/platform/observatory-api-client/project.json
+  - frontend/libs/platform/observatory-api-client/src/index.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - frontend/libs/platform/observatory-api-client/tsconfig.lib.json
+  - frontend/tsconfig.base.json
+  - work-items/handoffs/AURA-0080-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; the Observatory API producer and test/evaluation owners were directed to align with this authoritative contract and no other agent is authorized to revise the contract-owned paths
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added the owner-cookie-protected Observatory REST contract for overview, paginated run search, run and trace detail, component health, deployment catalogue, and asynchronous retention commands.
+        - Added authenticated same-origin SSE with Last-Event-ID catch-up and metadata-only change notification types.
+        - Added strict closed metadata response schemas, opaque stable cursors, bounded identifiers, UTC instants, typed errors, and distinct delete-before and purge-all command bodies.
+        - Added mandatory anti-CSRF, idempotency, and exact destructive-confirmation headers to retention action creation.
+        - Replaced invalid extension of the closed RunSummary schema with an independently closed RunDetail schema, and added bounded cursor continuation to run observations and trace spans.
+  compatibility_notes:
+    - This is the first published observatory-v1 OpenAPI contract, so it does not remove or tighten an earlier public Observatory contract.
+    - New optional metadata-only fields and new operations may be added compatibly in the 1.x line; removing operations or fields, adding required request fields, weakening owner controls, or widening capture beyond metadata_only requires explicit authorization and a versioned breaking change.
+    - The generated client is transport-only and contains no retry, authorization, retention, reconciliation, or product-feature behavior.
+  producers:
+    - Aura Observatory owner-facing API and SSE entrypoint
+    - Aura Observatory query and retention application services
+  consumers:
+    - The separate Observatory Angular application introduced by AURA-0081
+    - Observatory full-stack acceptance and contract evaluators
+  rollout:
+    - Deploy the Observatory API, its PostgreSQL and ClickHouse migrations, and retention worker before serving the generated client from Observatory Web.
+    - Regenerate and verify the client on every observatory-v1 contract change; do not hand-edit generated output.
+    - Keep authenticated API responses and SSE data out of browser or Workbox persistence, and preserve same-origin cookie authentication throughout rollout.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - UV_CACHE_DIR=/tmp/aura-0080-contract-uv uv run pytest services/aura-observatory/tests/test_aura0080_api.py services/aura-observatory/tests/test_aura0080_query_retention.py services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py (25 passed)
+    - Runtime contract audit confirmed overview, run page and detail, normalized trace spans, component health bounds and percentiles, deployment roles, typed errors, SSE payloads, retention status codes, and deletion counts match observatory-v1.
+    - UV_CACHE_DIR=/tmp/aura-0080-contract-uv uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_runtime_run_detail_validates_against_openapi_schema services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_large_run_and_trace_contracts_expose_partial_continuation (2 passed)
+    - transport client contains no Aura product feature imports
+    - git diff --check
+  failed: []
+  not_run:
+    - Full Observatory runtime, migration, and repository checks are owned by the Observatory, test/evaluation, review, and integration handoffs.
+decisions:
+  - The JSON-form OpenAPI 3.1 document is the source of truth so the repository's required json.tool check and deterministic generator do not require a YAML parser.
+  - Query types expose bounded operational metadata only; source prompts, responses, memories, document content, filenames, tool payloads, credentials, endpoints, bearer tokens, arbitrary attributes, and owner identity are excluded.
+  - Run cursors are opaque and trace spans are contractually returned in deterministic parent-child order without exposing arbitrary OpenTelemetry attributes.
+  - RunDetail is independently closed rather than extending closed RunSummary through allOf; the contract invariant check rejects a recurrence of that invalid JSON Schema composition.
+  - Run and trace detail pages are bounded at 10000 items and expose partial plus an opaque nextCursor for continuation.
+  - The owner browser authenticates only with the opaque HttpOnly Observatory session cookie; credentials are not query parameters, client state, or SSE URLs.
+  - Delete-before and purge-all are separate discriminated request shapes so an omitted cutoff cannot be interpreted as purge-all.
+  - Generated output contains readonly transport types and operation descriptors only; application behavior remains in Observatory-owned services and frontend feature libraries.
+risks:
+  - Future query dimensions require deliberate bounded schema additions; arbitrary attribute maps remain prohibited.
+unresolved: []

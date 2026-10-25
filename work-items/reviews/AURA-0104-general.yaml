@@ -1,0 +1,41 @@
+agent: general_reviewer
+work_item: AURA-0104
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved work item, final diff, production routes and adapters,
+    migration, contracts, component manifests, focused tests, handoffs, and all
+    prior general-review findings without modifying product code.
+  - >-
+    Confirmed the capture-authorization INSERT includes the predicate required
+    to infer migration 0015's partial unique idempotency index. An exact live
+    PostgreSQL reproduction admitted the first row, treated the duplicate as a
+    no-op, retained one row, and rolled back cleanly.
+  - >-
+    Confirmed artifact multipart parsing accepts a bounded standard filename,
+    streams request chunks into a bounded SpooledTemporaryFile, applies the
+    incremental and canonical recursive prohibited-content checks before any
+    byte reaches artifact storage, rewinds to offset zero after validation, and
+    replays the complete artifact in bounded chunks.
+  - >-
+    Confirmed the authenticated large-upload regression crosses the 64 KiB
+    in-memory spool threshold and proves exact byte-for-byte replay, final
+    byte-count equality, and SHA-256 equality. Literal and Unicode-escaped
+    credential keys remain rejected before storage receives bytes.
+  - >-
+    Confirmed header-failure telemetry has one owner across artifact, capture
+    authorization, and local-judge routes: the shared wrapper records owner,
+    CSRF, and idempotency-header failures once with session_store attribution,
+    while route-local handlers cover only subsequent parsing and admission
+    failures. Parameterized authenticated route tests assert exactly one span
+    for all three routes and all three header-rejection modes.
+  - >-
+    Confirmed admission operation, dependency, error, and duration allowlists,
+    executable observatory_public_evaluation_admission coverage, distinct
+    write-only Observatory API Garage identity, and corrected manifest
+    dependency remain intact.
+  - >-
+    Final focused checks passed: 23 Observatory backend tests, 20 contract
+    tests, and 4 deployment tests. Ruff, Pyright, and git diff validation also
+    passed.
+findings: []

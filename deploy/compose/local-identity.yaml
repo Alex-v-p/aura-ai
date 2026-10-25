@@ -49,6 +49,7 @@ services:
         export AUTHENTIK_SECRET_KEY="$$(cat /run/secrets/authentik-secret-key)";
         export AUTHENTIK_REDIS__PASSWORD="$$(cat /run/secrets/authentik-valkey-password)";
         export AURA_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/aura-oidc-client-secret)";
+        export AURA_OBSERVATORY_AUTHENTIK_CLIENT_SECRET="$$(cat /run/secrets/observatory-oidc-client-secret)";
         export AUTHENTIK_BOOTSTRAP_PASSWORD="$$(cat /run/secrets/authentik-bootstrap-password)";
         case "$${AUTHENTIK_IMAGE}" in *@sha256:*) ;; *) echo 'AUTHENTIK_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
         exec ak server
@@ -72,7 +73,9 @@ services:
       AURA_AUTHENTIK_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:?AURA_OIDC_CLIENT_ID is required}
       AURA_AUTHENTIK_REDIRECT_URI: ${AURA_OIDC_REDIRECT_URI:?AURA_OIDC_REDIRECT_URI is required}
       AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be configured for identity mode}
-    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, authentik-bootstrap-password]
+      AURA_OBSERVATORY_AUTHENTIK_CLIENT_ID: ${AURA_OBSERVATORY_OIDC_CLIENT_ID:-aura-observatory}
+      AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI: ${AURA_OBSERVATORY_OIDC_REDIRECT_URI:-https://observatory.example.invalid/api/v1/auth/callback}
+    secrets: [authentik-database-password, authentik-secret-key, authentik-valkey-password, aura-oidc-client-secret, observatory-oidc-client-secret, authentik-bootstrap-password]
     volumes:
       - ${AURA_STATE_ROOT:?encrypted state root is required}/authentik-media:/media
       # Overlay only Aura's blueprints; preserve Authentik's built-in system,
@@ -81,7 +84,10 @@ services:
     depends_on:
       authentik-postgres: {condition: service_healthy}
       authentik-valkey: {condition: service_healthy}
-    networks: [aura-identity, aura-identity-db, aura-identity-cache]
+    # Keep the established identity/cache attachment and add only the
+    # Observatory's narrowly scoped provider egress network.
+    # networks: [aura-identity, aura-identity-db, aura-identity-cache]
+    networks: [aura-identity, aura-identity-db, aura-identity-cache, observatory-identity-egress]
     ports: ["127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"]
     healthcheck:
       test: [CMD, /ak-root/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/-/health/ready/', timeout=2)"]
@@ -148,6 +154,8 @@ secrets:
     file: ${AUTHENTIK_BOOTSTRAP_PASSWORD_FILE:-./.secrets/authentik-bootstrap-password}
   authentik-valkey-password:
     file: ${AUTHENTIK_VALKEY_PASSWORD_FILE:-./.secrets/authentik-valkey-password}
+  observatory-oidc-client-secret:
+    file: ${AURA_OBSERVATORY_OIDC_CLIENT_SECRET_FILE:-./.secrets/observatory-oidc-client-secret}
 
 networks:
   aura-identity:

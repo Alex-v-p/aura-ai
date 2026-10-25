@@ -1,0 +1,35 @@
+agent: security_privacy_reviewer
+work_item: AURA-0110
+verdict: PASS
+checked:
+  - >-
+    Verified `_project_version` is restored to its prior grammar-only behavior
+    and all non-reference call sites retain their existing validation
+    semantics.
+  - >-
+    Verified `_project_reference_version` alone applies the authoritative
+    delimiter-bounded exclusions for owner, identity, credential, bearer,
+    token, secret, password, private, content, endpoint, URL, URI, filename,
+    and path segments.
+  - >-
+    Verified both exact accepted reference shapes canonicalize to only
+    `resourceId` and `resourceVersion`.
+  - >-
+    Verified partial, mixed, duplicate, additional-key, malformed UUID,
+    non-canonical UUID, invalid-version, overlength, and sensitive-value
+    references fail closed with only `stored dataset is unavailable`.
+  - >-
+    Verified direct execution rejected all 14 authoritative sensitive markers
+    without exposing supplied values.
+  - >-
+    Verified the non-reference regression preserves prior evaluator-version
+    behavior, resolving the scope-expansion finding.
+  - >-
+    Verified no authentication, authorization, identity, retention,
+    credential, telemetry, Core, frontend, deployment, migration, contract,
+    or cross-product boundary changed.
+  - >-
+    Focused verification passed with 73 tests; Ruff and Pyright passed.
+findings: []
+risks: []
+unresolved: []

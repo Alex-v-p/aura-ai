@@ -1,0 +1,278 @@
+agent: contract_steward
+work_item: AURA-0095
+status: complete
+runtime:
+  model: gpt-6-astra
+  reasoning_effort: high
+  execution_tier: priority
+  agent_thread_id: /root/aura0095_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - frontend/libs/platform/observatory-api-client/project.json
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - work-items/handoffs/AURA-0095-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for
+    observatory-v1 and its generated Angular transport output during this
+    ownership slice. The evaluation-v1, evaluation runner, lifecycle event,
+    telemetry, and Core contracts remain unchanged.
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - >-
+          Added owner-session REST resources under /api/v1/evaluation for
+          immutable datasets and cases, suites, evaluator catalogue entries,
+          jobs, attempts, results, scores, opaque artifact metadata, human
+          reviews, calibration summaries, judge qualifications, content-free
+          history, cancellation, revocation, and asynchronous manual deletion.
+        - >-
+          Added deterministic cursor pagination with page sizes capped at 200,
+          closed filters, exact immutable version paths, bounded time windows,
+          explicit partial flags, finite score and calibration values, stable
+          UUID identities, UTC timestamps, state enums, and bounded failure
+          codes.
+        - >-
+          Added closed CSRF headers to every state-changing evaluation command.
+          Durable commands use UUID idempotency keys; deletion uses the exact
+          DELETE_EVALUATION_ARTIFACTS acknowledgement required by its service.
+        - >-
+          Added five disjoint manual-deletion variants matching DeletionCommand
+          and DeletionSelector: command UUID, request time, and job, dataset,
+          suite, UTC cutoff, or purge-all selector. The union cannot represent
+          versions unsupported by that service, object locations, or credentials.
+        - >-
+          Corrected suite admission to require immutable component version,
+          code revision, image digest, and configuration revision bindings plus
+          exact bounded execution limits, provenance, and creation time.
+        - >-
+          Corrected job admission to carry the request, immutable definition
+          bindings, capture authorization, deadline, attempts, runner limits,
+          cases, execution provenance, and opaque artifact metadata needed for
+          EvaluationAdmission. Artifact bytes and locations remain excluded.
+        - >-
+          Corrected review and qualification commands to carry authorization,
+          calibration, local-model and opaque artifact bindings, manual-only
+          retention, provenance, and UTC action times. Prompt, rubric, and review
+          comment content is never portable through these bindings.
+        - >-
+          Added a dedicated /api/v1/evaluation/events SSE operation carrying a
+          closed EvaluationLiveEvent with event ID, timestamp, resource type,
+          opaque resource ID, change, bounded state, and metadata_only policy.
+          Scores, digests, authorization records, content, model locations, and
+          credentials are structurally absent. The original /api/v1/events
+          response, SsePayload, LiveEvent schema, and enum remain unchanged.
+        - >-
+          Added explicit transport DTO mappings to evaluation-v1 resources via
+          x-evaluation-v1-resource. UUID and version shapes, scopes, source
+          kinds, evaluator kinds, evidence and review enums, component/model
+          bindings, resource and execution provenance, reproducibility, and
+          qualification dispositions preserve evaluation-v1 vocabulary while
+          omitting content-bearing fields.
+        - >-
+          Declared the authenticated response cache policy no-store at the
+          contract boundary. The API carries bounded metadata only and raw
+          artifacts, case content, prompts, rubrics, responses, comments,
+          rationale, hidden reasoning, storage locations, provider endpoints,
+          credentials, tokens, owner identity, and arbitrary attributes remain
+          outside the transport.
+        - >-
+          Corrected generated-client response resolution for reusable OpenAPI
+          response components. listEvaluationDatasets now produces the contracted
+          EvaluationDatasetPage and JSON response descriptor instead of void/none;
+          all other evaluation page operations are protected by parity tests.
+        - >-
+          Corrected attempt transport semantics with a closed discriminated union:
+          queued attempts may omit or null workerComponentId before claim, while
+          every running or terminal attempt requires the persisted non-null
+          worker component. Generated TypeScript preserves that distinction.
+        - >-
+          Aligned EvaluationJob provenance with the exact execution provenance
+          already persisted in its admitted runner request envelope. The response
+          no longer requires a separately fabricated ResourceProvenance digest.
+  compatibility_notes:
+    - >-
+      Contract ID observatory-v1, semantic version 1.0.0, root security, every
+      existing path and operationId, every existing request and response shape,
+      and the original LiveEvent enum remain present. All AURA-0095 paths and
+      schemas are additive.
+    - >-
+      Existing generated-client consumers retain their operation names and
+      types. New operation descriptors and schema types are additive exports;
+      no generated facade behavior, retry, authentication, persistence, SSE
+      reconciliation, validation, confirmation, or feature state was added.
+    - >-
+      Corrected AURA-0095 command requirements were not part of a released
+      producer. They replace transport shapes that the durable producer refused
+      to admit; every pre-AURA-0095 path, schema, operation, and export is stable.
+    - >-
+      EvaluationJob and EvaluationAttempt are unreleased AURA-0095 response DTOs.
+      Their corrected provenance and claim-state requirements align the producer
+      with authoritative persisted facts without changing pre-AURA-0095 types.
+    - >-
+      EvaluationLiveEvent is delivered only by the additive dedicated evaluation
+      stream. The operational SsePayload remains exactly Overview or LiveEvent,
+      so existing stream producers, generated types, cursors, and consumers do
+      not observe evaluation events or contract drift.
+    - >-
+      Transport DTOs are explicit privacy-preserving projections, not duplicate
+      domain schemas. Producers must map admitted evaluation-v1 records to the
+      closed DTO and must not serialize fields omitted by the OpenAPI boundary.
+  producers:
+    - >-
+      Aura Observatory owner-authorized evaluation API and SSE application
+      boundaries assigned to AURA-0095.
+    - >-
+      Aura Observatory evaluation definition, orchestration, artifact,
+      calibration, qualification, and deletion services from AURA-0089 through
+      AURA-0094, only through explicit DTO mapping.
+  consumers:
+    - >-
+      Generated @aura/observatory-api-client transport types, descriptors, and
+      the transport-only ObservatoryApiClient facade.
+    - >-
+      Aura Observatory Web evaluation feature libraries and same-origin SSE
+      gateway assigned to AURA-0095.
+    - >-
+      Owner/operator CLI and browser acceptance tests, which must use the same
+      application services and closed DTO validation.
+  rollout:
+    - >-
+      Deploy the additive observatory-v1 producer before enabling evaluation
+      Web routes. Keep REST snapshots authoritative and emit evaluation SSE
+      notifications only after the corresponding persisted state is visible.
+    - >-
+      Regenerate the Angular client from the checked-in OpenAPI contract and
+      reject generated drift in integration. Feature code consumes the public
+      facade and owns reconciliation, confirmation, polling, recovery, and
+      memory-only state.
+    - >-
+      Preserve owner BFF authorization, same-origin CSRF, idempotency, explicit
+      destructive confirmation, no-store responses, bounded queries, and
+      metadata-only SSE throughout producer rollout. Do not expose or transfer
+      artifact bytes through these routes.
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - >-
+      tooling/architecture/common.py validate_document against
+      implementation-handoff.schema.json (zero errors)
+    - jq empty contracts/openapi/observatory-v1.yaml
+    - local-reference traversal found zero unresolved OpenAPI component references
+    - >-
+      exact structural comparison against HEAD confirmed /api/v1/events,
+      LiveEventType, LiveEvent, and SsePayload retain pre-AURA-0095 behavior
+    - pnpm --dir frontend exec nx run observatory-api-client:generate
+    - pnpm --dir frontend exec nx run observatory-api-client:validate-contract
+    - pnpm --dir frontend exec nx run observatory-api-client:check-generated
+    - pnpm --dir frontend exec nx test observatory-api-client (4 passed)
+    - pnpm --dir frontend exec nx lint observatory-api-client
+    - uv run ruff check contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py
+    - uv run pytest contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py -q (14 passed)
+    - >-
+      uv run pytest services/aura-observatory/tests/test_aura0078_contract.py
+      services/aura-observatory/tests/test_aura0086_contract.py
+      services/aura-observatory/tests/test_aura0087_contract.py
+      services/aura-observatory/tests/test_aura0088_contract.py contracts/tests
+      -q (99 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Observatory producer, CLI, complete Python, feature-library, application,
+      Storybook, and browser suites belong to the other AURA-0095 ownership
+      zones and aggregate integration.
+decisions:
+  - >-
+    Preserved observatory-v1 1.0.0 because the surface is strictly additive;
+    no existing operation, required property, enum, bound, or response variant
+    was removed or narrowed.
+  - >-
+    Treated the corrected command requirements as pre-release AURA-0095
+    alignment. Retaining the underspecified DTOs would preserve a producer
+    boundary that intentionally rejected durable commands.
+  - >-
+    Used explicit transport projections instead of referencing JSON Schema from
+    OpenAPI. This keeps generated clients transport-only while retaining exact
+    evaluation-v1 identities, versions, finite enums, provenance, and
+    reproducibility needed by owner workflows.
+  - >-
+    Kept artifact transfer outside the contract. Artifact resources expose only
+    opaque identity, version, media classification and type, digest, byte count,
+    capture classification, authorization-record reference, retention and
+    deletion state, provenance, and timestamps.
+  - >-
+    Created a dedicated evaluation stream and descriptor rather than extending
+    the operational SsePayload union. This preserves the existing operational
+    stream and cursor boundary while keeping evaluation catch-up independently
+    typed and additive.
+  - >-
+    Added a dedicated client test target because the AURA-0095 required check
+    already names it and transport-only delegation and descriptor parity now
+    have executable coverage.
+  - >-
+    Resolved reusable response components in the generator instead of inlining
+    EvaluationDatasetPageResponse in OpenAPI. This preserves the valid reusable
+    response and fixes generation for any future local response component while
+    rejecting unsupported or missing response references explicitly.
+  - >-
+    Used separate queued and claimed attempt schemas rather than one nullable
+    worker field. This makes absence state-dependent in both JSON Schema and the
+    generated union and prevents non-queued attempts from silently losing their
+    authoritative runner binding.
+  - >-
+    Reused EvaluationRunnerExecutionProvenance for jobs because it maps directly
+    to requestData.provenance in EvaluationAdmission.envelope.data. A second
+    digest-based summary would require unsupported derivation or new persistence.
+  - >-
+    Did not consult external documentation because dependency-version
+    verification was not assigned and repository ADR-0016 plus the checked-in
+    OpenAPI 3.1 generator define the applicable contract and client behavior.
+risks:
+  - >-
+    OpenAPI cannot prove cross-record existence, authorization restrictiveness,
+    immutable-version conflict semantics, cursor snapshot stability, deletion
+    preservation, or exact evaluation-v1-to-DTO provenance. The producer must
+    enforce those invariants before serialization.
+  - >-
+    The root no-store extension records the contract-wide policy, but each HTTP
+    producer must still emit Cache-Control no-store and browser tests must prove
+    that service workers and browser stores never persist authenticated data.
+unresolved:
+  - >-
+    The Observatory worker must replace its durable-command unavailable branches
+    with explicit adapters from these DTOs to SuiteDefinition,
+    EvaluationAdmission, HumanReview, Qualification, and DeletionCommand, while
+    preserving authoritative domain state.
+  - >-
+    The frontend and producer workers must agree on opaque resource history
+    state values and partial-evidence presentation using these closed DTOs;
+    free-form comments and artifact byte transfer remain intentionally absent.
+  - >-
+    Restart-safe evaluation SSE catch-up remains a producer migration blocker;
+    no authorized append-only API event table exists. This contract correction
+    does not authorize or simulate that persistence.

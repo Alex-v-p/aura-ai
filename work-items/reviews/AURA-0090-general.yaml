@@ -1,0 +1,41 @@
+agent: general_reviewer
+work_item: AURA-0090
+verdict: PASS
+checked:
+  - >-
+    Re-read the corrected complete uncommitted AURA-0090 diff and re-traced the
+    production score snapshot, durable PostgreSQL target ledger, deletion
+    recovery, UTC validation, browser refresh, and full-stack selector paths;
+    no reviewed product code was edited.
+  - >-
+    Verified the original immutable-target finding is corrected after command
+    creation: PostgreSQL owns score IDs per command, retries delete only those
+    IDs, target completion is lease-fenced, and late historical score unit
+    regressions cover success and retry without retargeting.
+  - >-
+    Verified cutoff and command requested-at validation now require an aware
+    zero UTC offset, with negative coverage for naive and non-zero offsets.
+  - >-
+    Verified browser comparison acceptance now deduplicates exact request
+    fingerprints, waits for a stability window, and caps the settled request
+    count at two while preserving URL and browser-storage privacy assertions.
+  - >-
+    Inspected /tmp/aura-observatory-e2e-final3.UgUYDY.log (status 0): real job,
+    dataset, suite, cutoff, purge-all, missing-object, score readback, worker
+    restart, browser, privacy scan, session, reset, and Core-isolation phases
+    completed; all browser phases passed.
+  - >-
+    Verified the residual score-capture finding is corrected. The production
+    ClickHouse query explicitly requests FORMAT JSON, decodes the pinned wire
+    shape, requests max-plus-one rows, and fails closed with
+    target_limit_exceeded rather than persisting a truncated target ledger.
+  - >-
+    Verified the full-stack selector helper now calls
+    EvaluationDeletionService.create_command for job, dataset, suite, cutoff,
+    and purge-all, so the successful final run exercises the real authenticated
+    ClickHouse snapshot path instead of injecting score IDs into the repository.
+  - >-
+    Ran the focused retention/storage/migration suite successfully (98 passed,
+    1 Docker-dependent skip), focused Ruff successfully, and focused Pyright
+    with 0 errors.
+findings: []

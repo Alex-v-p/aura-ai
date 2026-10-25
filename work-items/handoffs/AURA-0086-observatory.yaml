@@ -1,0 +1,94 @@
+agent: observatory_worker
+work_item: AURA-0086
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0086_observatory
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.component-catalogue and services.aura-observatory.component-query
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/src/aura_observatory/catalogue.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/test_aura0086_backend.py
+  - services/aura-observatory/tests/test_aura0086_postgres_integration.py
+contracts:
+  changed: false
+  compatibility: preserved through the version-shaped legacy list port and page-complete collection port; existing observatory-v1 topology supports null unconstrained versions and multiple resolved edges
+migrations:
+  changed: true
+  owning_service: aura-observatory
+  postgresql: services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  clickhouse: unchanged; observed health, deployed versions, and observed timestamps remain ClickHouse-owned
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - .venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests
+    - .venv/bin/pyright services/aura-observatory/src
+    - PYTHONPATH=services/aura-observatory/src .venv/bin/pytest -q services/aura-observatory/tests (371 passed, 1 opt-in PostgreSQL test skipped)
+    - PYTHONPATH=services/aura-observatory/src .venv/bin/pytest -q services/aura-observatory/tests/test_aura0086_query_corrections.py (25 passed)
+    - Direct max_nodes=1 topology probe confirmed deterministic truncation with no edge target absent from the returned node set
+    - Production catalogue source queries now bound component identifiers with decoded cursor and limit-plus-one before materializing complete definition/observed groups; ruff, pyright, and git diff checks passed after this correction
+    - Exact deployed subprocess invocation `python -m aura_observatory.entrypoints.cli` dispatches to migrate instead of Typer help; in this environment it reached PostgreSQL connection and exited 1 only because observatory-postgres was unavailable
+    - git diff --check
+    - manifest loader and adapter tests for malformed, duplicate, cyclic, bounded, deterministic, and privacy-safe definitions
+    - migration regressions for fresh shape, legacy upgrade shape, rerun safety, nullable unconstrained edges, and no-argument migration synchronization
+  failed: []
+  not_run:
+    - Real PostgreSQL migration test requires AURA_AURA0086_POSTGRES_URL and was skipped because no test database URL was available
+    - Frontend, browser, and full-stack checks remain integration-owner checks; this correction pass stayed in the backend ownership zone
+decisions:
+  - Parsing, normalization, cycle detection, manifest hashing, and synchronization orchestration now live in the closed catalogue module behind ComponentCataloguePort; the CLI is a thin migration/sync entrypoint and persistence SQL is owned by the PostgreSQL adapter.
+  - The no-argument migrate command retains its exact invocation and synchronizes packaged manifests after PostgreSQL migrations; the explicit sync-manifests command remains idempotent for operators.
+  - Migration 0006 upgrades legacy dependency primary-key layouts to a generated edge identity, makes required_version nullable-safe, deduplicates legacy rows deterministically, and enforces identity with a unique expression index.
+  - PostgreSQL contains only definitions and dependency edges. Production catalogue reads group complete components before pagination, while ClickHouse alone supplies observed versions, deployment presence, and observed time bounds.
+  - Topology traversal uses visited/enqueued sets, exact depth, deterministic deduplication, unconstrained multi-version expansion, 1000-edge and max-node bounds, 64 direct IDs, and 200 reverse IDs.
+  - Health trend points are ordered, time-bounded, version-filtered, and point-limited ClickHouse aggregates with contract-shaped start/end windows and summary values; retention does not touch definitions.
+  - ClickHouse transport outages use a typed StorageUnavailableError and API 503 response; not-found and partial-health results remain distinct and broad exception swallowing was removed from catalogue resource reads.
+  - Query resources retain successful duration/outcome instrumentation through the existing query decorator and component health path.
+  - query-api manifest dependencies are explicitly declared as PostgreSQL and ClickHouse rather than inferred from browser code.
+  - Topology edges are emitted for every bounded resolved, missing, or unavailable candidate, including unconstrained multi-version candidates; traversal stops at exact requested depth before expanding queued boundary nodes.
+  - Component-definition and sibling topology/health routes preserve typed storage failures; query metric labels use only the predeclared bounded vocabulary so instrumentation cannot mask StorageUnavailableError and produce a false 400.
+  - The query-api manifest declares PostgreSQL, ClickHouse, OIDC, login-state, and session-store dependencies at component level so synchronized topology reflects runtime providers.
+  - The no-argument module entrypoint dispatches directly to the migration function, preserving the deployed Docker command while retaining explicit Typer subcommands for operator use.
+  - Trend buckets use a canonical inner execution query with the same duration predicate and latest non-empty outcome selection as the summary, then aggregate one canonical execution per time bucket.
+  - PostgreSQL read failures and ClickHouse HTTP status failures are translated at the query adapter boundary to StorageUnavailableError; the typed error retains HTTPStatusError compatibility for existing callers while API responses remain retryable 503s.
+  - Component pagination applies the decoded component cursor and deterministic limit-plus-one bound independently in PostgreSQL and ClickHouse source queries. Complete component groups are merged without a hidden global source cap, and continuation remains source-backed when one source has duplicate component identifiers.
+  - Filtered catalogue pages perform bounded, independently advancing source scans until the requested number of matching component groups is available or both sources are exhausted. Sparse observed-only and declared filters therefore continue through overlapping no-match batches; capped scans return a deterministic continuation fence without skipping either provider.
+  - Dependency topology reserves each target node before emitting its edge; max_nodes truncation therefore marks partial without returning dangling edge targets, while exact-depth and deterministic visited/enqueued bounds remain intact.
+  - PostgreSQL definition pages use a lateral per-component `LIMIT 64` ordered by version, so retained definition history is bounded before rows cross the adapter boundary while preserving complete selected component groups.
+  - Component health uses a 24-hour default UTC window and rejects inverted or wider-than-31-day ranges. Direct, catalogue, and topology health paths carry explicit lower and upper ClickHouse predicates; topology shares one bounded window across its node lookups.
+  - The query-resource decorator owns success and failure duration/outcome samples for every decorated use case; legacy method-level success instrumentation was removed to prevent duplicate metrics.
+  - Decorated component collection reads the store directly on its legacy fallback path rather than calling the separately instrumented components() use case, so both public paths record exactly one metric sample per call.
+  - Topology definition, observed-component, and reverse-dependency reads use limit-plus-one source caps (2001, 201, and 201 respectively). Any cap hit propagates `partial`, so omitted history or reverse relationships are never presented as complete.
+  - Repository-pinned psycopg context-managed transactions and parameterized statements were used; no dependency or version changes were introduced and no network lookup was used because network access was not authorized.
+risks:
+  - The real PostgreSQL fresh/upgrade/rerun test is environment-gated and must be run by integration acceptance when its disposable database URL is available.
+  - The exact no-argument CLI subprocess could not complete migration locally because no Observatory PostgreSQL service was running; it no longer exits via Typer help/status 2.
+unresolved: []

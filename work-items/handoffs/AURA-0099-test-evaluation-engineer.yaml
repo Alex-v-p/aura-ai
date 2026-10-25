@@ -1,0 +1,62 @@
+agent: test_evaluation_engineer
+work_item: AURA-0099
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/redesign_test_plan
+  worktree: shared
+scope:
+  ownership_zone: frontend.apps.observatory-web-e2e.visual-ux-regression-and-dialog-contracts
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - work-items/handoffs/AURA-0099-test-evaluation-engineer.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - pnpm exec prettier --check apps/observatory-web-e2e/src/observatory-web.spec.ts apps/observatory-web-e2e/src/observatory-evaluation.spec.ts apps/observatory-web-e2e/src/observatory-experiments.spec.ts apps/observatory-web-e2e/src/observatory-operations.spec.ts
+    - mocked Playwright desktop focused UX/dialog checks (6 passed across grouped navigation, forced colors, and evaluation qualification confirmation)
+    - mocked Playwright desktop grouped-navigation regression (1 passed)
+    - mocked Playwright desktop evaluation qualification confirmation regression (1 passed)
+    - mocked Playwright rejected evaluation command recovery regression across desktop, tablet, and mobile (3 passed), proving zero pre-confirm requests, one rejected request after confirmation, duplicate-dispatch prevention, bounded error copy without raw response data, usable retry/cancel controls, and successful retry focus restoration
+    - mocked Playwright desktop grouped-navigation and forced-colors checks across desktop, tablet, and mobile (6 passed)
+    - mocked Playwright compact-shell failure subset across desktop, tablet, and mobile after final helper refinements (9 passed)
+    - complete mocked Playwright matrix across desktop, tablet, and mobile (315 passed; 0 failed) using `AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --workers=1 --timeout=30000` from `frontend/`
+    - targeted forced-colors shell regression across desktop, tablet, and mobile (3 passed) using `AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --workers=1 --grep "keeps shell tokens and focus treatment available in forced colors"` from `frontend/`
+    - pnpm nx run-many --target=lint --projects=observatory-web,observatory --parallel=false
+    - pnpm nx run-many --target=test --projects=observatory,observatory-web --parallel=false
+    - pnpm nx build observatory-web --configuration=production
+    - pnpm nx build-storybook storybook
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0099.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0099.yaml --path frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0099.yaml --path frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0099.yaml --path frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0099.yaml --path frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts (passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - full-stack AURA-0098 acceptance (blocked by documented backend/platform prerequisites)
+decisions:
+  - Kept assertions semantic and contract-oriented: roles, labels, state vocabulary, focus, overflow bounds, and exact confirmation scope/consequence; no pixel goldens or incidental CSS geometry.
+  - Reused synthetic metadata-only fixtures and did not persist screenshots, authenticated payloads, or private content.
+  - Updated existing mocked specs rather than adding a second fixture system; existing trace, table, chart, topology, comparison, state, dark, reduced-motion, and high-contrast coverage remains centralized in observatory-web.spec.ts and operations/evaluation specs.
+  - Confirmation coverage now proves no request before confirmation, Escape cancellation, focus return, exact scope/consequence copy, and one request after confirmation for evaluation and operations actions.
+  - Forced-colors navigation coverage checks active-item and child computed paint/readability without hard-coding platform RGB values.
+  - Forced-colors coverage waits for the active navigation state, then checks `forced-color-adjust:none`, painted foreground/background (including the semantic system-color token when Chromium reports a transparent computed background), and visible painted child text across all configured projects.
+risks:
+    - Existing dirty AURA-0098 and parallel AURA-0099 production changes make aggregate failure attribution path-sensitive; the focused forced-colors regression now passes across all configured projects.
+    - Responsive assertions intentionally check semantic reflow and bounded overflow rather than pixel positions, so they protect usability without freezing the visual design.
+    - Full-stack AURA-0098 acceptance remains out of scope for this visual-test handoff and was not run because its documented backend/platform prerequisites remain blocked; no private SQL, adapter calls, weakened checks, or fabricated evidence were used.
+unresolved: []

@@ -19,17 +19,21 @@ import math
 import re
 import secrets
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Protocol
-from uuid import UUID
+from typing import Protocol, cast
+from uuid import UUID, uuid4, uuid5
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
+    "aura.platform.telemetry_export": "1.0.0",
     "aura.artifacts.attachment_upload": "1.0.0",
     "aura.artifacts.attachment_processing": "1.0.0",
     "aura.artifacts.attachment_deletion": "1.0.0",
@@ -59,6 +63,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
     "aura.governance.approval_workflow": "1.1.0",
+    "aura.evaluation.runner": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -403,6 +408,32 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "outbox_duplicates",
         }
     ),
+    "aura.evaluation.runner": frozenset(
+        {
+            "evaluation_runner_queue_time_ms",
+            "evaluation_runner_fixture_load_duration_ms",
+            "evaluation_runner_execution_duration_ms",
+            "evaluation_runner_outcome_count",
+            "evaluation_runner_cancellation_count",
+            "evaluation_runner_resource_limit_count",
+            "evaluation_runner_reproducibility_completeness",
+            "evaluation_runner_queue_accepted",
+            "evaluation_runner_nats_fetch_failure_count",
+            "evaluation_runner_nats_publish_failure_count",
+            "evaluation_runner_nats_drain_failure_count",
+            "evaluation_runner_nats_recovery_count",
+            "evaluation_runner_nats_poison_count",
+            "evaluation_runner_terminal_settlement_failure_count",
+            "evaluation_runner_lease_renewal_failure_count",
+            "evaluation_runner_lease_lost_count",
+            "evaluation_runner_artifact_cleanup_failure_count",
+            "evaluation_runner_recovery_scan_failure_count",
+            "evaluation_runner_recovery_count",
+            "evaluation_runner_publication_recovery_failure_count",
+            "evaluation_runner_terminal_accounting_failure_count",
+            "evaluation_runner_nats_identity_conflict_count",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -584,6 +615,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
         {"document.search", "document.preview", "document.detail"}
     ),
     "aura.knowledge.document_deletion": frozenset({"document.delete"}),
+    "aura.evaluation.runner": frozenset({"evaluation.execute", "evaluation.fixture.load"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -615,6 +647,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.artifacts.attachment_processing": "attachment_processing_duration_ms",
     "aura.artifacts.attachment_deletion": "attachment_deletion_duration_ms",
     "aura.models.inference": "inference_duration_ms",
+    "aura.evaluation.runner": "evaluation_runner_execution_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -849,7 +882,6 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "conversation_store",
             "event_store",
             "model_policy",
-            "model_provider",
             "nats_jetstream",
             "postgresql",
             "sse_client",
@@ -872,6 +904,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "transport_validation",
             "application_validation",
             "application_unknown",
+            "model_provider",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -880,6 +913,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "authorization",
             "cancel",
             "conflict",
+            "identity",
             "delivery",
             "disabled",
             "idempotency",
@@ -904,6 +938,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "validation",
             "query_embedding",
             "database",
+            "database_programming",
             "telemetry",
             "budget",
             "scope",
@@ -950,6 +985,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "allowed",
             "completed",
             "failed",
+            "timeout",
             "rejected",
             "personal",
             "explicit_request",
@@ -992,6 +1028,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "verified",
             "ready",
             "storage_unavailable",
+            "fenced",
+            "recovered",
         }
     ),
     "operation": frozenset(
@@ -1074,6 +1112,48 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     ),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
+_OTLP_NO_TRACE_ID = "0" * 32
+_METADATA_OBSERVATION_V2_SCHEMA_URL = (
+    "https://aura.local/contracts/telemetry/v2/metadata-observation.schema.json"
+)
+_V2_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_V2_MODEL_IDENTIFIER = re.compile(
+    r"^(?!(?:https?|ftp|file|mailto|ssh|ws|wss):)"
+    r"(?!(?:owner|identity|credential|bearer|token|secret|password|private|content|hash|"
+    r"digest|endpoint)(?:$|[._:+-]))"
+    r"(?!.*[._:+-](?:owner|identity|credential|bearer|token|secret|password|private|content|"
+    r"hash|digest|endpoint)(?:$|[._:+-]))"
+    r"[a-z0-9][a-z0-9._+-]{0,127}"
+    r"(?::(?=[a-z0-9._+-]{1,64}$)(?=[a-z0-9._+-]*[a-z])[a-z0-9._+-]+)?$"
+)
+_V2_PRIVATE_MARKER_SEGMENT = re.compile(
+    r"(?:^|[._:+-])(?:owner|identity|credential|bearer|token|secret|password|private|content|"
+    r"hash|digest|endpoint)(?=$|[._:+-])",
+    re.IGNORECASE,
+)
+
+
+def _valid_v2_revision(value: str) -> bool:
+    """Validate a closed v2 revision without allowing private/content shapes."""
+
+    return bool(
+        _V2_REVISION.fullmatch(value)
+        and not _V2_PRIVATE_MARKER_SEGMENT.search(value)
+        and not any(character.isspace() for character in value)
+        and "://" not in value
+        and "/" not in value
+        and "\\" not in value
+        and "@" not in value
+    )
+
+
+def _valid_v2_model_identifier(value: str) -> bool:
+    """Validate repository-supported local model IDs, including provider tags."""
+
+    return bool(_V2_MODEL_IDENTIFIER.fullmatch(value)) and not _V2_PRIVATE_MARKER_SEGMENT.search(
+        value
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1090,6 +1170,9 @@ class Measurement:
     parent_span_id: str | None = None
     link_span_ids: tuple[str, ...] = ()
     trace_attributes: tuple[tuple[str, str], ...] = ()
+    # The identifier is assigned at record time so retries through the
+    # Collector preserve deduplication semantics.
+    observation_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1176,15 +1259,140 @@ class TelemetryExporter(Protocol):
     async def export(self, batch: TelemetryBatch) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class DeploymentMetadata:
+    """Bounded deployment identity attached to every exported observation."""
+
+    deployment_id: str = "local"
+    git_commit: str = "0000000"
+    environment: str = "development"
+    host_id: str = "local"
+    service_role: str = "api"
+    image_version: str | None = None
+    configuration_version: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_deployment_metadata(self)
+
+
+_DEPLOYMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+_ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+_GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def _valid_bounded_metadata(value: str, pattern: re.Pattern[str], label: str) -> None:
+    if (
+        not pattern.fullmatch(value)
+        or any(character.isspace() for character in value)
+        or "://" in value
+        or "/" in value
+        or "\\" in value
+        or "@" in value
+        or _V2_PRIVATE_MARKER_SEGMENT.search(value)
+    ):
+        raise ValueError(
+            f"{label} must be bounded metadata, not a URL, path, identity, or credential"
+        )
+
+
+def validate_deployment_metadata(metadata: DeploymentMetadata) -> None:
+    """Fail closed before metadata reaches either local logs or OTLP."""
+
+    _valid_bounded_metadata(metadata.deployment_id, _DEPLOYMENT_ID, "deployment id")
+    _valid_bounded_metadata(metadata.host_id, _DEPLOYMENT_ID, "host id")
+    if not _ENVIRONMENT.fullmatch(metadata.environment):
+        raise ValueError("environment must be a bounded lower-case identifier")
+    if not _GIT_COMMIT.fullmatch(metadata.git_commit):
+        raise ValueError("git commit must be 7-64 lower-case hexadecimal characters")
+    if metadata.service_role not in {"api", "worker", "scheduler", "cli"}:
+        raise ValueError("service role must be api, worker, scheduler, or cli")
+    for label, value in (
+        ("image version", metadata.image_version),
+        ("configuration version", metadata.configuration_version),
+    ):
+        if value is not None:
+            if not _valid_v2_revision(value):
+                raise ValueError(f"{label} must be bounded non-sensitive metadata")
+
+
+_WIRE_DIMENSIONS = {
+    "archive_state": "archiveState",
+    "error_class": "errorClass",
+    "token_estimator": "tokenEstimator",
+    "scope_type": "scopeType",
+    "retrieval_stage": "retrievalStage",
+}
+
+
+def _wire_observation(item: Measurement, deployment: DeploymentMetadata) -> dict[str, object]:
+    """Serialize one already-redacted Core measurement to telemetry v1.
+
+    The serializer is deliberately closed over ``Measurement`` fields. It
+    never forwards arbitrary trace attributes and therefore remains safe if a
+    caller passes an untrusted mapping to one of the public recording helpers.
+    """
+
+    attributes = dict(item.trace_attributes)
+    operation = attributes.get("operation", item.metric)
+    trace: dict[str, object] | None = None
+    if item.trace_id is not None:
+        trace = {"traceId": item.trace_id}
+        if item.span_id is not None:
+            trace["spanId"] = item.span_id
+        if item.parent_span_id is not None:
+            trace["parentSpanId"] = item.parent_span_id
+        if item.link_span_ids:
+            trace["linkedSpanIds"] = list(item.link_span_ids)
+    correlation: dict[str, str] | None = None
+    if attributes.get("run_id") is not None or attributes.get("conversation_id") is not None:
+        correlation = {
+            key.removesuffix("_id") + "Id": value
+            for key, value in attributes.items()
+            if key in {"run_id", "conversation_id"}
+        }
+    dimensions = {_WIRE_DIMENSIONS.get(key, key): value for key, value in item.dimensions}
+    observation: dict[str, object] = {
+        "schemaVersion": 1,
+        "observationId": str(item.observation_id),
+        "observedAt": item.observed_at.isoformat(),
+        "kind": item.kind,
+        "component": {"id": item.component_id, "version": item.component_version},
+        "operation": operation,
+        "measurement": {"name": item.metric, "value": item.value},
+        "dimensions": dimensions,
+        "deployment": {
+            "deploymentId": deployment.deployment_id,
+            "gitCommit": deployment.git_commit,
+            "environment": deployment.environment,
+            "hostId": deployment.host_id,
+        },
+        "serviceRole": deployment.service_role,
+        "capturePolicy": "metadata_only",
+    }
+    if trace is not None:
+        observation["trace"] = trace
+    if correlation is not None:
+        observation["correlation"] = correlation
+    return observation
+
+
 class StructuredContainerLogExporter:
     """Write metadata-only JSON lines to stdout for the container log driver."""
 
-    def __init__(self, writer: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        writer: Callable[[str], None] | None = None,
+        *,
+        deployment: DeploymentMetadata | None = None,
+        health_provider: Callable[[], Mapping[str, int | float]] | None = None,
+    ) -> None:
         self._writer = writer or _write_stdout
+        self.deployment = deployment
+        self._health_provider = health_provider
 
     async def export(self, batch: TelemetryBatch) -> None:
-        lines = [self._measurement_line(item) for item in batch.measurements]
-        lines.append(self._health_line(batch.stats))
+        lines = [self._measurement_line(item, self.deployment) for item in batch.measurements]
+        lines.append(self._health_line(batch.stats, self._health_provider))
         # Export runs only on the background lifecycle task; the application
         # recording path never performs this container-log I/O.
         self._write_lines(lines)
@@ -1195,7 +1403,26 @@ class StructuredContainerLogExporter:
             self._writer(line)
 
     @staticmethod
-    def _measurement_line(item: Measurement) -> str:
+    def _measurement_line(item: Measurement, deployment: DeploymentMetadata | None = None) -> str:
+        if deployment is not None:
+            wire = _wire_observation(item, deployment)
+            # Keep the established structured-log keys for local operators
+            # while adding the versioned wire envelope for Collector parity.
+            legacy = {
+                "capture_policy": "metadata_only",
+                "component_id": item.component_id,
+                "component_version": item.component_version,
+                "dimensions": dict(item.dimensions),
+                "kind": item.kind,
+                "metric": item.metric,
+                "observed_at": item.observed_at.isoformat(),
+                "value": item.value,
+            }
+            return json.dumps(
+                {"event": "aura.telemetry.measurement", **legacy, **wire},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
         trace: dict[str, object] = {}
         if item.trace_id is not None:
             trace["trace_id"] = item.trace_id
@@ -1223,20 +1450,457 @@ class StructuredContainerLogExporter:
         return json.dumps(record, separators=(",", ":"), sort_keys=True)
 
     @staticmethod
-    def _health_line(stats: TelemetryStats) -> str:
+    def _health_line(
+        stats: TelemetryStats,
+        health_provider: Callable[[], Mapping[str, int | float]] | None = None,
+    ) -> str:
+        record: dict[str, object] = {
+            "abandoned_batches": stats.abandoned_batches,
+            "capture_policy": "metadata_only",
+            "dropped": stats.dropped,
+            "event": "aura.telemetry.health",
+            "export_failures": stats.export_failures,
+            "rejected": stats.rejected,
+            "retained": stats.retained,
+        }
+        if health_provider is not None:
+            record.update(health_provider())
         return json.dumps(
-            {
-                "abandoned_batches": stats.abandoned_batches,
-                "capture_policy": "metadata_only",
-                "dropped": stats.dropped,
-                "event": "aura.telemetry.health",
-                "export_failures": stats.export_failures,
-                "rejected": stats.rejected,
-                "retained": stats.retained,
-            },
+            record,
             separators=(",", ":"),
             sort_keys=True,
         )
+
+
+class _OtlpHttpTransport(Protocol):
+    async def send(
+        self, endpoint: str, payload: bytes, credential: str | None, timeout: float
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _OtlpSignal:
+    signal: str
+    payload: bytes
+    observation_count: int
+
+
+class OtlpHttpTelemetryExporter:
+    """Independent bounded background sink for the Observatory Collector.
+
+    ``export`` only enqueues an already-redacted batch. Network I/O happens
+    on a separate task and is retried/dropped within bounded limits, so a
+    Collector outage cannot block Core's structured log exporter or request
+    processing.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        credential: str | None = None,
+        queue_capacity: int = 32,
+        max_attempts: int = 3,
+        timeout_seconds: float = 2.0,
+        transport: _OtlpHttpTransport | None = None,
+        deployment: DeploymentMetadata | None = None,
+    ) -> None:
+        if not endpoint or queue_capacity < 1 or max_attempts < 1 or timeout_seconds <= 0:
+            raise ValueError("invalid OTLP telemetry exporter configuration")
+        self.endpoint = endpoint
+        self.credential = credential
+        self.queue_capacity = queue_capacity
+        self.max_attempts = max_attempts
+        self.timeout_seconds = timeout_seconds
+        self.deployment = deployment or DeploymentMetadata()
+        self._transport = transport or _DefaultOtlpHttpTransport()
+        self._queue: asyncio.Queue[tuple[_OtlpSignal, int]] = asyncio.Queue(queue_capacity)
+        self._task: asyncio.Task[None] | None = None
+        self._inflight: _OtlpSignal | None = None
+        self._accepted = 0
+        self._failures = 0
+        self._dropped = 0
+        self._retries = 0
+        self._duration_ms = 0.0
+
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    @property
+    def stats(self) -> Mapping[str, int | float]:
+        return {
+            "telemetry_export_accepted_count": self._accepted,
+            "telemetry_export_failure_count": self._failures,
+            "telemetry_export_dropped_count": self._dropped,
+            "telemetry_export_retry_count": self._retries,
+            "telemetry_export_duration_ms": self._duration_ms,
+        }
+
+    async def start(self) -> None:
+        if not self.running:
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        try:
+            await asyncio.wait_for(self._queue.join(), timeout=self.timeout_seconds)
+        except TimeoutError:
+            while True:
+                try:
+                    signal, _ = self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                self._dropped += signal.observation_count
+                self._queue.task_done()
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
+        self._task = None
+
+    async def export(self, batch: TelemetryBatch) -> None:
+        for signal in self._signal_payloads(batch):
+            try:
+                self._queue.put_nowait((signal, 0))
+            except asyncio.QueueFull:
+                self._dropped += signal.observation_count
+                continue
+            self._accepted += signal.observation_count
+
+    async def _run(self) -> None:
+        while True:
+            signal, attempt = await self._queue.get()
+            self._inflight = signal
+            started = monotonic()
+            try:
+                await self._transport.send(
+                    self._signal_endpoint(signal.signal),
+                    signal.payload,
+                    self.credential,
+                    self.timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                self._dropped += signal.observation_count
+                raise
+            except Exception:
+                self._failures += signal.observation_count
+                if attempt + 1 < self.max_attempts:
+                    self._retries += signal.observation_count
+                    try:
+                        self._queue.put_nowait((signal, attempt + 1))
+                    except asyncio.QueueFull:
+                        self._dropped += signal.observation_count
+                else:
+                    self._dropped += signal.observation_count
+            finally:
+                self._duration_ms += (monotonic() - started) * 1000
+                self._inflight = None
+                self._queue.task_done()
+
+    def _signal_endpoint(self, signal: str) -> str:
+        parsed = urllib.parse.urlsplit(self.endpoint)
+        path = parsed.path.rstrip("/")
+        for suffix in ("/v1/observations", "/v1/metrics", "/v1/traces"):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, f"{path}/v1/{signal}", "", "")
+        )
+
+    def _signal_payloads(self, batch: TelemetryBatch) -> tuple[_OtlpSignal, ...]:
+        metrics = tuple(item for item in batch.measurements if item.kind == "metric")
+        spans = tuple(item for item in batch.measurements if item.kind == "span")
+        payloads: list[_OtlpSignal] = []
+        if metrics:
+            payloads.append(_OtlpSignal("metrics", self._metrics_payload(metrics), len(metrics)))
+        if spans:
+            payloads.append(_OtlpSignal("traces", self._traces_payload(spans), len(spans)))
+        return tuple(payloads)
+
+    def _resource_attributes(self) -> list[dict[str, object]]:
+        attributes: list[dict[str, object]] = [
+            {"key": "service.name", "value": {"stringValue": "aura-core"}},
+            {"key": "service.role", "value": {"stringValue": self.deployment.service_role}},
+            {"key": "deployment.id", "value": {"stringValue": self.deployment.deployment_id}},
+            {
+                "key": "deployment.environment",
+                "value": {"stringValue": self.deployment.environment},
+            },
+            {"key": "deployment.git_commit", "value": {"stringValue": self.deployment.git_commit}},
+            {"key": "host.id", "value": {"stringValue": self.deployment.host_id}},
+            {"key": "capture.policy", "value": {"stringValue": "metadata_only"}},
+        ]
+        # These are resource-level markers because they describe the deployed
+        # Core process, not a metric dimension. Optional values are omitted so
+        # an unset marker remains unavailable to Observatory rather than being
+        # represented by a fabricated default.
+        if self.deployment.image_version is not None:
+            attributes.append(
+                self._string_attribute("deployment.image_version", self.deployment.image_version)
+            )
+        if self.deployment.configuration_version is not None:
+            attributes.append(
+                self._string_attribute(
+                    "deployment.configuration_version", self.deployment.configuration_version
+                )
+            )
+        return attributes
+
+    @staticmethod
+    def _string_attribute(key: str, value: str) -> dict[str, object]:
+        return {"key": key, "value": {"stringValue": value}}
+
+    def _observation_attributes(self, item: Measurement) -> list[dict[str, object]]:
+        attributes = dict(item.trace_attributes)
+        values = [
+            self._string_attribute("aura.observation_id", str(item.observation_id)),
+            self._string_attribute("aura.component_id", item.component_id),
+            self._string_attribute("aura.component_version", item.component_version),
+            self._string_attribute("aura.operation", attributes.get("operation", item.metric)),
+            self._string_attribute("aura.metric_name", item.metric),
+            self._string_attribute("aura.capture_policy", "metadata_only"),
+        ]
+        for key, value in item.dimensions:
+            values.append(self._string_attribute(f"aura.dimension.{key}", value))
+        for key in ("run_id", "conversation_id"):
+            if key in attributes:
+                values.append(self._string_attribute(f"aura.{key}", attributes[key]))
+        # Only the closed v2 execution markers are projected. In particular,
+        # prompt_hash and every unlisted trace attribute stay out of OTLP even
+        # though they may exist in Core's internal trace context.
+        execution: list[tuple[str, str]] = []
+        model_id = attributes.get("model_id")
+        if model_id is not None and _valid_v2_model_identifier(model_id):
+            execution.append(("model_id", model_id))
+        for source, target in (
+            ("model_version", "model_version"),
+            ("agent_revision_id", "agent_revision"),
+            ("prompt_bundle_revision_id", "prompt_bundle_revision"),
+        ):
+            value = attributes.get(source)
+            if value is not None and _valid_v2_revision(value):
+                execution.append((target, value))
+        # Core can carry several policy provenance fields internally. The v2
+        # contract deliberately exposes one explicit marker, with a stable
+        # precedence that never infers a value from operation order.
+        for source in (
+            "policy_revision_id",
+            "tool_policy_revision_id",
+            "model_policy_revision_id",
+            "memory_policy_revision_id",
+        ):
+            value = attributes.get(source)
+            if value is not None and _valid_v2_revision(value):
+                execution.append(("policy_revision", value))
+                break
+        values.extend(
+            self._string_attribute(f"aura.execution.{key}", value) for key, value in execution
+        )
+        return values
+
+    @staticmethod
+    def _resource_schema_url() -> str:
+        return _METADATA_OBSERVATION_V2_SCHEMA_URL
+
+    def _metrics_payload(self, measurements: Sequence[Measurement]) -> bytes:
+        data_points = [
+            {
+                "attributes": self._observation_attributes(item),
+                "timeUnixNano": str(int(item.observed_at.timestamp() * 1_000_000_000)),
+                "asDouble": item.value,
+            }
+            for item in measurements
+        ]
+        payload = {
+            "resourceMetrics": [
+                {
+                    "resource": {"attributes": self._resource_attributes()},
+                    "schemaUrl": self._resource_schema_url(),
+                    "scopeMetrics": [
+                        {
+                            "scope": {"name": "aura.core.telemetry", "version": "1.0.0"},
+                            "metrics": [
+                                {
+                                    "name": "aura.metadata.measurement",
+                                    "gauge": {"dataPoints": data_points},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    def _traces_payload(self, measurements: Sequence[Measurement]) -> bytes:
+        spans: list[dict[str, object]] = []
+        for item in measurements:
+            attributes = self._observation_attributes(item)
+            # Some background Core paths use UUID(int=0) as their internal
+            # "no trace" sentinel.  OTLP treats an all-zero trace ID as
+            # unset and drops it from JSON, which makes the Collector reject
+            # the whole batch.  Give that one sentinel a stable, content-free
+            # ID derived from the durable observation ID while preserving all
+            # supplied span parent/link fields.
+            trace_id = (
+                uuid5(_OTLP_NO_TRACE_NAMESPACE, f"observation:{item.observation_id}").hex
+                if item.trace_id == _OTLP_NO_TRACE_ID
+                else item.trace_id
+            )
+            end_ns = int(item.observed_at.timestamp() * 1_000_000_000)
+            start_ns = max(0, end_ns - int(item.value * 1_000_000))
+            span: dict[str, object] = {
+                "traceId": trace_id,
+                "spanId": item.span_id,
+                "name": dict(item.trace_attributes).get("operation", item.metric),
+                "startTimeUnixNano": str(start_ns),
+                "endTimeUnixNano": str(end_ns),
+                "attributes": attributes,
+                "status": {
+                    "code": "STATUS_CODE_ERROR"
+                    if dict(item.dimensions).get("outcome") in {"error", "failed"}
+                    else "STATUS_CODE_OK"
+                },
+            }
+            if item.parent_span_id is not None:
+                span["parentSpanId"] = item.parent_span_id
+            if item.link_span_ids:
+                span["links"] = [
+                    {"traceId": trace_id, "spanId": link} for link in item.link_span_ids
+                ]
+            spans.append(span)
+        payload = {
+            "resourceSpans": [
+                {
+                    "resource": {"attributes": self._resource_attributes()},
+                    "schemaUrl": self._resource_schema_url(),
+                    "scopeSpans": [
+                        {
+                            "scope": {"name": "aura.core.telemetry", "version": "1.0.0"},
+                            "spans": spans,
+                        }
+                    ],
+                }
+            ]
+        }
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+class _DefaultOtlpHttpTransport:
+    async def send(
+        self, endpoint: str, payload: bytes, credential: str | None, timeout: float
+    ) -> None:
+        headers = {"Content-Type": "application/json"}
+        if credential:
+            headers["Authorization"] = f"Bearer {credential}"
+
+        def request() -> None:
+            request = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    if response.status >= 300:
+                        raise urllib.error.HTTPError(
+                            endpoint,
+                            response.status,
+                            "Collector rejected telemetry",
+                            response.headers,
+                            None,
+                        )
+            except urllib.error.URLError as exc:
+                raise ConnectionError("Collector telemetry export failed") from exc
+
+        await asyncio.to_thread(request)
+
+
+# Short public name used by composition and test callers. Keep the transport
+# detail in the longer class name for readability in tracebacks.
+OtlpTelemetryExporter = OtlpHttpTelemetryExporter
+
+
+class CompositeTelemetryExporter:
+    """Fan out without coupling the structured and OTLP failure domains."""
+
+    def __init__(self, *exporters: TelemetryExporter) -> None:
+        self.exporters = exporters
+
+    async def start(self) -> None:
+        for exporter in self.exporters:
+            start = getattr(exporter, "start", None)
+            if callable(start):
+                await cast(Callable[[], Awaitable[None]], start)()
+
+    async def export(self, batch: TelemetryBatch) -> None:
+        first_error: BaseException | None = None
+        for exporter in self.exporters:
+            try:
+                await exporter.export(batch)
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def stop(self) -> None:
+        for exporter in reversed(self.exporters):
+            stop = getattr(exporter, "stop", None)
+            if callable(stop):
+                await cast(Callable[[], Awaitable[None]], stop)()
+
+
+def make_telemetry_exporter(
+    *,
+    enabled: bool = False,
+    endpoint: str = "http://127.0.0.1:4318",
+    credential: str | None = None,
+    queue_capacity: int = 32,
+    max_attempts: int = 3,
+    timeout_seconds: float = 2.0,
+    deployment_id: str = "local",
+    git_commit: str = "0000000",
+    environment: str = "development",
+    host_id: str = "local",
+    service_role: str = "api",
+    image_version: str | None = None,
+    configuration_version: str | None = None,
+) -> TelemetryExporter:
+    """Compose Core's structured exporter and optional independent OTLP sink."""
+
+    role_map = {
+        "api": "api",
+        "worker": "worker",
+        "scheduler": "scheduler",
+        "cli": "cli",
+        "migrate": "cli",
+    }
+    if service_role not in role_map:
+        raise ValueError("service role must be api, worker, scheduler, cli, or migrate")
+    deployment = DeploymentMetadata(
+        deployment_id=deployment_id,
+        git_commit=git_commit,
+        environment=environment,
+        host_id=host_id,
+        service_role=role_map[service_role],
+        image_version=image_version,
+        configuration_version=configuration_version,
+    )
+    if not enabled:
+        return StructuredContainerLogExporter(deployment=deployment)
+    otlp = OtlpHttpTelemetryExporter(
+        endpoint,
+        credential=credential,
+        queue_capacity=queue_capacity,
+        max_attempts=max_attempts,
+        timeout_seconds=timeout_seconds,
+        deployment=deployment,
+    )
+    structured = StructuredContainerLogExporter(
+        deployment=deployment,
+        health_provider=lambda: otlp.stats,
+    )
+    # Queue first so the structured health line reports the latest accepted
+    # count; the OTLP sink never raises transport failures into this fanout.
+    return CompositeTelemetryExporter(otlp, structured)
 
 
 class MetadataMetrics:
@@ -1609,6 +2273,9 @@ class TelemetryLifecycle:
 
     async def start(self) -> None:
         if not self.running:
+            start_exporter = getattr(self.metrics.exporter, "start", None)
+            if callable(start_exporter):
+                await cast(Callable[[], Awaitable[None]], start_exporter)()
             self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> bool:
@@ -1616,7 +2283,11 @@ class TelemetryLifecycle:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
-        return await self.metrics.flush()
+        result = await self.metrics.flush()
+        stop_exporter = getattr(self.metrics.exporter, "stop", None)
+        if callable(stop_exporter):
+            await cast(Callable[[], Awaitable[None]], stop_exporter)()
+        return result
 
     async def _run(self) -> None:
         while True:

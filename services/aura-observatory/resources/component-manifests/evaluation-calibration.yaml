@@ -1,0 +1,75 @@
+component:
+  id: aura.observatory.calibration
+  version: 1.0.0
+  owner: observatory.calibration
+  category: evaluation
+input:
+  schema: owner-calibration-label-v1
+  replayable: true
+output:
+  schema: calibration-report-v1
+  replayable: true
+dependencies:
+  - postgresql
+  - private_garage_judge_read
+metrics:
+  - observatory_judge_disagreement_count
+  - observatory_calibration_review_count
+  - observatory_calibration_qualification_count
+  - observatory_calibration_duration_ms
+metric_semantics:
+  observatory_judge_disagreement_count: Bounded score or label disagreements in owner review.
+  observatory_calibration_review_count: Bounded owner-labelled review records.
+  observatory_calibration_qualification_count: Explicit manual qualification and revocation decisions.
+  observatory_calibration_duration_ms: Component-local calibration operation duration.
+metric_definitions:
+  - name: observatory_judge_disagreement_count
+    type: counter
+    unit: disagreements
+    labels: [disagreement]
+    dependencies: [postgresql]
+    trace: calibration
+    correlation: service
+    export: prometheus
+  - name: observatory_calibration_review_count
+    type: counter
+    unit: reviews
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: calibration
+    correlation: service
+    export: prometheus
+  - name: observatory_calibration_qualification_count
+    type: counter
+    unit: qualifications
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: calibration
+    correlation: service
+    export: prometheus
+  - name: observatory_calibration_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation, outcome]
+    dependencies: [postgresql]
+    trace: calibration
+    correlation: service
+    export: prometheus
+evaluators:
+  - calibration_agreement
+  - calibration_disagreement
+  - human_review_idempotency
+  - advisory_qualification_safety
+  - calibration_version_compatibility
+  - evaluation_browser_accessibility
+  - evaluation_browser_persistence_isolation
+  - evaluation_browser_recovery
+capture_policy: authorized_evaluation_content
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [outcome, disagreement, operation]
+  trace_only: [trace_id, span_id, case_id, result_id]
+  prohibited: [prompt, response, rubric, rationale, comment, content, filename, arguments, result, owner_identity, endpoint, token, credential]
+export:
+  sink: postgresql
+  cadence: per_review

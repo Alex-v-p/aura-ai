@@ -1,0 +1,56 @@
+agent: test_evaluation_engineer
+work_item: AURA-0079
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.observatory-export-deployment
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0079_auth.py
+  - services/aura-observatory/tests/test_aura0079_clickhouse_auth_regressions.py
+  - services/aura-observatory/tests/test_aura0079_identity_regressions.py
+  - services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+  - deploy/tests/test_aura0079_observatory_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+  metrics_added: []
+verification:
+  passed:
+    - ".venv/bin/ruff check new AURA-0079 regression test paths"
+    - ".venv/bin/ruff format --check new AURA-0079 regression test paths"
+    - ".venv/bin/pyright new Observatory and deployment regression tests (0 errors)"
+    - "Existing AURA-0079 topology/auth checks remain unchanged and were not edited"
+    - "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0079.yaml"
+  failed:
+    - "Focused new regression tests: 2 failed because the concurrent deployment corrections are not yet landed (Observatory web proxy file and Collector allowlist); 16 passed"
+    - "Observatory/deployment suite: 3 failed, 99 passed, 1 warning; one failure is the pre-existing topology assertion and two are the new deployment regressions"
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0079.yaml also reports concurrent production paths services/aura-observatory/src/aura_observatory/entrypoints/cli.py and services/aura-observatory/src/aura_observatory/otlp.py outside this work item's allowed paths"
+  not_run:
+    - "Full Core + Observatory + deployment suite (not rerun in this follow-up; Core changes are concurrent)"
+decisions:
+  - "Tests were placed only in new, distinctly named files under services/aura-observatory/tests and deploy/tests; existing Core and platform-owned tests were not edited."
+  - "Signal regressions send standard OTLP JSON resourceMetrics and resourceSpans through /internal/v1/telemetry/metrics and /internal/v1/telemetry/traces, matching Core's exporter shape rather than the obsolete observations envelope."
+  - "The signal tests capture payload bytes from Core's OtlpHttpTelemetryExporter in-process, assert its standard /v1/metrics or /v1/traces target, then submit those exact decoded payloads to the Observatory signal endpoint."
+  - "Sensitive arbitrary attributes, events, and links are injected into a span and the test requires rejection before in-memory storage or response serialization."
+  - "ClickHouse tests require file-loaded credentials to reach both the composition adapter and migration/insert HTTP calls without URL leakage."
+  - "Deployment checks validate scheduler export wiring, profile-level secret mounts, same-origin proxy configuration, Collector allowlisting, and exact disposable-local versus HTTPS settings without starting containers or using network tools."
+  - "Deployment checks inspect the source Compose/profile topology without requiring a Docker daemon or network access."
+  - "OTLP sink tests use an in-process transport fake to cover metadata serialization, independent structured-log delivery, bounded retries, and drop counters."
+  - "Authentication tests exercise the public ObservatoryAuth and FastAPI BFF seams with memory backends; provider tokens remain server-side."
+risks:
+  - "The full-stack Docker acceptance remains owned by the integration and platform workers; these tests intentionally do not start external services."
+unresolved:
+  - "Production workers must land the remaining reviewed deployment corrections before the new behavioral tests can pass: same-origin Observatory web proxy file and explicit Collector attribute/event/link allowlisting. Signal-specific OTLP normalization, authenticated ClickHouse clients, scheduler export wiring, identity, and exact origin validation now pass the new tests."

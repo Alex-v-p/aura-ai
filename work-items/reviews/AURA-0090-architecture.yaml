@@ -1,0 +1,10 @@
+agent: architecture_guardian
+work_item: AURA-0090
+verdict: PASS
+checked:
+  - Re-verified repository placement, ownership, public APIs, Core and Observatory isolation, service-owned migrations, provider direction, thin entrypoints, data ownership, and ADR compliance across the complete current diff.
+  - Confirmed concrete evaluation storage providers are registered under composition and are no longer declared as direct worker-entrypoint dependencies.
+  - Confirmed the worker invokes EvaluationDeletionService.resume_pending without reaching through to repository internals.
+  - Confirmed the application service consumes explicit repository, object-store, and score-store protocols and the PostgreSQL repository now exactly satisfies the inward-facing repository port.
+  - Work-item, changed-path, repository-shape, module-registry, service-isolation, observability, baseline-protection, contract-change, focused Pyright, and diff checks all passed.
+findings: []

@@ -1,0 +1,173 @@
+component:
+  id: aura.observatory.evaluation_orchestration
+  version: 1.0.0
+  owner: observatory.evaluation_orchestration
+  category: orchestration
+input:
+  schema: evaluation-runner-transport-v1
+  replayable: true
+output:
+  schema: evaluation-lifecycle-events-v1
+  replayable: true
+dependencies:
+  - postgresql
+  - clickhouse
+  - evaluation_nats
+metrics:
+  - observatory_evaluation_job_admission_count
+  - observatory_evaluation_attempt_transition_count
+  - observatory_evaluation_retry_scheduled_count
+  - observatory_evaluation_terminal_count
+  - observatory_evaluation_dependency_outcome_count
+  - observatory_evaluation_cancellation_count
+  - observatory_evaluation_deadline_count
+  - observatory_evaluation_outbox_pending_count
+  - observatory_evaluation_backlog_count
+  - observatory_evaluation_outbox_oldest_age_seconds
+  - observatory_evaluation_outbox_publication_count
+  - observatory_evaluation_result_consumption_count
+  - observatory_evaluation_result_lag_seconds
+  - observatory_evaluation_operation_duration_ms
+metric_semantics:
+  observatory_evaluation_job_admission_count: Bounded job admissions by fixed outcome.
+  observatory_evaluation_attempt_transition_count: Bounded attempt transitions by fixed outcome.
+  observatory_evaluation_retry_scheduled_count: Bounded retry scheduling decisions.
+  observatory_evaluation_terminal_count: Terminal evaluation outcomes by fixed outcome.
+  observatory_evaluation_dependency_outcome_count: Dependency operation outcomes by fixed operation and outcome.
+  observatory_evaluation_cancellation_count: Bounded cancellation decisions.
+  observatory_evaluation_deadline_count: Bounded deadline settlements.
+  observatory_evaluation_outbox_pending_count: Current unpublished outbox rows.
+  observatory_evaluation_backlog_count: Current queued and running attempt backlog.
+  observatory_evaluation_outbox_oldest_age_seconds: Age of the oldest unpublished outbox row.
+  observatory_evaluation_outbox_publication_count: Bounded outbox publication outcomes.
+  observatory_evaluation_result_consumption_count: Bounded result receipt dispositions.
+  observatory_evaluation_result_lag_seconds: Age between result completion and durable receipt.
+  observatory_evaluation_operation_duration_ms: Bounded orchestration operation latency.
+metric_definitions:
+  - name: observatory_evaluation_job_admission_count
+    type: counter
+    unit: jobs
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_attempt_transition_count
+    type: counter
+    unit: transitions
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_retry_scheduled_count
+    type: counter
+    unit: retries
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_terminal_count
+    type: counter
+    unit: transitions
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_dependency_outcome_count
+    type: counter
+    unit: outcomes
+    labels: [operation, outcome]
+    dependencies: [postgresql, evaluation_nats, clickhouse]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_cancellation_count
+    type: counter
+    unit: cancellations
+    labels: [outcome]
+    dependencies: [postgresql, evaluation_nats]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_deadline_count
+    type: counter
+    unit: deadlines
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_outbox_pending_count
+    type: gauge
+    unit: rows
+    labels: []
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_backlog_count
+    type: gauge
+    unit: attempts
+    labels: []
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_outbox_oldest_age_seconds
+    type: gauge
+    unit: seconds
+    labels: []
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_outbox_publication_count
+    type: counter
+    unit: publications
+    labels: [outcome]
+    dependencies: [postgresql, evaluation_nats]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_result_consumption_count
+    type: counter
+    unit: results
+    labels: [outcome]
+    dependencies: [postgresql, evaluation_nats, clickhouse]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_result_lag_seconds
+    type: histogram
+    unit: seconds
+    labels: []
+    dependencies: [postgresql, evaluation_nats]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_operation_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation]
+    dependencies: [postgresql]
+    trace: evaluation_orchestration
+    correlation: service
+    export: prometheus
+evaluators:
+  - evaluation_orchestration_idempotency
+  - evaluation_orchestration_retry_recovery
+  - evaluation_orchestration_cancellation_deadlines
+  - evaluation_orchestration_transport_privacy
+  - evaluation_sse_metadata_isolation
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [outcome, operation]
+  trace_only: [trace_id, span_id, parent_span_id, dependency, error_code]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity, bearer, password, object_key, url, uri]
+export:
+  sink: otlp_http_metrics_and_traces
+  cadence: periodic_and_shutdown

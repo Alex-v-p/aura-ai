@@ -1,0 +1,180 @@
+agent: frontend_worker
+work_item: AURA-0095
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0095_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.evaluation-workspaces
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/project.json
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/storybook/project.json
+  - frontend/apps/storybook/src/observatory-evaluation.stories.ts
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web/src/styles.css
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-dto-adapter.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-dto-adapter.spec.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: observatory-v1
+      version: 1.0
+      source: contracts/openapi/observatory-v1.yaml
+      consumer_boundary:
+        - Evaluation feature code consumes generated Observatory operations and bounded DTO adapters only.
+        - Raw evaluation content, comments, object locations, credentials, and provider details are not requested or rendered.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.evaluation_web
+  metrics_added: []
+verification:
+  passed:
+    - pnpm --dir frontend nx test observatory --run (39 passed)
+    - pnpm --dir frontend nx test observatory-api-client --run (4 passed)
+    - pnpm --dir frontend nx lint observatory (5 pre-existing warnings, 0 errors)
+    - pnpm --dir frontend nx lint observatory-web (passed)
+    - pnpm --dir frontend nx lint storybook (5 pre-existing warnings, 0 errors)
+    - pnpm --dir frontend nx build observatory-web --configuration=production (passed)
+    - pnpm --dir frontend nx build storybook (passed; evaluation stories included)
+    - >-
+      focused evaluation Playwright matrix (45 passed, 0 skipped; desktop/tablet/mobile;
+      native pointer/keyboard operations, all 11 evaluation tables including
+      conditional Cases compared cell pseudo-labels with headers at 390/320px,
+      authoritative immutable-suite composition with exact generated request
+      fields, fieldset/readiness validation, first-invalid focus, new suite
+      ID/version reconciliation and selected-summary focus, equivalent
+      200/400% viewport widths, dark semantic contrast,
+      provider-vs-storage 503, rejected-scope recovery, and failed-job recovery)
+    - pnpm --dir frontend nx e2e observatory-web-e2e (249 passed, 0 skipped; desktop/tablet/mobile)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml (passed)
+    - frontend ownership changed-path validation for six owned files (passed)
+    - git diff --check (passed)
+  failed:
+    - >-
+      Whole-worktree changed-path validation was attempted and reported unrelated
+      contract, Observatory backend, platform, and handoff changes owned by
+      sibling workers; the six frontend-owned changed paths validate cleanly.
+  not_run:
+    - Backend-integrated evaluation workflow; backend ownership and integration-maintainer validation remain separate.
+    - Full repository aggregate validators; integration maintainer owns the shared dirty-worktree run.
+decisions:
+  - >-
+    Added the Observatory-only evaluation workspace for datasets/cases, immutable
+    suites, evaluator bindings, jobs/progress/cancellation, results/scores,
+    artifact metadata, review/calibration, qualification/revocation, history,
+    and manual retention. The feature has no Aura product imports.
+  - >-
+    Kept authenticated evaluation state in memory-owned signals. Every request,
+    command, score fetch, poll, and live-event refresh is bound to an abort
+    signal and auth generation; clear() drops data, selections, notices, busy
+    actions, idempotency keys, and timers so deferred responses cannot repopulate
+    state after logout.
+  - >-
+    Runtime adapters consume generated DTO shapes and fail closed recursively on
+    unknown/private fields. EvaluationJob uses exact runner execution provenance;
+    queued attempts permit an absent or null worker component, while claimed
+    attempts require a bounded worker component ID. Producer-response parity is
+    covered by adapter tests and browser fixtures.
+  - >-
+    Job admission requires explicit authoritative dataset case membership,
+    suite/evaluator/component bindings, model/deployment metadata, reproducibility,
+    and execution limits. It uses contract-valid identifiers and digests without
+    fabricating content, prompts, policy data, or provider credentials.
+  - >-
+    Dedicated evaluation SSE remains separate from operational SSE, parses only
+    metadata-only events, preserves browser Last-Event-ID reconnect behavior, and
+    refreshes affected bounded snapshots. Provider-unavailable, unauthorized,
+    stale, disconnected, partial, rejected, failed, and cancelled states have
+    bounded recovery copy.
+  - >-
+    Destructive cancellation, qualification revocation, and deletion controls use
+    exact contract confirmations, stable idempotency keys, duplicate locking,
+    async status announcements, and terminal refresh. Artifact UI is metadata-only
+    with no upload/download or raw-comment path.
+  - >-
+    Desktop/tablet use roving tabindex tabs with Arrow/Home/End behavior; compact
+    mobile uses the sole exposed workspace selector. Responsive evaluation tables
+    switch to bounded labeled stacked rows below tablet width, with table-specific
+    data labels for datasets, cases, jobs, and qualifications; semantic table
+    headers remain available to assistive technology, and action controls remain
+    pointer/keyboard operable.
+  - >-
+    Review and qualification commands require explicit selected score,
+    calibration, prompt, and rubric metadata. Confirmation copy contains only the
+    exact bounded resource scope. Failed and cancelled jobs expose an allowlisted
+    cause plus inspect/Prepare new evaluation recovery without raw errors. The
+    preparation action prefills bounded authoritative provenance and navigates to
+    Jobs for review before a new submission.
+  - >-
+    Rejected scope failures are a distinct workspace state from fulfilled partial
+    snapshots. They expose bounded scope-specific retry actions, while pending
+    Cancel, Delete, and Revoke labels are announced live until the asynchronous
+    command reaches a terminal state.
+  - >-
+    Every evaluation table now has an explicit mobile label map keyed by its
+    owning workspace panel; data-label content wins over positional fallbacks.
+    Rejected-scope retry uses the requested collection endpoint only, preserves
+    sibling snapshots, clears the rejected scope on success, and retains a
+    bounded rejected/error state on failure. Retry all remains the full snapshot
+    operation. Browser fixtures seed all table collections so the rendered
+    pseudo-label/header parity is verified for datasets, cases, suites,
+    evaluators, jobs, results, scores, artifacts, reviews, qualifications, and
+    history at both compact widths.
+  - >-
+    HTTP 503 responses are classified as local judge unavailability only for the
+    closed provider_unavailable/local_judge_unavailable categories; generic 503
+    responses remain service-unavailable.
+  - >-
+    Replaced the former no-op immutable-suite action with an accessible,
+    authoritative composition form. Dataset and evaluator versions are selected
+    from current generated DTO pages; component ID/version/code revision/image
+    digest/configuration revision, bounded limits, manual metric/operator/value,
+    metadata-only capture notice, and manual retention provenance are explicit
+    inputs. Submission stays disabled until all fields validate, calls the
+    generated createSuite operation, then refreshes and selects the created
+    immutable suite. Revision fields are never derived from dataset metadata;
+    the generated contract's numeric manualThresholds shape receives the
+    validated metric/value while the operator remains a validated UI field.
+  - >-
+    Removed the inert duplicate pass-threshold control and unsupported <=
+    operator. The UI exposes fixed At least (>=) semantics and states the
+    backend-persisted mean aggregation, ratio unit, minimum sample size 1, and
+    inconclusive missing-evidence policy. Suite composition is grouped into
+    accessible Definition, Component, Limits, Threshold, and Provenance
+    fieldsets with linked readiness errors and a first-invalid readiness action.
+    Successful creation reconciles a genuinely new fixture ID/version, updates
+    the subsequent suite snapshot, and focuses a bounded selected-suite summary
+    containing the accepted version, five-field component binding, limits,
+    threshold semantics, and provenance.
+  - >-
+    Added explicit 320px browser assertions for invalid/readiness and successful
+    composition states: document and suite-form bounds stay within the viewport,
+    the created metadata summary wraps without horizontal overflow, and the
+    readiness/composition actions remain reachable.
+  - >-
+    Storybook covers ready, dark, loading, empty, partial, stale, disconnected,
+    unauthorized, provider-unavailable, failed, cancelled, service-unavailable,
+    and destructive states with the repository a11y gate enabled.
+risks:
+  - >-
+    Backend-integrated acceptance still depends on the backend worker and
+    integration-maintainer checkpoint; this frontend handoff validates the
+    generated contract boundary with deterministic content-free fixtures.
+unresolved: []

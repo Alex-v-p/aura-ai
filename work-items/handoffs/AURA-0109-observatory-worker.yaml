@@ -1,0 +1,109 @@
+agent: observatory_worker
+work_item: AURA-0109
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.telemetry-ingestion+telemetry-storage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/test_aura0109_ingest_throughput.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0109.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0109.yaml (no contract changes)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0109.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0109.yaml (no protected baseline changes)
+    - git diff --check
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_*.py (4 passed)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0108_reconciliation.py (69 passed)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/ingest.py services/aura-observatory/src/aura_observatory/ports.py services/aura-observatory/src/aura_observatory/settings.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/adapters/clickhouse.py services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/memory.py services/aura-observatory/tests/test_aura0109_*.py
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_*.py after duplicate-registry correction (9 passed)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0108_reconciliation.py after duplicate-registry correction (81 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/memory.py services/aura-observatory/tests/test_aura0109_*.py after duplicate-registry correction
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after duplicate-registry correction (0 errors)
+    - python3 -c YAML parsing of the AURA-0109 work item, worker handoff, and two telemetry manifests after review amendment
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_*.py services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0108_reconciliation.py after review corrections (90 passed, 1 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/ingest.py services/aura-observatory/src/aura_observatory/ports.py services/aura-observatory/src/aura_observatory/settings.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/adapters/clickhouse.py services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/memory.py services/aura-observatory/tests/test_aura0109_*.py services/aura-observatory/tests/test_aura0078_review_fixes.py after review corrections
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after review corrections (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_ingest_throughput.py after UUID-cast and rollback corrections (17 passed, 2 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/tests/test_aura0109_ingest_throughput.py after UUID-cast and rollback corrections
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after UUID-cast and rollback corrections (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_ingest_throughput.py after PostgreSQL UNNEST alias correction (17 passed, 2 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/tests/test_aura0109_ingest_throughput.py after PostgreSQL UNNEST alias correction
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after PostgreSQL UNNEST alias correction (0 errors)
+    - git diff --check after PostgreSQL UNNEST alias correction
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_ingest_throughput.py after pending-sequence recovery correction (18 passed, 2 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/tests/test_aura0109_ingest_throughput.py after pending-sequence recovery correction
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after pending-sequence recovery correction (0 errors)
+    - git diff --check after pending-sequence recovery correction
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_ingest_throughput.py services/aura-observatory/tests/test_aura0078_review_fixes.py after re-review corrections (60 passed, 2 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0108_reconciliation.py services/aura-observatory/tests/test_aura0109_*.py after re-review corrections (102 passed, 3 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/clickhouse.py services/aura-observatory/src/aura_observatory/ingest.py services/aura-observatory/tests/test_aura0109_ingest_throughput.py services/aura-observatory/tests/test_aura0078_review_fixes.py after re-review corrections
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pyright services/aura-observatory after re-review corrections (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0109.yaml after re-review corrections
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0109.yaml after re-review corrections
+    - git diff --check after re-review corrections
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0094_postgres_integration.py services/aura-observatory/tests/test_aura0094_worker.py services/aura-observatory/tests/test_aura0108_reconciliation.py services/aura-observatory/tests/test_aura0109_*.py after UUID-cast and rollback corrections (103 passed, 7 skipped; one known migration-version failure)
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0109_*.py services/aura-observatory/tests/test_aura0078_ingestion.py services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0094_clickhouse_integration.py services/aura-observatory/tests/test_aura0094_postgres_integration.py services/aura-observatory/tests/test_aura0094_worker.py services/aura-observatory/tests/test_aura0108_reconciliation.py after review corrections (95 passed, 5 skipped; one known migration-version failure)
+  failed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0109.yaml is blocked by pre-existing dirty AURA-0098 paths outside this work item
+    - UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests full suite: 1274 passed, 38 skipped, 6 pre-existing AURA-0098/AURA-0104/migration-baseline failures
+  not_run:
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0109.yaml (not reached after observability validation failure)
+    - ./deploy/compose/run-observatory-full-stack-e2e.sh (owned by AURA-0098 and not edited here)
+decisions:
+  - Added optional batch-only ports so existing single-observation test doubles and adapters remain source-compatible while production composition uses the bounded path.
+  - TelemetryIngestService validates every record before catalogue, receipt, or provider writes and classifies repeated valid identifiers before admission.
+  - PostgresObservationIdRegistry claims all unique valid observations under one existing advisory-lock transaction, allocates/reuses immutable sequences, commits the receipt fence, and retains the guard through batch settlement or cancellation cleanup.
+  - ClickHouseObservationStore uses one AsyncClient per bounded batch, a validated semaphore, stable observation identifiers as deduplication tokens, and per-observation outcomes; only confirmed successes settle and advance visibility.
+  - Failed, ambiguous, or cancelled writes leave pending receipts and immutable sequences for redelivery or AURA-0108 reconciliation; settlement and abort paths release provider and advisory-lock resources.
+  - Health/catalogue updates are aggregated by finite batch outcome where the health port is durable; no new metrics, schema, migration, contract, Core dependency, or Aura Web change was introduced.
+  - MemoryObservationIdRegistry.claim_batch now rejects repeated identifiers before mutating pending or sequence state, matching PostgreSQL batch semantics.
+  - Added only observatory_ingest_bounded_concurrency to the two authorized telemetry component manifests; metric catalogues, capture policy, retention, dependencies, and all other evaluators are unchanged.
+  - Added an optional batch catalogue port. Production PostgreSQL uses one connection and set-based UNNEST projections for deduplicated components, deployments, and role arrays; legacy test doubles retain the existing fallback.
+  - Production receipt admission and settlement use bounded set-based receipt/sequence/visibility operations under the existing advisory lock. Legacy sequence allocation remains only as a compatibility fallback when the allocator row is absent.
+  - ClickHouse batch writes execute fixed-size waves, retaining one client and stable per-observation dedupe tokens in log-safe ClickHouse settings headers rather than URL/query parameters.
+  - Ingest opens one metadata-only trace context and records bounded catalogue, PostgreSQL claim/settlement, and ClickHouse storage phase spans using existing component span APIs and finite error classes.
+  - Batched receipt admission, UUID joins, filtering, and settlement explicitly cast text-array observation identifiers to UUID so psycopg cannot infer an incompatible text[] value for UUID columns.
+  - Failed or cancelled claim and settlement cleanup explicitly rolls back before advisory unlock; rollback or unlock failures never replace the primary statement exception or cancellation.
+  - Set-based receipt updates consistently reference the `batch_values` UNNEST relation for both observed timestamps and immutable ingest sequences; the focused production-registry fake executes both updates and rejects the former invalid `values` alias.
+  - Batch claim result mapping now preserves `ingest_sequence` for every existing receipt, including non-stale pending and completed rows; only stale/new rows enter the acquired set, so recovery exposes the immutable sequence without falsely accepting a pending receipt.
+  - Catalogue deployment roles now use bounded JSONB recordset rows, preserving each deployment's independently sized role array without invalid multidimensional text-array UNNEST semantics.
+  - ClickHouse dedupe settings are emitted in provider-supported INSERT SETTINGS SQL (`insert_deduplicate=1` and the validated opaque identifier token), keeping identifiers out of URL parameters and request headers/log metadata while preserving retry idempotency.
+  - Catalogue, PostgreSQL claim, ClickHouse write, and PostgreSQL settlement each emit one correlated metadata-only phase span; provider partials and cancellation use existing finite transport error classes, and the catalogue adapter no longer duplicates the service-owned catalogue span.
+risks:
+  - The shared checkout contains unrelated AURA-0098 and integrated AURA-0104 edits in overlapping composition.py and ports.py; integration must stage only AURA-0109 hunks.
+  - Full-suite failures are outside this item: migration 0015 changes the expected version, and AURA-0098 changed full-stack helper text/order assertions.
+  - Independent production PostgreSQL/ClickHouse 128-observation acceptance and the composed AURA-0098 acceptance remain integration-owned and were not run in this worker lane.
+unresolved:
+  - Parent integration must run the unchanged AURA-0098 full-stack acceptance after review and focused integration.

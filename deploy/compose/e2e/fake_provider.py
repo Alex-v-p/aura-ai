@@ -40,6 +40,10 @@ def issuer() -> str:
     return os.environ.get("AURA_E2E_OIDC_ISSUER", "http://aura-e2e-oidc:8081").rstrip("/")
 
 
+def is_model_provider() -> bool:
+    return kind() in {"ollama", "judge"}
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -141,7 +145,7 @@ async def token(request: Request) -> dict[str, str]:
 
 @app.get("/api/tags")
 async def tags() -> dict[str, list[dict[str, str]]]:
-    if kind() != "ollama":
+    if not is_model_provider():
         raise HTTPException(status_code=404)
     return {
         "models": [
@@ -171,7 +175,7 @@ async def tags() -> dict[str, list[dict[str, str]]]:
 
 @app.post("/api/show")
 async def show(body: dict[str, Any]) -> dict[str, list[str]]:
-    if kind() != "ollama":
+    if not is_model_provider():
         raise HTTPException(status_code=404)
     name = body.get("name")
     if name in {"embed", "qwen3-embedding:4b"}:
@@ -183,7 +187,7 @@ async def show(body: dict[str, Any]) -> dict[str, list[str]]:
 
 @app.post("/api/embed")
 async def embed(body: dict[str, Any]) -> dict[str, list[list[float]] | str]:
-    if kind() != "ollama":
+    if not is_model_provider():
         raise HTTPException(status_code=404)
     model = body.get("model")
     value = body.get("input")
@@ -206,7 +210,7 @@ async def embed(body: dict[str, Any]) -> dict[str, list[list[float]] | str]:
 
 @app.post("/api/chat")
 async def chat(body: dict[str, Any]) -> StreamingResponse:
-    if kind() != "ollama":
+    if not is_model_provider():
         raise HTTPException(status_code=404)
     messages = body.get("messages", [])
     content = next(

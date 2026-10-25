@@ -1,0 +1,86 @@
+agent: integration_maintainer
+work_item: AURA-0086
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0086-general.yaml: PASS
+  - work-items/reviews/AURA-0086-architecture.yaml: PASS
+  - work-items/reviews/AURA-0086-security-privacy.yaml: PASS
+  - work-items/reviews/AURA-0086-observability.yaml: PASS
+  - work-items/reviews/AURA-0086-ux-ui.yaml: PASS
+conflicts_resolved: []
+generated_outputs:
+  - >-
+    frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+    regenerated from contracts/openapi/observatory-v1.yaml and validated by
+    validate-generated-sync.py.
+checks:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0086.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0086.yaml (34 changed paths)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0086.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0086.yaml (no protected changes)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py
+      --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - git diff --check
+    - cd services/aura-observatory && uv run ruff check src tests
+    - cd services/aura-observatory && uv run pyright
+    - >-
+      uv run pytest services/aura-observatory/tests: 371 passed, 1 opt-in
+      PostgreSQL integration test skipped without a standalone database URL;
+      disposable-stack migration coverage passed in full-stack acceptance.
+    - cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec nx run observatory:lint --skip-nx-cache
+    - cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec nx run observatory:test --skip-nx-cache
+    - cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec nx run observatory-web:lint --skip-nx-cache
+    - cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec nx run observatory-web:test --skip-nx-cache
+    - cd frontend && NX_CLOUD=false NX_DAEMON=false pnpm exec nx run observatory-web:build:production --skip-nx-cache
+    - >-
+      pnpm exec playwright test --config
+      apps/observatory-web-e2e/playwright.config.ts: 126 passed across
+      desktop, tablet, and mobile, including the version-aware topology case.
+    - >-
+      Focused version-aware topology browser regression: 3 passed across
+      desktop, tablet, and mobile.
+    - python3 deploy/compose/test_topology.py: 42 passed
+    - docker compose --env-file .env --profile observatory config --quiet
+    - >-
+      bash deploy/compose/run-observatory-full-stack-e2e.sh: passed owner
+      authentication, real Core run generation, REST/SSE observation,
+      component measurements, retention deletion, preserved session restart,
+      reset reauthentication, model discovery, Core completion after
+      Observatory shutdown, and disposable cleanup.
+    - >-
+      Full-stack browser acceptance covered the corrected Core readiness and
+      Observatory-outage path; no temporary owner credential was persisted in
+      source, fixtures, logs, or reports.
+  failed: []
+  skipped:
+    - >-
+      Direct AURA-0086 PostgreSQL integration test is opt-in and skipped when
+      no standalone AURA_AURA0086_POSTGRES_URL is configured; the disposable
+      full-stack runner exercised fresh, upgrade, rerun, and cleanup paths.
+    - >-
+      NX emitted its existing sandbox socket warning during non-browser Nx
+      targets; all targets completed successfully and the browser run used the
+      authorized local execution path.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No Conventional Commit was created in this integration pass because the
+    assigned instruction explicitly prohibited committing; the validated
+    worktree remains ready for the parent integration checkpoint.

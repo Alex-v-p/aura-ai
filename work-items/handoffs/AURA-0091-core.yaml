@@ -1,0 +1,273 @@
+agent: core_worker
+work_item: AURA-0091
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0091_core
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-core.evaluation-runner
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/run-evaluation-runner-e2e.sh
+  - deploy/tests/test_aura0091_topology.py
+  - services/aura-core/migrations/versions/0023_evaluation_runner.py
+  - services/aura-core/resources/component-manifests/evaluation-runner.yaml
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/runner.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/state.py
+  - services/aura-core/src/aura_core/runtime/replay/application.py
+  - services/aura-core/src/aura_core/runtime/replay/state.py
+  - services/aura-core/src/aura_core/platform/evaluation_transport.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  - services/aura-core/src/aura_core/runtime/replay/__init__.py
+  - services/aura-core/src/aura_core/runtime/replay/registry.py
+  - services/aura-core/tests/test_aura0091_core.py
+  - services/aura-core/tests/test_aura0091_evaluation.py
+  - services/aura-core/tests/system/test_aura0091_runner.py
+  - work-items/handoffs/AURA-0091-core.yaml
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-runner-transport-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation-runner-transport.schema.json
+      consumer_boundary:
+        - Core validates the closed envelope and all nested allowlists before receipt or execution.
+        - Core accepts only opaque UUID artifact references and never accepts provider locators, paths, credentials, prompts, responses, or arbitrary attributes.
+migrations:
+  changed: true
+  postgresql:
+    - services/aura-core/migrations/versions/0023_evaluation_runner.py
+observability:
+  components:
+    - aura.evaluation.runner
+  metrics_added:
+    - evaluation_runner_queue_time_ms
+    - evaluation_runner_fixture_load_duration_ms
+    - evaluation_runner_execution_duration_ms
+    - evaluation_runner_outcome_count
+    - evaluation_runner_cancellation_count
+    - evaluation_runner_resource_limit_count
+    - evaluation_runner_reproducibility_completeness
+    - evaluation_runner_queue_accepted
+    - evaluation_runner_nats_fetch_failure_count
+    - evaluation_runner_nats_publish_failure_count
+    - evaluation_runner_nats_drain_failure_count
+    - evaluation_runner_nats_recovery_count
+    - evaluation_runner_nats_poison_count
+    - evaluation_runner_terminal_settlement_failure_count
+    - evaluation_runner_lease_renewal_failure_count
+    - evaluation_runner_lease_lost_count
+    - evaluation_runner_artifact_cleanup_failure_count
+    - evaluation_runner_recovery_scan_failure_count
+    - evaluation_runner_recovery_count
+    - evaluation_runner_publication_recovery_failure_count
+    - evaluation_runner_terminal_accounting_failure_count
+    - evaluation_runner_nats_identity_conflict_count
+verification:
+  passed:
+    - uv run ruff check on all changed Core implementation files
+    - uv run pyright on all new Core implementation modules (0 errors)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py (4 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_evaluation.py (19 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_evaluation.py::test_runner_active_cancellation_has_one_terminal_publication (1 passed)
+    - uv run pytest services/aura-core/tests (1107 passed, 104 skipped)
+    - uv run pytest services/aura-core/tests/test_migrations.py (8 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py (23 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_migrations.py (31 passed)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_outbox.py services/aura-core/tests/test_telemetry.py (123 passed, 1 skipped)
+    - uv run pytest services/aura-core/tests (1112 passed, 104 skipped, 1 warning)
+    - python3 -m pytest tooling/architecture/tests/test_validate_observability.py (3 passed)
+    - Real MetadataMetrics span probe verified registered evaluation.execute and evaluation.fixture.load operations, correlation trace linkage, fixture parent linkage, positive terminal duration, and zero rejected records.
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/system/test_aura0091_runner.py services/aura-core/tests/test_migrations.py (36 passed, 1 dependency-gated skip)
+    - uv run pytest services/aura-core/tests/test_migrations.py (8 passed)
+    - NATS transport health paths now emit bounded fetch, publish, drain, poison, and recovery observations with telemetry failure isolation.
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0091.yaml
+    - Runtime smoke: valid synthetic replay publishes a schema-valid completed result with deterministic result identity.
+    - uv run ruff check services/aura-core/src/aura_core/runtime/replay/state.py services/aura-core/tests/system/test_aura0091_runner.py
+    - uv run pyright services/aura-core/src/aura_core/runtime/replay/state.py
+    - uv run pytest -q services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/system/test_aura0091_runner.py services/aura-core/tests/test_migrations.py (35 passed, 1 dependency-gated skip)
+    - uv run pytest -q services/aura-core/tests/test_aura0091_core.py::test_runner_surfaces_terminal_ledger_failures_as_bounded_metadata (1 passed; no exception text emitted)
+    - Isolated PostgreSQL probe with the exact runner DML grants reproduced the production failure as SQLSTATE 42P08 AmbiguousParameter on the nullable lease-owner bind; after explicit VARCHAR/UUID casts, a real runner-generated completed envelope settled atomically with pending terminal outbox state.
+    - uv run ruff check services/aura-core/src/aura_core/runtime/replay/state.py services/aura-core/src/aura_core/runtime/replay/application.py services/aura-core/src/aura_core/platform/telemetry.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/system/test_aura0091_runner.py
+    - uv run pyright services/aura-core/src/aura_core/runtime/replay/state.py services/aura-core/src/aura_core/runtime/replay/application.py services/aura-core/tests/system/test_aura0091_runner.py services/aura-core/tests/test_aura0091_core.py (0 errors)
+    - uv run pytest -q services/aura-core/tests (1113 passed, 104 skipped, 1 warning)
+    - uv run ruff check services/aura-core/src/aura_core/runtime/replay/state.py services/aura-core/tests/system/test_aura0091_runner.py services/aura-core/src/aura_core/runtime/replay/application.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py
+    - uv run pyright services/aura-core/src/aura_core/runtime/replay/state.py services/aura-core/src/aura_core/runtime/replay/application.py services/aura-core/tests/system/test_aura0091_runner.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py (0 errors)
+    - uv run pytest services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/system/test_aura0091_runner.py -q (33 passed, 2 dependency-gated skips)
+    - uv run pytest services/aura-core/tests -q (1117 passed, 105 skipped, 1 warning)
+    - Fixed the SQL claim predicate's nullable max_attempts bind with explicit INTEGER casts; added a PostgreSQL-gated regression for nullable and finite max-attempt concurrent claims and stale lease generations.
+    - In-memory and SQL cancellation now bind request, job, idempotency, request digest, and deadline identities; pre-request tombstones are durable and mismatches classify as permanent AttemptConflict before local execution signalling.
+    - SQL receipt insertion uses conflict handling across both attempt and idempotency uniqueness constraints, then compares the complete immutable identity; SQL cancellation tombstones re-read after concurrent insertion to classify both conflict directions deterministically.
+    - Lease renewal loss and renewal exceptions fence provider work immediately; registry and artifact read/write operations race cancellation, lease fencing, and absolute deadlines, and completed output objects are best-effort deleted when cancellation wins.
+    - Request concurrency is enforced by a bounded effective-limit gate, while input reads and output writes share one cumulative artifact-operation budget; declared input byte counts are rejected before object-store access and the remaining byte ceiling is passed to the adapter.
+    - Production document replay now invokes the public DocumentService.process seam over isolated in-memory evaluation state, and emits an authorized bounded runner-owned output reference; synthetic execution uses explicit deterministic model, dependency, and tool fixture ports.
+    - Runtime evidence resolves exact registered replay/synthetic adapter versions and omits unset deployment fields as genuinely missing; terminal outcome/span accounting occurs immediately after durable settlement and recovery scans/drains expose bounded failure/recovery metrics.
+    - Current local validation with the repository virtual environment: ruff and pyright (0 errors) on changed Core implementation modules; AURA-0091 focused Core/evaluation/system tests 33 passed, 2 PostgreSQL dependency-gated skips; compileall and AST checks passed.
+    - .venv/bin/ruff check on all changed Core implementation and focused test files (passed).
+    - .venv/bin/pyright on all changed Core implementation and focused test files (0 errors, 0 warnings).
+    - .venv/bin/pytest services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/system/test_aura0091_runner.py -q (34 passed, 2 PostgreSQL dependency-gated skips).
+    - .venv/bin/pytest services/aura-core/tests -q (1118 passed, 105 skipped, 1 warning).
+    - python3 tooling/architecture/validate-module-registry.py (passed after keeping document replay behind the registered public bootstrap composition).
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0091.yaml (passed with the expanded lease, recovery, cleanup, accounting, and identity-conflict metrics).
+    - Reproduced and fixed the strict output-write cancellation regression; .venv/bin/pytest services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/system/test_aura0091_runner.py -q (48 passed, 2 PostgreSQL dependency-gated skips).
+    - .venv/bin/ruff check and .venv/bin/pyright on the corrected runner and focused regression (passed; 0 errors/warnings).
+    - .venv/bin/pytest services/aura-core/tests -q after cleanup correction (1132 passed, 105 skipped, 1 warning).
+    - .venv/bin/pytest services/aura-core/tests/test_aura0091_evaluation.py::test_synthetic_model_call_is_charged_once_at_runner_boundary -q (passed; maxModelCalls=1 completed and maxModelCalls=0 failed with RESOURCE_LIMIT_EXCEEDED).
+    - .venv/bin/pytest services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/system/test_aura0091_runner.py -q after accounting correction (49 passed, 2 PostgreSQL dependency-gated skips).
+    - .venv/bin/pytest services/aura-core/tests -q after accounting correction (1133 passed, 105 skipped, 1 warning).
+    - Added and passed the NATS permanent-conflict regression; poison accounting is emitted with rejected/conflict dimensions before acknowledgement.
+    - .venv/bin/ruff check and .venv/bin/pyright on the NATS consumer and focused regression (passed; 0 errors/warnings).
+    - >-
+      Final Core correction check: uv run --project services/aura-core ruff check
+      and pyright on the corrected evaluation runner, replay application and
+      registry, telemetry, and AURA-0091 evaluation tests passed with 0 errors
+      or warnings; focused AURA-0091 Core/evaluation/system suite passed 64
+      tests with 3 PostgreSQL-dependent skips. The fixture-pin admission
+      regression uses a typed publisher and confirms the module adapter is not
+      invoked before REQUEST_INVALID settlement.
+    - .venv/bin/pytest services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/system/test_aura0091_runner.py -q after NATS poison accounting correction (50 passed, 2 PostgreSQL dependency-gated skips).
+    - >-
+      Diagnosed the live pre-receipt permanent conflict without changing
+      Core: the E2E cancellation fixture constructs its cancellation envelope
+      through the generic envelope helper without the canonical request
+      digest, so it persists the helper's fixed fixture digest. The later
+      request fixture recomputes its canonical digest. SqlEvaluationRunnerLedger.receive
+      correctly rejects that cancellation/request identity mismatch before
+      returning a record; the transaction rolls back the just-inserted
+      attempt, leaving no target ledger row, and the consumer acknowledges it
+      as bounded conflict poison. Core source tracing shows no other
+      first-receipt AttemptConflict path is reachable for a fresh matching
+      request. The correction belongs to the E2E fixture (reuse the canonical
+      request digest), outside this Core ownership correction.
+    - >-
+      Implemented the follow-up Core correction slice: mixed request
+      concurrency now admits only when the candidate active set fits the
+      strictest ceiling; input reads, replay-reported operations, and output
+      writes share one artifact budget; document replay consumes the
+      authorized input artifact and includes bounded digest/size evidence;
+      synthetic execution calls an injected Core orchestration seam with
+      explicit fixture lifecycle measurements; and fixture revisions resolve
+      from the selected registered adapter with mismatched deployment bindings
+      failing closed.
+    - >-
+      PostgreSQL receipt and cancellation transactions now take the same
+      attempt-scoped transaction advisory lock before either table is read or
+      written. A real PostgreSQL-gated barrier regression was added for the
+      overlapping request/pre-receipt-cancellation ordering.
+    - >-
+      Added durable business-accounting state and execution-start timestamps
+      to the Core runner ledger. Fresh-process publication recovery republishes
+      without duplicating terminal outcome accounting or manufacturing a
+      near-zero duration; resource-limit accounting occurs at durable
+      settlement. Initial evaluation subscriptions retry three times with
+      bounded failure/recovery metrics, and the entrypoint observes consumer
+      task failure.
+    - >-
+      Expanded the production MetadataMetrics allowlist for all runner
+      manifest metrics and emitted bounded runner dependency/outcome/error
+      values. Input/output storage failures and model/orchestration failures
+      now retain their actual bounded dependency in terminal spans/accounting.
+    - >-
+      .venv focused Core/evaluation/system suite after this correction slice:
+      57 passed and 3 PostgreSQL-dependent tests skipped; Ruff passed on all
+      changed Core/runtime/bootstrap/telemetry/consumer/entrypoint/test files;
+      Pyright reported 0 errors and 0 warnings; migration tests passed 8/8;
+      observability validator passed.
+    - >-
+      Final focused validation after adding fixture revisions to all Core test
+      adapters: uv run pytest services/aura-core/tests/test_aura0091_core.py
+      services/aura-core/tests/test_aura0091_evaluation.py
+      services/aura-core/tests/system/test_aura0091_runner.py -q (57 passed,
+      3 PostgreSQL-dependent tests skipped); uv run Ruff and Pyright on all
+      changed Core/runtime/bootstrap/telemetry/consumer/entrypoint/test files
+      passed with 0 Pyright errors/warnings.
+    - >-
+      Final Core suite: uv run pytest services/aura-core/tests -q (1141 passed,
+      106 skipped, 1 Authlib deprecation warning). Architecture work-item,
+      changed-path, observability, service-isolation, module-registry,
+      baseline-protection, and contract-change validators all passed or
+      reported their expected skipped baseline status.
+    - >-
+      Final architecture correction validation: focused AURA-0091 suite 63
+      passed and 3 PostgreSQL-dependent tests skipped; full Core suite 1147
+      passed and 106 skipped with the existing Authlib deprecation warning;
+      Ruff and Pyright passed with 0 errors/warnings; deployment topology tests
+      passed 10/10; work-item, changed-path, observability, module-registry,
+      service-isolation, and contract validators passed.
+    - >-
+      Production document replay now charges one input read plus one runner
+      output write under a two-operation limit; the regression passed without
+      a third provider operation. Runtime fixture pins fail before adapter
+      execution for both module and synthetic registrations, and the disposable
+      Compose/E2E defaults no longer use generic fixture-v1.
+  failed: []
+  not_run:
+    - Real PostgreSQL/NATS/Garage stack; deployment topology and runner E2E.
+    - Security, architecture, observability, general, and integration-maintainer reviews.
+decisions:
+  - Kept the runner entrypoint and state modules as compatibility/lifecycle shims; application and ledger state now live under runtime/replay and production bootstrap composes SQL, JetStream, Garage, telemetry, synthetic, and document replay adapters.
+  - Required the target component binding to appear exactly in the request provenance component set before Core accepts the attempt.
+  - Added a forward-only Core-owned attempt ledger with leases, cancellation, terminal compare-and-set, and publication state; an in-memory implementation mirrors the production race semantics for tests.
+  - Used deterministic UUIDv5 terminal/result message identities derived only from attempt and finite terminal status, allowing safe redelivery without duplicate terminal identities.
+  - Enforced effective limits as the stricter of transport and deployment configuration, with a dedicated bounded queue, per-request concurrency gate, deadline, and cooperative cancellation checkpoints.
+  - Settled queued and active cancellation through the same deterministic terminal path, including the race where cancellation arrives after lease claim but before a replay checkpoint.
+  - Serialized terminal ledger settlement and publication in the runner so cancellation, completion, and failure races produce at most one publication in-process; already-published terminal records are treated as idempotent recovery observations.
+  - Added a runner-specific opaque UUID-derived artifact adapter that verifies declared media, capture authorization, byte count, and SHA-256 digest before read/write.
+  - Persisted the bounded request projection, exact terminal envelope, terminal outbox, lease generation, and cancellation tombstone so restart and broker-failure recovery do not depend on process-local maps.
+  - Compared request reproducibility declarations against independently configured runtime evidence and emitted verified, missing, or mismatched statuses.
+  - Declared the runner's metadata-only metrics and privacy prohibitions in its component manifest and Core telemetry registry.
+  - Rooted evaluation traces in the transport correlation UUID, used the registered evaluation.execute operation, and emitted evaluation.fixture.load as a child span with bounded dependency, outcome, and error-class dimensions.
+  - Kept terminal duration observations real for success, failure, cancellation, and deadline paths; NATS fetch, publish, drain, poison, and recovery health counters are bounded and exporter-failure-isolated.
+  - Rejected observed runtime evidence mismatches before replay, retained missing evidence as an explicit terminal status, enforced artifact I/O against the request deadline and cancellation, and checked output capture authorization against the enclosing request.
+  - Removed the runtime application's dependency on the concrete object-storage provider error type; provider failures remain translated at the inward artifact port boundary.
+  - Compared durable request projections on duplicate delivery and cleaned process-local cancellation/request maps for unknown or already-published terminal messages.
+  - Recomputed and verified requestDigest over canonical closed request data; envelope delivery metadata remains outside the digest while terminal/cancellation messages carry the original request digest.
+  - Added bounded durable recovery scanning for queued and expired-leased request projections, periodic re-enqueue, lease renewal with generation fencing, and deterministic maxAttempts exhaustion.
+  - Replaced owner-document-table replay and bootstrap-local synthetic sequencing with the public Core DocumentService and RunCoordinator use cases, composed over isolated repository, policy, tool, model, event, and outbox fixtures.
+  - Removed the terminal outbox foreign-key runtime privilege dependency. Terminal settlement and outbox insertion remain one Core-owned transaction; the forward migration drops the constraint on upgraded schemas so the dedicated runner role needs only the explicitly granted ledger table DML privileges.
+  - Added a PostgreSQL-gated terminal persistence regression that settles with the claimed lease generation and verifies the completed attempt, pending publication state, terminal payload, and pending outbox payload before publication recovery.
+  - Added a bounded terminal-settlement failure metric with finite database/authorization/timeout/execution classes so SQL transaction failures are observable without leaking provider exception text.
+  - Added a PostgreSQL regression assertion that the terminal outbox has no foreign-key runtime privilege dependency before exercising the claimed-lease transaction; this is gated by the isolated runner database and performs scoped cleanup.
+  - Fixed the SQL terminal compare-and-set predicate's nullable lease-owner bind ambiguity by explicitly casting lease-owner to VARCHAR and lease-generation to UUID; added bounded classification for SQL programming and privilege failures.
+  - Fixed the SQL claim predicate's nullable max_attempts bind ambiguity by explicitly casting it to INTEGER in both branches; finite max-attempt claims remain atomic and stale lease generations remain fenced.
+  - Kept an exact in-flight output reference and provider-start marker around each artifact write; cancellation, deadline, or lease fencing cleans only writes that may have crossed the provider boundary, while pre-invocation cancellation does not delete an unrelated existing object.
+  - Replay adapters report bounded token/model/artifact usage in ReplayResult; EvaluationRunner is the single accounting owner and consumes each result exactly once. The synthetic fixture no longer mutates ReplayContext before reporting its one model call.
+  - Permanent NATS AttemptConflict deliveries are metered through the existing poison counter with only bounded dependency/outcome/error-class dimensions before acknowledgement; no exception text or identifiers are emitted.
+  - Mixed-limit admission is represented by the active ceiling set: a new request may join only when the resulting active count is no greater than every active request's effective ceiling.
+  - Shared artifact accounting is carried by ReplayContext into the runner-owned budget, so component-reported operations are charged before output providers are entered.
+  - Adapter-owned fixture_revision is the source of runtime truth; a non-empty deployment pin that differs from the selected adapter raises a bounded admission failure, while unset Compose configuration always observes the selected adapter revision.
+  - Runner-owned artifact writes are the sole output-operation accounting owner; replay adapters report no duplicate write charge.
+  - Terminal resource-limit accounting is performed inside durable business settlement, so publication recovery cannot duplicate outcome duration or lose the bounded resource counter.
+  - The runner ledger's business_accounted flag is a durable compare-and-set marker; execution_started_at remains Core state rather than widening the closed terminal transport contract.
+  - Receipt/cancellation serialization uses PostgreSQL transaction advisory locks keyed by a namespaced attempt UUID and does not add a cross-service table or provider dependency.
+risks:
+  - >-
+    PostgreSQL-gated local tests require the isolated database URL; the final
+    Docker Desktop acceptance supplied the migrated SQL, NATS, Garage, outage,
+    recovery, and isolation evidence for the complete stack.
+  - >-
+    The artifact object-store protocol retains a narrow async-iterator typing
+    concern at the test boundary; runtime behavior and focused type checks are
+    green and no production contract was widened.
+unresolved: []

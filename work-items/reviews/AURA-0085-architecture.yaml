@@ -1,0 +1,13 @@
+agent: architecture_guardian
+work_item: AURA-0085
+verdict: PASS
+checked:
+  - Core and Observatory retain separate module roots databases migrations authentication boundaries generated clients frontend libraries and deployment lifecycles.
+  - ObservatoryHealthPort is an explicit narrow boundary composed with the PostgreSQL provider; application and query code do not discover adapters dynamically.
+  - Health and observation events share a gap-free visible ordering and production SSE resumes strictly after Last-Event-ID while heartbeats remain unpersisted.
+  - The API-lifecycle health projector persists time-driven worker outage and recovery independently of owner reads; overview and SSE remain read-only consumers.
+  - Material health events are limited to state or visibility-watermark changes and cannot form an overview refresh feedback loop.
+  - PostgreSQL owns bounded health history cumulative histogram state and operational metadata; no shared file or cross-service table access is introduced.
+  - The typed observability validator is restricted to the four opted-in Observatory components and preserves compatibility for legacy manifests.
+  - Focused service topology runtime validator isolation module frontend and changed-path checks passed; no ADR is required.
+findings: []

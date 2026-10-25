@@ -1,0 +1,40 @@
+agent: general_reviewer
+work_item: AURA-0087
+verdict: PASS
+checked:
+  - >-
+    Formalized the final observability_steward PASS verdict without
+    impersonating that specialist role; independently reviewed the affected
+    query and storage execution paths, metric registry, query-api manifest,
+    operational semantics, regression tests, and provider-backed evidence.
+  - >-
+    Confirmed observatory_query_duration_ms, observatory_query_outcome, and
+    observatory_query_freshness_lag_ms retain finite names, units, resource and
+    outcome labels, exact-once query-boundary accounting, and metadata-only
+    capture without query text or request-value logging.
+  - >-
+    Confirmed the query-api manifest adds only the authorized
+    operational_analytics_bounds, operational_analytics_semantics, and
+    operational_analytics_accessibility evaluators while component identity,
+    dependencies, metrics, capture, retention, and cardinality declarations
+    remain governed.
+  - >-
+    Confirmed production and reference analytics use the declared
+    clickhouse_quantile_exact method, explicit sample counts and rate
+    intervals, normalized outcomes, bounded observed-time freshness, explicit
+    unavailable signals, and propagated scan, execution, late-data, retention,
+    series, and point partial reasons.
+  - >-
+    Confirmed source-global late-data evidence is calculated from the single
+    bounded lookahead source before aggregate LIMIT and remains visible when
+    the late bucket or group falls outside the returned aggregate page.
+  - >-
+    Reviewed parent provider evidence that pinned ClickHouse 25.8 produced
+    p50=3 and p90/p95/p99=100 both directly and through
+    ProductionObservatoryStore, and that a real 1000001-row source returned a
+    truthful scan_limit partial state.
+  - >-
+    Reviewed the final focused result of 46 passed and 2 environment-gated
+    skips, the full Observatory result of 417 passed, successful observability
+    validation, and the real full-stack Core/SSE/retention/isolation pass.
+findings: []

@@ -1,0 +1,327 @@
+component:
+  id: aura.evaluation.runner
+  version: 1.0.0
+  owner: evaluation.runner
+  category: worker
+input:
+  schema: evaluation-runner-transport-v1
+  replayable: true
+output:
+  schema: evaluation-runner-transport-v1
+  capture:
+    content: controlled_evaluation_only
+    metadata: allowlisted
+dependencies: [postgresql, evaluation_nats, evaluation_object_storage, core_public_replay_ports]
+metrics:
+  - evaluation_runner_queue_time_ms
+  - evaluation_runner_fixture_load_duration_ms
+  - evaluation_runner_execution_duration_ms
+  - evaluation_runner_outcome_count
+  - evaluation_runner_cancellation_count
+  - evaluation_runner_resource_limit_count
+  - evaluation_runner_reproducibility_completeness
+  - evaluation_runner_queue_accepted
+  - evaluation_runner_nats_fetch_failure_count
+  - evaluation_runner_nats_publish_failure_count
+  - evaluation_runner_nats_drain_failure_count
+  - evaluation_runner_nats_recovery_count
+  - evaluation_runner_nats_poison_count
+  - evaluation_runner_terminal_settlement_failure_count
+  - evaluation_runner_lease_renewal_failure_count
+  - evaluation_runner_lease_lost_count
+  - evaluation_runner_artifact_cleanup_failure_count
+  - evaluation_runner_recovery_scan_failure_count
+  - evaluation_runner_recovery_count
+  - evaluation_runner_publication_recovery_failure_count
+  - evaluation_runner_terminal_accounting_failure_count
+  - evaluation_runner_nats_identity_conflict_count
+metric_semantics:
+  evaluation_runner_queue_time_ms: Queue wait in milliseconds, including expired queued work.
+  evaluation_runner_fixture_load_duration_ms: Bounded fixture and input-artifact load duration in milliseconds.
+  evaluation_runner_execution_duration_ms: Bounded execution duration in milliseconds through success, failure, cancellation, or deadline.
+  evaluation_runner_outcome_count: Count of terminal completed or failed outcomes.
+  evaluation_runner_cancellation_count: Count of terminal cancellations by bounded reason class.
+  evaluation_runner_resource_limit_count: Count of bounded resource-limit rejections.
+  evaluation_runner_reproducibility_completeness: Ratio of declared reproducibility fields verified at terminal settlement.
+  evaluation_runner_queue_accepted: Count of requests durably accepted into the bounded runner queue.
+  evaluation_runner_nats_fetch_failure_count: Count of bounded JetStream pull-fetch failures.
+  evaluation_runner_nats_publish_failure_count: Count of bounded JetStream result-publish failures.
+  evaluation_runner_nats_drain_failure_count: Count of bounded transient delivery or application-drain failures.
+  evaluation_runner_nats_recovery_count: Count of transport recovery observations after a prior bounded failure.
+  evaluation_runner_nats_poison_count: Count of permanently rejected malformed or invalid transport messages.
+  evaluation_runner_terminal_settlement_failure_count: Count of terminal ledger transactions that failed, classified by a bounded error class.
+  evaluation_runner_lease_renewal_failure_count: Count of lease renewal provider failures classified by bounded error class.
+  evaluation_runner_lease_lost_count: Count of fenced executions whose durable lease could not be renewed.
+  evaluation_runner_artifact_cleanup_failure_count: Count of bounded cleanup failures after interrupted output writes.
+  evaluation_runner_recovery_scan_failure_count: Count of durable attempt recovery scans that failed.
+  evaluation_runner_recovery_count: Count of queued or expired leased attempts re-enqueued after recovery.
+  evaluation_runner_publication_recovery_failure_count: Count of terminal publication drain failures.
+  evaluation_runner_terminal_accounting_failure_count: Count of invalid durable terminal payloads encountered during recovery accounting.
+  evaluation_runner_nats_identity_conflict_count: Count of permanently rejected NATS identity conflicts.
+metric_definitions:
+  - name: evaluation_runner_queue_time_ms
+    type: histogram
+    unit: milliseconds
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, evaluation_nats, application_validation, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_fixture_load_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_object_storage, object_storage, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_execution_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, evaluation_object_storage, object_storage, model_provider, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_outcome_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_cancellation_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_resource_limit_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [application_validation, postgresql]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_reproducibility_completeness
+    type: gauge
+    unit: ratio
+    labels: [outcome, error_class, dependency]
+    dependencies: [application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_queue_accepted
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_fetch_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_publish_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_drain_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream, application_unknown]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_recovery_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream, postgresql]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_poison_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_terminal_settlement_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_unknown]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_lease_renewal_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_unknown]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_lease_lost_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_artifact_cleanup_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_object_storage, object_storage]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_recovery_scan_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_unknown]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_recovery_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_publication_recovery_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, evaluation_nats, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_terminal_accounting_failure_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [postgresql, application_validation]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+  - name: evaluation_runner_nats_identity_conflict_count
+    type: counter
+    unit: count
+    labels: [outcome, error_class, dependency]
+    dependencies: [evaluation_nats, nats_jetstream]
+    trace: evaluation_runner
+    correlation: attempt_id
+    export: [structured_container_log, otlp]
+metric_units:
+  evaluation_runner_queue_time_ms: milliseconds
+  evaluation_runner_fixture_load_duration_ms: milliseconds
+  evaluation_runner_execution_duration_ms: milliseconds
+  evaluation_runner_outcome_count: count
+  evaluation_runner_cancellation_count: count
+  evaluation_runner_resource_limit_count: count
+  evaluation_runner_reproducibility_completeness: ratio
+  evaluation_runner_queue_accepted: count
+  evaluation_runner_nats_fetch_failure_count: count
+  evaluation_runner_nats_publish_failure_count: count
+  evaluation_runner_nats_drain_failure_count: count
+  evaluation_runner_nats_recovery_count: count
+  evaluation_runner_nats_poison_count: count
+  evaluation_runner_terminal_settlement_failure_count: count
+  evaluation_runner_lease_renewal_failure_count: count
+  evaluation_runner_lease_lost_count: count
+  evaluation_runner_artifact_cleanup_failure_count: count
+  evaluation_runner_recovery_scan_failure_count: count
+  evaluation_runner_recovery_count: count
+  evaluation_runner_publication_recovery_failure_count: count
+  evaluation_runner_terminal_accounting_failure_count: count
+  evaluation_runner_nats_identity_conflict_count: count
+evaluators:
+  - evaluation_runner_contract_validation
+  - evaluation_runner_exact_component_version
+  - evaluation_runner_idempotency
+  - evaluation_runner_cancellation
+  - evaluation_runner_resource_isolation
+  - evaluation_runner_reproducibility
+  - evaluation_runner_content_leakage
+  - evaluation_runner_core_independence
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, attempt_id]
+  prohibited:
+    - access_token
+    - argument
+    - arguments
+    - arbitrary_attributes
+    - attributes
+    - authorization
+    - bearer
+    - bearer_token
+    - content
+    - credentials
+    - digest
+    - document_content
+    - prompt
+    - raw_content
+    - raw_result
+    - response
+    - response_content
+    - response_payload
+    - payload
+    - result
+    - results
+    - artifact_bytes
+    - filename
+    - object_key
+    - owner
+    - owner_identity
+    - password
+    - private
+    - refresh_token
+    - secret
+    - token
+    - tokens
+    - tool_argument
+    - tool_arguments
+    - tool_result
+    - tool_results
+    - credential
+    - endpoint
+    - exception
+    - id_token
+    - memory_content
+    - owner_subject
+    - url
+    - uri
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log_and_otlp
+  cadence: periodic_and_shutdown
+  retry: bounded_three_attempts
+  health_counters: [accepted, rejected, dropped, export_failures, abandoned_batches]

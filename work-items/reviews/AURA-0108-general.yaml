@@ -1,0 +1,50 @@
+agent: general_reviewer
+work_item: AURA-0108
+verdict: PASS
+checked:
+  - >-
+    Re-read the final implementation, active work item, amended Observatory and
+    test handoffs, and actual AURA-0108 diff while isolating overlapping
+    AURA-0098 shared-worktree changes.
+  - >-
+    Verified stale receipt selection remains bounded and lease-safe, ClickHouse
+    presence requires the exact opaque observation identifier and immutable
+    ingest sequence, and PostgreSQL completion remains atomic, idempotent, and
+    serialized with ingest and retention.
+  - >-
+    Verified the prior startup blocker remains resolved: recovery starts beside
+    intake, heartbeat, and stop handling, and every pass has a validated
+    whole-pass deadline without terminating normal worker operation.
+  - >-
+    Verified the prior long-tail blocker is resolved: every periodic pass calls
+    the production registry's bounded visibility continuation, so a quiescent
+    contiguous tail advances autonomously across lock-budget slices without a
+    new producer event or a skipped gap.
+  - >-
+    Verified visibility health now counts every ledger row beyond the committed
+    watermark, reporting the truthful interim tail and converging to zero; run
+    list, run detail, and trace detail retain the same committed snapshot fence.
+  - >-
+    Verified each reconciliation pass uses a fresh trace context whose phase
+    spans remain correlated, and whole-pass timeouts attribute the active
+    PostgreSQL selection/commit or ClickHouse presence phase with finite,
+    content-free labels.
+  - >-
+    Re-ran the independent focused AURA-0108 suite: 22 passed with one
+    pre-existing Authlib warning. Ruff and Pyright passed for the reviewed
+    Observatory implementation and test surfaces.
+  - >-
+    Re-ran the selected AURA-0078/AURA-0080/AURA-0085/AURA-0108 convergence
+    regressions: 205 passed and one known overlapping AURA-0104 migration
+    idempotency assertion failed outside AURA-0108 scope.
+  - >-
+    Re-ran work-item, repository-shape, module-registry, import-boundary,
+    service-isolation, contract-change, observability, baseline-protection, and
+    diff-whitespace checks; all applicable AURA-0108 checks passed.
+findings: []
+risks:
+  - >-
+    The shared checkout still contains unrelated AURA-0098 changes and the
+    known AURA-0104 migration-idempotency regression; integration must preserve
+    those edits and must not attribute that existing failure to AURA-0108.
+unresolved: []

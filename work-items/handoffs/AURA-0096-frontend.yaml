@@ -1,0 +1,100 @@
+agent: frontend_worker
+work_item: AURA-0096
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0096_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.experiment-workspaces
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/storybook/src/observatory-experiments.stories.ts
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-contract-guards.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.spec.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: observatory-v1
+      version: 1.0
+      source: contracts/openapi/observatory-v1.yaml
+      consumer_boundary:
+        - Experiments, baselines, regressions, attribution, and history use generated Observatory operation IDs and transport types.
+        - The feature renders only bounded metadata, finite metrics, versions, and opaque evidence references; no content or owner identity is requested.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.experiment_web
+  metrics_added: []
+verification:
+  passed:
+    - pnpm --dir frontend nx lint observatory-web (passed)
+    - pnpm --dir frontend nx lint observatory (passed; only pre-existing gateway/store warnings remain)
+    - pnpm --dir frontend nx lint storybook (passed; only pre-existing warnings remain)
+    - pnpm --dir frontend nx test observatory (41 passed)
+    - pnpm --dir frontend nx test observatory-api-client (5 passed)
+    - python3 -m pytest -q contracts/tests/test_aura0096_experiment_contracts.py contracts/tests/test_observatory_v1.py (17 passed)
+    - pnpm --dir frontend nx run observatory-api-client:check-generated (passed; embedded OpenAPI SHA-256 matches current contract)
+    - pnpm --dir frontend nx run observatory-api-client:validate-contract (passed)
+    - pnpm --dir frontend nx lint observatory-api-client (passed)
+    - pnpm --dir frontend nx build observatory-web --configuration=production (passed with regenerated transport client)
+    - pnpm --dir frontend nx build storybook --configuration=production (passed; experiment stories included)
+    - pnpm --dir frontend nx e2e observatory-web-e2e -- --grep experiments --project desktop --project tablet --project mobile (15 passed, including auth, SSE, promotion, retention reload, and responsive recovery)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts (264 passed across desktop, tablet, and mobile)
+    - pnpm --dir frontend nx run storybook:build-storybook (passed; explicit loading, disconnected, rejected, unauthorized, unavailable, incompatible, and error stories included)
+    - git diff --check (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml (passed: all changed paths are authorized; no adapters/postgres.py change is present)
+  failed:
+    - none
+  not_run:
+    - Full repository aggregate and backend checks remain integration-maintainer scope.
+decisions:
+  - >-
+    Added a separate Observatory experiment workspace and top-level shell route. It is isolated from Aura feature libraries and keeps feature state in an injectable, memory-only store.
+  - >-
+    Candidate creation and deterministic comparison use generated transport request types. Promotion is a separate owner action requiring the exact typed confirmation PROMOTE_IMMUTABLE_BASELINE, CSRF/idempotency headers, a fresh opaque authorization record, and an async progress announcement; duplicate submissions are suppressed per baseline version.
+  - >-
+    Experiment composition starts with two explicit variants and provides accessible add/remove/edit controls bounded to 2–16 unique variant IDs. The store rejects invalid variant counts before transport, and browser acceptance submits and asserts the closed contract body.
+    Browser acceptance also exercises the add/remove controls and verifies the exact immutable-promotion header alongside the complete retry request.
+  - >-
+    Promotion commands retain the complete original request body, including authorizationRecordId, and idempotency key in memory across ambiguous/lost-response retries. Regression attribution requests always include the generated required version query, and late evidence is rendered as a distinct non-colour status.
+  - >-
+    The workspace observes Observatory's authenticated evaluation SSE revision/disconnected signals: persisted metadata changes trigger a bounded REST refresh, while a disconnected stream is presented as a stale/disconnected state until recovery. Auth-generation and session-required transitions clear all memory-only workspace data and require a fresh authoritative snapshot without discarding safe in-form drafts.
+  - >-
+    The browser exposes exact suite, variant, component, model, deployment, cohort, result, threshold, and reproducibility bindings. It does not accept arbitrary dimensions or render prompts, responses, comments, filenames, endpoints, credentials, or owner identity.
+  - >-
+    Responsive tables switch to semantic labeled stacked rows below 900px, forms stack below 640px, promotion dialogs trap focus, restore the invoker, and permit Escape only when safe, state banners and progress are announced, colors are paired with text badges, and reduced motion is respected.
+  - >-
+    The full Observatory browser matrix now accounts for the ninth Experiments panel. Privacy assertions remain scoped to content-bearing values while permitting bounded metadata such as prompt revision identifiers.
+  - >-
+    Experiment endpoint session-required failures now promote through the shared Observatory auth lifecycle, clearing feature state and presenting sign-in recovery. Retention completion advances both the destructive auth-generation boundary and evaluation revision, so experiment rows, selected regressions, attribution, drafts, and idempotency command material are cleared before the authoritative reload.
+  - >-
+    Browser acceptance emits a bounded metadata-only evaluation.changed SSE event, verifies an authoritative experiment refresh on the live revision, and covers reconnect/catch-up recovery without asserting browser-specific Last-Event-ID delivery behavior.
+  - >-
+    Storybook explicitly covers ready, structural loading, empty, partial, disconnected, rejected, unauthorized, unavailable, incompatible, error, insufficient-evidence/inconclusive, late, and dark modes with the repository accessibility gate. Playwright covers contract-shaped suite/case/result binding, candidate creation, distinct-variant comparison, affected/unaffected attribution, persisted regression reopen/history, promotion safety with idempotent duplicate prevention, navigation, keyboard focus wrapping, reconnect/refresh states including a non-empty Last-Event-ID cursor, 320px/zoom/reduced-motion behavior, and desktop/tablet/mobile viewports.
+  - >-
+    Regenerated the transport-only Angular Observatory client through the repository generator after the experiment request contract changed. The generated CreateEvaluationExperimentRequest now includes required captureAuthorization and limits fields, and its embedded OpenAPI SHA-256 matches the current contract; no hand edits or feature behavior were added to the generated surface.
+  - >-
+    Re-ran the generator against the final OpenAPI revision. The generated EvaluationSuite and CreateEvaluationSuiteRequest now expose optional variantBindings, with embedded contract SHA-256 05792ba96ee03a2fb7029ce2d28cc2b9476c32926468f0e015214e07392c7c3f; a transport type assertion guards the new field.
+  - >-
+    Updated the experiment Storybook fixture with canonical metadata-only captureAuthorization and bounded execution limits required by the generated EvaluationExperiment type; no product behavior or persisted state was added.
+risks:
+  - >-
+    The fixture acceptance intentionally does not require a live Ollama/provider because this slice only exercises deterministic metadata comparisons and owner promotion. Full composed-stack provider and outage acceptance remains AURA-0098/integration scope.
+unresolved: []

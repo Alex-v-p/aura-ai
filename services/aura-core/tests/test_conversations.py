@@ -47,6 +47,7 @@ from aura_core.domains.interaction.agents.public import (
     ToolPolicy,
 )
 from aura_core.domains.interaction.conversations.dto import DocumentCitation
+from aura_core.domains.interaction.conversations.persistence import MessageRow
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
     Conversation,
@@ -60,6 +61,7 @@ from aura_core.domains.interaction.conversations.public import (
     server_local_time,
     validate_client_time_zone,
 )
+from aura_core.domains.interaction.conversations.repository import SqlConversationRepository
 from aura_core.entrypoints.worker import app as worker_app
 from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
 from aura_core.platform.telemetry import MetadataMetrics, new_span_id
@@ -89,6 +91,47 @@ ResumeApproval = Callable[
     Awaitable[None],
 ]
 _resume_approval = cast(ResumeApproval, vars(worker_app)["_resume_approval"])
+
+
+@pytest.mark.asyncio
+async def test_sql_append_message_eager_loads_relationship_for_each_stream_chunk() -> None:
+    """Every assistant chunk must be renderable without async lazy-loading."""
+
+    message_id = uuid4()
+    row = MessageRow(
+        id=message_id,
+        conversation_id=uuid4(),
+        role="assistant",
+        content="",
+        state=MessageState.PARTIAL.value,
+        citations=[],
+        attachments=[],
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    session = AsyncMock(spec=AsyncSession)
+
+    async def get_message(*_: object, **kwargs: object) -> MessageRow:
+        # Model the async-safe boundary: a relationship loader must be part of
+        # every locked lookup before the row is converted to a public message.
+        assert kwargs["with_for_update"] is True
+        assert kwargs["options"]
+        row.attachment_links = []
+        return row
+
+    session.get.side_effect = get_message
+    repository = SqlConversationRepository()
+
+    first = await repository.append_message(session, message_id, "first", MessageState.PARTIAL)
+    second = await repository.append_message(session, message_id, "second", MessageState.COMPLETE)
+
+    assert first is not None
+    assert first.content == "first"
+    assert first.attachments == ()
+    assert second is not None
+    assert second.content == "firstsecond"
+    assert second.state is MessageState.COMPLETE
+    assert session.get.await_count == 2
 
 
 def test_same_run_document_citations_accept_only_returned_evidence_and_strip_markers() -> None:

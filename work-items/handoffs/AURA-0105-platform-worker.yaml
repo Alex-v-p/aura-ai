@@ -1,0 +1,61 @@
+agent: platform_worker
+work_item: AURA-0105
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0105_platform
+  worktree: shared
+scope:
+  ownership_zone: deploy.compose.topology-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/test_topology.py
+  - work-items/handoffs/AURA-0105-platform-worker.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0105.yaml
+    - UV_CACHE_DIR=/tmp/aura-0105-uv uv run python -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_garage_is_private_digest_qualified_and_core_only -v
+    - UV_CACHE_DIR=/tmp/aura-0105-uv uv run python -m unittest deploy.compose.test_topology -v
+    - UV_CACHE_DIR=/tmp/aura-0105-uv uv run ruff check deploy/compose/test_topology.py
+    - docker compose --profile observatory config --quiet
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0105.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0105.yaml
+    - git diff --check
+  failed:
+    - >-
+      validate-changed-paths.py --work-item AURA-0105 reports concurrent
+      AURA-0098 files outside this work item's allowed paths. This worker only
+      changed the authorized topology test and AURA-0105 handoff; the unrelated
+      dirty paths predated this task and were not reverted.
+  not_run: []
+decisions:
+  - >-
+    The Observatory bootstrap extraction now ends at
+    aura-evaluation-runner-garage-bootstrap, so its W-only assertions cannot
+    consume the runner's legitimate RW grant.
+  - >-
+    The evaluation runner bootstrap is extracted independently and explicitly
+    checked for its distinct credential, RW permission flag, owner denial, and
+    dependency on the Observatory bootstrap.
+  - >-
+    Observatory API assertions now inspect the observatory-api service block,
+    while existing Core API assertions continue to inspect aura-core-api. No
+    production Compose content was changed.
+risks: []
+unresolved:
+  - >-
+    The changed-path validation failure is caused solely by concurrent
+    AURA-0098 worktree changes outside AURA-0105 ownership and must be handled
+    by integration without reverting those changes.

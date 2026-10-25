@@ -1,0 +1,239 @@
+id: AURA-0092
+title: Add durable Observatory evaluation orchestration
+status: integrated
+change_class: repository_governance
+intent: >
+  Coordinate authorized evaluation work through Observatory-owned durable jobs,
+  attempts, schedules, cancellation, deadlines, retries, transactional dispatch,
+  idempotent result consumption, and restart-safe recovery while keeping Core
+  execution independent and all transport and operational signals content-free.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - The architecture baseline already authorizes separate Observatory evaluation worker and scheduler deployables and PostgreSQL-owned orchestration state; no new service product or protocol boundary is introduced and no new ADR is required.
+    - Observatory PostgreSQL is authoritative for evaluation jobs attempts schedules cancellation deadlines retry policy leases result receipts and outbox state; NATS is transport only and cannot become business truth.
+    - A dedicated evaluation worker publishes commands consumes results and advances durable orchestration state while a separate database-only scheduler claims due schedules retries deadlines and abandoned leases; neither responsibility is added to the telemetry ingest worker.
+    - Existing evaluation resource lifecycle-event and runner-transport v1 contracts are closed and sufficient; this item does not change them or place raw evaluation content in NATS PostgreSQL logs metrics traces health history or error diagnostics.
+    - Job attempt event command and cancellation identifiers are service-generated deterministic or UUID-shaped stable identifiers with persisted correlation causation idempotency and immutable request fingerprints.
+    - Every outbound runner request and cancellation is inserted into a transactional outbox in the same PostgreSQL transaction as its authoritative state transition and is marked published only after the transport confirms publication.
+    - Runner results are validated against the closed transport schema and expected job attempt request provenance and digest before an idempotent state transition; messages are acknowledged only after durable commit and duplicate or out-of-order terminal delivery cannot reopen or duplicate work.
+    - Retry eligibility backoff next-attempt time maximum attempts lease expiry deadline and cancellation authority are persisted and bounded by deployment maxima; terminal cancellation and deadline outcomes take precedence over later completion or retry delivery.
+    - Scheduled work references opaque dataset suite evaluator and artifact identifiers without defining or inspecting their content; AURA-0093 owns those definitions and evaluator behavior.
+    - The scheduler has no NATS or artifact credentials. The evaluation worker receives only the existing least-privilege Observatory dispatch identity and no Core database or normal Core service credential.
+    - Core remains an isolated executor reached only through the versioned NATS boundary and receives no dependency on Observatory availability tables packages or lifecycle state.
+    - This item adds no public HTTP CLI SSE or browser interface no dataset suite evaluator judge experiment baseline or alert behavior and no production telemetry capture expansion.
+    - Real-stack acceptance found that the existing Core evaluation runner delegates reconnect diagnostics to the pinned NATS default callback which emits raw provider tracebacks; AURA-0092 authorizes the smallest runner-bootstrap correction needed to preserve the already-approved metadata-only cross-service outage boundary without changing Core business behavior contracts state or normal deployables.
+    - Real-stack privacy review found that the pinned Collector emits configured endpoints and its injected secret filename in provider diagnostics; AURA-0092 authorizes the smallest existing Collector configuration correction and private self-telemetry needed to preserve the approved metadata-only trace boundary and verify bounded queue failure and recovery without adding a service or public port.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-038
+  - EVA-039
+  - EVA-040
+  - EVA-041
+ownership_zones:
+  - services.aura-observatory.evaluation-orchestration
+  - services.aura-observatory.evaluation-transport
+  - services.aura-observatory.evaluation-worker
+  - services.aura-observatory.evaluation-scheduler
+  - services.aura-observatory.evaluation-orchestration-state
+  - deploy.observatory-evaluation-orchestration
+  - repository.module-registration
+  - evaluation.observatory-orchestration-tests
+allowed_paths:
+  - work-items/active/AURA-0092.yaml
+  - work-items/archived/AURA-0092.yaml
+  - work-items/handoffs/AURA-0092-*.yaml
+  - work-items/reviews/AURA-0092-*.yaml
+  - work-items/integration/AURA-0092.yaml
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/__init__.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-scheduler.yaml
+  - services/aura-observatory/tests/test_aura0092_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/tests/test_aura0092_*.py
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/observatory-collector.yaml
+  - deploy/compose/run-evaluation-orchestration-e2e.sh
+  - deploy/compose/test_topology.py
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/docker/aura-observatory.Dockerfile.dockerignore
+  - deploy/tests/test_aura0092_*.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/clickhouse/**
+  - frontend/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-orchestration
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.evaluation_scheduler
+  required_metrics:
+    - observatory_evaluation_job_admission_count
+    - observatory_evaluation_attempt_transition_count
+    - observatory_evaluation_retry_scheduled_count
+    - observatory_evaluation_cancellation_count
+    - observatory_evaluation_deadline_count
+    - observatory_evaluation_outbox_pending_count
+    - observatory_evaluation_outbox_publication_count
+    - observatory_evaluation_result_consumption_count
+    - observatory_evaluation_worker_heartbeat_age_seconds
+    - observatory_evaluation_scheduler_heartbeat_age_seconds
+  required_evaluators:
+    - evaluation_orchestration_idempotency
+    - evaluation_orchestration_retry_recovery
+    - evaluation_orchestration_cancellation_deadlines
+    - evaluation_orchestration_lease_exclusivity
+    - evaluation_orchestration_transport_privacy
+    - evaluation_orchestration_core_independence
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Evaluation transport and orchestration records are closed bounded metadata schemas and reject unknown fields raw content arbitrary attributes credentials endpoints object locations filenames owner identity and exception text before persistence or publication.
+    - Transactional outbox payloads contain only schema-valid runner command or cancellation envelopes with bounded references hashes classifications limits provenance correlation and causation and cannot contain artifact bytes prompts responses rubrics comments or provider configuration.
+    - Result consumers authenticate through a separate file-injected dispatch identity validate schema version subject event identity expected attempt provenance digest and terminal semantics and acknowledge only after the durable transaction commits.
+    - Scheduler lease and worker claim operations use database compare-and-set or row locking with bounded lease expiry so concurrent replicas restart and redelivery cannot produce duplicate active attempts or split-brain scheduling.
+    - Cancellation deadline retry and terminal races resolve through an explicit monotonic state machine with one durable terminal outcome and no completion-after-cancellation or retry-after-deadline reopening.
+    - Retry policy and effective resource limits are fixed bounded deployment configuration and persisted metadata rather than caller-controlled executable policy or arbitrary schedule expressions.
+    - Schedules use validated UTC timing and bounded cadence with no arbitrary code shell commands dynamic imports URLs or external destinations and cannot grant execution authority beyond an already authorized evaluation reference.
+    - Logs metrics traces health records manifests and errors use finite phase outcome and failure-code dimensions only and never label or emit job attempt request artifact dataset suite owner digest or content values.
+    - The evaluation worker receives only required PostgreSQL NATS dispatch and telemetry files; the scheduler receives PostgreSQL and telemetry files only and neither can access Core databases normal Core credentials or public networks.
+    - Shutdown dependency loss poison messages and recovery preserve authoritative state without dropping acknowledged results duplicating dispatch or leaking message bodies in diagnostics.
+  data_classes:
+    - evaluation_job_metadata
+    - evaluation_attempt_metadata
+    - evaluation_schedule_metadata
+    - evaluation_transport_reference
+    - evaluation_lifecycle_audit
+required_agents:
+  implementation:
+    - observatory_worker
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A forward-only idempotent PostgreSQL migration from empty and upgraded Observatory schemas creates content-free jobs attempts schedules leases cancellation result receipts lifecycle audit and transactional outbox state without accessing Core tables or altering migrations 0001 through 0007.
+  - Job admission uses service-generated stable identifiers a closed authorized request fingerprint persisted UTC deadline bounded retry policy exact capture classification and immutable component dataset suite evaluator artifact and reproducibility references without storing raw content or object locations.
+  - Reusing an idempotency key with the same fingerprint returns the same job while conflicting reuse fails closed and concurrent admission cannot create duplicate jobs initial attempts or outbox records.
+  - Creating an attempt and its runner request outbox row is one transaction; publishing marks only the exact row after broker acknowledgement and restart safely republishes unpublished rows with the same deterministic transport event identity.
+  - The evaluation worker publishes only schema-valid request and cancellation events on the existing least-privilege runner subjects and consumes only schema-valid results from the existing durable result subject.
+  - Result handling verifies job attempt request event deployment component provenance digest and allowed terminal transition then commits the result receipt attempt job audit and any follow-on action atomically before acknowledging the message.
+  - Duplicate result delivery returns the prior durable disposition without duplicate terminal audit retry or derived work while conflicting unknown malformed unsupported out-of-order and mismatched results are classified and handled without exposing payloads.
+  - Persisted bounded retry policy schedules only eligible transient failure classes with deterministic capped backoff next-attempt UTC time and maximum attempts; permanent malformed authorization integrity cancellation deadline and resource failures do not retry.
+  - Cancellation before dispatch during an active attempt and after terminal completion is idempotent race-safe and produces at most one deterministic cancellation command and one final job outcome.
+  - Deadlines prevent late dispatch settle due active work with a bounded terminal timeout outcome and take precedence over subsequent retry or successful result delivery without losing a content-free audit trail.
+  - Scheduler replicas claim due schedules retries deadlines and expired leases exclusively using bounded transactions and lease ownership and recover abandoned work after restart without duplicate active attempts.
+  - Scheduled evaluations use validated enabled state UTC next-run time bounded cadence opaque authorized evaluation references and deterministic occurrence identity and never arbitrary cron code time zones destinations or executable policy.
+  - Worker and scheduler configuration enforces bounded batch size poll interval lease duration maximum attempts backoff cadence queue depth payload size and shutdown drain time and rejects unsafe values at startup.
+  - Worker and scheduler heartbeats backlog outbox age result lag attempt transitions retry cancellation deadline and failure outcomes are metadata-only bounded measurements with stable component identities and finite labels.
+  - Component manifests declare ownership dependencies measurements evaluators metadata-only capture manual retention and provider-neutral roles for the orchestration worker and scheduler.
+  - Compose provides distinct evaluation worker and scheduler services with no published ports health checks restart policy resource limits encrypted-state-root PostgreSQL access and only the worker on the private evaluation NATS network with file-injected dispatch credentials.
+  - Stopping crashing saturating or misconfiguring either Observatory evaluation process does not affect Observatory API telemetry ingestion Core API worker scheduler migration or normal Core requests and Core remains usable with all evaluation orchestration stopped.
+  - Fresh migration upgrade idempotent rerun unit property concurrency privacy transport topology and project-scoped Docker Desktop acceptance cover admission outbox publication result redelivery retry cancellation deadlines schedules lease recovery shutdown and dependency outages.
+  - Project-scoped acceptance proves one request is dispatched to the real Core evaluation runner its content-free result is consumed durably duplicate delivery is idempotent cancellation and restart recovery succeed and all services and disposable state are cleaned through repository scripts.
+  - The only Core source change is the evaluation runner's bounded privacy-safe NATS diagnostic callback required by real outage acceptance; no Core business logic public API worker scheduler migration state contract dependency or normal runtime behavior changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0092.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0092.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0092.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0092.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0092.yaml
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - python3 -m unittest deploy.compose.test_topology
+  - cd /home/alexa/Documents/Projects/aura-ai && uv run pytest deploy/tests/test_aura0092_*.py
+  - docker compose --env-file .env --profile observatory config --quiet
+  - bash -n deploy/compose/local-http.sh deploy/compose/run-evaluation-orchestration-e2e.sh
+  - bash deploy/compose/run-evaluation-orchestration-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Dataset suite evaluator definitions deterministic scoring and broader component registrations remain assigned to AURA-0093; schedules in this item reference opaque pre-authorized identities only.
+  - Local Ollama judges prompts rubrics calibration human review and advisory scoring remain assigned to AURA-0094 and cloud judges remain prohibited.
+  - Evaluation REST CLI SSE Web dataset upload artifact download review progress and owner-facing scheduling workflows remain assigned to AURA-0095.
+  - Experiments immutable manual baselines regression analysis comparison and promotion remain assigned to AURA-0096 and protected repository baselines remain unchanged.
+  - Dashboard alert annotation and incident behavior remains assigned to AURA-0097.

@@ -1,0 +1,169 @@
+agent: frontend_worker
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0084_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.auth-recovery
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web/src/styles.css
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role frontend_worker with all seven
+      frontend-owned changed paths explicitly supplied
+    - git diff --check
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+    - >-
+      cd frontend && pnpm exec tsc --noEmit --ignoreConfig --target ES2022
+      --module ESNext --moduleResolution Bundler --esModuleInterop
+      --skipLibCheck apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      Browser-boundary unit coverage verifies the authoritative 2048-character
+      cap, exact and normalized OIDC/identity/content/request/provider endpoint
+      key removal, unconditional fragment removal, benign filter preservation,
+      and generated login-link privacy.
+    - >-
+      Mocked browser coverage verifies logout 401 as already absent, no retry
+      action, and a later session uses a fresh in-memory CSRF value.
+    - >-
+      Observatory store coverage verifies a session-required rejection from
+      each parallel overview, runs, components, and deployments request is
+      promoted before partial-state assembly, while ordinary failures remain
+      partial and stale load sequences cannot apply late authentication loss.
+    - >-
+      Live-refresh coverage drives a 100-event SSE burst through a bounded
+      single-flight coordinator, verifies exactly one trailing refresh and no
+      timer/queue growth, and confirms the latest snapshot version becomes
+      visible.
+    - >-
+      Live-refresh coverage also leaves a components request unresolved while
+      overview and runs complete, confirming the live run snapshot publishes
+      without waiting for slow component health work.
+    - >-
+      Bootstrap coverage leaves initial catalog loading unresolved and confirms
+      overview/runs readiness and live connection proceed independently.
+    - >-
+      Catalog-entry coverage confirms a Components navigation transition queues
+      one coalesced catalog refresh after an initially empty catalog, while
+      observation-event bursts do not trigger catalog work.
+    - >-
+      Mocked browser authentication coverage verifies recovery→checking→same
+      recovery refocuses the recovery heading and recovery→checking→success
+      focuses the authenticated main landmark.
+    - >-
+      The in-session expiry browser scenario enters Runs while authenticated,
+      arms the one-shot expired response, and submits the existing Runs form
+      through requestSubmit so the real session-loss path is exercised without
+      an actionability retry against a control that is removed during recovery;
+      it retains assertions for private-navigation clearing, announcement, and
+      recovery-heading focus.
+  failed: []
+  not_run:
+    - >-
+      cd frontend && pnpm exec playwright test --config
+      apps/observatory-web-e2e/playwright.config.ts --project=desktop (the
+      configured Nx web server could not start because this sandbox denied
+      local listener/plugin socket creation)
+    - bash deploy/compose/run-observatory-full-stack-e2e.sh (owned by the
+      full-stack integration phase)
+decisions:
+  - >-
+    The browser receives only finite recovery states: initial, expired,
+    explicit_logout, logout_unconfirmed, callback_failed, callback_denied, and
+    identity_unavailable. Provider values and server error text are never used
+    as browser copy.
+  - >-
+    Authentication retry runs the same session-load lifecycle as startup and
+    reconnects SSE only after a successful session and REST snapshot. The
+    identity-unavailable retry is the primary action; owner sign-in remains a
+    secondary same-origin link.
+  - >-
+    Logout reports explicit_logout only after a 204 response or a 401 already-
+    absent response. 403, 5xx, network, and missing-CSRF failures clear visible
+    private state but preserve the opaque in-memory CSRF value for a
+    logout_unconfirmed retry and never claim sign-out completed.
+  - >-
+    The auth_recovery query marker is consumed once with history.replaceState;
+    unknown values are removed without being rendered. Native same-origin
+    links preserve only a bounded local return path and never carry credentials.
+  - >-
+    Session loss continues to clear snapshots, filters, selected traces,
+    retention state, component health, and deferred request generations through
+    the existing store invalidation path. sessionRequired remains available for
+    existing feature compatibility.
+  - >-
+    Recovery heading focus is deferred until auth status is known or changes;
+    authenticated initial loading does not steal focus. Static polite live
+    announcements, visible programmatic-heading focus styling, responsive
+    actions, and reduced-motion rules cover the browser recovery surface.
+  - >-
+    Observatory-scoped dark-mode token overrides preserve semantic contrast for
+    the canvas, surfaces, text, focus, status, and destructive actions. Mocked
+    browser coverage asserts dark and reduced-motion preferences.
+  - >-
+    The browser return-path sanitizer mirrors the server's bounded relative-path
+    policy: it normalizes key names before applying the exact denylist and
+    credential suffix/prefix rules, strips every fragment, removes callback,
+    identity, content, request, provider, endpoint, and credential variants,
+    and preserves benign Observatory filters.
+  - >-
+    Authenticated API responses remain in memory only. No browser storage,
+    service-worker cache, URL token, or bearer credential was introduced.
+  - >-
+    Parallel resource authentication failures are promoted through the
+    lifecycle catch before partial snapshot assembly; ordinary resource
+    failures retain the existing authenticated partial-data behavior, and the
+    load sequence guard remains authoritative for late results.
+  - >-
+    Live SSE notifications update the latest event ID immediately and use a
+    timer-free one-active-plus-one-trailing refresh coordinator. A burst cannot
+    starve snapshot publication or create unbounded concurrent loads; session
+    loss cancels pending trailing work.
+  - >-
+    Live refreshes query only overview and runs, preserving the last full
+    components/deployments snapshot and resource states. Their session and
+    auth-generation guards mirror full loads, while full manual loads retain
+    the complete resource set.
+  - >-
+    Session bootstrap awaits only the observation surface before opening SSE;
+    components and deployments use an independent bounded background
+    coordinator with its own generation guard, so slow catalog work cannot
+    block connection or create overlapping full loads.
+  - >-
+    Components navigation explicitly requests the existing catalog coordinator
+    once on entry. Repeated live events remain overview/run-only, while an
+    in-flight startup catalog request is coalesced with the entry request.
+  - >-
+    Auth focus transitions reset on checking: initial authenticated startup does
+    not steal focus, repeated recovery failure focuses the recovery heading,
+    and successful recovery focuses the stable authenticated main landmark.
+risks:
+  - >-
+    Local Playwright execution needs a host that permits the configured
+    development-server listener and Nx plugin sockets. The added mocked browser
+    cases are committed for the integration environment to execute.
+unresolved: []

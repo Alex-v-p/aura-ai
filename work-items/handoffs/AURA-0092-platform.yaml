@@ -1,0 +1,89 @@
+agent: platform_worker
+work_item: AURA-0092
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/implement_aura_0092_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.observatory-evaluation-orchestration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/observatory-collector.yaml
+  - deploy/compose/test_topology.py
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/tests/test_aura0092_topology.py
+  - work-items/handoffs/AURA-0092-platform.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+migrations:
+  changed: false
+  postgresql: []
+  clickhouse: []
+observability:
+  components:
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.evaluation_scheduler
+  metrics_added: []
+verification:
+  passed:
+    - git diff --check
+    - python3 -m pytest -q deploy/tests/test_aura0092_topology.py (6 passed)
+    - python3 -m unittest deploy.compose.test_topology (49 passed)
+    - docker compose --env-file .env --profile observatory config --quiet
+    - AURA_WORK_ITEM=AURA-0092 python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0092.yaml
+    - python3 -m pytest -q deploy/tests/test_aura0092_topology.py (7 passed after runtime contract packaging fix)
+    - docker compose --env-file .env --profile observatory config --quiet after runtime contract packaging fix
+    - python3 -m pytest -q deploy/tests/test_aura0092_topology.py (9 passed after production OTLP wiring)
+    - python3 -m unittest deploy.compose.test_topology (49 passed)
+    - docker compose --env-file .env --profile observatory config --quiet after production OTLP wiring
+    - docker compose --env-file .env -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity --profile observatory config --quiet
+    - bash -n deploy/compose/local-http.sh deploy/compose/run-evaluation-orchestration-e2e.sh
+    - python3 -m pytest -q deploy/tests/test_aura0092_e2e.py deploy/tests/test_aura0092_topology.py (16 passed after Collector startup and probe secret wiring)
+    - "AURA_E2E_TRACE_ONLY=true COMPOSE_PROGRESS=plain bash deploy/compose/run-evaluation-orchestration-e2e.sh (Docker Desktop: trace_only passed; 73 spans, 2 components, 2 dependencies, 6 operations, 2 traces)"
+    - docker compose --env-file .env --profile observatory config --quiet after Collector diagnostic policy
+    - bash -n deploy/compose/run-evaluation-orchestration-e2e.sh after Collector outage privacy phase
+    - python3 -m pytest -q deploy/tests/test_aura0092_e2e.py deploy/tests/test_aura0092_topology.py (20 passed after Collector diagnostic policy and outage phase)
+    - python3 -m unittest deploy.compose.test_topology (49 passed after Collector command policy)
+    - docker run pinned Collector `validate` against deploy/compose/observatory-collector.yaml after private self-telemetry reader addition
+    - python3 -m pytest -q deploy/tests/test_aura0092_e2e.py deploy/tests/test_aura0092_topology.py deploy/tests/test_aura0079_observatory_topology.py (28 passed after private Collector self-telemetry coverage)
+    - standalone pinned Collector startup with diagnostic flags emitted no endpoint or secret-path fields
+    - targeted pinned Collector 0.138.0 connection-outage test: bounded private queue metrics and send-attempt count were observed; stdout/stderr scan found no endpoint or secret-path fields; exact disposable containers and network were removed
+    - pinned Collector 0.138.0 config validation after normal self-metrics privacy correction
+    - python3 -m pytest -q deploy/tests/test_aura0092_e2e.py deploy/tests/test_aura0092_topology.py deploy/tests/test_aura0079_observatory_topology.py after normal self-metrics privacy correction
+    - python3 -m unittest deploy.compose.test_topology after normal self-metrics privacy correction
+    - exact saved-file stdin validation with pinned Collector 0.138.0 after service telemetry resource suppression
+    - targeted pinned Collector runtime full-body metrics scan after a real OTLP span: queue size 0, capacity 256, send-attempt count 1; no service_instance_id, endpoint address/port, URL, or secret-path tokens; target_info retained only service_name/service_version
+  failed: []
+  not_run:
+    - Full matrix final acceptance after trace verification (parent integration owns serialized Docker Desktop execution; isolated trace-only path passed)
+    - Full repository and Observatory checks (owned by implementation and integration workers)
+decisions:
+  - Added dedicated `evaluation-worker` and `evaluation-scheduler` Dockerfile targets that invoke the existing thin entrypoints without changing contracts or service code.
+  - Removed the dispatch NATS credential and evaluation-bus attachment from the regular Observatory telemetry worker; only the dedicated evaluation worker receives that file-backed identity.
+  - Kept the scheduler database-only on the private Observatory PostgreSQL network, with no broker, object-store, public port, or Core network access.
+  - Added read-only, dropped-capability, no-new-privilege, bounded CPU/memory/PID/file-descriptor/tmpfs controls and import-based health checks to both new deployables.
+  - Reused existing encrypted AURA_STATE_ROOT mounts, Compose secrets, NATS dispatch identity, and observatory profile; no persistent state or host ports were added.
+  - Applied the disposable local HTTP overlay to both new services while preserving private network membership and existing named-volume behavior.
+  - Enabled the evaluation worker and DB-only scheduler's bounded metadata-only component-span OTLP exporter in the production Observatory profile, injecting the existing file-backed ingest credential and adding only the private Collector ingest network. Stable deployment identity remains configuration-provided; the scheduler retains no NATS attachment or dispatch credential.
+  - Started the Collector explicitly in the trace-only/full-stack acceptance startup set and waited for its running process; the ClickHouse verification probe receives a scoped read-only password file mount instead of broadening the scheduler's production secret set.
+  - Docker Desktop trace-only acceptance confirmed persisted component spans after the Collector startup and probe-secret fixes: both Observatory components, both private dependencies, all required trace operations, and metadata-only privacy fields were observed.
+  - Set the pinned Collector's supported service telemetry log level to warn and disabled caller/stacktrace fields through Compose command flags. This removes its info-level token filename and receiver/exporter endpoint diagnostics while retaining warnings/errors and leaving retry and sending-queue configuration unchanged.
+  - Extended the project-scoped acceptance with a real Observatory API outage: scheduler telemetry is generated while the API is stopped, Collector output is scanned without endpoint/URL/secret-path allowlists, then API recovery and a second persisted trace verification prove the configured queue/retry path remains functional.
+  - Added the pinned Collector 0.138.0 internal Prometheus pull reader on port 8888, bound to 0.0.0.0 only inside the private observatory-ingest network and without host publication. The outage probe asserts bounded trace retry-queue occupancy, queue capacity, and send-attempt count, then asserts queue drain after API recovery; no resource attributes or endpoint data are exported.
+  - Routed the pinned Collector's provider diagnostics to `/dev/null` for both normal and error output paths. This is a narrow privacy correction for endpoint and credential-file context in provider messages; private self-telemetry remains enabled for bounded outage evidence, and exporter retry/buffering is unchanged.
+  - Set the pinned Collector self-metrics level to `normal`, which retains the required queue size, queue capacity, and batch send-attempt counters while excluding endpoint resource dimensions such as `server_address` and `server_port`.
+  - Copied the exact authoritative `contracts/evaluation/v1/` directory into `/app/contracts/evaluation/v1/`, the existing runtime lookup path, so the transport schema and its transitive `evaluation.schema.json` and `failure-codes.schema.json` references are available to every Observatory image target without a generated or duplicated schema.
+risks:
+  - Health checks validate the dedicated entrypoint import rather than an HTTP endpoint because these worker processes expose no public or internal health server; durable heartbeats remain the application-level liveness signal.
+  - The complete matrix remains parent-integration-owned; an earlier full run reached a pre-existing Core evaluation-runner NATS stream-not-found restart after the trace phase. The isolated trace-only path is green and did not require any production network or secret broadening.
+  - A later full-matrix attempt was intentionally stopped before the Collector outage phase when the disposable Docker project encountered the known fixed object-storage subnet-overlap startup condition; its scoped Compose cleanup completed with no project containers, networks, volumes, or fixture directory remaining.
+  - Suppressed the automatically generated `service.instance.id` through the pinned Collector's supported `service.telemetry.resource.service.instance.id: null` setting. The normal pull reader still permits content-free target_info with only service name/version labels while excluding lifecycle and endpoint dimensions.
+unresolved: []

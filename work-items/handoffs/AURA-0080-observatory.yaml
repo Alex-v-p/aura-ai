@@ -1,0 +1,178 @@
+agent: observatory_worker
+work_item: AURA-0080
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: aura-observatory.query, aura-observatory.live-notifications, aura-observatory.retention, aura-observatory.persistence, aura-observatory.migrations, repository.module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/contract.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/resources/component-manifests/retention.yaml
+  - tooling/architecture/modules.yaml
+contracts: {changed: false}
+migrations:
+  changed: true
+  notes: Added rerunnable PostgreSQL retention target pages, receipt, ingest-health, and contiguous visibility-watermark state plus ClickHouse ordering, deterministic legacy ordering records, and a service-owned migration ledger guarded in each authenticated migration request. No automatic expiry is configured; retention remains explicit.
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  metrics_added:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_sse_connection_count
+    - observatory_sse_active
+    - observatory_sse_replay_count
+    - observatory_retention_action_count
+    - observatory_retention_deleted_count
+    - observatory_retention_failure_count
+verification:
+  passed:
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - ./.venv/bin/pytest services/aura-observatory/tests -q (177 passed)
+    - Focused owner-first malformed-query probe: unauthenticated requests return 401; authenticated invalid limits return bounded 400 without reflecting the submitted value.
+    - ./.venv/bin/python -m pytest services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py (7 passed)
+    - ./.venv/bin/pytest services/aura-observatory/tests -q (177 passed)
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv lock --check
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests/test_aura0080_query_retention.py services/aura-observatory/tests/test_aura0080_api.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -q' (90 passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py (passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py (0 errors, 0 warnings)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests -q' (189 passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py (passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/adapters/postgres.py (0 errors, 0 warnings)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests -q' (190 passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/src/aura_observatory/entrypoints/api/app.py (passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/src/aura_observatory/entrypoints/api/app.py (0 errors, 0 warnings)
+    - git diff --check (passed)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_component_health_sql_accepts_only_exact_spanless_duration_measurements services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_component_health_counts_one_canonical_span_execution services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_spanless_component_health_uses_only_explicit_primary_measurements services/aura-observatory/tests/test_aura0080_query_retention.py -q' (14 passed)
+    - Bounded histogram exposition probe (TYPE plus _sum/_count/_bucket and no unsuffixed base sample) (passed)
+    - Focused canonical-duration regression with a later queue_time_ms measurement (duration remains selected) (passed)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_production_component_health_deduplicates_spanless_secondary_metrics services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_component_health_sql_accepts_only_exact_spanless_duration_measurements services/aura-observatory/tests/test_aura0080_query_retention.py -q' (13 passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src/aura_observatory/adapters/query.py (passed)
+    - RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/adapters/query.py (0 errors, 0 warnings)
+    - timeout 90s bash -lc 'ulimit -v 786432; UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_production_component_health_uses_status_only_map_values_for_outcomes services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_production_component_health_keeps_earlier_duration_before_later_token_count -q' (2 passed)
+    - ./.venv/bin/pytest services/aura-observatory/tests/test_aura0080_api.py::test_http_run_and_trace_details_expose_partial_continuations services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_terminal_audit_failure_is_content_free_and_keeps_counts -q (2 passed)
+    - ./.venv/bin/pytest services/aura-observatory/tests/test_aura0080_query_retention.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -q (62 passed)
+    - ./.venv/bin/pytest services/aura-observatory/tests -q (166 passed)
+    - ./.venv/bin/ruff check services/aura-observatory/src/aura_observatory (passed)
+    - ./.venv/bin/pyright services/aura-observatory/src/aura_observatory (0 errors, 0 warnings)
+    - AURA_WORK_ITEM=AURA-0080 python3 tooling/architecture/validate-changed-paths.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0080.yaml (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - git diff --check (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0080.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - git diff --check
+    - ./.venv/bin/pytest services/aura-observatory/tests/test_aura0078_review_fixes.py services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py -q (32 passed)
+    - AURA_WORK_ITEM=AURA-0080 python3 tooling/architecture/validate-changed-paths.py
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-observability.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0080.yaml (passed/skipped: no protected baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - timeout 90s bash -lc 'ulimit -v 786432; RAYON_NUM_THREADS=1 .venv/bin/ruff check services/aura-observatory/src/aura_observatory/adapters/query.py' (passed)
+    - timeout 90s bash -lc 'ulimit -v 1572864; NODE_OPTIONS=--max-old-space-size=512 .venv/bin/pyright --threads 1 services/aura-observatory/src/aura_observatory/adapters/query.py' (0 errors, 0 warnings, 0 informations)
+    - python3 -m py_compile services/aura-observatory/src/aura_observatory/adapters/query.py (passed)
+    - timeout 90s bash -lc 'ulimit -v 786432; RAYON_NUM_THREADS=1 taskset -c 0 .venv/bin/ruff check services/aura-observatory/src/aura_observatory/adapters/query.py' (passed)
+    - timeout 90s bash -lc 'ulimit -v 1572864; taskset -c 0 .venv/bin/pyright --threads 1 services/aura-observatory/src/aura_observatory/adapters/query.py' (0 errors, 0 warnings, 0 informations)
+    - python3 -m py_compile services/aura-observatory/src/aura_observatory/adapters/query.py (passed after retention page-fetch validation)
+    - timeout 90s bash -lc 'ulimit -v 786432; RAYON_NUM_THREADS=1 taskset -c 0 .venv/bin/ruff check services/aura-observatory/src/aura_observatory/adapters/query.py' (passed after retention page-fetch validation)
+    - timeout 90s bash -lc 'ulimit -v 1572864; taskset -c 0 .venv/bin/pyright --threads 1 services/aura-observatory/src/aura_observatory/adapters/query.py' (0 errors, 0 warnings, 0 informations after retention page-fetch validation)
+    - python3 -m py_compile services/aura-observatory/src/aura_observatory/adapters/query.py (passed after deterministic tie-break correction)
+    - timeout 90s bash -lc 'ulimit -v 786432; RAYON_NUM_THREADS=1 taskset -c 0 .venv/bin/ruff check services/aura-observatory/src/aura_observatory/adapters/query.py' (passed after deterministic tie-break correction)
+    - timeout 90s bash -lc 'ulimit -v 1572864; taskset -c 0 .venv/bin/pyright --threads 1 services/aura-observatory/src/aura_observatory/adapters/query.py' (0 errors, 0 warnings, 0 informations after deterministic tie-break correction)
+  failed:
+    - 512 MiB Ruff invocation could not start its worker process under RLIMIT_AS; the same focused check passed with taskset CPU isolation and a 768 MiB cap.
+    - 512 MiB Pyright invocation failed during Node/V8 startup virtual-memory reservation; the same focused check passed with one thread, CPU isolation, and a 1.5 GiB cap.
+  not_run:
+    - Frontend generated-client checks and full-stack Compose/browser acceptance remain with contract/frontend/integration workers.
+decisions:
+  - Query use cases consume only the versioned metadata observation contract through narrow Observatory-owned store ports; the in-memory adapter and deletion DTO live outside the query use-case module.
+  - API serialization follows observatory-v1 while the in-memory use-case adapter remains deterministic for unit/evaluation coverage.
+  - SSE replay uses a monotonic persisted ingest sequence with a PostgreSQL contiguous visibility watermark, immutable REST snapshot fences, Last-Event-ID catch-up, bounded batches, live polling, delayed heartbeats without SSE ids, request disconnect checks, and no credentials or captured content.
+  - Protected query, SSE, and retention routes authenticate before application-level parameter parsing; framework validation is translated to a bounded Problem envelope without reflecting submitted values, while auth callback/login behavior remains public.
+  - Retention uses strict UTC less-than cutoff semantics, explicit purge-all action, owner session, CSRF, exact confirmation, canonical command fingerprints, and an atomic durable idempotency claim.
+  - Queued/running recovery leases the action before mutation; durable target counts/phases survive restart, destructive phases are serialized with a service advisory lock, and receipt deletion handles pre-migration null timestamps without losing the bounded source scope.
+  - Raw outcomes are normalized to the observatory-v1 succeeded/failed/cancelled/unknown vocabulary, component health uses real p50/p95 percentiles, trace partiality reflects missing lineage, detail pages expose bounded partial/nextCursor fields, and deployment service roles are persisted.
+  - Component/deployment catalogues and content-free retention action rows are preserved through observation deletion; query metrics use bounded resource/outcome labels and canonical span execution aggregation.
+  - Production composition binds explicit query and retention ports; the reference adapter is compatibility-loaded only for legacy deterministic tests and is never selected by production use-case dispatch.
+  - Metrics are exposed through the Observatory Prometheus-compatible scrape endpoint with bounded label series; SSE active-stream gauge is decremented on cancellation.
+  - Persistent SSE re-fetches and re-authorizes the captured session before snapshot and each notification/heartbeat, terminating without payloads after revocation or expiry. Ingest sequence allocation is receipt-backed and reused across retries.
+  - Migration execution bootstraps and consults a ClickHouse ledger on real HTTP responses, skips applied versions, and synchronizes the PostgreSQL allocator, visible-sequence rows, and committed watermark after deterministic legacy backfill.
+  - Retention resumes from persisted source/projection/receipt phases; a terminal audit-write failure preserves deletion counts but marks the action failed/recoverable so the durable worker can reclaim it without falsely reporting success.
+  - Ingest holds the shared PostgreSQL advisory guard from receipt claim through ClickHouse visibility and receipt completion; failed transports release the guard while preserving the pending lease.
+  - Worker retention metrics are derived from durable Observatory PostgreSQL retention audit rows at API scrape time; no cross-container filesystem sharing is required. Duration metrics expose real bounded histogram buckets with sum/count, active SSE is a gauge, replay counts only persisted catch-up rows, and status-derived action/failure series are gauges while deletion totals remain counters.
+  - Canonical component executions use span identity when present and run/component/operation identity for span-less metric rows, preventing duplicate health executions.
+  - Legacy ClickHouse ordering backfill offsets deterministic row numbers above existing positive sequences and waits for mutation completion; PostgreSQL allocation uses a transactional row allocator with a durable receipt/sequence commit boundary before external ClickHouse I/O.
+  - Retention recovery reattaches the durable action context before every mutation. Production target capture, source deletion, projection rebuild, receipt cleanup, and terminal release remain serialized by a session-scoped advisory guard with committed phase transitions and bounded storage-side projection rebuilds.
+  - Retention deletion replays only immutable per-action target observation IDs and run IDs in bounded pages; late observations and receipts created after capture remain outside the action. Source/projection/receipt phases are committed independently, failed recovery preserves the last durable phase, receipt counts come from the immutable target snapshot, and projection rebuild retries use synchronous truncate-and-fill semantics.
+  - Metric label values are finite allowlists per resource/outcome/event/action/status/failure domain and are validated identically for local records and persisted shared-series reads; crafted or unbounded label values are discarded before exposition.
+  - Canonical component-health executions use exact spanless `duration_ms`; similarly named secondary spanless metrics are excluded, while span-backed observations remain canonical by span identity.
+  - Trace tree construction is iterative, deterministic, and lossless: self-parent and multi-node cycle edges are detached into roots, orphan/cyclic traces are marked partial, and each span is emitted exactly once.
+  - Receipt claims never return while a manually entered PostgreSQL context remains open: duplicate/pending outcomes commit, release the advisory lock when acquired, and exit the context; acquired claims retain the guard until completion or abort.
+  - Owner HTTP inputs are checked against the observatory-v1 UUID, trace, component, SafeLabel, status, cursor, and Last-Event-ID constraints after owner authentication; invalid request responses use fixed messages.
+  - ClickHouse literals escape backslashes before apostrophes, preventing escape-sequence injection for all values interpolated by the bounded SQL adapter.
+  - Production retention state is PostgreSQL-authoritative; the adapter keeps only the currently attached action during a guarded deletion and clears it when the guard releases.
+  - Component health groups one execution per span (or exact spanless duration observation), selects the designated millisecond duration independently from secondary metrics, and derives outcome without allowing a secondary metric to replace latency.
+  - Prometheus query-duration exposition follows histogram semantics: TYPE, `_bucket`, `_sum`, and `_count` are emitted without an unsuffixed base sample.
+  - Canonical component latency requires `measurement_name = 'duration_ms'` with millisecond units for both span-backed and spanless executions; outcome selection remains independent of secondary measurements.
+  - ClickHouse Map dimensions use `coalesce(nullIf(status, ''), nullIf(outcome, ''))` so missing Map keys do not mask an outcome-only or status-only observation in run summaries, filters, or component outcomes.
+  - Production run filters and summaries normalize the empty-aware dimension value (`success`/`completed`/`ok` → `succeeded`, `error` → `failed`, `cancelled`, otherwise `unknown`) consistently before comparison and aggregation.
+  - Retention keyset pagination fails fast with a bounded metadata-only RuntimeError when a full page repeats or regresses its cursor; observation-target, receipt-target, projection, source-observation, and receipt-deletion loops are all guarded.
+  - Retention page-fetch helpers validate their own returned final key against the supplied `after` cursor, so a malformed/regressing database page fails before callers perform deletion work.
+  - Production latest-status, component-outcome, and canonical-duration selections use `(observed_at, observation_id)` tuple ordering, matching reference deterministic ordering for equal-timestamp telemetry.
+risks:
+  - Production retention execution depends on the service worker completing the durable action row; adapter-level ClickHouse mutations are synchronous and have no automatic expiry.
+  - Full OpenAPI generated-client compatibility is owned by the contract worker and must be verified during integration.
+  - The active SSE gauge is included in the live-updates metric definition; the legacy manifest summary list intentionally remains compatible with the current manifest regression fixture.
+unresolved:
+  - Frontend/generated-client and full-stack browser acceptance are pending integration ownership.

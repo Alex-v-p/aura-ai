@@ -1,0 +1,98 @@
+agent: contract_steward
+work_item: AURA-0087
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0087_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/tests/test_aura0087_contract.py
+  - work-items/handoffs/AURA-0087-contract.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no other owner was authorized to edit the Observatory OpenAPI source or its generated transport client during this slice
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added an owner-authorized metric-catalogue resource containing the finite operational measurement and unit pairs, supported aggregations and groupings, focus areas, availability, and fixed query limits.
+        - Added an owner-authorized bounded operational-analytics snapshot resource with a default 24-hour and maximum 31-day UTC window, deterministic bucket choices, at most 200 points per series, at most 12 series, at most 50 breakdowns, and fixed scan and execution limits.
+        - Added closed metadata-only filter and facet types limited to component/version, operation, deployment, environment, host, service role, provider, outcome, error class, status, and retrieval stage from metadata-observation v1.
+        - Added explicit exact-percentile, sample-count, rate-interval, freshness, zero-versus-unavailable, partial-state, unsupported-signal, effective-query, and no-store response semantics.
+        - Added focus-area values for model, queue, retrieval, tool, memory, and automation views without widening telemetry capture or claiming unavailable model identity, retryability, cohort, GPU, evidence, side-effect, quality, or saturation signals.
+  compatibility_notes:
+    - Existing operation identifiers, paths, parameters, request bodies, response properties, required fields, and schemas are unchanged.
+    - Both resources, all parameters, and all supporting schemas are additive, so observatory-v1 remains at version 1.0.0.
+    - Existing clients ignore the new resources; the regenerated Angular output adds only transport types and operation descriptors.
+    - Metric and unit are both required and their pair is validated against the catalogue; unsupported combinations return the existing 422 Problem response rather than being coerced.
+    - Model identity is intentionally not a filter because metadata-observation v1 does not contain an allowlisted model dimension; the model focus uses declared measurements and provider/component facets and reports unavailable signals explicitly.
+  producers:
+    - Aura Observatory owner-authorized query API
+    - Aura Observatory ClickHouse operational-analytics query adapter
+  consumers:
+    - Observatory Web metric explorer
+    - Observatory Web focused model, queue, retrieval, tool, memory, and automation workspaces
+    - Observatory contract, adapter, privacy, accessibility, and browser acceptance suites
+  rollout:
+    - Deploy the compatible Observatory API producer before or with the regenerated Observatory Web client; older clients continue using the unchanged v1 resources.
+    - Populate the catalogue from the fixed service-owned allowlist and reject measurement/unit/aggregation combinations that are not declared.
+    - Execute analytical aggregation in ClickHouse under the declared scan and execution limits; do not hydrate or sort unbounded observation history in the application process.
+    - Keep responses owner-authorized and no-store, fetch analytical series after metadata-only SSE invalidation, and never place credentials, filters, or series data in SSE event URLs or payloads.
+    - Retention deletion must affect the next snapshot; consumers must discard stale in-flight responses using snapshot/request generation ordering.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0087.yaml
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0087-contract-uv uv run pytest tests/test_aura0087_contract.py tests/test_aura0086_contract.py -q (9 passed)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0087-contract-uv uv run ruff check tests/test_aura0087_contract.py
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0087.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Service runtime, ClickHouse adapter, full Observatory test suite, frontend feature, Storybook, browser, and full-stack checks remain assigned to the Observatory, frontend, test/evaluation, review, and integration owners.
+decisions:
+  - Kept contract id observatory-v1 and version 1.0.0 because the change is purely additive and does not widen or alter any accepted v1 producer requirement.
+  - Used a finite AnalyticsMetricName enum plus catalogue-declared unit pairs instead of accepting the telemetry schema's general syntactic measurement-name pattern.
+  - Required the unit in every query and returned it through the effective query so a series can never aggregate incompatible units.
+  - Used one finite group-by dimension per query and hard response limits to keep cardinality predictable while supporting the approved error and focused-view facets.
+  - Declared clickhouse_quantile_exact as the stable percentile method and an explicit rate interval so consumers do not guess statistical semantics.
+  - Kept null unavailable values distinct from measured zero and exposed no-data, unavailable, partial reasons, freshness, scan bounds, and execution bounds directly.
+  - Excluded model identity, retryability, input cohort, GPU, selected evidence, side-effect detail, quality, and saturation from filters because those fields are absent from the closed metadata-observation v1 contract; the API reports their unavailability rather than synthesizing them.
+  - Kept the generated Angular output transport-only with no authorization, validation, querying, retention, retry, caching, state, or presentation behavior.
+  - No online documentation was needed because the repository's pinned OpenAPI 3.1 and Angular 22 guidance and existing generator conventions resolved the contract work.
+risks:
+  - The static metric allowlist must be evolved additively by the contract owner when a separately approved metadata-only measurement becomes queryable; the service must not silently accept syntactically valid but undeclared measurement names.
+  - Model-focused analytics can expose provider and component operational data but cannot identify individual model names under metadata-observation v1; adding such a dimension would require a separate contract-authorized telemetry change.
+unresolved: []

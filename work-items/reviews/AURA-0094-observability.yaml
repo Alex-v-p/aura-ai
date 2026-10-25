@@ -1,0 +1,69 @@
+agent: observability_steward
+work_item: AURA-0094
+verdict: PASS
+checked:
+  - >-
+    Verified stable component IDs and versions for
+    aura.observatory.local_judges and aura.observatory.calibration, their typed
+    input/output schemas, PostgreSQL, ClickHouse, Garage, and Ollama
+    dependencies, evaluator identities, replay declarations,
+    authorized-evaluation-content capture, manual-owner retention, redaction,
+    and finite metric cardinality.
+  - >-
+    Verified local-work admitted enqueue, pending materialization, claim,
+    completion, and failure repository boundaries emit bounded PostgreSQL
+    latency and error spans and map repository exceptions to
+    OrchestrationDependencyError rather than falsely attributing them to NATS.
+  - >-
+    Verified calibration result persistence and claim recovery emit distinct
+    PostgreSQL failure and recovery spans. An independent forced
+    put_calibration_result failure returned content-free storage_failure,
+    invoked fail_calibration, and emitted calibrate/storage_failure plus
+    recover/success spans.
+  - >-
+    Verified judge execution-failure persistence emits the execution_fail
+    PostgreSQL phase on success and failure. Provider, artifact, definition,
+    execution, qualification, score-write, and calibration-result failures
+    retain finite dependency-specific error classes.
+  - >-
+    Verified PostgreSQL artifact authorization metadata and Garage object
+    retrieval are separate measured component boundaries. Independent delayed
+    reads emitted read/postgresql and read/garage success spans with their own
+    non-zero monotonic durations; aggregate read_artifacts latency remains a
+    separate phase and is not treated as the dependency coverage itself.
+  - >-
+    Verified Ollama verification and generation and ClickHouse score writes
+    retain distinct local-judge component spans, finite outcomes, error
+    classes, and durations. ClickHouse adapter spans use
+    aura.observatory.local_judges when composed for this work item.
+  - >-
+    Verified the per-work trace context begins before durable claim and covers
+    claim, judge or calibration execution, dependency phases, and terminal
+    completion or recovery. Independent dispatch produced one trace ID across
+    claim and completion, while each span retained a unique span ID; unrelated
+    work receives a fresh context.
+  - >-
+    Verified production composition passes one shared ObservatoryMetrics
+    instance to orchestration, AuthorizedArtifactReader,
+    ClickHouseEvaluationScoreStore, LocalJudgeService, and CalibrationService.
+    Worker shutdown deduplicates and flushes the owned exporter before releasing
+    services, and exporter failure or cancellation is accounted as bounded
+    drops rather than abandoned work.
+  - >-
+    Verified optional judge initialization failure emits bounded unavailable
+    metric and component-span evidence without endpoint, credential, exception,
+    artifact, or content values. Normal Core and Observatory readiness remains
+    independent of local judge availability.
+  - >-
+    Verified the runtime metric and span allowlists cover every admitted
+    operation, dependency, outcome, and error class used by the corrected
+    paths. Metrics and spans exclude job, case, request, artifact, digest,
+    model endpoint, prompt, rubric, response, rationale, comment, credential,
+    and owner identity values; arbitrary labels remain rejected.
+  - >-
+    Ran 134 focused judge, calibration, worker, final-review, and observability
+    tests; work-item observability, module-registry, and service-isolation
+    validators; git diff checking; and direct failure, latency, correlation,
+    dependency-attribution, and exporter-lifecycle probes. All required
+    observability behavior passed.
+findings: []

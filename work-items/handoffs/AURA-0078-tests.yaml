@@ -1,0 +1,55 @@
+agent: test_evaluation_engineer
+work_item: AURA-0078
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.observatory-ingestion
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/conftest.py
+  - services/aura-observatory/tests/test_aura0078_contract.py
+  - services/aura-observatory/tests/test_aura0078_ingestion.py
+  - services/aura-observatory/tests/test_aura0078_isolation_and_migrations.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0078.yaml"
+    - ".venv/bin/ruff check services/aura-observatory/tests"
+    - ".venv/bin/ruff format --check services/aura-observatory/tests"
+    - "PYTHONPATH=services/aura-observatory/src .venv/bin/pytest -q services/aura-observatory/tests (65 passed)"
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0078.yaml"
+    - "python3 tooling/architecture/validate-repository-shape.py"
+    - "python3 tooling/architecture/validate-module-registry.py"
+    - "python3 tooling/architecture/validate-import-boundaries.py"
+    - "python3 tooling/architecture/validate-service-isolation.py"
+    - "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0078.yaml"
+    - "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0078.yaml"
+    - "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0078.yaml"
+    - "python3 -m unittest discover -s tooling/architecture/tests (52 passed)"
+    - ".venv/bin/ruff check services/aura-observatory"
+    - ".venv/bin/pyright services/aura-observatory"
+    - "git diff --check"
+  failed: []
+  not_run: []
+decisions:
+  - "Tests use the authoritative camelCase wire envelope and exercise the runtime normalizer through MetadataObservation.from_payload."
+  - "Schema/runtime drift is a blocking test: every emitted root field must be represented in the versioned JSON Schema."
+risks:
+  - "The repository does not currently include a JSON Schema validator dependency; tests cover closed-schema shape and runtime Pydantic rejection without adding a dependency."
+  - "The test typing uses the Python 3.14-compatible collections.abc.AsyncGenerator form; no production behavior was changed."
+unresolved: []

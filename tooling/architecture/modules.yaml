@@ -6,6 +6,375 @@ metadata:
   note: Registry entries describe existing roots; they do not authorize new product
     behavior.
 modules:
+- id: aura-observatory.service
+  root: services/aura-observatory
+  kind: service
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-observatory.package
+  root: services/aura-observatory/src/aura_observatory
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory
+  source_files:
+  - services/aura-observatory/src/aura_observatory/__init__.py
+  dependencies: []
+- id: aura-observatory.contract
+  root: services/aura-observatory/src/aura_observatory/contract.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/contract.py
+  python_modules:
+  - aura_observatory.contract
+  dependencies: []
+- id: aura-observatory.ports
+  root: services/aura-observatory/src/aura_observatory/ports.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/ports.py
+  python_modules:
+  - aura_observatory.ports
+  dependencies:
+  - aura-observatory.contract
+- id: aura-observatory.metrics
+  root: services/aura-observatory/src/aura_observatory/metrics.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/metrics.py
+  python_modules:
+  - aura_observatory.metrics
+  dependencies: []
+- id: aura-observatory.query
+  root: services/aura-observatory/src/aura_observatory/query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/query.py
+  python_modules:
+  - aura_observatory.query
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
+- id: aura-observatory.settings
+  root: services/aura-observatory/src/aura_observatory/settings.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/settings.py
+  python_modules:
+  - aura_observatory.settings
+  dependencies: []
+- id: aura-observatory.auth
+  root: services/aura-observatory/src/aura_observatory/auth.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/auth.py
+  python_modules:
+  - aura_observatory.auth
+  dependencies:
+  - aura-observatory.settings
+- id: aura-observatory.otlp
+  root: services/aura-observatory/src/aura_observatory/otlp.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/otlp.py
+  python_modules:
+  - aura_observatory.otlp
+  dependencies: []
+- id: aura-observatory.ingest
+  root: services/aura-observatory/src/aura_observatory/ingest.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/ingest.py
+  python_modules:
+  - aura_observatory.ingest
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.metrics
+  - aura-observatory.ports
+- id: aura-observatory.adapters
+  root: services/aura-observatory/src/aura_observatory/adapters
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/adapters/__init__.py
+  python_modules:
+  - aura_observatory.adapters
+  source_files:
+  - services/aura-observatory/src/aura_observatory/adapters/__init__.py
+  dependencies: []
+- id: aura-observatory.adapters.memory
+  root: services/aura-observatory/src/aura_observatory/adapters/memory.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/memory.py
+  python_modules:
+  - aura_observatory.adapters.memory
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
+- id: aura-observatory.adapters.postgres
+  root: services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  python_modules:
+  - aura_observatory.adapters.postgres
+  dependencies:
+  - aura-observatory.ports
+- id: aura-observatory.adapters.clickhouse
+  root: services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  python_modules:
+  - aura_observatory.adapters.clickhouse
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.ports
+- id: aura-observatory.adapters.query
+  root: services/aura-observatory/src/aura_observatory/adapters/query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/query.py
+  python_modules:
+  - aura_observatory.adapters.query
+  dependencies:
+  - aura-observatory.contract
+  - aura-observatory.query
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-storage
+  root: services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  python_modules:
+  - aura_observatory.evaluation_storage
+  dependencies:
+  - aura-observatory.ports
+  - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-query
+  root: services/aura-observatory/src/aura_observatory/evaluation_query.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_query.py
+  python_modules:
+  - aura_observatory.evaluation_query
+  dependencies:
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-live
+  root: services/aura-observatory/src/aura_observatory/evaluation_live.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_live.py
+  python_modules:
+  - aura_observatory.evaluation_live
+  dependencies:
+  - aura-observatory.metrics
+- id: aura-observatory.evaluation-api
+  root: services/aura-observatory/src/aura_observatory/evaluation_api.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_api.py
+  python_modules:
+  - aura_observatory.evaluation_api
+  dependencies:
+  - aura-observatory.evaluation-query
+  - aura-observatory.evaluation-live
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-storage
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.local-judges
+  - aura-observatory.ports
+  - aura-observatory.calibration
+  - aura-observatory.evaluation-experiments
+- id: aura-observatory.adapters.evaluation-query
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_query
+  dependencies:
+  - aura-observatory.evaluation-query
+- id: aura-observatory.adapters.evaluation-live
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_live
+  dependencies:
+  - aura-observatory.evaluation-live
+- id: aura-observatory.evaluation-definitions
+  root: services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  python_modules:
+  - aura_observatory.evaluation_definitions
+  dependencies:
+  - aura-contract.evaluation-v1
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-evaluators
+  root: services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  python_modules:
+  - aura_observatory.evaluation_evaluators
+  dependencies:
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-storage
+  - aura-observatory.ports
+- id: aura-observatory.adapters.evaluation-definitions
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_definitions
+  dependencies:
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.ports
+- id: aura-observatory.adapters.evaluation-storage
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_storage
+  dependencies:
+  - aura-observatory.evaluation-storage
+  - aura-observatory.ports
+- id: aura-observatory.adapters.object-storage
+  root: services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  python_modules:
+  - aura_observatory.adapters.object_storage
+  dependencies:
+  - aura-observatory.ports
+- id: aura-observatory.local-judges
+  root: services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  python_modules:
+  - aura_observatory.evaluation_judges
+  dependencies:
+  - aura-observatory.evaluation-storage
+  - aura-observatory.metrics
+  - aura-observatory.ports
+- id: aura-observatory.calibration
+  root: services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  python_modules:
+  - aura_observatory.evaluation_calibration
+  dependencies:
+  - aura-observatory.local-judges
+  - aura-observatory.metrics
+- id: aura-observatory.adapters.local-ollama
+  root: services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  python_modules:
+  - aura_observatory.adapters.local_ollama
+  dependencies:
+  - aura-observatory.local-judges
+- id: aura-observatory.composition
+  root: services/aura-observatory/src/aura_observatory/composition.py
+  kind: bootstrap
+  public_api: services/aura-observatory/src/aura_observatory/composition.py
+  python_modules:
+  - aura_observatory.composition
+  dependencies:
+  - aura-observatory.adapters.clickhouse
+  - aura-observatory.adapters.postgres
+  - aura-observatory.adapters.query
+  - aura-observatory.adapters.evaluation-orchestration
+  - aura-observatory.adapters.evaluation-live
+  - aura-observatory.adapters.evaluation-query
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-api
+  - aura-observatory.evaluation-query
+  - aura-observatory.evaluation-live
+  - aura-observatory.metrics
+  - aura-observatory.ports
+  - aura-observatory.evaluation-storage
+  - aura-observatory.adapters.evaluation-storage
+  - aura-observatory.adapters.evaluation-definitions
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-evaluators
+  - aura-observatory.adapters.object-storage
+  - aura-observatory.adapters.local-ollama
+  - aura-observatory.local-judges
+  - aura-observatory.calibration
+  - aura-observatory.evaluation-experiments
+  - aura-observatory.adapters.evaluation-experiments
+  - aura-observatory.auth
+  - aura-observatory.ingest
+  - aura-observatory.settings
+  - aura-observatory.query
+  - aura-observatory.operations
+  - aura-observatory.adapters.operations
+- id: aura-observatory.entrypoints
+  root: services/aura-observatory/src/aura_observatory/entrypoints
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints
+  source_files:
+  - services/aura-observatory/src/aura_observatory/entrypoints/__init__.py
+  dependencies: []
+- id: aura-observatory.entrypoints.api
+  root: services/aura-observatory/src/aura_observatory/entrypoints/api
+  kind: package
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints.api
+  source_files:
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/__init__.py
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.operations
+- id: aura-observatory.entrypoints.api.app
+  root: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  python_modules:
+  - aura_observatory.entrypoints.api.app
+  dependencies:
+  - aura-observatory.adapters.memory
+  - aura-observatory.auth
+  - aura-observatory.composition
+  - aura-observatory.evaluation-api
+  - aura-observatory.ingest
+  - aura-observatory.otlp
+  - aura-observatory.settings
+  - aura-observatory.query
+  - aura-observatory.operations
+- id: aura-observatory.entrypoints.worker
+  root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  python_modules:
+  - aura_observatory.entrypoints.worker
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.ingest
+  - aura-observatory.settings
+  - aura-observatory.query
+  - aura-observatory.evaluation-storage
+  - aura-observatory.operations
+- id: aura-observatory.entrypoints.cli
+  root: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  python_modules:
+  - aura_observatory.entrypoints.cli
+  dependencies:
+  - aura-observatory.settings
+  - aura-observatory.composition
+  - aura-observatory.operations
+- id: aura-contract.telemetry-observation
+  root: contracts/telemetry/v1
+  kind: event-contract
+  public_api: contracts/telemetry/v1/metadata-observation.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-contract.evaluation-v1
+  root: contracts/evaluation/v1
+  kind: event-contract
+  public_api: contracts/evaluation/v1/evaluation.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-contract.evaluation-events-v1
+  root: contracts/events/evaluation/v1
+  kind: event-contract
+  public_api: contracts/events/evaluation/v1/evaluation-events.schema.json
+  python_modules: []
+  source_files: []
+  dependencies: []
 - id: aura-core.service
   root: services/aura-core
   kind: service
@@ -22,6 +391,104 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/__init__.py
   dependencies: []
+- id: aura-core.runtime.replay
+  root: services/aura-core/src/aura_core/runtime/replay
+  kind: package
+  public_api: services/aura-core/src/aura_core/runtime/replay/registry.py
+  python_modules:
+  - aura_core.runtime.replay
+  source_files:
+  - services/aura-core/src/aura_core/runtime/replay/__init__.py
+  dependencies:
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.runtime.replay.registry
+  root: services/aura-core/src/aura_core/runtime/replay/registry.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/registry.py
+  python_modules:
+  - aura_core.runtime.replay.registry
+  dependencies: []
+- id: aura-core.runtime.replay.state
+  root: services/aura-core/src/aura_core/runtime/replay/state.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/state.py
+  python_modules:
+  - aura_core.runtime.replay.state
+  dependencies: []
+- id: aura-core.runtime.replay.application
+  root: services/aura-core/src/aura_core/runtime/replay/application.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/runtime/replay/application.py
+  python_modules:
+  - aura_core.runtime.replay.application
+  dependencies:
+  - aura-core.platform.evaluation-transport
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.platform.evaluation-transport
+  root: services/aura-core/src/aura_core/platform/evaluation_transport.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/evaluation_transport.py
+  python_modules:
+  - aura_core.platform.evaluation_transport
+  dependencies: []
+- id: aura-core.entrypoints.evaluation-runner
+  root: services/aura-core/src/aura_core/entrypoints/evaluation_runner
+  kind: entrypoint
+  public_api: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  python_modules:
+  - aura_core.entrypoints.evaluation_runner
+  source_files:
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/runner.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/state.py
+  dependencies:
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+- id: aura-core.bootstrap.evaluation-runner
+  root: services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  python_modules:
+  - aura_core.bootstrap.evaluation_runner
+  dependencies:
+  - aura-core.bootstrap.document-uow
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.platform.auth
+  - aura-core.platform.database.engine
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.nats
+  - aura-core.platform.telemetry
+  - aura-core.providers.object-storage.evaluation
+  - aura-core.providers.object-storage.garage
+  - aura-core.runtime.models.ports
+  - aura-core.runtime.replay.application
+  - aura-core.runtime.replay.registry
+  - aura-core.runtime.replay.state
+  - aura-core.runtime.streaming.publisher
+  - aura-core.runtime.tools
+- id: aura-core.entrypoints.evaluation-runner.main
+  root: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/evaluation_runner/main.py
+  python_modules:
+  - aura_core.entrypoints.evaluation_runner.main
+  dependencies:
+  - aura-core.bootstrap.evaluation-runner
+  - aura-core.platform.auth
+- id: aura-core.providers.object-storage.evaluation
+  root: services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  python_modules:
+  - aura_core.providers.object_storage.evaluation
+  dependencies:
+  - aura-core.platform.evaluation-transport
 - id: aura-core.domains
   root: services/aura-core/src/aura_core/domains
   kind: package
@@ -1621,6 +2088,7 @@ modules:
   dependencies:
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
+  - aura-core.platform.evaluation-transport
   - aura-core.platform.outbox.service
   - aura-core.platform.telemetry
 - id: aura-core.platform.outbox.persistence
@@ -1872,6 +2340,24 @@ modules:
   public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
+- id: aura-contract.observatory-openapi
+  root: contracts/openapi/observatory-v1.yaml
+  kind: openapi-contract
+  public_api: contracts/openapi/observatory-v1.yaml
+  dependencies: []
+- id: aura-web.observatory-api-client
+  root: frontend/libs/platform/observatory-api-client
+  kind: generated-client
+  public_api: frontend/libs/platform/observatory-api-client/src/index.ts
+  dependencies:
+  - aura-contract.observatory-openapi
+- id: aura-web.observatory
+  root: frontend/libs/observatory
+  kind: frontend-feature
+  public_api: frontend/libs/observatory/src/index.ts
+  dependencies:
+  - aura-web.observatory-api-client
+  - aura-web.shared-ui
 - id: aura-contract.openapi
   root: contracts/openapi/aura-v1.yaml
   kind: openapi-contract
@@ -1897,3 +2383,106 @@ modules:
   kind: event-contract
   public_api: contracts/events/automation/v1/notification-events.schema.json
   dependencies: []
+- id: aura-observatory.evaluation-orchestration
+  root: services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  python_modules:
+  - aura_observatory.evaluation_orchestration
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-contract.evaluation-v1
+- id: aura-observatory.evaluation-experiments
+  root: services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  python_modules:
+  - aura_observatory.evaluation_experiments
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-contract.evaluation-v1
+- id: aura-observatory.adapters.evaluation-experiments
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_experiments
+  dependencies:
+  - aura-observatory.evaluation-experiments
+  - aura-observatory.evaluation-definitions
+  - aura-observatory.evaluation-storage
+  - aura-observatory.ports
+- id: aura-observatory.evaluation-transport
+  root: services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  python_modules:
+  - aura_observatory.evaluation_transport
+  dependencies:
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.ports
+- id: aura-observatory.adapters.evaluation-orchestration
+  root: services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  python_modules:
+  - aura_observatory.adapters.evaluation_orchestration
+  dependencies:
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.metrics
+- id: aura-observatory.entrypoints.evaluation-worker
+  root: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  python_modules:
+  - aura_observatory.entrypoints.evaluation_worker
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.evaluation-orchestration
+  - aura-observatory.evaluation-transport
+  - aura-observatory.settings
+  - aura-observatory.local-judges
+  - aura-observatory.calibration
+- id: aura-observatory.entrypoints.evaluation-scheduler
+  root: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  kind: entrypoint
+  public_api: services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  python_modules:
+  - aura_observatory.entrypoints.evaluation_scheduler
+  dependencies:
+  - aura-observatory.composition
+  - aura-observatory.settings
+  - aura-observatory.operations
+- id: aura-observatory.operations
+  root: services/aura-observatory/src/aura_observatory/dashboards.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/dashboards.py
+  python_modules:
+  - aura_observatory.dashboards
+  - aura_observatory.saved_queries
+  - aura_observatory.alerting
+  - aura_observatory.incidents
+  - aura_observatory.annotations
+  - aura_observatory.operational_live
+  dependencies:
+  - aura-observatory.ports
+  - aura-observatory.metrics
+  - aura-observatory.query
+  - aura-observatory.evaluation-query
+  - aura-contract.observatory-openapi
+- id: aura-observatory.adapters.operations
+  root: services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  python_modules:
+  - aura_observatory.adapters.dashboards
+  - aura_observatory.adapters.saved_queries
+  - aura_observatory.adapters.alerting
+  - aura_observatory.adapters.incidents
+  - aura_observatory.adapters.annotations
+  - aura_observatory.adapters.operational_live
+  dependencies:
+  - aura-observatory.operations
+  - aura-observatory.ports
