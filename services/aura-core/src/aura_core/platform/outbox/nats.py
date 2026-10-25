@@ -265,6 +265,12 @@ class NatsOutbox:
     def connected(self) -> bool:
         return self._connection is not None and self._jetstream is not None
 
+    @property
+    def connection(self) -> Any:
+        """Expose the already-composed transport to independent Core ports."""
+
+        return self._connection
+
     async def connect(self) -> None:
         nats_module: Any = nats
         self._connection = await nats_module.connect(self.connection_url)

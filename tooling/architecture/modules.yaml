@@ -463,6 +463,7 @@ modules:
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.object-storage.evaluation
   - aura-core.providers.object-storage.garage
@@ -730,6 +731,14 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/platform/__init__.py
   dependencies: []
+- id: aura-core.platform.run-evidence
+  root: services/aura-core/src/aura_core/platform/run_evidence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/run_evidence.py
+  python_modules:
+  - aura_core.platform.run_evidence
+  dependencies:
+  - aura-core.domains.execution.runs.ports
 - id: aura-core.platform.object-store
   root: services/aura-core/src/aura_core/platform/object_store
   kind: package
@@ -1924,6 +1933,7 @@ modules:
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
   - aura-core.platform.readiness
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.providers.embeddings.ollama.adapter
@@ -2020,6 +2030,7 @@ modules:
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.providers.embeddings.ollama.adapter

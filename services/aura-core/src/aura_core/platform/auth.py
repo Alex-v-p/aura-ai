@@ -103,6 +103,17 @@ class Settings(BaseSettings):
             "AURA_TELEMETRY_CONFIGURATION_VERSION", "AURA_OBSERVATORY_CONFIGURATION_VERSION"
         ),
     )
+    # Governed run-evidence capture is independent from ordinary OTLP and
+    # Observatory export settings.  The empty policy is intentionally inert.
+    run_evidence_capture_policy: str = Field(
+        default="",
+        validation_alias=AliasChoices("AURA_RUN_EVIDENCE_CAPTURE_POLICY"),
+    )
+    run_evidence_capture_revision: str = Field(default="full-content-v1")
+    run_evidence_queue_capacity: int = Field(default=256, ge=1, le=4096)
+    run_evidence_max_attempts: int = Field(default=3, ge=1, le=5)
+    run_evidence_drain_seconds: float = Field(default=5.0, ge=0.1, le=30.0)
+    run_evidence_max_bytes: int = Field(default=1_048_576, ge=1, le=1_048_576)
     public_origin: str = "https://aura.localhost"
     ollama_url: str = Field(
         default="http://127.0.0.1:11434",

@@ -1,0 +1,216 @@
+id: AURA-0118
+title: Capture governed Core run evidence without execution coupling
+status: integrated
+change_class: repository_governance
+intent: >
+  Implement the Core-owned producer authorized by ADR-0017 so every persisted
+  Core run records exact model-visible and executor-visible evidence through
+  explicit serializers and a bounded nonblocking one-way channel, while Core
+  remains fully usable when capture, transport, or all downstream consumers
+  are unavailable.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - AURA-0117 defines the closed run-evidence-v1 producer contract and authorizes this runtime capture phase.
+    - The Core public boundary is a RunEvidenceRecorder port whose recording operation is synchronous bounded and nonblocking; transport runs only in a bounded background exporter.
+    - The concrete channel is the dedicated durable JetStream subject aura.runs.evidence.v1 and never reuses run commands the Core transactional outbox OTLP or the transient thinking subject.
+    - Core publishes evidence one way and never imports calls reads from names or waits for Aura Observatory; publish acknowledgement affects only exporter retry and completeness telemetry.
+    - Full-content capture is disabled by default and requires the distinct owner-controlled AURA_RUN_EVIDENCE_CAPTURE_POLICY=full_content setting; existing Observatory or OTLP export settings never enable it implicitly.
+    - Queue capacity payload limit retry limit and shutdown drain are bounded configuration with safe fixed maxima; queue pressure or transport failure drops evidence and records content-free completeness signals without changing run state output latency or delivery.
+    - Initial message existing-conversation message edit branch regeneration retry approval resume native tools retrieval synthesis visible thinking and evaluation executions share stable run correlation and explicit boundary serializers where applicable.
+    - Scheduler and reminder polling are not fabricated as runs when no persisted Core run identity exists; a future automation run boundary must provide a real run identity before evidence capture.
+    - Existing metadata-only telemetry component manifests remain metadata-only; the separate run-evidence component alone declares content capture and its telemetry is content-free.
+    - A pre-existing Ruff line-length violation in migration 0015 may receive a formatting-only SQL string wrap so the required full Core lint gate can run green; migration behavior and history must remain byte-for-byte equivalent after Python string evaluation.
+  contracts:
+    - contracts/events/runs/v1/run-evidence.schema.json
+feature_references:
+  - OBS-001
+  - OBS-002
+  - OBS-005
+  - OBS-020
+  - OBS-025
+  - OBS-027
+  - GOV-020
+ownership_zones:
+  - aura-core.execution.runs
+  - aura-core.platform.run-evidence
+  - aura-core.entrypoints.api-composition
+  - aura-core.entrypoints.worker
+  - aura-core.bootstrap.evaluation-runner
+  - aura-core.platform.configuration
+  - aura-core.platform.telemetry
+  - architecture.module-registry
+  - evaluation.aura0118-core-evidence
+  - delivery.aura0118
+allowed_paths:
+  - work-items/active/AURA-0118.yaml
+  - work-items/archived/AURA-0118.yaml
+  - work-items/handoffs/AURA-0118-*.yaml
+  - work-items/reviews/AURA-0118-*.yaml
+  - work-items/integration/AURA-0118.yaml
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/platform/run_evidence.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/migrations/versions/0015_notification_delivery.py
+  - services/aura-core/resources/component-manifests/run-evidence-export.yaml
+  - services/aura-core/tests/test_run_evidence.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_aura0091_evaluation.py
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - compose.yaml
+  - deploy/**
+  - services/aura-observatory/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - run-evidence-v1 producer implementation
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: execution.runs
+observability:
+  applicable: true
+  affected_components:
+    - aura.platform.run_evidence_export
+    - aura.execution.run_coordinator
+  required_metrics:
+    - run_evidence_export_outcome_count
+    - run_evidence_export_dropped_count
+    - run_evidence_serialize_latency_ms
+    - run_evidence_queue_offer_latency_ms
+    - run_evidence_transport_latency_ms
+    - run_evidence_queue_depth
+    - run_evidence_queue_capacity
+  required_evaluators:
+    - run_evidence_exact_boundary_coverage
+    - run_evidence_schema_compatibility
+    - run_evidence_failure_isolation
+    - run_evidence_secret_rejection
+    - observatory_run_evidence_privacy
+  capture_policy: full_content
+security_privacy:
+  applicable: true
+  concerns:
+    - Exact owner-private request prompt context retrieval thinking generation tool attachment and evaluation content crosses a new one-way channel and must use only the closed explicit serializers authorized by ADR-0017.
+    - Credentials secrets bearer material and provider-hidden reasoning are permanently excluded and the full item is rejected before queueing rather than redacted under an exact-content claim.
+    - Model-visible media requires the contract-defined validated media inspection attestation; unsupported malformed or incompletely scanned attachments are represented by content-free partial evidence only.
+    - Evidence must never enter OTLP logs metrics SSE Core run events transactional outbox commands exception detail or existing metadata-only component captures.
+    - Capture is separately owner-enabled and defaults off; existing metadata export settings cannot activate it.
+    - Queue transport cancellation shutdown and downstream outage behavior cannot alter Core execution persistence streaming provider calls tool actions approvals evaluation results or user-visible latency.
+    - Stable logical identifiers canonical bytes digests counts sequences and delivery-attempt identities must converge safely under retry worker redelivery and approval resume.
+    - Core has no Observatory import URL route label client callback health dependency or browser communication.
+  data_classes:
+    - owner_private_run_evidence
+    - admitted_request_and_trigger_content
+    - compiled_prompt_and_context_content
+    - retrieval_and_chunk_content
+    - model_visible_attachment_content
+    - displayed_thinking_content
+    - generated_and_synthesis_content
+    - tool_argument_result_policy_and_approval_content
+    - persistence_delivery_worker_and_evaluation_content
+    - content_free_export_health
+required_agents:
+  implementation:
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A Core-owned RunEvidenceRecorder public port accepts only closed evidence records and returns immediately after a bounded queue offer; disabled capture uses an inert implementation and no recording call can await network storage acknowledgement or downstream health.
+  - A separate bounded background exporter publishes run-evidence-v1 envelopes to aura.runs.evidence.v1 with stable event and evidence IDs monotonic per-run sequence distinct delivery IDs and attempts canonical bytes verified digest and byte count and bounded retry shutdown and overflow behavior.
+  - A distinct owner-controlled full_content policy defaults disabled and validates bounded queue capacity retry and drain settings; existing AURA_OBSERVATORY_EXPORT_ENABLED OTLP configuration cannot enable evidence capture.
+  - Explicit serializers record exact admitted request or trigger compiled system and persona prompt admitted conversation context memory and document chunks routing decisions model-visible attachments displayed thinking generation and synthesis output tool arguments and results policy approval and execution outcomes persistence delivery worker and evaluation inputs and outputs where those boundaries apply.
+  - Initial conversation existing-conversation message edit and branch regeneration retry approval-resumed retrieval tool synthesis visible-thinking and evaluation flows retain stable run trace span parent and sequence lineage and do not fabricate steps that did not occur.
+  - Only displayed ModelThinkingDelta content is eligible; provider-hidden chain-of-thought is never requested inferred reconstructed or represented.
+  - Every serializer is closed and bounded and rejects a prohibited oversized malformed or incompletely inspected item whole before queueing while recording a bounded content-free excluded partial or dropped signal that does not claim exact content was captured.
+  - Text JSON image and PDF evidence use the contract-defined admission modes and canonical byte domains; binary evidence is never accepted from filename media-type or caller assertions alone.
+  - Retry worker redelivery and approval resume preserve stable logical identity while each transport attempt receives a distinct delivery identity; exact duplicates are safe and changed immutable evidence produces a content-free collision signal.
+  - Queue saturation serialization rejection publisher disconnection missing JetStream downstream outage cancellation and shutdown timeout never change the normal run result state events persistence tool side effects evaluation outcome or response delivery.
+  - API worker and isolated evaluation composition roots inject the recorder without an Observatory client dependency and close or drain it within bounded lifecycle handling.
+  - Scheduler and reminder polling without a persisted Run remain outside capture and are covered by a regression preventing fabricated run evidence.
+  - A dedicated aura.platform.run_evidence_export component manifest declares the run-evidence input bounded queue nonblocking behavior content-free metrics finite dimensions dependencies retention replay and failure semantics without weakening any metadata-only manifest.
+  - Content-free telemetry covers serialize queue-offer and transport-publish spans exporter outcomes drops latency queue depth and capacity using only ADR-0017 dimensions and error classes; evidence IDs kinds media digests bytes content owner data and exception text never enter telemetry.
+  - Tests cover canonical serialization every applicable boundary exact visible evidence stable sequencing retry idempotency secret rejection media admission backpressure cancellation shutdown outage isolation configuration composition and the absence of evidence from OTLP SSE logs Core run events and existing outbox payloads.
+  - Architecture validation proves no Aura Web Observatory service frontend contract migration deployment or protected-baseline changes and assigns every new Core module exactly one registry owner with explicit dependencies.
+  - The pre-existing migration 0015 lint violation is corrected by formatting only with no SQL semantic schema revision or migration-order change.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0118.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0118.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0118.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0118.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0118.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Observatory-owned JetStream stream provisioning ingestion persistence APIs deletion and UI remain sequential follow-up work and cannot be added to this Core-only item.
+  - Full-stack acceptance cannot enable capture until the follow-up Observatory ingestion and dedicated storage work is integrated.

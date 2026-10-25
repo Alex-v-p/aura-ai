@@ -50,7 +50,8 @@ def upgrade() -> None:
                 status VARCHAR(16) NOT NULL
                     CONSTRAINT ck_notification_events_status
                     CHECK (status IN ('delivered', 'acknowledged')),
-                version INTEGER NOT NULL CONSTRAINT ck_notification_events_version_positive CHECK (version > 0),
+                version INTEGER NOT NULL CONSTRAINT ck_notification_events_version_positive """
+                """CHECK (version > 0),
                 occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """

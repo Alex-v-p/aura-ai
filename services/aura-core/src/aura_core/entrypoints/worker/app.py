@@ -57,6 +57,11 @@ from aura_core.platform.outbox import (
     TransactionalOutboxTransport,
 )
 from aura_core.platform.outbox.nats import NatsIdentifierConsumer, NatsOutbox, NatsRunConsumer
+from aura_core.platform.run_evidence import (
+    BoundedRunEvidenceRecorder,
+    JetStreamRunEvidencePublisher,
+    make_run_evidence_recorder,
+)
 from aura_core.platform.telemetry import (
     MemoryTraceContext,
     MetadataMetrics,
@@ -748,6 +753,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry(config)
+    run_evidence = make_run_evidence_recorder(config, metrics=metrics)
     from aura_core.bootstrap.attachment_uow import attachment_service
 
     attachment_service_instance = attachment_service(sessions, settings=config, metrics=metrics)
@@ -860,6 +866,11 @@ async def run_forever(settings: Settings | None = None) -> None:
             await memory_consumer.connect()
             housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
         await event_transport.connect()
+        if isinstance(run_evidence, BoundedRunEvidenceRecorder):
+            connection = getattr(event_transport, "connection", None)
+            if connection is not None:
+                run_evidence.bind_publisher(JetStreamRunEvidencePublisher(connection))
+                await run_evidence.start()
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
@@ -909,6 +920,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             attachment_service=attachment_service_instance,
             attachment_resolver=store,
             thinking_publisher=event_transport,
+            run_evidence=run_evidence,
         )
         # Approval/resumption wakeups are identifier-only; the worker always
         # reloads owner-authorized state through the governance public port.
@@ -1045,6 +1057,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_delete_consumer.close()
         await resume_consumer.close()
         await consumer.close()
+        await run_evidence.stop()
         await event_transport.close()
         await telemetry.stop()
         await engine.dispose()

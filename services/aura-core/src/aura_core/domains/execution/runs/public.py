@@ -4,6 +4,8 @@ from aura_core.domains.execution.runs.dto import Run, RunClaim, RunClaimLost, Ru
 from aura_core.domains.execution.runs.ports import (
     ChatCompletionPort,
     ChatMessage,
+    RunEvidenceItem,
+    RunEvidencePort,
     RunRepository,
 )
 from aura_core.domains.execution.runs.repository import SqlRunRepository
@@ -17,6 +19,8 @@ __all__ = [
     "RunClaimLost",
     "RunCoordinator",
     "RunError",
+    "RunEvidenceItem",
+    "RunEvidencePort",
     "RunRepository",
     "RunStatus",
     "SqlRunRepository",

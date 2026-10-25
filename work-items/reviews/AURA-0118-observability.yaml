@@ -1,0 +1,14 @@
+agent: observability_steward
+work_item: AURA-0118
+verdict: PASS
+checked:
+  - Settled native-text generation, repeated-tool sequencing, nested JSON rejection, manifest, telemetry, handoffs, and tests.
+  - Unique component-local serialize, queue-offer, and per-attempt transport spans with source-span lineage and finite content-free dimensions.
+  - Stable restart, approval-resume, evaluation, repeated tool, synthesis, terminal, and delivery sequences below the contract safe-integer limit.
+  - Run-correlated rejection, queue-pressure, outage, cancellation, and shutdown completeness diagnostics plus truthful queue-depth convergence.
+  - No evidence payload, credential, digest, byte count, evidence identifier, prompt, response, owner value, or exception text in telemetry.
+  - Focused suite 76 passed; full Core 1238 passed and 106 skipped; Ruff, Pyright, observability, and diff checks passed.
+findings: []
+risks:
+  - Downstream ingestion and inspection telemetry remains owned by the following Observatory runtime work item.
+unresolved: []

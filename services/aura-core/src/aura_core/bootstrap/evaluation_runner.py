@@ -10,7 +10,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import nats
 
 from aura_core.bootstrap.document_uow import document_service
-from aura_core.domains.execution.runs.public import RunCoordinator
+from aura_core.domains.execution.runs.public import RunCoordinator, RunEvidenceItem
 from aura_core.domains.interaction.agents.public import AgentCatalog
 from aura_core.domains.interaction.conversations.public import ConversationStore
 from aura_core.platform.auth import Settings
@@ -19,6 +19,12 @@ from aura_core.platform.outbox import InMemoryOutbox
 from aura_core.platform.outbox.nats import (
     EvaluationJetStreamConsumer,
     EvaluationJetStreamPublisher,
+)
+from aura_core.platform.run_evidence import (
+    BoundedRunEvidenceRecorder,
+    JetStreamRunEvidencePublisher,
+    RunEvidenceRecorder,
+    make_run_evidence_recorder,
 )
 from aura_core.platform.telemetry import (
     MetadataMetrics,
@@ -50,6 +56,21 @@ _NATS_ERROR_CLASSES = frozenset(
         "unknown",
     }
 )
+
+
+class EvaluationTelemetryLifecycle:
+    """Coordinate metadata telemetry and the optional bounded evidence drain."""
+
+    def __init__(self, telemetry: TelemetryLifecycle, run_evidence: RunEvidenceRecorder) -> None:
+        self.telemetry = telemetry
+        self.run_evidence = run_evidence
+
+    async def start(self) -> None:
+        await self.telemetry.start()
+
+    async def stop(self) -> bool:
+        await self.run_evidence.stop()
+        return await self.telemetry.stop()
 
 
 def _bounded_nats_error_class(error: BaseException) -> str:
@@ -295,6 +316,19 @@ class SyntheticEvaluationScenario:
     scenario_version = "1.0.0"
     fixture_revision = "synthetic-run-coordinator-v1"
 
+    def __init__(self, run_evidence: RunEvidenceRecorder | None = None) -> None:
+        self.run_evidence = run_evidence
+
+    def _evidence_enabled(self) -> bool:
+        recorder = self.run_evidence
+        return recorder is not None and getattr(recorder, "enabled", True) is not False
+
+    def _enabled_evidence_recorder(self) -> RunEvidenceRecorder | None:
+        recorder = self.run_evidence
+        if recorder is None or getattr(recorder, "enabled", True) is False:
+            return None
+        return recorder
+
     async def execute(self, case_id: UUID, context: ReplayContext) -> ReplayResult:
         context.checkpoint()
         dependency = _SyntheticDependencyFixture()
@@ -308,6 +342,7 @@ class SyntheticEvaluationScenario:
             side_effects.events,
             side_effects.outbox,
             tool_registry=tools.registry,
+            run_evidence=self.run_evidence,
         )
         descriptor = ModelDescriptor(
             model.id,
@@ -326,6 +361,29 @@ class SyntheticEvaluationScenario:
                 (descriptor,),
                 f"aura-evaluation:{case_id}",
             )
+            if (recorder := self._enabled_evidence_recorder()) is not None:
+                recorder.record(
+                    RunEvidenceItem(
+                        run_id=run.id,
+                        trace_id=run.id.hex,
+                        span_id=run.id.hex[:16],
+                        parent_span_id=None,
+                        # Evaluation input is the deterministic first boundary
+                        # of the run.  The coordinator's admission slot starts
+                        # after it, so a restarted evaluator cannot collide
+                        # with a fresh process-local allocator.
+                        sequence=0,
+                        step_category="evaluation",
+                        evidence_kind="evaluation_input",
+                        media_classification="structured",
+                        media_type="application/json",
+                        observed_at=run.created_at,
+                        payload={
+                            "kind": "evaluation_input",
+                            "content": {"name": "synthetic_case", "content": str(case_id)},
+                        },
+                    )
+                )
             await coordinator.execute(run.id, model)
             _completed_conversation, completed = await repository.find_run_any(run.id)
         except Exception as exc:
@@ -335,6 +393,27 @@ class SyntheticEvaluationScenario:
         if completed.status.value != "completed":
             raise ReplayError(
                 "synthetic Core run did not complete", dependency="application_unknown"
+            )
+        if (recorder := self._enabled_evidence_recorder()) is not None:
+            recorder.record(
+                RunEvidenceItem(
+                    run_id=run.id,
+                    trace_id=run.id.hex,
+                    span_id=run.id.hex[:16],
+                    parent_span_id=None,
+                    # Terminal Core boundaries occupy the 9e12 range; keep
+                    # evaluation output after settlement for monotonic replay.
+                    sequence=9_200_000_000_000,
+                    step_category="evaluation",
+                    evidence_kind="evaluation_output",
+                    media_classification="structured",
+                    media_type="application/json",
+                    observed_at=completed.created_at,
+                    payload={
+                        "kind": "evaluation_output",
+                        "content": {"name": "synthetic_case", "content": completed.status.value},
+                    },
+                )
             )
         context.checkpoint()
         return ReplayResult(
@@ -411,7 +490,7 @@ class _SyntheticSideEffectFixture:
 
 async def build_evaluation_runner(
     settings: Settings | None = None,
-) -> tuple[EvaluationRunner, EvaluationJetStreamConsumer, Any, TelemetryLifecycle]:
+) -> tuple[EvaluationRunner, EvaluationJetStreamConsumer, Any, EvaluationTelemetryLifecycle]:
     """Compose every production provider before the entrypoint starts."""
 
     effective = settings or Settings(role="evaluation-runner")
@@ -448,10 +527,14 @@ async def build_evaluation_runner(
     )
     registry = ReplayRegistry()
     registry.register_replay(DocumentProcessingEvaluationReplay())
-    registry.register_synthetic(SyntheticEvaluationScenario())
+    run_evidence = make_run_evidence_recorder(effective, metrics=metrics)
     connection = await _connect_evaluation_nats(effective.nats_url, metrics)
+    if isinstance(run_evidence, BoundedRunEvidenceRecorder):
+        run_evidence.bind_publisher(JetStreamRunEvidencePublisher(connection))
+        await run_evidence.start()
+    registry.register_synthetic(SyntheticEvaluationScenario(run_evidence))
     publisher = EvaluationJetStreamPublisher(connection, metrics=metrics)
-    lifecycle = TelemetryLifecycle(metrics)
+    lifecycle = EvaluationTelemetryLifecycle(TelemetryLifecycle(metrics), run_evidence)
     runner = EvaluationRunner(
         ledger,
         registry,

@@ -84,6 +84,11 @@ from aura_core.platform.readiness import (
     StaticProbe,
     UnknownProbe,
 )
+from aura_core.platform.run_evidence import (
+    BoundedRunEvidenceRecorder,
+    JetStreamRunEvidencePublisher,
+    make_run_evidence_recorder,
+)
 from aura_core.platform.telemetry import (
     MetadataMetrics,
     Stopwatch,
@@ -228,6 +233,7 @@ class AppState:
             )
         )
         self.telemetry = TelemetryLifecycle(self.metrics)
+        self.run_evidence = make_run_evidence_recorder(self.settings, metrics=self.metrics)
         self.provider = provider or OllamaAdapter(
             self.settings.ollama_url,
             self.settings.ollama_run_timeout_seconds,
@@ -530,6 +536,7 @@ class AppState:
             attachment_service=self.attachment_service,
             attachment_resolver=self.store,
             thinking_publisher=thinking_publisher,
+            run_evidence=self.run_evidence,
         )
 
     async def startup(self) -> None:
@@ -543,6 +550,13 @@ class AppState:
                 await self.agent_store.refresh()
             assert self.nats is not None
             await self.nats.connect()
+            if isinstance(self.run_evidence, BoundedRunEvidenceRecorder):
+                connection = getattr(self.nats, "connection", None)
+                if connection is not None:
+                    self.run_evidence.bind_publisher(
+                        JetStreamRunEvidencePublisher(connection)
+                    )
+                    await self.run_evidence.start()
             await self.nats.subscribe_events(self._ingest_event_wakeup)
             thinking_subscribe = getattr(self.nats, "subscribe_thinking_events", None)
             if callable(thinking_subscribe):
@@ -585,6 +599,7 @@ class AppState:
             self.dispatcher_task.cancel()
             await asyncio.gather(self.dispatcher_task, return_exceptions=True)
             self.dispatcher_task = None
+        await self.run_evidence.stop()
         if self.nats is not None:
             await self.nats.close()
         backend = self.sessions.backend

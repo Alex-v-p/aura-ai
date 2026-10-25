@@ -1,0 +1,66 @@
+agent: integration_maintainer
+work_item: AURA-0118
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0118-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0118-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0118-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0118-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0118.yaml
+  - work-items/integration/AURA-0118.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs were read and report complete status,
+      authorized ownership paths, no contract changes, and no unresolved
+      findings in scope. All four required review artifacts are schema-valid
+      PASS verdicts with no findings.
+    - >-
+      The archived work item and 21 changed paths passed work-item,
+      changed-path, contract-change, generated-sync, import-boundary,
+      module-registry, service-isolation, frontend-boundary, observability,
+      repository-shape, baseline-protection, and whitespace checks.
+    - >-
+      The focused Core run-evidence suite passed 76 tests. The complete Core
+      suite passed 1238 tests with 106 skipped and one pre-existing warning.
+      Ruff passed for services/aura-core and Pyright reported zero errors,
+      warnings, or informations.
+    - >-
+      The module-registry governance suite passed all 14 tests and docker
+      compose config validation passed.
+    - >-
+      Handoff, review, archived work-item, and integration-report documents
+      validate against their repository schemas.
+    - >-
+      Review evidence confirms disabled-by-default owner-controlled capture,
+      explicit bounded serializers, stable evidence and retry lineage,
+      content-free telemetry, secret/provider-hidden-reasoning exclusion,
+      Core execution isolation, and unchanged Aura Web/Observatory boundaries.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Observatory ingestion, PostgreSQL manifests, dedicated Garage storage,
+    inspection APIs, deletion, UI rendering, and full-stack failure acceptance
+    remain sequential follow-up work and must be complete before full-content
+    capture is enabled end to end.
+  - >-
+    Image and PDF evidence remains truthfully rejected or partial until a
+    separately reviewed format-aware parser, metadata, and OCR admission
+    boundary exists.
+  - >-
+    Downstream ingestion must enforce payload-kind agreement, digest and byte
+    count verification, duplicate collision handling, and deterministic
+    out-of-order assembly.
