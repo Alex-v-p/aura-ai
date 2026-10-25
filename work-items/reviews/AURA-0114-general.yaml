@@ -1,0 +1,64 @@
+agent: general_reviewer
+work_item: AURA-0114
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final AURA-0114 backend, frontend, and browser-test diff,
+    active work item, implementation handoffs, unchanged contracts, Core
+    lifecycle producers, and every finding from the three earlier general
+    review passes.
+  - >-
+    Verified terminal headers derive status, start, finish, and duration from
+    authoritative run_started, run_status, and valid run_duration_ms evidence;
+    later correlated telemetry cannot reopen or extend them. Running runs keep
+    finish and duration unavailable until terminal evidence arrives, and Core
+    producer `canceled` normalizes to public `cancelled` in projection and
+    filtering.
+  - >-
+    Verified model and trace headers use execution/lifecycle evidence rather
+    than the newest arbitrary correlated row. Legacy fallback remains
+    deterministic, list cursors use the actual latest-observation ordering
+    boundary, and paged details compute stable headers from the full fenced
+    snapshot rather than the current page.
+  - >-
+    Verified discovery filtering now has qualify-first/project-second
+    semantics in both reference and production paths. Component, deployment,
+    model, from, and to predicates form one per-observation conjunction inside
+    one production countIf, while terminal status remains a separate run-level
+    predicate. This matches reference `_matches`, rejects split-row matches,
+    gives from/to one `[from,to)` interval, and preserves all lifecycle rows
+    after a genuine match.
+  - >-
+    Verified the phase inspector deduplicates only mirrored span observations,
+    maps tool.execute separately from run.execute, preserves canonical order
+    within observed/unobserved groups, renders measurement values with their
+    captured units, exposes source timestamps and run offsets, uses readable
+    durations with exact accessible labels, and truthfully distinguishes Not
+    observed metadata from content that is Not captured.
+  - >-
+    Verified the selected-run status announcement, responsive trace-depth
+    cap, waterfall image semantics, reduced-motion and forced-colors rules,
+    metadata-only disclosure, and absence of Aura Web or cross-product
+    frontend changes. The separate advisory UX formalization remains PASS.
+  - >-
+    Final verification rerun passed: 16 focused AURA-0114 backend tests; 17
+    selected formal run-query, cursor, trace, lifecycle, and detail
+    regressions; Ruff on changed backend/test files; and repository diff
+    whitespace validation. Earlier corrected frontend verification remains 58
+    unit tests plus desktop, tablet, and mobile focused browser/Axe coverage.
+findings: []
+risks:
+  - >-
+    Rich prompt, chunk, generated-content, displayed-thinking, and tool
+    payload evidence remains intentionally unavailable in this metadata-only
+    work item and requires the separately governed evidence architecture.
+  - >-
+    The full Observatory suite retains six pre-existing migration/full-stack
+    fixture failures recorded by the worker; focused and selected existing
+    regressions for this change pass.
+  - >-
+    Live post-integration inspection should confirm the rebuilt Observatory
+    bundle and deployed ClickHouse support the exercised aggregate/window
+    functions; no current implementation or regression evidence indicates a
+    blocking incompatibility.
+unresolved: []

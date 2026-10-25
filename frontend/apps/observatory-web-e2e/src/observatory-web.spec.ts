@@ -262,6 +262,18 @@ function runDetail() {
         serviceRole: 'worker',
         capturePolicy: 'metadata_only',
       },
+      {
+        observationId: 'c4a5d06f-99be-4b16-a05e-e9c8d7d2a4dd',
+        observedAt,
+        componentId: 'aura.core.api',
+        componentVersion: '1.2.0',
+        operation: 'request',
+        measurement: { name: 'tool.calls', value: 3, unit: 'count' },
+        outcome: 'succeeded',
+        deploymentId: 'dev-local',
+        serviceRole: 'api',
+        capturePolicy: 'metadata_only',
+      },
     ],
     partial: false,
     nextCursor: null,
@@ -3009,6 +3021,66 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(traceList.getByText('job', { exact: true })).toBeVisible();
     await expect(traceList.getByText('partial / missing parent', { exact: true })).toBeVisible();
     await expect(traceList.getByRole('listitem')).toHaveCount(3);
+  });
+
+  test('AURA-0114 keeps terminal run headers readable and labels metadata-only evidence gaps', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await openDestination(page, 'Runs');
+    const runs = page.locator('observatory-runs');
+    const runButton = runs.getByRole('button', { name: runId, exact: true });
+    await expect(runButton).toBeVisible();
+
+    const durationCell = runs.locator('tbody tr').first().locator('td').nth(2);
+    await expect(durationCell).toContainText('5.00 s');
+    await expect(durationCell).not.toContainText('5000 ms');
+    await expect(durationCell.locator('[aria-label="5000 milliseconds"]')).toBeVisible();
+
+    await runButton.click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(trace.getByText('Metadata-only capture.', { exact: false })).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Captured phases', exact: true })).toBeVisible();
+    await expect(trace.locator('.summary-value strong')).toHaveText('5.00 s');
+    await expect(trace.locator('.summary-value')).toHaveAttribute('aria-label', '5000 milliseconds');
+    await expect(trace.locator('.item-time[aria-label="3 count"]')).toHaveText('3 count');
+    await expect(trace.locator('.item-label time').first()).toContainText('·');
+    await expect(trace.locator('.item-label time').first()).toHaveAttribute('datetime');
+
+    for (const phase of [
+      'Request admission',
+      'Context & retrieval',
+      'Prompt construction',
+      'Model routing',
+      'Generation',
+      'Displayed thinking',
+      'Tools & policy',
+      'Persistence',
+      'Streaming & delivery',
+    ]) {
+      await expect(trace.getByRole('heading', { name: phase, exact: true })).toBeVisible();
+    }
+
+    await expect(
+      trace.locator('.coverage-item').filter({ hasText: 'Request & lifecycle' }),
+    ).toContainText('Metadata available');
+    for (const unavailable of [
+      'Chunks & context',
+      'Prompt text',
+      'Generated content',
+      'Displayed thinking',
+      'Tool payloads',
+    ]) {
+      await expect(
+        trace.locator('.coverage-item').filter({ hasText: unavailable }),
+      ).toContainText('Not captured');
+    }
+
+    await expect(trace.getByRole('list', { name: 'Run phase coverage', exact: true })).toBeVisible();
+    await expect(trace.getByRole('list', { name: 'Ordered trace spans', exact: true })).toBeVisible();
+    await expectNoA11yViolations(page);
   });
 
   test('shows component health summaries and a bounded trend', async ({ page }) => {

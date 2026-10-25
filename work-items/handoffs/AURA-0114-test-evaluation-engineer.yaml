@@ -1,0 +1,73 @@
+agent: test_evaluation_engineer
+work_item: AURA-0114
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: evaluation.observatory-run-projection
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0114-test-evaluation-engineer.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - frontend.observatory.run-inspector
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4301
+      AURA_OBSERVATORY_WEB_E2E_SKIP_SERVER=1 corepack pnpm exec playwright test
+      --config apps/observatory-web-e2e/playwright.config.ts --project desktop
+      --grep AURA-0114: 1 passed.
+    - >-
+      The AURA-0114 mocked desktop test verifies the terminal run list renders
+      the stable 5.00 s duration rather than raw 5000 ms, retains the precise
+      5000 milliseconds accessible label, renders the phase-oriented inspector
+      headings and semantic phase/span lists, and distinguishes metadata
+      available request lifecycle data from Not captured chunks, prompt text,
+      generated content, displayed thinking, and tool payloads. The fixture
+      also carries a content-free count measurement and the test verifies it
+      renders as 3 count with its timestamp and phase offset rather than
+      coercing every captured value into milliseconds. Its Axe scan passes
+      with the corrected waterfall role and hidden fill geometry.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0114.yaml --path
+      frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts:
+      validated the test-owned changed path.
+    - >-
+      git diff --check -- frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+      work-items/handoffs/AURA-0114-test-evaluation-engineer.yaml: passed.
+    - >-
+      The handoff YAML parsed successfully with all implementation-handoff
+      required fields present.
+  failed: []
+  not_run:
+    - >-
+      The exact default-port invocation could not start because
+      http://127.0.0.1:4300 was already occupied by the running Observatory
+      application. The same maintained Playwright config and required desktop
+      grep were executed against a dedicated 4301 dev server.
+    - >-
+      Responsive, reduced-motion, and forced-colors browser projects were not
+      duplicated for this focused desktop test; the existing Observatory E2E
+      suite remains responsible for those cross-viewport shell guarantees.
+decisions:
+  - >-
+    Added one deterministic mocked browser acceptance test in the now-authorized
+    maintained Observatory Web E2E spec. The fixture remains content-free and
+    uses only bounded lifecycle metadata.
+  - >-
+    Asserted unavailable evidence as Not captured rather than empty content,
+    preserving the AURA-0114 metadata-only boundary and avoiding any prompt,
+    chunk, response, thinking, or tool payload fixture data.
+risks: []
+unresolved: []

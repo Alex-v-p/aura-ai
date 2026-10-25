@@ -534,6 +534,31 @@ export function componentCatalogueViewFor(state: ObservatoryResourceState, itemC
 export type RetentionRequest = CreateRetentionActionRequest & { confirmation: 'delete-before' | 'purge-all' };
 export type RetentionState = { action: RetentionAction | null; running: boolean; error: string | null };
 export type SelectedRun = { detail: RunDetail | null; trace: TraceDetail | null };
+
+/** Format a stable snapshot duration for people while keeping exact timing in the accessible label. */
+export function formatDurationMs(durationMs: number | null): string {
+  if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return 'Unavailable';
+  const milliseconds = Math.round(durationMs);
+  if (milliseconds < 1_000) return `${milliseconds} ms`;
+  if (milliseconds < 60_000) {
+    const seconds = milliseconds / 1_000;
+    return `${seconds.toFixed(seconds < 10 ? 2 : 1)} s`;
+  }
+  if (milliseconds < 3_600_000) {
+    const minutes = Math.floor(milliseconds / 60_000);
+    const seconds = Math.floor((milliseconds % 60_000) / 1_000);
+    return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  }
+  const hours = Math.floor(milliseconds / 3_600_000);
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
+export function durationAriaLabel(durationMs: number | null): string {
+  if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return 'Duration unavailable';
+  return `${durationMs} milliseconds`;
+}
+
 export type ObservatoryComparisonState = 'idle' | 'loading' | 'refreshing' | 'ready' | 'empty' | 'stale' | 'disconnected' | 'partial' | 'malformed' | 'rejected' | 'unavailable' | 'service_down' | 'error';
 export type ObservatoryComparison = {
   readonly leftRunId: string | null;

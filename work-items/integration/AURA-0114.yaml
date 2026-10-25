@@ -1,0 +1,82 @@
+agent: integration_maintainer
+work_item: AURA-0114
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0114-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0114-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0114-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0114-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0114-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0114.yaml
+  - work-items/integration/AURA-0114.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs were read and report complete status,
+      authorized ownership paths, no contract or migration changes, and no
+      unresolved items. All five required reviews are final PASS verdicts with
+      no unresolved findings.
+    - >-
+      The archived work item and its 18 changed paths passed work-item and
+      changed-path validation. Repository shape, module registry, Python
+      import boundaries, service isolation, observability obligations,
+      contract-change protection, and baseline protection checks passed.
+    - >-
+      The focused backend suite passed 16 tests. Ruff and Pyright passed for
+      the changed backend and focused tests; the Observatory frontend suite
+      passed 58 tests; Observatory lint passed with five pre-existing warnings
+      and no errors; and git diff --check passed.
+    - >-
+      The maintained AURA-0114 browser acceptance passed on a dedicated 4311
+      server with the desktop project and verified stable readable durations,
+      accessible precise timing labels, phase headings, content-free
+      metadata-only disclosure, and the Not captured evidence states.
+    - >-
+      The integrated diff contains only Observatory query/UI/tests and the
+      authorized AURA-0114 governance artifacts. Aura Web, Core, contracts,
+      migrations, deployment topology, generated clients, and SSE payloads
+      remain unchanged.
+    - >-
+      A single focused Conventional Commit checkpoint is created for this
+      reviewed and validated AURA-0114 slice; no push is performed.
+  failed:
+    - >-
+      The full Observatory suite completed with 1442 passed and 43 skipped,
+      with six pre-existing failures outside AURA-0114: the migration-0015
+      rerunnable assertion, two AURA-0087 full-stack runner-shape assertions,
+      and three AURA-0094/AURA-0095 migration-inventory assertions that still
+      expect version 14 while migration 0015 exists. No AURA-0114 test failed
+      and no protected baseline was changed.
+    - >-
+      The literal required Playwright invocation could not start its fresh
+      web-server process on the first attempt. The same maintained config and
+      dedicated 4311 server were then exercised with reuse-existing-server,
+      and the AURA-0114 desktop test passed.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The full Observatory suite retains the six unrelated migration and
+    full-stack fixture failures until their existing owners correct those
+    baselines; this integration does not weaken or update them.
+  - >-
+    Rich prompt, chunk, generated-content, displayed-thinking, and tool
+    payload evidence remains intentionally unavailable under the metadata-only
+    AURA-0114 scope and requires the separately governed evidence architecture.
+  - >-
+    The shared checkout is clean with respect to unrelated paths but remains
+    repository_clean false in this report because the integration checkpoint
+    itself is the current staged worktree transition.

@@ -57,6 +57,7 @@ from aura_observatory.query import (
     iso,
     retention_from_row,
     run_dict,
+    run_projection,
     span_dict,
     tree,
 )
@@ -440,7 +441,32 @@ _RUN_STATUS_SQL = (
     + _DIMENSION_STATUS_SQL
     + " IN ('error', 'failed'), 'failed', "
     + _DIMENSION_STATUS_SQL
-    + " = 'cancelled', 'cancelled', 'unknown')"
+    + " IN ('canceled', 'cancelled'), 'cancelled', 'unknown')"
+)
+_RUN_TERMINAL_STATUS_SQL = _RUN_STATUS_SQL + " IN ('succeeded', 'failed', 'cancelled')"
+# Lifecycle status is authoritative when Core emitted it.  Prefer the latest
+# terminal lifecycle event so a late nonterminal retry cannot reopen a run.
+_RUN_STATUS_PROJECTION_SQL = (
+    "if(countIf(measurement_name = 'run_status') > 0, "
+    "argMaxIf(" + _RUN_STATUS_SQL + ", "
+    "(" + _RUN_TERMINAL_STATUS_SQL + ", observed_at, observation_id), "
+    "measurement_name = 'run_status'), "
+    "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)))"
+)
+_RUN_STATUS_AT_SQL = (
+    "argMaxIf(observed_at, ("
+    + _RUN_TERMINAL_STATUS_SQL
+    + ", observed_at, observation_id), measurement_name = 'run_status')"
+)
+_MODEL_EXECUTION_PREDICATE_SQL = (
+    "component_id IN ('aura.runtime.model_routing', 'aura.runtime.model_inference')"
+)
+_RUN_STATUS_WINDOW_SQL = (
+    "if(countIf(measurement_name = 'run_status') OVER () > 0, "
+    "argMaxIf(" + _RUN_STATUS_SQL + ", "
+    "(" + _RUN_TERMINAL_STATUS_SQL + ", observed_at, observation_id), "
+    "measurement_name = 'run_status') OVER (), "
+    "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) OVER ())"
 )
 _ANALYTICS_OUTCOME_SQL = (
     "multiIf("
@@ -449,7 +475,7 @@ _ANALYTICS_OUTCOME_SQL = (
     + _DIMENSION_STATUS_SQL
     + " IN ('error', 'failed'), 'failed', "
     + _DIMENSION_STATUS_SQL
-    + " = 'cancelled', 'cancelled', 'unknown')"
+    + " IN ('canceled', 'cancelled'), 'cancelled', 'unknown')"
 )
 
 
@@ -2854,34 +2880,36 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             if cursor_snapshot is not None:
                 snapshot_sequence = min(snapshot_sequence, cursor_snapshot)
         conditions = ["run_id != ''", f"ingest_sequence <= {snapshot_sequence}"]
-        if filters.component:
-            conditions.append(f"component_id = {_sql(filters.component)}")
-        if filters.deployment:
-            conditions.append(f"deployment_id = {_sql(filters.deployment)}")
-        if filters.model:
-            conditions.append(f"dimensions['provider'] = {_sql(filters.model)}")
-        if filters.from_time:
-            conditions.append(
-                "observed_at >= toDateTime64(" + _clickhouse_time(filters.from_time) + ", 3, 'UTC')"
-            )
-        if filters.to_time:
-            conditions.append(
-                "observed_at < toDateTime64(" + _clickhouse_time(filters.to_time) + ", 3, 'UTC')"
-            )
         # Cursor decoding is deliberately delegated to the use case; the
         # opaque value is carried as a stable boundary in its query contract.
         having_conditions: list[str] = []
+        # Discovery filters qualify run IDs, rather than narrowing the rows
+        # used for their projection.  This preserves lifecycle/model evidence
+        # for a matching run while retaining observed-time window semantics:
+        # a run qualifies when it has an observation in the requested window.
+        discovery_predicates: list[str] = []
+        if filters.component:
+            discovery_predicates.append("component_id = " + _sql(filters.component))
+        if filters.deployment:
+            discovery_predicates.append("deployment_id = " + _sql(filters.deployment))
+        if filters.model:
+            discovery_predicates.append("dimensions['provider'] = " + _sql(filters.model))
+        if filters.from_time:
+            discovery_predicates.append(
+                "observed_at >= toDateTime64(" + _clickhouse_time(filters.from_time) + ", 3, 'UTC')"
+            )
+        if filters.to_time:
+            discovery_predicates.append(
+                "observed_at < toDateTime64(" + _clickhouse_time(filters.to_time) + ", 3, 'UTC')"
+            )
+        if discovery_predicates:
+            having_conditions.append("countIf(" + " AND ".join(discovery_predicates) + ") > 0")
         if filters.status:
             # Status is a property of the latest observation for a run, not
             # of an individual row.  Filtering in WHERE would let an older
             # success keep a run visible after a later failure (or vice
             # versa), and could make one run appear in both result sets.
-            having_conditions.append(
-                "argMax("
-                + _RUN_STATUS_SQL
-                + ", (observed_at, observation_id)) = "
-                + _sql(filters.status)
-            )
+            having_conditions.append(_RUN_STATUS_PROJECTION_SQL + " = " + _sql(filters.status))
         if cursor_at is not None and cursor_id is not None:
             having_conditions.append(
                 "(max(observed_at), run_id) < (toDateTime64("
@@ -2894,14 +2922,44 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         statement = (
             "SELECT run_id, min(observed_at) AS started_at, max(observed_at) AS finished_at, "
             "argMax(observed_at, observed_at) AS latest_at, "
-            "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) AS status, "
-            "argMax(dimensions['provider'], observed_at) AS model, "
+            + _RUN_STATUS_PROJECTION_SQL
+            + " AS status, "
+            + "countIf(measurement_name = 'run_status') AS run_status_count, "
+            + _RUN_STATUS_AT_SQL
+            + " AS run_status_at, "
+            + "countIf(measurement_name = 'run_started') AS run_started_count, "
+            + "minIf(observed_at, measurement_name = 'run_started') AS run_started_at, "
+            + "countIf(measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_count, "
+            + "argMaxIf(measurement_value, (observed_at, observation_id), "
+            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_ms, "
+            + "argMaxIf(observed_at, (observed_at, observation_id), "
+            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_at, "
+            + "countIf(dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") AS model_execution_count, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") AS model_execution, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '') AS legacy_model, "
             "argMax(deployment_id, observed_at) AS deployment_id, "
             "groupUniqArray(component_id) AS component_ids, "
-            # Empty terminal measurements must not mask the latest span
-            # lineage.  The tuple argument makes equal-timestamp selection
-            # deterministic by observation ID while the condition keeps the
-            # aggregate explicitly metadata-only and non-empty.
+            # Prefer the run coordinator trace (Core uses the run UUID as its
+            # trace id), then use the earliest correlated trace for legacy
+            # observations.  Later memory/SSE traces cannot replace it.
+            "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' "
+            "AND measurement_name IN ('run_started', 'run_status', 'run_duration_ms')) "
+            "AS lifecycle_trace_id, "
+            "argMaxIf(trace_id, (1, observed_at, observation_id), trace_id != '' "
+            "AND replaceAll(lowerUTF8(trace_id), '-', '') = "
+            "replaceAll(lowerUTF8(run_id), '-', '')) AS primary_trace_id, "
+            "argMinIf(trace_id, (observed_at, observation_id), trace_id != '') AS legacy_trace_id, "
+            # Keep the closed legacy aggregate available to old query fakes;
+            # lifecycle-aware rows never use it for their primary lineage.
             "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id, "
             "max(ingest_sequence) AS order_sequence "
             "FROM observations WHERE "
@@ -2916,13 +2974,59 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             {
                 "runId": row["run_id"],
                 "status": _run_status(str(row.get("status") or "unknown")),
-                "startedAt": iso(_parse_datetime(row.get("started_at"))),
-                "finishedAt": iso(_parse_datetime(row.get("finished_at"))),
-                "durationMs": _duration(row.get("started_at"), row.get("finished_at")),
-                "model": row.get("model") or None,
+                "startedAt": iso(
+                    _parse_datetime(row.get("run_started_at"))
+                    if int(row.get("run_started_count", 0) or 0) > 0
+                    else _parse_datetime(row.get("started_at"))
+                ),
+                "finishedAt": iso(
+                    _parse_datetime(row.get("run_duration_at"))
+                    if int(row.get("run_duration_count", 0) or 0) > 0
+                    else (
+                        _parse_datetime(row.get("run_status_at"))
+                        if int(row.get("run_status_count", 0) or 0) > 0
+                        and _run_status(str(row.get("status") or "unknown"))
+                        in {"succeeded", "failed", "cancelled"}
+                        else (
+                            None
+                            if int(row.get("run_started_count", 0) or 0) > 0
+                            or int(row.get("run_status_count", 0) or 0) > 0
+                            else _parse_datetime(row.get("finished_at"))
+                        )
+                    )
+                ),
+                "durationMs": (
+                    float(cast(Any, row.get("run_duration_ms")))
+                    if int(row.get("run_duration_count", 0) or 0) > 0
+                    and row.get("run_duration_ms") is not None
+                    else (
+                        None
+                        if int(row.get("run_started_count", 0) or 0) > 0
+                        or int(row.get("run_status_count", 0) or 0) > 0
+                        else _duration(row.get("started_at"), row.get("finished_at"))
+                    )
+                ),
+                "model": (
+                    row.get("model_execution")
+                    if int(row.get("model_execution_count", 0) or 0) > 0
+                    else (
+                        None
+                        if int(row.get("run_started_count", 0) or 0) > 0
+                        or int(row.get("run_status_count", 0) or 0) > 0
+                        or int(row.get("run_duration_count", 0) or 0) > 0
+                        else row.get("legacy_model") or row.get("model")
+                    )
+                ),
                 "deploymentId": row.get("deployment_id"),
                 "componentIds": list(row.get("component_ids") or []),
-                "traceId": row.get("trace_id") or None,
+                "traceId": (
+                    row.get("lifecycle_trace_id") or row.get("primary_trace_id")
+                    or row.get("legacy_trace_id")
+                    if int(row.get("run_started_count", 0) or 0) > 0
+                    or int(row.get("run_status_count", 0) or 0) > 0
+                    or int(row.get("run_duration_count", 0) or 0) > 0
+                    else row.get("trace_id") or None
+                ),
                 "orderSequence": int(row.get("order_sequence", 0)),
             }
             for row in rows
@@ -2930,8 +3034,16 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         next_cursor = None
         if len(items) == limit and items:
             last = items[-1]
+            # The cursor must mirror ORDER BY latest_at DESC, run_id DESC;
+            # lifecycle finishedAt is a public projection field, not the
+            # private page-order boundary.
             next_cursor = encode_cursor(
-                _parse_datetime(last["finishedAt"]) or datetime.now(UTC),
+                _parse_datetime(
+                    rows[-1].get("latest_at")
+                    or rows[-1].get("observed_at")
+                    or rows[-1].get("finished_at")
+                )
+                or datetime.now(UTC),
                 str(last["runId"]),
                 snapshot_sequence,
             )
@@ -2966,15 +3078,57 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             else ""
         )
         rows = await self._query_rows(
-            "SELECT observation_id, observed_at, schema_version, kind, component_id, "
+            "SELECT * FROM (SELECT observation_id, observed_at, schema_version, kind, "
+            "component_id, "
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
             "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
             "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
             "capture_policy, image_version, configuration_version, model_id, model_version, "
             "agent_revision, prompt_bundle_revision, policy_revision "
+            ", "
+            + _RUN_STATUS_WINDOW_SQL
+            + " AS header_status, countIf(measurement_name = 'run_status') OVER () "
+            + "AS header_status_count, "
+            + "argMaxIf(observed_at, ("
+            + _RUN_TERMINAL_STATUS_SQL
+            + ", observed_at, observation_id), measurement_name = 'run_status') OVER () "
+            + "AS header_status_at, "
+            + "min(observed_at) OVER () AS header_legacy_started_at, "
+            + "max(observed_at) OVER () AS header_legacy_finished_at, "
+            + "countIf(measurement_name = 'run_started') OVER () AS header_started_count, "
+            + "minIf(observed_at, measurement_name = 'run_started') OVER () AS header_started_at, "
+            + "countIf(measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_count, "
+            + "argMaxIf(measurement_value, (observed_at, observation_id), "
+            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_ms, "
+            + "argMaxIf(observed_at, (observed_at, observation_id), "
+            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_at, "
+            + "countIf(dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") OVER () AS header_model_execution_count, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") OVER () AS header_model_execution, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '') OVER () AS header_legacy_model, "
+            + "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' AND "
+            + "measurement_name IN ('run_started', 'run_status', 'run_duration_ms')) OVER () "
+            + "AS header_lifecycle_trace_id, "
+            + "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' AND "
+            + "replaceAll(lowerUTF8(trace_id), '-', '') = "
+            + "replaceAll(lowerUTF8(run_id), '-', '')) OVER () AS header_primary_trace_id, "
+            + "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') OVER () "
+            + "AS header_legacy_trace_id "
             "FROM observations WHERE run_id = "
             + _sql(run_id)
             + fence
+            + ") AS run_rows WHERE 1 = 1"
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
             + str(limit + 1)
@@ -2984,7 +3138,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if not items:
             return None
         newest = max(items, key=lambda item: (item.observed_at, item.observation_id))
-        result = run_dict(run_id, items, newest, include_spans=True)
+        result = run_dict(
+            run_id,
+            items,
+            newest,
+            include_spans=True,
+            projection=_detail_projection(run_id, rows[:limit], items),
+        )
         result["partial"] = truncated
         result["nextCursor"] = (
             encode_cursor(items[-1].observed_at, items[-1].observation_id, snapshot_sequence)
@@ -3489,12 +3649,86 @@ def _duration(start: Any, end: Any) -> float | None:
     return (last - first).total_seconds() * 1000 if first and last else None
 
 
+def _detail_projection(
+    run_id: str, rows: list[dict[str, Any]], items: list[MetadataObservation]
+) -> dict[str, Any]:
+    """Use full-snapshot window aggregates when the page query provides them."""
+
+    if not rows or "header_status_count" not in rows[0]:
+        newest = max(items, key=lambda item: (item.observed_at, item.observation_id))
+        return run_projection(run_id, items, newest)
+    row = rows[0]
+    fallback = run_projection(
+        run_id,
+        items,
+        max(items, key=lambda item: (item.observed_at, item.observation_id)),
+    )
+    status_count = int(row.get("header_status_count", 0) or 0)
+    started_count = int(row.get("header_started_count", 0) or 0)
+    duration_count = int(row.get("header_duration_count", 0) or 0)
+    lifecycle = status_count > 0 or started_count > 0 or duration_count > 0
+    status = _run_status(str(row.get("header_status") or fallback["status"]))
+    started = (
+        _parse_datetime(row.get("header_started_at"))
+        if started_count > 0
+        else _parse_datetime(row.get("header_legacy_started_at"))
+        if not lifecycle
+        else _parse_datetime(fallback.get("startedAt"))
+    )
+    duration = (
+        float(cast(Any, row.get("header_duration_ms")))
+        if duration_count > 0 and row.get("header_duration_ms") is not None
+        else None
+        if lifecycle
+        else fallback.get("durationMs")
+    )
+    finished = (
+        _parse_datetime(row.get("header_duration_at"))
+        if duration_count > 0
+        else (
+            _parse_datetime(row.get("header_status_at"))
+            if status_count > 0 and status in {"succeeded", "failed", "cancelled"}
+            else None
+            if lifecycle
+            else _parse_datetime(row.get("header_legacy_finished_at"))
+            if not lifecycle
+            else _parse_datetime(fallback.get("finishedAt"))
+        )
+    )
+    if not lifecycle and started is not None and finished is not None:
+        duration = (finished - started).total_seconds() * 1000.0
+    model = (
+        row.get("header_model_execution")
+        if int(row.get("header_model_execution_count", 0) or 0) > 0
+        else None
+        if lifecycle
+        else row.get("header_legacy_model") or fallback.get("model")
+    )
+    trace = (
+        row.get("header_lifecycle_trace_id")
+        or row.get("header_primary_trace_id")
+        or row.get("header_legacy_trace_id")
+        if lifecycle
+        else row.get("header_legacy_trace_id") or fallback.get("traceId")
+    )
+    return {
+        **fallback,
+        "status": status,
+        "startedAt": iso(started),
+        "finishedAt": iso(finished),
+        "durationMs": duration,
+        "model": model,
+        "traceId": trace,
+    }
+
+
 def _run_status(value: str) -> str:
     normalized = {
         "success": "succeeded",
         "completed": "succeeded",
         "ok": "succeeded",
         "error": "failed",
+        "canceled": "cancelled",
     }.get(value, value)
     return (
         normalized
