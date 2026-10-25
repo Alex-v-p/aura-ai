@@ -2857,7 +2857,8 @@ def _lifecycle_duration(
         item
         for item in items
         if item.measurement.name == _RUN_DURATION_NAME
-        and item.measurement.unit == "milliseconds"
+        and canonical_measurement_unit(item.measurement.name, item.measurement.unit)
+        == "milliseconds"
         and math.isfinite(item.measurement.value)
         and item.measurement.value >= 0
     ]
@@ -2865,6 +2866,19 @@ def _lifecycle_duration(
         return None, None
     selected = max(candidates, key=lambda item: (item.observed_at, item.observation_id))
     return selected.measurement.value, selected
+
+
+def canonical_measurement_unit(name: str, unit: str | None) -> str | None:
+    """Apply the one compatibility default permitted for run lifecycle data.
+
+    Core's canonical ``run_duration_ms`` measurement is milliseconds even for
+    older observations whose optional unit was omitted.  No other measurement
+    name gets a guessed unit, and an explicitly supplied unit is preserved.
+    """
+
+    if name == _RUN_DURATION_NAME and not unit:
+        return "milliseconds"
+    return unit
 
 
 def _primary_trace_id(run_id: str, items: list[MetadataObservation]) -> str | None:
@@ -3049,7 +3063,12 @@ def _span_dict(item: MetadataObservation) -> dict[str, Any]:
         "parentSpanId": trace.parent_span_id,
         "componentId": item.component.id,
         "operation": item.operation,
-        "durationMs": item.measurement.value if item.measurement.unit == "milliseconds" else None,
+        "durationMs": (
+            item.measurement.value
+            if canonical_measurement_unit(item.measurement.name, item.measurement.unit)
+            == "milliseconds"
+            else None
+        ),
         "outcome": _normalize_outcome(item),
         "startedAt": _iso(item.observed_at),
         "children": [],
@@ -3067,7 +3086,9 @@ def _observation_dict(item: MetadataObservation) -> dict[str, Any]:
         "measurement": {
             "name": item.measurement.name,
             "value": item.measurement.value,
-            "unit": item.measurement.unit,
+            "unit": canonical_measurement_unit(
+                item.measurement.name, item.measurement.unit
+            ),
         },
         "outcome": _normalize_outcome(item),
         "deploymentId": item.deployment.deployment_id,

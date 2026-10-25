@@ -50,6 +50,7 @@ from aura_observatory.query import (
     analytics_unavailable,
     bounded_component_health_window,
     build_run_comparison,
+    canonical_measurement_unit,
     comparison_execution_limit_snapshot,
     decode_cursor,
     decode_run_cursor,
@@ -467,6 +468,10 @@ _RUN_STATUS_WINDOW_SQL = (
     "(" + _RUN_TERMINAL_STATUS_SQL + ", observed_at, observation_id), "
     "measurement_name = 'run_status') OVER (), "
     "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) OVER ())"
+)
+_RUN_DURATION_MEASUREMENT_SQL = (
+    "measurement_name = 'run_duration_ms' AND "
+    "(measurement_unit = 'milliseconds' OR measurement_unit = '')"
 )
 _ANALYTICS_OUTCOME_SQL = (
     "multiIf("
@@ -971,7 +976,9 @@ class _RetentionPersistenceAdapter:
                         "measurement": {
                             "name": row["measurement_name"],
                             "value": float(row["measurement_value"]),
-                            "unit": row.get("measurement_unit") or None,
+                            "unit": canonical_measurement_unit(
+                                row["measurement_name"], row.get("measurement_unit") or None
+                            ),
                         },
                         "dimensions": row.get("dimensions") or {},
                         "trace": trace,
@@ -2929,13 +2936,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             + " AS run_status_at, "
             + "countIf(measurement_name = 'run_started') AS run_started_count, "
             + "minIf(observed_at, measurement_name = 'run_started') AS run_started_at, "
-            + "countIf(measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "countIf(" + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_count, "
             + "argMaxIf(measurement_value, (observed_at, observation_id), "
-            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_ms, "
             + "argMaxIf(observed_at, (observed_at, observation_id), "
-            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_at, "
             + "countIf(dimensions['provider'] != '' AND "
             + _MODEL_EXECUTION_PREDICATE_SQL
@@ -3110,15 +3117,15 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             + "max(observed_at) OVER () AS header_legacy_finished_at, "
             + "countIf(measurement_name = 'run_started') OVER () AS header_started_count, "
             + "minIf(observed_at, measurement_name = 'run_started') OVER () AS header_started_at, "
-            + "countIf(measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + "countIf(" + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
             + "AS header_duration_count, "
             + "argMaxIf(measurement_value, (observed_at, observation_id), "
-            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
             + "AS header_duration_ms, "
             + "argMaxIf(observed_at, (observed_at, observation_id), "
-            + "measurement_name = 'run_duration_ms' AND measurement_unit = 'milliseconds' "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
             + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
             + "AS header_duration_at, "
             + "countIf(dimensions['provider'] != '' AND "

@@ -3083,6 +3083,83 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expectNoA11yViolations(page);
   });
 
+  test('AURA-0115 bounds late correlated metadata to a collapsed continuation summary', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      const detail = runDetail();
+      const terminalAt = '2026-10-15T09:00:00.000Z';
+      detail.startedAt = '2026-10-15T08:59:55.000Z';
+      detail.finishedAt = terminalAt;
+      detail.partial = true;
+      detail.observations = [
+        { ...detail.observations[0], observedAt: detail.startedAt, measurement: { name: 'run_started', value: 1, unit: 'count' } },
+        { ...detail.observations[1], observedAt: terminalAt, measurement: { name: 'run_status', value: 1, unit: 'count' } },
+        { ...detail.observations[2], observedAt: new Date(Date.parse(terminalAt) + 100).toISOString(), measurement: { name: 'run_duration_ms', value: 5000, unit: 'milliseconds' } },
+        ...Array.from({ length: 40 }, (_, index) => ({
+          ...detail.observations[0],
+          observationId: `a3fdc06f-88ad-4a05-970d-f8b7c8cf${String(index + 20).padStart(4, '0')}`,
+          observedAt: new Date(Date.parse(terminalAt) + (index + 1) * 60_000).toISOString(),
+          measurement: { name: 'memory_retry_count', value: index + 1, unit: 'count' },
+          outcome: 'failed' as const,
+          serviceRole: 'worker' as const,
+        })),
+      ];
+      await route.fulfill({ json: detail });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
+    await expect(trace.locator('.phase-count').filter({ hasText: '40+ loaded records' })).toBeVisible();
+    await expect(trace.getByText(/Loaded metadata window:/)).toBeVisible();
+    const continuation = trace.locator('details.continuation-details');
+    await expect(continuation).not.toHaveAttribute('open', '');
+    await continuation.locator('summary').click();
+    await expect(continuation.locator('li')).toHaveCount(25);
+    await expect(trace.getByText(/Showing at most the first 25 records from this loaded metadata page/)).toBeVisible();
+    await expect(trace.getByText(/More correlated metadata may exist beyond this page/)).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0115 discloses an incomplete page when no continuation rows are loaded', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      const detail = runDetail();
+      const terminalAt = '2026-10-15T09:00:00.000Z';
+      detail.startedAt = '2026-10-15T08:59:55.000Z';
+      detail.finishedAt = terminalAt;
+      detail.partial = true;
+      detail.nextCursor = 'next-page';
+      detail.observations = [
+        { ...detail.observations[0], observedAt: detail.startedAt, measurement: { name: 'run_started', value: 1, unit: 'count' } },
+        { ...detail.observations[1], observedAt: terminalAt, measurement: { name: 'run_status', value: 1, unit: 'count' } },
+        { ...detail.observations[2], observedAt: new Date(Date.parse(terminalAt) + 100).toISOString(), measurement: { name: 'run_duration_ms', value: 5000, unit: 'milliseconds' } },
+      ];
+      await route.fulfill({ json: detail });
+    });
+    await page.route(`**/api/v1/traces/${traceId}`, async (route) => {
+      const trace = traceDetail();
+      trace.spans[0].startedAt = '2026-10-15T09:00:00.200Z';
+      await route.fulfill({ json: trace });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
+    await expect(trace.locator('.phase-count').filter({ hasText: 'Page incomplete' })).toBeVisible();
+    await expect(trace.getByText('Further correlated metadata was not loaded; no post-run count or range is known from this page.', { exact: true })).toBeVisible();
+    await expect(trace.locator('details.continuation-details')).toHaveCount(0);
+    await expect(trace.getByRole('list', { name: 'Ordered trace spans', exact: true }).getByText('request', { exact: true })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
   test('shows component health summaries and a bounded trend', async ({ page }) => {
     await openFixture(page);
     await openDestination(page, 'Components');

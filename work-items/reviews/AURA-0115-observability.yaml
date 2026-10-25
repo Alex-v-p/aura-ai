@@ -1,0 +1,36 @@
+agent: observability_steward
+work_item: AURA-0115
+verdict: PASS
+checked:
+  - >-
+    Re-verified the metadata-only capture boundary, stable run correlation,
+    retention behavior, and the absence of new metrics or content-bearing
+    telemetry in the final diff.
+  - >-
+    Confirmed completed-run duration is projected from canonical lifecycle
+    measurements and remains stable when later worker observations arrive.
+    Missing units are normalized only for run_duration_ms, while other
+    measurement units remain unchanged and uninferred.
+  - >-
+    Confirmed late correlated observations are classified as post-run
+    continuation metadata rather than extending request timing or phase order.
+    Partial pages disclose lower-bound and loaded-window semantics instead of
+    claiming a complete count or range.
+  - >-
+    Confirmed live refresh preserves the selected run and continuation
+    disclosure state without appending late worker telemetry to the foreground
+    timeline. Existing SSE payloads remain unchanged.
+  - >-
+    Focused Observatory backend, frontend, architecture, and whitespace checks
+    passed for the changed scope; the two focused AURA-0115 browser scenarios
+    passed under the supported Node 24 and pnpm 12 environment.
+findings: []
+risks:
+  - >-
+    Existing stored observations are retained and can continue to grow if Core
+    retry behavior remains active; this item bounds their presentation but does
+    not change Core transport or retry semantics.
+  - >-
+    Continuation totals and ranges remain page-bounded when the existing detail
+    response is partial or has a cursor.
+unresolved: []
