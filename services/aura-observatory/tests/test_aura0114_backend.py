@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -564,6 +565,12 @@ async def test_production_query_asks_clickhouse_for_lifecycle_projection() -> No
     assert "run_duration_ms" in statements[0]
     assert "run_status" in statements[0]
     assert "primary_trace_id" in statements[0]
+    executable_sql = re.sub(r"/\\*.*?\\*/", "", statements[0], flags=re.DOTALL)
+    assert executable_sql.count("argMinIf(observations.trace_id") == 2
+    assert executable_sql.count("argMaxIf(observations.trace_id") == 2
+    assert "argMaxIf(trace_id, (1, observed_at, observation_id)" not in executable_sql
+    assert "argMinIf(trace_id, (observed_at, observation_id)" not in executable_sql
+    assert "argMaxIf(trace_id, (observed_at, observation_id)" not in executable_sql
 
 
 @pytest.mark.asyncio

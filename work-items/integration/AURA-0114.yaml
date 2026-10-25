@@ -45,13 +45,27 @@ checks:
       accessible precise timing labels, phase headings, content-free
       metadata-only disclosure, and the Not captured evidence states.
     - >-
+      The post-checkpoint backend continuation handoff and updated general
+      review are complete and PASS. The four changed continuation paths are
+      within the archived AURA-0114 ownership scope, and the repaired run-list
+      and run-detail SQL qualifies every trace aggregate source column with
+      the observations table name while retaining the compatibility trace_id
+      alias for existing fakes.
+    - >-
+      The continuation's focused SQL-shape regressions passed 16 backend tests
+      and 17 selected production-query regressions; Ruff, Pyright, archived
+      work-item, changed-path, architecture-boundary, and whitespace checks
+      also passed. The exact generated run-list and paged run-detail queries
+      were executed against ClickHouse 25.8 with real observations and no
+      Code 184 alias-substitution failure.
+    - >-
       The integrated diff contains only Observatory query/UI/tests and the
       authorized AURA-0114 governance artifacts. Aura Web, Core, contracts,
       migrations, deployment topology, generated clients, and SSE payloads
       remain unchanged.
     - >-
-      A single focused Conventional Commit checkpoint is created for this
-      reviewed and validated AURA-0114 slice; no push is performed.
+      A focused follow-up Conventional Commit checkpoint is created for this
+      reviewed and validated AURA-0114 continuation; no push is performed.
   failed:
     - >-
       The full Observatory suite completed with 1442 passed and 43 skipped,
@@ -73,10 +87,10 @@ remaining_risks:
     full-stack fixture failures until their existing owners correct those
     baselines; this integration does not weaken or update them.
   - >-
-    Rich prompt, chunk, generated-content, displayed-thinking, and tool
-    payload evidence remains intentionally unavailable under the metadata-only
-    AURA-0114 scope and requires the separately governed evidence architecture.
+      Rich prompt, chunk, generated-content, displayed-thinking, and tool
+      payload evidence remains intentionally unavailable under the metadata-only
+      AURA-0114 scope and requires the separately governed evidence architecture.
   - >-
-    The shared checkout is clean with respect to unrelated paths but remains
-    repository_clean false in this report because the integration checkpoint
-    itself is the current staged worktree transition.
+    This continuation does not change the known six unrelated full-suite
+    migration and full-stack fixture failures or the metadata-only capture
+    boundary.

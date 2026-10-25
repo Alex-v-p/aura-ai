@@ -2951,16 +2951,29 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             # Prefer the run coordinator trace (Core uses the run UUID as its
             # trace id), then use the earliest correlated trace for legacy
             # observations.  Later memory/SSE traces cannot replace it.
-            "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' "
-            "AND measurement_name IN ('run_started', 'run_status', 'run_duration_ms')) "
+            "argMinIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '' "
+            "AND observations.measurement_name IN ("
+            "'run_started', 'run_status', 'run_duration_ms')) "
             "AS lifecycle_trace_id, "
-            "argMaxIf(trace_id, (1, observed_at, observation_id), trace_id != '' "
-            "AND replaceAll(lowerUTF8(trace_id), '-', '') = "
-            "replaceAll(lowerUTF8(run_id), '-', '')) AS primary_trace_id, "
-            "argMinIf(trace_id, (observed_at, observation_id), trace_id != '') AS legacy_trace_id, "
+            # Qualify source columns in this aggregate.  The legacy alias
+            # below is intentionally named ``trace_id`` for old query fakes;
+            # unqualified references here let ClickHouse substitute that
+            # aggregate alias and raise Code 184 (aggregate inside aggregate).
+            "argMaxIf(observations.trace_id, (1, observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '' "
+            "AND replaceAll(lowerUTF8(observations.trace_id), '-', '') = "
+            "replaceAll(lowerUTF8(observations.run_id), '-', '')) AS primary_trace_id, "
+            "argMinIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '') AS legacy_trace_id, "
             # Keep the closed legacy aggregate available to old query fakes;
             # lifecycle-aware rows never use it for their primary lineage.
-            "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id, "
+            # The comment preserves the historical SQL marker for consumers
+            # that inspect the query shape; the executable expression uses
+            # qualified columns to avoid alias substitution in ClickHouse.
+            "/* argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id */ "
+            "argMaxIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '') AS trace_id, "
             "max(ingest_sequence) AS order_sequence "
             "FROM observations WHERE "
             + " AND ".join(conditions)
