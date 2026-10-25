@@ -73,6 +73,11 @@ services:
       AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
       AURA_TELEMETRY_IMAGE_VERSION: ${AURA_TELEMETRY_IMAGE_VERSION:-local}
       AURA_TELEMETRY_CONFIGURATION_VERSION: ${AURA_TELEMETRY_CONFIGURATION_VERSION:-local}
+      # Full run-evidence capture is owner opt-in; the empty default keeps
+      # Core execution metadata-only and independent of Observatory health.
+      AURA_RUN_EVIDENCE_CAPTURE_POLICY: ${AURA_RUN_EVIDENCE_CAPTURE_POLICY:-}
+      AURA_RUN_EVIDENCE_CAPTURE_REVISION: ${AURA_RUN_EVIDENCE_CAPTURE_REVISION:-full-content-v1}
+      AURA_RUN_EVIDENCE_MAX_BYTES: ${AURA_RUN_EVIDENCE_MAX_BYTES:-1048576}
       AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?AURA_OIDC_ISSUER must be a stable non-localhost HTTPS issuer}
       AURA_OIDC_AUDIENCE: ${AURA_OIDC_AUDIENCE:-aura-web}
       AURA_OIDC_CLIENT_ID: ${AURA_OIDC_CLIENT_ID:-aura-web}
@@ -87,7 +92,7 @@ services:
     # Established Core attachments remain unchanged; observatory-ingest is an
     # additional optional Collector path for metadata-only export.
     # networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress]
-    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress, observatory-ingest]
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-core-egress, observatory-ingest, aura-run-evidence-bus]
     # Docker Desktop provides this name automatically; Linux Engine needs the
     # explicit gateway mapping for the local Ollama development default.
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -153,9 +158,14 @@ services:
       AURA_TELEMETRY_HOST_ID: ${AURA_TELEMETRY_HOST_ID:-local}
       AURA_TELEMETRY_IMAGE_VERSION: ${AURA_TELEMETRY_IMAGE_VERSION:-local}
       AURA_TELEMETRY_CONFIGURATION_VERSION: ${AURA_TELEMETRY_CONFIGURATION_VERSION:-local}
+      # Keep the worker's recorder policy identical to the API composition
+      # root, while retaining an explicit disabled-by-default deployment.
+      AURA_RUN_EVIDENCE_CAPTURE_POLICY: ${AURA_RUN_EVIDENCE_CAPTURE_POLICY:-}
+      AURA_RUN_EVIDENCE_CAPTURE_REVISION: ${AURA_RUN_EVIDENCE_CAPTURE_REVISION:-full-content-v1}
+      AURA_RUN_EVIDENCE_MAX_BYTES: ${AURA_RUN_EVIDENCE_MAX_BYTES:-1048576}
     secrets: [aura-core-database-password, aura-nats-password, aura-valkey-password, aura-garage-access-key, aura-garage-secret-key]
     # The worker invokes Ollama, but has no browser-facing network attachment.
-    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress, observatory-ingest]
+    networks: [aura-core-db, aura-core-bus, aura-core-cache, aura-object-storage, aura-document-parser, aura-core-egress, observatory-ingest, aura-run-evidence-bus]
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       aura-core-migrate: {condition: service_completed_successfully}
@@ -296,12 +306,14 @@ services:
       AURA_NATS_BOOTSTRAP_USER: ${AURA_NATS_BOOTSTRAP_USER:-aura-evaluation-bootstrap}
       AURA_NATS_DISPATCH_USER: ${AURA_NATS_DISPATCH_USER:-aura-evaluation-dispatch}
       AURA_NATS_RUNNER_USER: ${AURA_NATS_RUNNER_USER:-aura-evaluation-runner}
-    secrets: [aura-nats-password, aura-nats-bootstrap-password, aura-nats-dispatch-password, aura-nats-runner-password]
+      AURA_NATS_RUN_EVIDENCE_USER: ${AURA_NATS_RUN_EVIDENCE_USER:-aura-observatory-run-evidence}
+      AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_USER: ${AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_USER:-aura-run-evidence-bootstrap}
+    secrets: [aura-nats-password, aura-nats-bootstrap-password, aura-nats-run-evidence-bootstrap-password, aura-nats-dispatch-password, aura-nats-runner-password, aura-nats-run-evidence-password]
     volumes:
       - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-nats:/data
       - ./deploy/docker/nats-entrypoint.sh:/usr/local/bin/aura-nats-entrypoint:ro
     expose: ["4222", "8222"]
-    networks: [aura-core-bus, aura-evaluation-bus]
+    networks: [aura-core-bus, aura-evaluation-bus, aura-run-evidence-bus]
     restart: unless-stopped
 
   aura-evaluation-nats-bootstrap:
@@ -316,6 +328,24 @@ services:
       AURA_NATS_BOOTSTRAP_USER: ${AURA_NATS_BOOTSTRAP_USER:-aura-evaluation-bootstrap}
     secrets: [aura-nats-bootstrap-password]
     networks: [aura-evaluation-bus]
+    depends_on:
+      aura-nats: {condition: service_started}
+    restart: "no"
+
+  aura-run-evidence-nats-bootstrap:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/aura-evaluation-runner.Dockerfile
+      target: runtime
+    init: true
+    entrypoint: [/usr/local/bin/nats-run-evidence-bootstrap]
+    environment:
+      AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_USER: ${AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_USER:-aura-run-evidence-bootstrap}
+    secrets: [aura-nats-run-evidence-bootstrap-password]
+    volumes:
+      - ./deploy/docker/nats-run-evidence-bootstrap.sh:/usr/local/bin/nats-run-evidence-bootstrap:ro
+    networks: [aura-run-evidence-bus]
     depends_on:
       aura-nats: {condition: service_started}
     restart: "no"
@@ -559,6 +589,94 @@ services:
       aura-garage: {condition: service_healthy}
       aura-garage-config: {condition: service_completed_successfully}
       aura-garage-bootstrap: {condition: service_completed_successfully}
+    restart: "no"
+
+  # Run evidence has its own bucket and identities. The worker may write only;
+  # the API receives a separate read/write identity because Garage's write
+  # permission is also the delete capability used by durable deletion.
+  observatory-run-evidence-garage-bootstrap:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/garage-bootstrap.Dockerfile
+      args:
+        GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+        BUSYBOX_IMAGE: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        case "$${AURA_GARAGE_IMAGE}" in *@sha256:*) ;; *) echo 'AURA_GARAGE_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        access_key="$$(cat /run/secrets/observatory-run-evidence-worker-access-key)";
+        secret_key="$$(cat /run/secrets/observatory-run-evidence-worker-secret-key)";
+        if [ -z "$${AURA_GARAGE_BUCKET}" ] || [ -z "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ] || [ -z "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" ] || [ "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" = "$${AURA_GARAGE_BUCKET}" ] || [ "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" = "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ]; then echo 'run-evidence Garage bucket must be configured and distinct' >&2; exit 78; fi;
+        until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage key import failed closed' >&2; exit 78; }; fi;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then echo 'run-evidence worker Garage key could not be inspected' >&2; exit 78; fi;
+        grants="$$(printf '%s\n' "$${key_info}" | awk '/==== BUCKETS FOR THIS KEY ====/{table=1; next} table && NF >= 2 {print $$NF} table && NF < 2 {table=0}')";
+        if [ -n "$${grants}" ] && { printf '%s\n' "$${grants}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null || printf '%s\n' "$${grants}" | grep -Fqx -- "$${AURA_GARAGE_BUCKET}" || printf '%s\n' "$${grants}" | grep -Fqx -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}"; }; then echo 'run-evidence worker Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
+        /garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || /garage --config /run/garage-config/garage.toml bucket create "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}";
+        /garage --config /run/garage-config/garage.toml bucket allow --write --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage write grant failed closed' >&2; exit 78; };
+        /garage --config /run/garage-config/garage.toml bucket deny --read --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage read deny failed closed' >&2; exit 78; };
+        /garage --config /run/garage-config/garage.toml bucket deny --owner --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage owner deny failed closed' >&2; exit 78; };
+        permissions="$$(/garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" 2>/dev/null | awk -v key="$${access_key}" 'index($$0, key) && NF {print $$1; exit}')";
+        if [ "$${permissions}" != "W" ]; then echo 'run-evidence worker Garage permission verification failed closed (expected W)' >&2; exit 78; fi;
+        unset access_key secret_key key_info grants permissions
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+      AURA_GARAGE_BUCKET: ${AURA_GARAGE_BUCKET:-aura-documents}
+      AURA_OBSERVATORY_GARAGE_BUCKET: ${AURA_OBSERVATORY_GARAGE_BUCKET:-aura-observatory-evaluation}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET:-aura-observatory-run-evidence}
+    secrets: [observatory-run-evidence-worker-access-key, observatory-run-evidence-worker-secret-key]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage:/var/lib/garage:ro
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config:ro
+    networks: [observatory-object-storage]
+    depends_on:
+      aura-garage: {condition: service_healthy}
+      aura-garage-config: {condition: service_completed_successfully}
+      aura-garage-bootstrap: {condition: service_completed_successfully}
+    restart: "no"
+
+  observatory-run-evidence-api-garage-bootstrap:
+    profiles: [observatory]
+    build:
+      context: .
+      dockerfile: deploy/docker/garage-bootstrap.Dockerfile
+      args:
+        GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+        BUSYBOX_IMAGE: ${AURA_GARAGE_CONFIG_IMAGE:-busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        case "$${AURA_GARAGE_IMAGE}" in *@sha256:*) ;; *) echo 'AURA_GARAGE_IMAGE must use a sha256 digest' >&2; exit 64 ;; esac;
+        access_key="$$(cat /run/secrets/observatory-run-evidence-api-access-key)";
+        secret_key="$$(cat /run/secrets/observatory-run-evidence-api-secret-key)";
+        if [ -z "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" ]; then echo 'run-evidence API Garage bucket is required' >&2; exit 78; fi;
+        until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1 || { echo 'run-evidence API Garage key import failed closed' >&2; exit 78; }; fi;
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then echo 'run-evidence API Garage key could not be inspected' >&2; exit 78; fi;
+        grants="$$(printf '%s\n' "$${key_info}" | awk '/==== BUCKETS FOR THIS KEY ====/{table=1; next} table && NF >= 2 {print $$NF} table && NF < 2 {table=0}')";
+        if [ -n "$${grants}" ] && printf '%s\n' "$${grants}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null; then echo 'run-evidence API Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
+        /garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence bucket must be created by worker bootstrap first' >&2; exit 78; };
+        /garage --config /run/garage-config/garage.toml bucket allow --read --write --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence API Garage read/write grant failed closed' >&2; exit 78; };
+        /garage --config /run/garage-config/garage.toml bucket deny --owner --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence API Garage owner deny failed closed' >&2; exit 78; };
+        permissions="$$(/garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" 2>/dev/null | awk -v key="$${access_key}" 'index($$0, key) && NF {print $$1; exit}')";
+        if [ "$${permissions}" != "RW" ]; then echo 'run-evidence API Garage permission verification failed closed (expected RW)' >&2; exit 78; fi;
+        unset access_key secret_key key_info grants permissions
+    environment:
+      AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET:-aura-observatory-run-evidence}
+    secrets: [observatory-run-evidence-api-access-key, observatory-run-evidence-api-secret-key]
+    volumes:
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage:/var/lib/garage:ro
+      - ${AURA_STATE_ROOT:?encrypted state root is required}/aura-garage-config:/run/garage-config:ro
+    networks: [observatory-object-storage]
+    depends_on:
+      observatory-run-evidence-garage-bootstrap: {condition: service_completed_successfully}
     restart: "no"
 
   # The Core evaluation runner receives a distinct key from Observatory's
@@ -805,7 +923,13 @@ services:
       AURA_OBSERVATORY_EVALUATION_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-api-garage-access-key
       AURA_OBSERVATORY_EVALUATION_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-api-garage-secret-key
       AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES: ${AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES:-16777216}
-    secrets: [observatory-database-password, observatory-oidc-client-secret, observatory-session-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-api-garage-access-key, observatory-api-garage-secret-key]
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ENDPOINT: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ENDPOINT:-http://aura-garage:3900}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_REGION: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_REGION:-garage}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET:-aura-observatory-run-evidence}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-run-evidence-api-access-key
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-run-evidence-api-secret-key
+      AURA_OBSERVATORY_RUN_EVIDENCE_MAX_ENVELOPE_BYTES: ${AURA_OBSERVATORY_RUN_EVIDENCE_MAX_ENVELOPE_BYTES:-1500000}
+    secrets: [observatory-database-password, observatory-oidc-client-secret, observatory-session-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-api-garage-access-key, observatory-api-garage-secret-key, observatory-run-evidence-api-access-key, observatory-run-evidence-api-secret-key]
     networks: [observatory-api, observatory-db, observatory-session, observatory-ingest, observatory-identity-egress, observatory-object-storage]
     depends_on:
       observatory-migrate: {condition: service_completed_successfully}
@@ -813,6 +937,7 @@ services:
       observatory-clickhouse: {condition: service_healthy}
       observatory-session: {condition: service_healthy}
       observatory-api-garage-bootstrap: {condition: service_completed_successfully}
+      observatory-run-evidence-api-garage-bootstrap: {condition: service_completed_successfully}
     expose: ["8000"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
@@ -848,13 +973,25 @@ services:
       AURA_OBSERVATORY_EVALUATION_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-garage-access-key
       AURA_OBSERVATORY_EVALUATION_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-garage-secret-key
       AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES: ${AURA_OBSERVATORY_EVALUATION_ARTIFACT_MAX_BYTES:-16777216}
-    secrets: [observatory-database-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-garage-access-key, observatory-garage-secret-key]
-    networks: [observatory-db, observatory-ingest, observatory-object-storage]
+      AURA_OBSERVATORY_RUN_EVIDENCE_NATS_URL: ${AURA_OBSERVATORY_RUN_EVIDENCE_NATS_URL:-nats://aura-nats:4222}
+      AURA_OBSERVATORY_RUN_EVIDENCE_NATS_USER: ${AURA_OBSERVATORY_RUN_EVIDENCE_NATS_USER:-aura-observatory-run-evidence}
+      AURA_OBSERVATORY_RUN_EVIDENCE_NATS_PASSWORD_FILE: /run/secrets/aura-nats-run-evidence-password
+      AURA_OBSERVATORY_RUN_EVIDENCE_NATS_DURABLE: ${AURA_OBSERVATORY_RUN_EVIDENCE_NATS_DURABLE:-aura-observatory-run-evidence}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ENDPOINT: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ENDPOINT:-http://aura-garage:3900}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_REGION: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_REGION:-garage}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET:-aura-observatory-run-evidence}
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_ACCESS_KEY_FILE: /run/secrets/observatory-run-evidence-worker-access-key
+      AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_SECRET_KEY_FILE: /run/secrets/observatory-run-evidence-worker-secret-key
+      AURA_OBSERVATORY_RUN_EVIDENCE_MAX_ENVELOPE_BYTES: ${AURA_OBSERVATORY_RUN_EVIDENCE_MAX_ENVELOPE_BYTES:-1500000}
+    secrets: [observatory-database-password, observatory-ingest-credential, observatory-clickhouse-password, observatory-garage-access-key, observatory-garage-secret-key, aura-nats-run-evidence-password, observatory-run-evidence-worker-access-key, observatory-run-evidence-worker-secret-key]
+    networks: [observatory-db, observatory-ingest, observatory-object-storage, aura-run-evidence-bus]
     depends_on:
       observatory-migrate: {condition: service_completed_successfully}
       observatory-postgres: {condition: service_healthy}
       observatory-clickhouse: {condition: service_healthy}
       observatory-garage-bootstrap: {condition: service_completed_successfully}
+      observatory-run-evidence-garage-bootstrap: {condition: service_completed_successfully}
+      aura-run-evidence-nats-bootstrap: {condition: service_completed_successfully}
     restart: unless-stopped
 
   # Evaluation orchestration is a separate process from telemetry ingestion.
@@ -1081,6 +1218,9 @@ services:
       AURA_EVALUATION_RUNTIME_FIXTURE_REVISION: ${AURA_EVALUATION_RUNTIME_FIXTURE_REVISION:-}
       AURA_EVALUATION_RUNTIME_PROMPT_REVISION: ${AURA_EVALUATION_RUNTIME_PROMPT_REVISION:-prompt-v1}
       AURA_EVALUATION_RUNTIME_POLICY_REVISION: ${AURA_EVALUATION_RUNTIME_POLICY_REVISION:-policy-v1}
+      AURA_RUN_EVIDENCE_CAPTURE_POLICY: ${AURA_RUN_EVIDENCE_CAPTURE_POLICY:-}
+      AURA_RUN_EVIDENCE_CAPTURE_REVISION: ${AURA_RUN_EVIDENCE_CAPTURE_REVISION:-full-content-v1}
+      AURA_RUN_EVIDENCE_MAX_BYTES: ${AURA_RUN_EVIDENCE_MAX_BYTES:-1048576}
       AURA_OBJECT_STORAGE_ENDPOINT: http://aura-garage:3900
       AURA_OBJECT_STORAGE_REGION: ${AURA_GARAGE_REGION:-garage}
       AURA_OBJECT_STORAGE_BUCKET: ${AURA_OBSERVATORY_GARAGE_BUCKET:-aura-observatory-evaluation}
@@ -1272,6 +1412,10 @@ secrets:
     file: ${AURA_NATS_DISPATCH_PASSWORD_FILE:-./.secrets/aura-nats-dispatch-password}
   aura-nats-runner-password:
     file: ${AURA_NATS_RUNNER_PASSWORD_FILE:-./.secrets/aura-nats-runner-password}
+  aura-nats-run-evidence-password:
+    file: ${AURA_NATS_RUN_EVIDENCE_PASSWORD_FILE:-./.secrets/aura-nats-run-evidence-password}
+  aura-nats-run-evidence-bootstrap-password:
+    file: ${AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_PASSWORD_FILE:-./.secrets/aura-nats-run-evidence-bootstrap-password}
   aura-valkey-password:
     file: ${AURA_VALKEY_PASSWORD_FILE:-./.secrets/aura-valkey-password}
   aura-garage-rpc-secret:
@@ -1306,6 +1450,14 @@ secrets:
     file: ${AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE:-./.secrets/aura-evaluation-runner-garage-access-key}
   aura-evaluation-runner-garage-secret-key:
     file: ${AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE:-./.secrets/aura-evaluation-runner-garage-secret-key}
+  observatory-run-evidence-worker-access-key:
+    file: ${AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_ACCESS_KEY_FILE:-./.secrets/observatory-run-evidence-worker-access-key}
+  observatory-run-evidence-worker-secret-key:
+    file: ${AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_SECRET_KEY_FILE:-./.secrets/observatory-run-evidence-worker-secret-key}
+  observatory-run-evidence-api-access-key:
+    file: ${AURA_OBSERVATORY_RUN_EVIDENCE_API_ACCESS_KEY_FILE:-./.secrets/observatory-run-evidence-api-access-key}
+  observatory-run-evidence-api-secret-key:
+    file: ${AURA_OBSERVATORY_RUN_EVIDENCE_API_SECRET_KEY_FILE:-./.secrets/observatory-run-evidence-api-secret-key}
   aura-evaluation-runner-database-password:
     file: ${AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE:-./.secrets/aura-evaluation-runner-database-password}
 
@@ -1330,6 +1482,10 @@ networks:
   # NATS is shared only by the Observatory dispatcher and Core evaluation
   # runner on this network; normal Core services remain on aura-core-bus.
   aura-evaluation-bus:
+    internal: true
+  # The run-evidence path is a dedicated private broker segment shared only
+  # by Core publishers, the Observatory consumer, and its bootstrap job.
+  aura-run-evidence-bus:
     internal: true
   aura-core-cache:
     internal: true

@@ -35,9 +35,11 @@ def test_observatory_api_has_only_its_write_only_garage_identity() -> None:
 
     assert api["networks"][-1] == "observatory-object-storage"
     assert "aura-object-storage" not in api["networks"]
-    assert api["secrets"][-2:] == [
+    assert api["secrets"][-4:] == [
         "observatory-api-garage-access-key",
         "observatory-api-garage-secret-key",
+        "observatory-run-evidence-api-access-key",
+        "observatory-run-evidence-api-secret-key",
     ]
     assert environment["AURA_OBSERVATORY_EVALUATION_OBJECT_ACCESS_KEY_FILE"] == (
         "/run/secrets/observatory-api-garage-access-key"

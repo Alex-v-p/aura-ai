@@ -36,6 +36,16 @@ services:
       - local_http_core_garage_data:/var/lib/garage:ro
       - local_http_core_garage_config:/run/garage-config:ro
 
+  observatory-run-evidence-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
+  observatory-run-evidence-api-garage-bootstrap:
+    volumes: !override
+      - local_http_core_garage_data:/var/lib/garage:ro
+      - local_http_core_garage_config:/run/garage-config:ro
+
   observatory-api-garage-bootstrap:
     volumes: !override
       - local_http_core_garage_data:/var/lib/garage:ro
@@ -87,7 +97,7 @@ services:
       AURA_OWNER_SUBJECT: ${AURA_OWNER_SUBJECT:?local HTTP owner subject is required}
       AURA_SECURE_COOKIES: "false"
     # Keep all normal Core paths and add only the Authentik control network.
-    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity]
+    networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, aura-core-egress, aura-identity, aura-run-evidence-bus]
 
   observatory-api:
     environment:

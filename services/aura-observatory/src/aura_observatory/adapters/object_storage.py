@@ -276,6 +276,21 @@ class GarageEvaluationObjectStore:
         )
         return request
 
+    def signed_request(
+        self,
+        method: str,
+        key: str,
+        *,
+        headers: dict[str, str] | None = None,
+        payload_hash: str,
+        content: AsyncIterable[bytes] | None = None,
+    ) -> httpx.Request:
+        """Public request-signing port for service-specific object adapters."""
+
+        return self._signed_request(
+            method, key, headers=headers, payload_hash=payload_hash, content=content
+        )
+
 
 def _signing_key(secret: str, date: str, region: str) -> bytes:
     key = hmac.new(("AWS4" + secret).encode(), date.encode(), hashlib.sha256).digest()

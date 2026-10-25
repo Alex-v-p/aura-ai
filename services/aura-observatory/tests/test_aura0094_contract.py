@@ -497,7 +497,7 @@ def test_migration_is_forward_only_content_free_and_rerunnable() -> None:
             "*.sql"
         )
     )
-    assert versions[-1] == 14
+    assert versions[-1] == 16
     assert versions.count(10) == 1
     assert (
         ROOT

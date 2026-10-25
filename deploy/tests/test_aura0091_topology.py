@@ -59,6 +59,8 @@ def test_evaluation_nats_has_closed_subject_acl_and_file_injected_identities() -
         "aura-nats-bootstrap-password",
         "aura-nats-dispatch-password",
         "aura-nats-runner-password",
+        "aura-nats-run-evidence-bootstrap-password",
+        "aura-nats-run-evidence-password",
     }
     assert "aura-evaluation-bus" in nats["networks"]
     script = (ROOT / "deploy/docker/nats-entrypoint.sh").read_text(encoding="utf-8")
@@ -169,6 +171,14 @@ def test_non_core_nats_identities_have_no_core_jetstream_grants() -> None:
         "$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner",
         "$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation",
         "$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation",
+    }
+
+    run_evidence_bootstrap = _nats_user_block(script, "$run_evidence_bootstrap_user")
+    assert _nats_permission_subjects(run_evidence_bootstrap, "publish") == {
+        "$JS.API.STREAM.INFO.AURA_RUN_EVIDENCE",
+        "$JS.API.STREAM.CREATE.AURA_RUN_EVIDENCE",
+        "$JS.API.CONSUMER.INFO.AURA_RUN_EVIDENCE.aura-observatory-run-evidence",
+        "$JS.API.CONSUMER.DURABLE.CREATE.AURA_RUN_EVIDENCE.aura-observatory-run-evidence",
     }
 
     for user_variable in ("$dispatch_user", "$runner_user"):

@@ -936,6 +936,9 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
         "aura.observatory.alerting",
         "aura.observatory.incidents",
         "aura.observatory.annotations",
+        "aura.observatory.run_evidence_ingestion",
+        "aura.observatory.run_evidence_storage",
+        "aura.observatory.run_inspection_query",
     }
     ingestion_metrics = {
         "telemetry_ingest_accepted_count",
@@ -1100,6 +1103,25 @@ def test_module_registry_and_component_manifests_describe_the_same_service_surfa
             expected_metrics = {"observatory_incident_transition_count"}
         elif manifest_id == "aura.observatory.annotations":
             expected_metrics = {"observatory_annotation_operation_count"}
+        elif manifest_id == "aura.observatory.run_evidence_ingestion":
+            expected_metrics = {
+                "run_evidence_ingest_outcome_count",
+                "run_evidence_ingest_validation_latency_ms",
+                "run_evidence_ingest_dedupe_latency_ms",
+            }
+        elif manifest_id == "aura.observatory.run_evidence_storage":
+            expected_metrics = {
+                "run_evidence_storage_outcome_count",
+                "run_evidence_manifest_storage_latency_ms",
+                "run_evidence_object_storage_latency_ms",
+                "run_evidence_deletion_outcome_count",
+                "run_evidence_deletion_latency_ms",
+            }
+        elif manifest_id == "aura.observatory.run_inspection_query":
+            expected_metrics = {
+                "run_inspection_query_latency_ms",
+                "run_inspection_merge_latency_ms",
+            }
         assert set(manifest["metrics"]) == expected_metrics
         if manifest_id in {
             "aura.observatory.evaluation_artifact_storage",

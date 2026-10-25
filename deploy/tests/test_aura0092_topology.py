@@ -131,7 +131,16 @@ def test_regular_observatory_worker_no_longer_receives_dispatch_identity() -> No
     worker = _services()["observatory-worker"]
     assert "aura-evaluation-bus" not in worker["networks"]
     assert "aura-nats-dispatch-password" not in worker["secrets"]
-    assert not any("NATS" in str(key) for key in worker["environment"])
+    assert {
+        key
+        for key in worker["environment"]
+        if "NATS" in str(key)
+    } == {
+        "AURA_OBSERVATORY_RUN_EVIDENCE_NATS_URL",
+        "AURA_OBSERVATORY_RUN_EVIDENCE_NATS_USER",
+        "AURA_OBSERVATORY_RUN_EVIDENCE_NATS_PASSWORD_FILE",
+        "AURA_OBSERVATORY_RUN_EVIDENCE_NATS_DURABLE",
+    }
 
 
 def test_new_processes_have_bounded_read_only_runtime_controls() -> None:

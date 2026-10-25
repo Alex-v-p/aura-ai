@@ -1,0 +1,157 @@
+agent: test_evaluation_engineer
+work_item: AURA-0119
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0119-observatory
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0119_acceptance.py
+  - services/aura-observatory/tests/test_aura0119_regression.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0100_startup.py
+  - deploy/tests/test_aura0091_topology.py
+  - deploy/tests/test_aura0092_topology.py
+  - deploy/tests/test_aura0104_acceptance_capabilities.py
+  - work-items/handoffs/AURA-0119-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.run_evidence_ingestion
+    - aura.observatory.run_evidence_storage
+    - aura.observatory.run_inspection_query
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Added independent acceptance coverage for every closed evidence kind and
+      discriminator/media correspondence, canonical text/JSON/attachment bytes,
+      digest and byte-count invariants, bounded sequences, malformed envelopes,
+      approved media magic bytes, prohibited secret fields, and content-free
+      excluded/provider-hidden-reasoning states.
+    - >-
+      Added exact duplicate idempotency versus changed immutable stable-ID
+      collision coverage, deterministic out-of-order and missing-parent
+      retention, bounded inspection pagination, and payload/object-key
+      non-disclosure in snapshots.
+    - >-
+      Added owner-only API coverage for inspection/evidence reads, no-store,
+      nosniff, exact Content-Length and digest-backed streaming, CSRF and
+      confirmation-gated deletion, idempotent durable deletion response, and
+      deleted metadata truth.
+    - >-
+      Added content-free run-scoped observation.changed invalidation checks,
+      object-store canonical UUID isolation and integrity failures, migration
+      restart/idempotence shape checks, capture-disabled bounded state, and
+      terminal malformed transport-message ACK behavior.
+    - >-
+      Added second-review regressions for producer/fixture bypass rejection,
+      exact delivery/admission/revision/category/state bindings, the 1.5 MiB
+      wire envelope and 1 MiB attachment limits, durable collision/deletion/
+      orphan-recovery schema separation, future SSE cursors, run-wide page
+      completeness, canonical UUID step IDs, captured zero-byte streaming,
+      pre-byte digest verification, content-free rejection records, and the
+      ADR-0017 operation/correlation/metric/evaluator catalogue.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-observatory/tests/test_aura0119_acceptance.py
+      services/aura-observatory/tests/test_aura0119_regression.py -q: 77
+      passed, 1 warning.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-observatory/tests/test_aura0119_acceptance.py
+      services/aura-observatory/tests/test_aura0119_regression.py: passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-observatory: 0 errors, 0 warnings, 0 informations after
+      typing the adversarial mutator fixtures.
+    - >-
+      Authorized legacy inventory/topology suites: 141 passed, 13 skipped;
+      updated only stale migration version, component-manifest, dedicated
+      NATS ACL/secret, worker run-evidence channel, and API Garage identity
+      expectations while preserving exact isolation assertions.
+    - >-
+      Ruff for the AURA-0119 acceptance suite and all eight authorized legacy
+      test files: passed.
+    - >-
+      Authorized focused Observatory/deployment regression suites:
+      218 passed, 13 skipped, 1 warning.
+    - >-
+      After the strict attachment-category contract update, the exact focused
+      acceptance/regression/topology command passes 83 tests with 1 warning;
+      focused Ruff and evaluator Pyright remain green.
+    - >-
+      Updated accepted evidence fixtures to Core's
+      core-evidence-scanner-v1/core-evidence-policy-v1 attestations while
+      retaining unknown-revision rejection coverage; the exact focused command
+      now passes 84 tests with 1 warning, with Ruff and Pyright green.
+    - >-
+      Final regression-test formatting recheck is green: scoped Ruff passes,
+      and the acceptance/regression/topology command passes 88 tests with 1
+      warning.
+    - >-
+      Resolved the remaining regression-test typing diagnostics without
+      changing assertions or production code; full
+      `uv run pyright services/aura-observatory` now reports 0 errors, and
+      scoped Ruff plus the focused 88-test suite remain green.
+    - >-
+      Full pyright for services/aura-observatory: 0 errors, 0 warnings, 0
+      informations; focused evaluator pyright and Ruff are also green.
+    - >-
+      Work-item, changed-path, generated-sync, import-boundary, module-registry,
+      service-isolation, frontend-boundary, observability, repository-shape,
+      and compose checks passed; baseline protection correctly skipped because
+      no protected baselines changed.
+  failed:
+    - >-
+      Aggregate ruff check services/aura-observatory deploy/tests is blocked by
+      the pre-existing deploy/tests/test_aura0090_topology.py E501 at line 189;
+      the evaluator-owned test passes ruff independently.
+    - >-
+      Aggregate pytest services/aura-observatory/tests deploy/tests stops at
+      collection because deploy/tests/test_aura0104_acceptance_capabilities.py
+      collides with the same-basename Observatory test module; focused
+      AURA-0119 acceptance/regression and authorized inventory suites remain
+      green.
+  not_run:
+    - >-
+      Live PostgreSQL/Garage/NATS restart, ACL, and independent outage checks
+      remain for the final integration environment.
+decisions:
+  - >-
+    Kept all evaluator changes inside the assigned Observatory acceptance test
+    and handoff paths; no production, contract, migration, deploy, Core,
+    frontend, or protected baseline files were changed by this evaluator.
+  - >-
+    Exercised public Observatory validator, repository, object-store,
+    inspection, transport, and HTTP composition seams rather than internal
+    implementation details or Aura Core data stores.
+  - >-
+    Treated evidence bytes as REST-only and asserted that inspection, SSE,
+    deletion, and object-key-facing responses remain content-free.
+risks:
+  - >-
+    These acceptance tests use the in-memory Observatory composition for
+    deterministic behavior; live PostgreSQL/Garage/NATS restart and ACL
+    behavior must be confirmed by the integration and deployment suites.
+  - >-
+    The migration check validates restart-safe SQL shape and content-free
+    columns; a live fresh/upgrade/restart database execution remains an
+    environment-dependent integration responsibility.
+  - >-
+    The current transport acceptance proves terminal malformed-message ACK;
+    outage retry/redelivery behavior requires the durable NATS integration
+    harness and should remain part of the final full-stack run.
+unresolved: []
