@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { isEvaluationAttempt, isEvaluationDataset, isEvaluationJob, parseEvaluationAttemptPage, parseEvaluationDatasetPage, parseEvaluationLiveEvent } from './evaluation-dto-adapter';
+import { isEvaluationAttempt, isEvaluationDataset, isEvaluationEvaluator, isEvaluationJob, parseEvaluationAttemptPage, parseEvaluationDatasetPage, parseEvaluationEvaluatorPage, parseEvaluationJobPage, parseEvaluationLiveEvent, parseEvaluationSuitePage } from './evaluation-dto-adapter';
 
 const provenance = {
   createdByComponent: 'aura.observatory.evaluation_api',
@@ -44,10 +44,47 @@ const executionProvenance = {
   deploymentRevision: 'deploy-1',
   reproducibility: { seed: 7, clockMode: 'fixed', timeZone: 'UTC', locale: 'en-US', fixtureRevision: 'fixture-1', promptRevision: 'prompt-1', policyRevision: 'policy-1' },
 } as const;
+const runnerExecutionProvenance = {
+  ...executionProvenance,
+  dataset: { id: dataset.datasetId, version: dataset.datasetVersion },
+  suite: { id: '22222222-2222-4222-8222-222222222222', version: '1.0.0' },
+} as const;
+const deterministicLiveJobId = 'aad8f7e5-52ca-6190-4d92-4ca1324f8e94';
 const job = {
-  schemaVersion: 1, resourceType: 'job', jobId: '44444444-4444-4444-8444-444444444444', suite: executionProvenance.suite, status: 'queued', captureClassification: 'metadata_only', attemptCount: 1, resultCount: 0, artifactCount: 0, deadlineAt: '2026-10-21T01:00:00Z', failureCode: null, provenance: executionProvenance, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z',
+  schemaVersion: 1, resourceType: 'job', jobId: '44444444-4444-4444-8444-444444444444', suite: executionProvenance.suite, status: 'queued', captureClassification: 'metadata_only', attemptCount: 1, resultCount: 0, artifactCount: 0, deadlineAt: '2026-10-21T01:00:00Z', failureCode: null, provenance: runnerExecutionProvenance, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z',
 } as const;
 const attempt = { attemptId: '55555555-5555-4555-8555-555555555555', jobId: job.jobId, attemptNumber: 1, status: 'queued', startedAt: null, finishedAt: null, nextAttemptAt: null, failureCode: null } as const;
+// This is the exact closed shape emitted by the Observatory PostgreSQL
+// provider's project_definition() for a persisted suite.  The provider
+// projection contains componentIds/caseBudget/timeoutMs, but deliberately
+// does not include the request-only component binding or limits objects.
+const persistedSuiteProjection = {
+  schemaVersion: 1,
+  resourceType: 'suite',
+  suiteId: '66666666-6666-4666-8666-666666666666',
+  suiteVersion: '1.0.0',
+  dataset: { resourceId: dataset.datasetId, resourceVersion: dataset.datasetVersion },
+  evaluators: [{ evaluatorId: '77777777-7777-4777-8777-777777777777', evaluatorVersion: '1.0.0', kind: 'deterministic' }],
+  componentIds: ['aura.core.api'],
+  caseBudget: 2,
+  timeoutMs: 30_000,
+  retentionMode: 'manual_only',
+  provenance,
+  state: 'active',
+  createdAt: '2026-10-21T00:00:00Z',
+} as const;
+const persistedEvaluatorProjection = {
+  schemaVersion: 1,
+  resourceType: 'evaluator',
+  evaluatorId: '77777777-7777-4777-8777-777777777777',
+  evaluatorVersion: '1.0.0',
+  kind: 'deterministic',
+  metric: 'quality.pass_rate',
+  componentIds: ['aura.core.api'],
+  retentionMode: 'manual_only',
+  provenance,
+  createdAt: '2026-10-21T00:00:00Z',
+} as const;
 
 describe('evaluation transport adapters', () => {
   it('accepts a bounded generated dataset page and rejects malformed fields', () => {
@@ -61,6 +98,117 @@ describe('evaluation transport adapters', () => {
     expect(parseEvaluationDatasetPage(page)).toEqual(page);
     expect(parseEvaluationDatasetPage({ ...page, items: [{ ...dataset, caseCount: -1 }] })).toBeNull();
     expect(parseEvaluationDatasetPage({ ...page, nextCursor: 'not a bounded cursor' })).toBeNull();
+  });
+
+  it('projects the exact persisted provider suite shape into the workspace', () => {
+    const page = {
+      items: [persistedSuiteProjection],
+      nextCursor: null,
+      snapshotAt: '2026-10-21T00:00:00Z',
+      partial: false,
+    };
+    expect(parseEvaluationSuitePage(page)).toEqual(page);
+    expect(parseEvaluationSuitePage({
+      ...page,
+      items: [{ ...persistedSuiteProjection, providerPrivateField: 'must-reject' }],
+    })).toBeNull();
+  });
+
+  it('accepts every contract-defined optional suite projection combination', () => {
+    const component = {
+      componentId: 'aura.core.api',
+      componentVersion: '1.0.0',
+      codeRevision: 'rev-1',
+      imageDigest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      configurationRevision: 'config-1',
+    };
+    const limits = {
+      timeoutMs: 30_000,
+      maxConcurrency: 1,
+      maxAttempts: 1,
+      maxCases: 2,
+      maxInputBytes: 0,
+      maxOutputBytes: 0,
+      maxTokens: 0,
+    };
+    const variantBindings = [{
+      variantId: 'control',
+      components: [component],
+      model: {
+        modelId: 'local-model',
+        modelVersion: '1.0.0',
+        modelDigest: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      },
+      configurationRevision: 'config-1',
+      promptRevision: 'prompt-1',
+      policyRevision: 'policy-1',
+      deploymentRevision: 'deploy-1',
+    }];
+    for (const optional of [
+      { components: [component] },
+      { limits },
+      { variantBindings },
+      { components: [component], limits, variantBindings },
+    ]) {
+      expect(parseEvaluationSuitePage({
+        items: [{ ...persistedSuiteProjection, ...optional }],
+        nextCursor: null,
+        snapshotAt: '2026-10-21T00:00:00Z',
+        partial: false,
+      })).not.toBeNull();
+    }
+    expect(parseEvaluationSuitePage({
+      items: [{ ...persistedSuiteProjection, limits: { ...limits, maxAttempts: 0 } }],
+      nextCursor: null,
+      snapshotAt: '2026-10-21T00:00:00Z',
+      partial: false,
+    })).toBeNull();
+    expect(parseEvaluationSuitePage({
+      items: [{ ...persistedSuiteProjection, variantBindings: [{ ...variantBindings[0], model: { ...variantBindings[0].model, modelDigest: 'not-a-digest' } }] }],
+      nextCursor: null,
+      snapshotAt: '2026-10-21T00:00:00Z',
+      partial: false,
+    })).toBeNull();
+  });
+
+  it('projects the exact persisted provider evaluator shape and validates optional combinations', () => {
+    const page = {
+      items: [persistedEvaluatorProjection],
+      nextCursor: null,
+      snapshotAt: '2026-10-21T00:00:00Z',
+      partial: false,
+    };
+    expect(isEvaluationEvaluator(persistedEvaluatorProjection)).toBe(true);
+    expect(parseEvaluationEvaluatorPage(page)).toEqual(page);
+
+    for (const optional of [
+      {},
+      { rubricVersion: '1.0.0' },
+      { calibrationVersion: '1.0.0' },
+      { rubricVersion: '1.0.0', calibrationVersion: '1.0.0' },
+    ]) {
+      expect(parseEvaluationEvaluatorPage({
+        ...page,
+        items: [{ ...persistedEvaluatorProjection, ...optional }],
+      })).not.toBeNull();
+    }
+    for (const invalid of [
+      { providerPrivateField: 'must-reject' },
+      { rubricVersion: '' },
+      { calibrationVersion: 'not a version' },
+      { rubricVersion: undefined },
+      { componentIds: [''] },
+      { componentIds: ['aura.core.api'], metric: 'bad metric!' },
+    ]) {
+      expect(parseEvaluationEvaluatorPage({
+        ...page,
+        items: [{ ...persistedEvaluatorProjection, ...invalid }],
+      })).toBeNull();
+    }
+    expect(parseEvaluationEvaluatorPage({
+      ...page,
+      items: [{ ...persistedEvaluatorProjection, retentionMode: undefined }],
+    })).toBeNull();
   });
 
   it('rejects private or arbitrary DTO fields before template access', () => {
@@ -93,6 +241,10 @@ describe('evaluation transport adapters', () => {
 
   it('matches generated job provenance and queued/claimed attempt variants', () => {
     expect(isEvaluationJob(job)).toBe(true);
+    expect(isEvaluationJob({ ...job, status: 'succeeded' })).toBe(true);
+    expect(parseEvaluationJobPage({ items: [{ ...job, status: 'succeeded' }], nextCursor: null, snapshotAt: '2026-10-21T00:00:00Z', partial: false })).not.toBeNull();
+    expect(isEvaluationJob({ ...job, suite: runnerExecutionProvenance.suite })).toBe(false);
+    expect(isEvaluationJob({ ...job, provenance: executionProvenance })).toBe(false);
     expect(isEvaluationJob({ ...job, provenance: provenance })).toBe(false);
     expect(isEvaluationAttempt(attempt)).toBe(true);
     expect(isEvaluationAttempt({ ...attempt, workerComponentId: null })).toBe(true);
@@ -101,6 +253,15 @@ describe('evaluation transport adapters', () => {
     expect(isEvaluationAttempt({ ...attempt, workerComponentId: 'aura.core.worker' })).toBe(false);
     expect(parseEvaluationAttemptPage({ items: [attempt], nextCursor: null, snapshotAt: '2026-10-21T00:00:00Z', partial: false })).not.toBeNull();
     expect(parseEvaluationAttemptPage({ items: [{ ...attempt, content: 'PRIVATE_CONTENT' }], nextCursor: null, snapshotAt: '2026-10-21T00:00:00Z', partial: false })).toBeNull();
+  });
+
+  it('accepts deterministic canonical IDs without marker bits and rejects malformed or uppercase IDs', () => {
+    const deterministicJob = { ...job, jobId: deterministicLiveJobId };
+    expect(isEvaluationJob(deterministicJob)).toBe(true);
+    expect(parseEvaluationJobPage({ items: [deterministicJob], nextCursor: null, snapshotAt: '2026-10-21T00:00:00Z', partial: false })).not.toBeNull();
+    expect(isEvaluationAttempt({ ...attempt, jobId: deterministicLiveJobId })).toBe(true);
+    expect(isEvaluationJob({ ...deterministicJob, jobId: deterministicLiveJobId.replace('4ca1324f8e94', '4ca1324f8e9') })).toBe(false);
+    expect(isEvaluationJob({ ...deterministicJob, jobId: deterministicLiveJobId.toUpperCase() })).toBe(false);
   });
 
   it('keeps authenticated evaluation state memory-only at the transport and feature boundaries', () => {

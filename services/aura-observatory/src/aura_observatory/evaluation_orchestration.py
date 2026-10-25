@@ -25,6 +25,11 @@ from time import monotonic
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
+from aura_observatory.evaluation_definitions import (
+    DefinitionStorageError,
+    DefinitionValidationError,
+)
+from aura_observatory.evaluation_storage import ArtifactStorageError
 from aura_observatory.ports import (
     EvaluationDispatchIntent,
     EvaluationTransportPort,
@@ -40,6 +45,8 @@ DEFAULT_WORKER_ID = "00000000-0000-4000-8000-000000000092"
 DEFAULT_SCHEDULER_ID = "00000000-0000-4000-8000-000000000093"
 RETRYABLE_FAILURES = frozenset({"DEPENDENCY_UNAVAILABLE", "STORAGE_FAILED"})
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "deadline"})
+
+ResultScorer = Callable[[str, str, Mapping[str, object], Mapping[str, object]], Awaitable[object]]
 
 
 class TransportValidationError(ValueError):
@@ -780,6 +787,7 @@ class EvaluationOrchestrationService:
         retry_max_seconds: int = 3600,
         max_attempts: int = MAX_ATTEMPTS,
         event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
+        result_scorer: ResultScorer | None = None,
     ) -> None:
         if not 1 <= batch_size <= 1000:
             raise ValueError("batch_size out of bounds")
@@ -799,6 +807,7 @@ class EvaluationOrchestrationService:
         self.retry_max_seconds = retry_max_seconds
         self.max_attempts = max_attempts
         self.event_publisher = event_publisher
+        self.result_scorer = result_scorer
 
     async def _publish_live(
         self, resource_type: str, resource_id: str, change: str, state: str
@@ -1142,9 +1151,75 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("result_apply", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        message_type = str(validated["messageType"])
+        data = cast(Mapping[str, object], validated["data"])
+        if (
+            self.result_scorer is not None
+            and message_type == "evaluation.runner.completed"
+            and disposition in {"applied", "duplicate"}
+        ):
+            try:
+                job = await self.repository.get_job(str(validated["jobId"]))
+            except Exception as error:
+                self._record_dependency_failure("score_projection", started, "postgresql")
+                raise OrchestrationDependencyError(
+                    "score_projection_failure", "postgresql"
+                ) from error
+            if job is not None:
+                request_data = job.admission.envelope.get("data")
+                if isinstance(request_data, Mapping):
+                    try:
+                        await self.result_scorer(
+                            job.job_id,
+                            str(data.get("resultId") or validated["jobId"]),
+                            cast(Mapping[str, object], request_data),
+                            data,
+                        )
+                    except DefinitionValidationError:
+                        # The result itself is already durably settled.  A
+                        # malformed or incompatible definition is permanent;
+                        # acknowledge it so the broker cannot redeliver an
+                        # unrepairable projection.
+                        _LOGGER.info(
+                            "evaluation score projection rejected",
+                            extra={"code": "score_projection_validation"},
+                        )
+                        self._span("score_projection", started, "failure", "validation", None)
+                    except ArtifactStorageError as error:
+                        if error.failure_code not in {"database_failure", "storage_timeout"}:
+                            _LOGGER.info(
+                                "evaluation score projection rejected",
+                                extra={"code": "score_projection_validation"},
+                            )
+                            self._span("score_projection", started, "failure", "validation", None)
+                        else:
+                            # The application score port has already emitted
+                            # its ClickHouse failure metric/span. Preserve
+                            # that single attribution while preventing ack.
+                            raise OrchestrationDependencyError(
+                                "score_projection_failure", "clickhouse"
+                            ) from error
+                    except DefinitionStorageError as error:
+                        self._record_dependency_failure("score_projection", started, "postgresql")
+                        raise OrchestrationDependencyError(
+                            "score_projection_failure", "postgresql"
+                        ) from error
+                    except OrchestrationDependencyError as error:
+                        self._record_dependency_failure(
+                            "score_projection", started, error.dependency
+                        )
+                        raise
+                    except Exception as error:
+                        self._record_dependency_failure("score_projection", started, "clickhouse")
+                        _LOGGER.warning(
+                            "evaluation score projection unavailable",
+                            extra={"code": "score_projection_unavailable"},
+                        )
+                        raise OrchestrationDependencyError(
+                            "score_projection_failure", "clickhouse"
+                        ) from error
         if acknowledge is not None:
             await acknowledge()
-        message_type = str(validated["messageType"])
         if disposition == "applied":
             result_id = str(validated.get("resultId") or validated.get("jobId"))
             terminal_state = {
@@ -1158,7 +1233,6 @@ class EvaluationOrchestrationService:
         if application.terminal_transition == "deadline":
             self._metric("observatory_evaluation_deadline_count", labels={"outcome": "deadline"})
             self._metric("observatory_evaluation_terminal_count", labels={"outcome": "deadline"})
-        data = cast(Mapping[str, object], validated["data"])
         retry_scheduled = False
         if disposition == "applied" and message_type.endswith("failed"):
             try:

@@ -110,6 +110,12 @@ export class EvaluationWorkspaceStore {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private requestController = new AbortController();
   private readonly actionKeys = new Map<string, string>();
+  private loadInFlight = 0;
+  private readonly deferredLiveRefreshes = new Set<EvaluationLiveEvent['resourceType']>();
+  private liveRefreshInFlight = false;
+  private liveRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private liveRefreshEpoch = 0;
+  private readonly queuedLiveRefreshes = new Set<EvaluationLiveEvent['resourceType']>();
 
   private beginRequest(): { readonly generation: number; readonly signal: AbortSignal } {
     this.requestController.abort();
@@ -137,6 +143,7 @@ export class EvaluationWorkspaceStore {
   }
 
   async load(): Promise<void> {
+    this.loadInFlight += 1;
     const { generation, signal } = this.beginRequest();
     this.state.set('loading');
     this.error.set(null);
@@ -165,7 +172,7 @@ export class EvaluationWorkspaceStore {
         datasets: requests[0].status === 'fulfilled' ? requests[0].value : null,
         suites: requests[1].status === 'fulfilled' ? requests[1].value : null,
         evaluators: requests[2].status === 'fulfilled' ? requests[2].value : null,
-        jobs: requests[3].status === 'fulfilled' ? requests[3].value : null,
+        jobs: requests[3].status === 'fulfilled' ? this.retainActiveJob(requests[3].value) : null,
         results: requests[4].status === 'fulfilled' ? requests[4].value : null,
         artifacts: requests[5].status === 'fulfilled' ? requests[5].value : null,
         reviews: requests[6].status === 'fulfilled' ? requests[6].value : null,
@@ -186,6 +193,13 @@ export class EvaluationWorkspaceStore {
       if (!this.current(generation, signal)) return;
       this.state.set(cause instanceof ObservatorySessionRequiredError ? 'unauthorized' : this.runtimeState(cause));
       this.error.set(cause instanceof Error ? cause.message : 'Evaluation service is unavailable.');
+    } finally {
+      this.loadInFlight -= 1;
+      if (this.loadInFlight === 0 && this.deferredLiveRefreshes.size) {
+        const resources = [...this.deferredLiveRefreshes];
+        this.deferredLiveRefreshes.clear();
+        queueMicrotask(() => resources.forEach((resource) => void this.refreshResource(resource)));
+      }
     }
   }
 
@@ -303,6 +317,41 @@ export class EvaluationWorkspaceStore {
   }
 
   async refreshResource(resourceType: EvaluationLiveEvent['resourceType']): Promise<void> {
+    if (this.loadInFlight > 0) {
+      this.deferredLiveRefreshes.add(resourceType);
+      return;
+    }
+    this.queuedLiveRefreshes.add(resourceType);
+    if (this.liveRefreshInFlight || this.liveRefreshTimer !== null) return;
+    this.liveRefreshTimer = setTimeout(() => {
+      this.liveRefreshTimer = null;
+      void this.drainLiveRefreshes();
+    }, 50);
+  }
+
+  private async drainLiveRefreshes(): Promise<void> {
+    if (this.liveRefreshInFlight || this.queuedLiveRefreshes.size === 0) return;
+    this.liveRefreshInFlight = true;
+    const epoch = this.liveRefreshEpoch;
+    const resources = [...this.queuedLiveRefreshes];
+    this.queuedLiveRefreshes.clear();
+    try {
+      for (const resourceType of resources) {
+        if (epoch !== this.liveRefreshEpoch) return;
+        await this.refreshResourceNow(resourceType);
+      }
+    } finally {
+      this.liveRefreshInFlight = false;
+      if (epoch === this.liveRefreshEpoch && this.queuedLiveRefreshes.size && this.liveRefreshTimer === null) {
+        this.liveRefreshTimer = setTimeout(() => {
+          this.liveRefreshTimer = null;
+          void this.drainLiveRefreshes();
+        }, 50);
+      }
+    }
+  }
+
+  private async refreshResourceNow(resourceType: EvaluationLiveEvent['resourceType']): Promise<void> {
     const resource = resourceType as string;
     if (resource === 'evaluation_case' || resource === 'evaluation_attempt' || resource === 'evaluation_deletion' || resource === 'evaluation_experiment' || resource === 'evaluation_baseline' || resource === 'evaluation_regression' || resource === 'evaluation_attribution') { await this.load(); return; }
     const pageSize = 50;
@@ -311,7 +360,7 @@ export class EvaluationWorkspaceStore {
       if (resourceType === 'evaluation_dataset') { const raw = await this.gateway.execute('listEvaluationDatasets', { ...blankInput('listEvaluationDatasets'), query: { page_size: pageSize } }, signal); const datasets = this.requirePage(raw, parseEvaluationDatasetPage, 'Evaluation dataset'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, datasets })); }
       else if (resourceType === 'evaluation_suite') { const raw = await this.gateway.execute('listEvaluationSuites', { ...blankInput('listEvaluationSuites'), query: { page_size: pageSize } }, signal); const suites = this.requirePage(raw, parseEvaluationSuitePage, 'Evaluation suite'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, suites })); }
       else if (resourceType === 'evaluation_evaluator') { const raw = await this.gateway.execute('listEvaluationEvaluators', { ...blankInput('listEvaluationEvaluators'), query: { page_size: pageSize } }, signal); const evaluators = this.requirePage(raw, parseEvaluationEvaluatorPage, 'Evaluation evaluator'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, evaluators })); }
-      else if (resourceType === 'evaluation_job') { const raw = await this.gateway.execute('listEvaluationJobs', { ...blankInput('listEvaluationJobs'), query: { page_size: pageSize } }, signal); const jobs = this.requirePage(raw, parseEvaluationJobPage, 'Evaluation job'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, jobs })); }
+      else if (resourceType === 'evaluation_job') { const raw = await this.gateway.execute('listEvaluationJobs', { ...blankInput('listEvaluationJobs'), query: { page_size: pageSize } }, signal); const jobs = this.requirePage(raw, parseEvaluationJobPage, 'Evaluation job'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, jobs: this.retainActiveJob(jobs) })); }
       else if (resourceType === 'evaluation_result') { const raw = await this.gateway.execute('listEvaluationResults', { ...blankInput('listEvaluationResults'), query: { page_size: pageSize } }, signal); const results = this.requirePage(raw, parseEvaluationResultPage, 'Evaluation result'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, results })); }
       else if (resourceType === 'evaluation_artifact') { const raw = await this.gateway.execute('listEvaluationArtifacts', { ...blankInput('listEvaluationArtifacts'), query: { page_size: pageSize } }, signal); const artifacts = this.requirePage(raw, parseEvaluationArtifactPage, 'Evaluation artifact'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, artifacts })); }
       else if (resourceType === 'evaluation_review') { const raw = await this.gateway.execute('listEvaluationReviews', { ...blankInput('listEvaluationReviews'), query: { page_size: pageSize } }, signal); const reviews = this.requirePage(raw, parseEvaluationReviewPage, 'Evaluation review'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, reviews })); }
@@ -319,7 +368,13 @@ export class EvaluationWorkspaceStore {
       else if (resourceType === 'evaluation_qualification') { const raw = await this.gateway.execute('listEvaluationQualifications', { ...blankInput('listEvaluationQualifications'), query: { page_size: pageSize } }, signal); const qualifications = this.requirePage(raw, parseEvaluationQualificationPage, 'Evaluation qualification'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, qualifications })); }
       else if (resource === 'evaluation_history') { const raw = await this.gateway.execute('listEvaluationHistory', { ...blankInput('listEvaluationHistory'), query: { page_size: pageSize } }, signal); const history = this.requirePage(raw, parseEvaluationHistoryPage, 'Evaluation history'); if (this.current(generation, signal)) this.data.update((value) => ({ ...value, history })); }
       else await this.load();
-      if (this.current(generation, signal)) this.lastUpdatedAt.set(new Date().toISOString());
+      if (this.current(generation, signal)) {
+        this.lastUpdatedAt.set(new Date().toISOString());
+        if (resourceType === 'evaluation_job') {
+          const activeJob = this.data().jobs?.items.find((item) => item.jobId === this.activeJobId());
+          if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) this.pollJob(activeJob.jobId);
+        }
+      }
     } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause) === 'provider-unavailable' ? 'provider-unavailable' : this.hasData() ? 'stale' : 'error'); this.notice.set('A live evaluation update could not be reconciled. Refresh to retry.'); } }
   }
 
@@ -336,7 +391,7 @@ export class EvaluationWorkspaceStore {
       if (scope === 'datasets') { const raw = await this.gateway.execute('listEvaluationDatasets', { ...blankInput('listEvaluationDatasets'), query }, signal); const page = this.requirePage(raw, parseEvaluationDatasetPage, 'Evaluation dataset'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, datasets: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
       else if (scope === 'suites') { const raw = await this.gateway.execute('listEvaluationSuites', { ...blankInput('listEvaluationSuites'), query }, signal); const page = this.requirePage(raw, parseEvaluationSuitePage, 'Evaluation suite'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, suites: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
       else if (scope === 'evaluators') { const raw = await this.gateway.execute('listEvaluationEvaluators', { ...blankInput('listEvaluationEvaluators'), query }, signal); const page = this.requirePage(raw, parseEvaluationEvaluatorPage, 'Evaluation evaluator'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, evaluators: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
-      else if (scope === 'jobs') { const raw = await this.gateway.execute('listEvaluationJobs', { ...blankInput('listEvaluationJobs'), query }, signal); const page = this.requirePage(raw, parseEvaluationJobPage, 'Evaluation job'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, jobs: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
+      else if (scope === 'jobs') { const raw = await this.gateway.execute('listEvaluationJobs', { ...blankInput('listEvaluationJobs'), query }, signal); const page = this.requirePage(raw, parseEvaluationJobPage, 'Evaluation job'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, jobs: this.retainActiveJob(page) })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
       else if (scope === 'results') { const raw = await this.gateway.execute('listEvaluationResults', { ...blankInput('listEvaluationResults'), query }, signal); const page = this.requirePage(raw, parseEvaluationResultPage, 'Evaluation result'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, results: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
       else if (scope === 'artifacts') { const raw = await this.gateway.execute('listEvaluationArtifacts', { ...blankInput('listEvaluationArtifacts'), query }, signal); const page = this.requirePage(raw, parseEvaluationArtifactPage, 'Evaluation artifact'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, artifacts: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
       else if (scope === 'reviews') { const raw = await this.gateway.execute('listEvaluationReviews', { ...blankInput('listEvaluationReviews'), query }, signal); const page = this.requirePage(raw, parseEvaluationReviewPage, 'Evaluation review'); if (!this.current(generation, signal)) return; this.data.update((value) => ({ ...value, reviews: page })); this.unavailableScopes.update((items) => page.partial ? [...new Set([...items, scope])] : items.filter((item) => item !== scope)); }
@@ -448,7 +503,9 @@ export class EvaluationWorkspaceStore {
       }, signal);
       const parsedJob = this.requirePage(job, parseEvaluationJob, 'Evaluation job');
       if (!this.current(generation, signal)) return;
-      this.activeJobId.set(parsedJob.jobId); this.notice.set(`Evaluation job ${parsedJob.jobId} was queued.`); this.busyAction.set(null); void this.load(); this.pollJob(parsedJob.jobId);
+      this.activeJobId.set(parsedJob.jobId);
+      this.upsertJob(parsedJob);
+      this.notice.set(`Evaluation job ${parsedJob.jobId} was queued.`); this.busyAction.set(null); void this.load(); this.pollJob(parsedJob.jobId);
     } catch (cause) { if (this.current(generation, signal)) { this.state.set(this.runtimeState(cause)); this.notice.set('The evaluation job could not be submitted. Retry when the service is available.'); this.busyAction.set(null); } }
   }
 
@@ -509,12 +566,32 @@ export class EvaluationWorkspaceStore {
     else if (this.state() === 'disconnected') this.state.set(this.hasData() ? 'stale' : 'loading');
   }
 
-  clear(): void { this.requestController.abort(); this.generation += 1; if (this.pollTimer) clearTimeout(this.pollTimer); this.pollTimer = null; this.data.set(emptyData()); this.selectedDataset.set(null); this.selectedSuite.set(null); this.selectedEvaluator.set(null); this.selectedResult.set(null); this.jobBindings.set(null); this.actionKeys.clear(); this.unavailableScopes.set([]); this.rejectedScopes.set([]); this.state.set('loading'); this.error.set(null); this.notice.set(null); this.busyAction.set(null); this.activeJobId.set(null); this.lastUpdatedAt.set(null); }
+  clear(): void { this.requestController.abort(); this.generation += 1; this.liveRefreshEpoch += 1; this.deferredLiveRefreshes.clear(); this.queuedLiveRefreshes.clear(); if (this.liveRefreshTimer) clearTimeout(this.liveRefreshTimer); this.liveRefreshTimer = null; if (this.pollTimer) clearTimeout(this.pollTimer); this.pollTimer = null; this.data.set(emptyData()); this.selectedDataset.set(null); this.selectedSuite.set(null); this.selectedEvaluator.set(null); this.selectedResult.set(null); this.jobBindings.set(null); this.actionKeys.clear(); this.unavailableScopes.set([]); this.rejectedScopes.set([]); this.state.set('loading'); this.error.set(null); this.notice.set(null); this.busyAction.set(null); this.activeJobId.set(null); this.lastUpdatedAt.set(null); }
   private hasRows(data: EvaluationWorkspaceData): boolean { return [data.datasets, data.suites, data.evaluators, data.jobs, data.results, data.artifacts, data.reviews, data.calibrations, data.qualifications, data.history].some((page) => Boolean(page && page.items.length > 0)); }
+  private upsertJob(job: EvaluationJob): void {
+    this.data.update((value) => {
+      const current = value.jobs;
+      const items = (current?.items ?? []).filter((item) => item.jobId !== job.jobId);
+      return {
+        ...value,
+        jobs: current
+          ? { ...current, items: [job, ...items] }
+          : { items: [job], nextCursor: null, snapshotAt: job.updatedAt, partial: false },
+      };
+    });
+  }
+  private retainActiveJob(page: EvaluationJobPage): EvaluationJobPage {
+    const activeJobId = this.activeJobId();
+    if (!activeJobId || page.items.some((item) => item.jobId === activeJobId)) return page;
+    const activeJob = this.data().jobs?.items.find((item) => item.jobId === activeJobId);
+    return activeJob ? { ...page, items: [activeJob, ...page.items] } : page;
+  }
   private pollJob(jobId: string): void {
     const generation = this.generation; const signal = this.requestController.signal;
     this.activeJobId.set(jobId);
+    if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = setTimeout(async () => {
+      this.pollTimer = null;
       if (!this.current(generation, signal)) return;
       await this.load();
       if (!this.current(generation + 1, this.requestController.signal)) return;

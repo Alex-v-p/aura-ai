@@ -11,6 +11,7 @@ output:
   replayable: true
 dependencies:
   - postgresql
+  - clickhouse
   - evaluation_nats
 metrics:
   - observatory_evaluation_job_admission_count
@@ -79,7 +80,7 @@ metric_definitions:
     type: counter
     unit: outcomes
     labels: [operation, outcome]
-    dependencies: [postgresql, evaluation_nats]
+    dependencies: [postgresql, evaluation_nats, clickhouse]
     trace: evaluation_orchestration
     correlation: service
     export: prometheus
@@ -135,7 +136,7 @@ metric_definitions:
     type: counter
     unit: results
     labels: [outcome]
-    dependencies: [postgresql, evaluation_nats]
+    dependencies: [postgresql, evaluation_nats, clickhouse]
     trace: evaluation_orchestration
     correlation: service
     export: prometheus

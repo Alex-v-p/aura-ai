@@ -712,6 +712,7 @@ def build_evaluation_orchestration(
     *,
     transport: EvaluationTransportPort | None = None,
     event_publisher: Any | None = None,
+    result_scorer: Any | None = None,
 ) -> EvaluationOrchestrationService:
     """Compose the dedicated evaluation worker's durable orchestration port."""
 
@@ -746,6 +747,7 @@ def build_evaluation_orchestration(
         retry_max_seconds=settings.evaluation_retry_max_seconds,
         max_attempts=settings.evaluation_max_attempts,
         event_publisher=event_publisher,
+        result_scorer=result_scorer,
     )
 
 

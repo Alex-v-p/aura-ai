@@ -72,7 +72,7 @@ metric_definitions:
   observatory_operations_recovery_count:
     type: counter
     labels: [operation, outcome]
-    bounded_outcomes: [complete, failed, conflict, recovered]
+    bounded_outcomes: [complete, success, failed, conflict, recovered]
     trace: alert_recovery
     correlation: service
     export: prometheus

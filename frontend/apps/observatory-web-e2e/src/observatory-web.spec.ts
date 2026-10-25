@@ -18,6 +18,7 @@ const overview = (
   state: 'healthy' | 'degraded' | 'unavailable' = 'healthy',
   stale = false,
   healthState: FixtureHealthState = state === 'healthy' ? 'healthy' : 'degraded',
+  runCount = 1,
 ) => ({
   observedAt: stale ? oldObservedAt : observedAt,
   systemState: state,
@@ -34,7 +35,7 @@ const overview = (
     lastFailureAt: state === 'healthy' ? null : observedAt,
   },
   observationCount: 12,
-  runCount: 1,
+  runCount,
   latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
   health: {
     snapshotId: '3cbd2a62-8a4e-4596-9e59-9fd2d52a5de5',
@@ -83,6 +84,11 @@ const comparisonRun = {
   model: 'fixture-chat-v2',
   deploymentId: 'dev-canary',
   traceId: '1123456789abcdef0123456789abcdef',
+};
+const staleCatalogueRun = {
+  ...run,
+  runId: '8f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a03',
+  traceId: '2123456789abcdef0123456789abcdef',
 };
 
 const componentHealth = {
@@ -458,6 +464,7 @@ type FixtureOptions = {
   healthState?: FixtureHealthState;
   deferAfterLogout?: boolean;
   deferCatalogue?: boolean;
+  sseFlapping?: boolean;
   componentStale?: boolean;
   componentTopology?: 'declared' | 'multi-version' | 'partial' | 'unavailable' | 'empty';
   detailFailure?: 'definition' | 'dependencies' | 'malformed' | 'malformed-topology';
@@ -470,6 +477,15 @@ type FixtureOptions = {
     | 'unavailable-marker';
   comparisonRecovers?: boolean;
   runsEmpty?: boolean;
+  reconcileRuns?: boolean;
+  runAppearsAfterAttempts?: number;
+  replaceRunAfterAttempts?: number;
+  runCount?: number;
+  runsRefreshFailure?: boolean;
+  traceRefreshFailure?: boolean;
+  traceInitialFailure?: boolean;
+  traceUnavailable?: boolean;
+  traceMaterializesAfterAttempts?: number;
 };
 
 type FixtureHandle = {
@@ -483,6 +499,7 @@ type FixtureHandle = {
   analyticsQueryUrls: string[];
   comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }>;
   runsRequests: Array<void>;
+  traceRequests: Array<void>;
   releaseDeferred: () => void;
   failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
@@ -500,6 +517,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const analyticsQueryUrls: string[] = [];
   const comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }> = [];
   const runsRequests: Array<void> = [];
+  const traceRequests: Array<void> = [];
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
@@ -512,6 +530,40 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   let healthChanged = false;
   let detailFailureAttempts = 0;
   let componentRefreshFailure = false;
+  let runListRequests = 0;
+  let runDetailRequests = 0;
+
+  if (options.sseFlapping) {
+    await page.addInitScript(() => {
+      class FlappingEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readonly url: string;
+        readonly withCredentials = true;
+        readyState = FlappingEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: ((event: Event) => void) | null = null;
+        private closed = false;
+        constructor(url: string) {
+          this.url = url;
+          const flap = (): void => {
+            if (this.closed) return;
+            this.readyState = FlappingEventSource.OPEN;
+            this.onopen?.();
+            this.readyState = FlappingEventSource.CONNECTING;
+            this.onerror?.(new Event('error'));
+            setTimeout(flap, 100);
+          };
+          setTimeout(flap, 100);
+        }
+        addEventListener(): void { /* The fixture emits no data frames. */ }
+        close(): void { this.closed = true; this.readyState = FlappingEventSource.CLOSED; }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: FlappingEventSource });
+    });
+  }
 
   const defer = async (kind: string): Promise<void> => {
     if (!options.deferAfterLogout && !(kind === 'catalogue' && options.deferCatalogue)) return;
@@ -558,6 +610,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         options.sseDisconnected ? 'degraded' : 'healthy',
         options.stale,
         currentHealthState,
+        options.runCount ?? 1,
       );
       await route.fulfill({
         status: options.unavailable ? 503 : 200,
@@ -609,6 +662,10 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     }
     if (path.endsWith('/runs') && request.method() === 'GET') {
       runsRequests.push(undefined);
+      const currentRunListRequest = runListRequests++;
+      const laggingRunCatalogue = options.reconcileRuns && currentRunListRequest === 0;
+      const delayedRunCatalogue = options.runAppearsAfterAttempts !== undefined && currentRunListRequest < options.runAppearsAfterAttempts;
+      const staleRunIdentity = options.replaceRunAfterAttempts !== undefined && currentRunListRequest < options.replaceRunAfterAttempts;
       if (options.expireNextRuns && expireSessionRequested) {
         expireSessionRequested = false;
         loggedOut = true;
@@ -619,9 +676,13 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         await route.abort('failed');
         return;
       }
+      if (options.runsRefreshFailure && currentRunListRequest > 0) {
+        await route.abort('failed');
+        return;
+      }
       await route.fulfill({
         json: {
-          items: options.runsEmpty ? [] : options.comparisonFailure ? [run, comparisonRun] : [run],
+          items: options.runsEmpty || laggingRunCatalogue || delayedRunCatalogue ? [] : options.comparisonFailure ? [run, comparisonRun] : [staleRunIdentity ? staleCatalogueRun : run],
           nextCursor: null,
           snapshotAt: observedAt,
           latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
@@ -702,10 +763,18 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     }
     if (path.endsWith(`/runs/${runId}`)) {
       await defer('run');
-      await route.fulfill({ json: runDetail() });
+      const currentRunDetailRequest = runDetailRequests++;
+      const delayedTrace = options.traceMaterializesAfterAttempts !== undefined && currentRunDetailRequest < options.traceMaterializesAfterAttempts;
+      await route.fulfill({ json: delayedTrace ? { ...runDetail(), traceId: null } : runDetail() });
       return;
     }
     if (path.endsWith(`/traces/${traceId}`)) {
+      traceRequests.push(undefined);
+      const currentTraceRequest = traceRequests.length - 1;
+      if (options.traceUnavailable || (options.traceInitialFailure && currentTraceRequest === 0) || (options.traceRefreshFailure && currentTraceRequest > 0)) {
+        await route.abort('failed');
+        return;
+      }
       await route.fulfill({ json: traceDetail() });
       return;
     }
@@ -1294,6 +1363,17 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       return;
     }
     if (path.endsWith('/events')) {
+      if (options.sseFlapping) {
+        // A successful EventSource handshake followed by an immediate stream
+        // close exercises the browser's open/error reconnect loop without
+        // delivering an observation that could mask catalogue recovery.
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
+          body: 'retry: 250\n: transport-open\n\n',
+        });
+        return;
+      }
       if (options.sseDisconnected) {
         await route.abort('failed');
         return;
@@ -1378,6 +1458,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     analyticsQueryUrls,
     comparisonRequests,
     runsRequests,
+    traceRequests,
     releaseDeferred: () => {
       while (deferredResolvers.length) deferredResolvers.shift()?.();
     },
@@ -2601,6 +2682,293 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(
       page.locator('observatory-runs').getByRole('button', { name: runId, exact: true }),
     ).toBeVisible();
+  });
+
+  test('reconciles a delayed run while SSE remains disconnected', async ({ page }) => {
+    await openFixture(page, {
+      sseDisconnected: true,
+      // The overview has not observed the run yet; the independently
+      // materialized run projection catches up after the initial retries.
+      runCount: 0,
+      runAppearsAfterAttempts: 5,
+    });
+    await openDestination(page, 'Runs');
+    const runs = page.locator('observatory-runs');
+    await expect(runs.getByRole('status').filter({ hasText: /data may be stale|disconnected|reconnecting/i })).toBeVisible();
+    await expect(runs.getByRole('button', { name: runId, exact: true })).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('reconciles an equal-length catalogue when the run identity is delayed', async ({ page }) => {
+    await openFixture(page, {
+      sseDisconnected: true,
+      runCount: 1,
+      replaceRunAfterAttempts: 5,
+    });
+    await openDestination(page, 'Runs');
+    const runs = page.locator('observatory-runs');
+    await expect(runs.getByRole('button', { name: runId, exact: true })).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('keeps active Runs reconciliation alive after an open SSE same-count response', async ({ page }) => {
+    await page.addInitScript(() => {
+      class OpenOnlyEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = OpenOnlyEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private closed = false;
+        constructor() {
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = OpenOnlyEventSource.OPEN;
+            this.onopen?.();
+          }, 0);
+        }
+        addEventListener(): void { /* This regression deliberately emits no event. */ }
+        close(): void { this.closed = true; this.readyState = OpenOnlyEventSource.CLOSED; }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: OpenOnlyEventSource });
+    });
+    await openFixture(page, { runCount: 1, replaceRunAfterAttempts: 5 });
+    await openDestination(page, 'Runs');
+    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('renders an authoritative Runs catalogue after activation without mutation delivery', async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => {
+      // The shell owns route visibility while the Runs feature stays mounted.
+      // Suppress mutation delivery to prove activation is not dependent on a
+      // browser scheduling detail at the route boundary.
+      Object.defineProperty(window, 'MutationObserver', { configurable: true, writable: true, value: undefined });
+    });
+    const fixture = await openFixture(page, { sseDisconnected: true, runCount: 1, replaceRunAfterAttempts: 30 });
+
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    expect(fixture.runsRequests.length).toBeLessThanOrEqual(32);
+
+    const payload = await page.evaluate(async () => {
+      const response = await fetch('/api/v1/runs', { headers: { Accept: 'application/json' } });
+      return { ok: response.ok, payload: (await response.json()) as { items?: Array<{ runId?: string }> } };
+    });
+    expect(payload.ok).toBe(true);
+    expect(payload.payload.items?.some((item) => item.runId === runId)).toBe(true);
+
+    // From this point onward, only a fresh Runs activation is allowed to see
+    // the authoritative catalogue. A stale global recovery generation has
+    // already capped and cannot accidentally make this assertion pass.
+    await page.route('**/api/v1/runs', async (route) => {
+      await route.fulfill({
+        json: {
+          items: [run],
+          nextCursor: null,
+          snapshotAt: observedAt,
+          latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
+  });
+
+  test('keeps run recovery alive while SSE repeatedly opens and errors', async ({ page }) => {
+    await page.clock.install();
+    const fixture = await openFixture(page, {
+      sseFlapping: true,
+      runCount: 1,
+      replaceRunAfterAttempts: 5,
+    });
+    await openDestination(page, 'Runs');
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+
+    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
+    expect(fixture.runsRequests.length).toBeGreaterThan(5);
+  });
+
+  test('caps run recovery while SSE repeatedly opens and errors', async ({ page }) => {
+    await page.clock.install();
+    const fixture = await openFixture(page, {
+      sseFlapping: true,
+      runCount: 1,
+      replaceRunAfterAttempts: 999,
+    });
+    await openDestination(page, 'Runs');
+
+    for (let attempt = 0; attempt < 35; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    const requestsAtWindowEnd = fixture.runsRequests.length;
+    expect(requestsAtWindowEnd).toBeGreaterThan(1);
+    expect(requestsAtWindowEnd).toBeLessThanOrEqual(32);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    expect(fixture.runsRequests.length).toBe(requestsAtWindowEnd);
+  });
+
+  test('stops disconnected identity reconciliation after its bounded recovery window', async ({ page }) => {
+    await page.clock.install();
+    const fixture = await openFixture(page, { sseDisconnected: true, runCount: 1, replaceRunAfterAttempts: 999 });
+    await openDestination(page, 'Runs');
+
+    // `runFor` deliberately fires each due timer at most once. Advance one
+    // bounded retry interval at a time so every refresh promise gets a turn
+    // to settle before the following timer is scheduled.
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    const requestsAtWindowEnd = fixture.runsRequests.length;
+    expect(requestsAtWindowEnd).toBeGreaterThan(1);
+    expect(requestsAtWindowEnd).toBeLessThanOrEqual(32);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    expect(fixture.runsRequests.length).toBe(requestsAtWindowEnd);
+  });
+
+  test('starts a fresh Runs reconciliation window after the initial window caps', async ({ page }) => {
+    await page.clock.install();
+    const fixture = await openFixture(page, {
+      sseDisconnected: true,
+      runCount: 1,
+      // The target is created after the global recovery window has expired;
+      // activating Runs must begin a new bounded generation.
+      replaceRunAfterAttempts: 40,
+    });
+
+    for (let attempt = 0; attempt < 35; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    const requestsBeforeRunsActivation = fixture.runsRequests.length;
+    expect(requestsBeforeRunsActivation).toBeGreaterThan(1);
+    expect(requestsBeforeRunsActivation).toBeLessThanOrEqual(32);
+
+    await openDestination(page, 'Runs');
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
+    expect(fixture.runsRequests.length).toBeGreaterThan(requestsBeforeRunsActivation);
+  });
+
+  test('reconciles a lagging run catalogue against the overview count', async ({ page }) => {
+    await openFixture(page, { reconcileRuns: true });
+    await openDestination(page, 'Runs');
+    await expect(
+      page.locator('observatory-runs').getByRole('button', { name: runId, exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('keeps authoritative cached runs visible when a refresh becomes stale', async ({ page }) => {
+    await openFixture(page, { runsRefreshFailure: true });
+    await openDestination(page, 'Runs');
+    const runs = page.locator('observatory-runs');
+    await expect(runs.getByRole('status').filter({ hasText: /last known results/i })).toBeVisible({ timeout: 10_000 });
+    await expect(runs.getByRole('button', { name: runId, exact: true })).toBeVisible();
+  });
+
+  test('keeps the selected trace visible when its refresh becomes unavailable', async ({ page }) => {
+    await openFixture(page, { traceRefreshFailure: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    await expect(trace.getByRole('status').filter({ hasText: /latest trace refresh is unavailable/i })).toBeVisible();
+    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+  });
+
+  test('reconciles a delayed first trace projection without hiding its loading state', async ({ page }) => {
+    const fixture = await openFixture(page, { traceInitialFailure: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
+    expect(fixture.traceRequests.length).toBeGreaterThan(1);
+  });
+
+  test('reconciles a selected run when its trace materializes after an observation invalidation', async ({ page }) => {
+    await page.addInitScript(() => {
+      class ObservationEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = ObservationEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private closed = false;
+        constructor() {
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = ObservationEventSource.OPEN;
+            this.onopen?.();
+            setTimeout(() => {
+              if (this.closed) return;
+              this.onmessage?.(new MessageEvent('observation.changed', { data: '{}' }));
+            }, 750);
+          }, 0);
+        }
+        addEventListener(): void { /* The callback above models a named invalidation. */ }
+        close(): void { this.closed = true; this.readyState = ObservationEventSource.CLOSED; }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: ObservationEventSource });
+    });
+    await openFixture(page, { traceMaterializesAfterAttempts: 1 });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    await expect(page.locator('observatory-trace').getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('stops initial trace reconciliation after its bounded recovery window', async ({ page }) => {
+    await page.clock.install();
+    const fixture = await openFixture(page, { traceUnavailable: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+
+    for (let attempt = 0; attempt < 70; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    await page.clock.runFor(1);
+    for (let flush = 0; flush < 4; flush += 1) await page.evaluate(() => Promise.resolve());
+    const requestsAtWindowEnd = fixture.traceRequests.length;
+    expect(requestsAtWindowEnd).toBeGreaterThan(1);
+    expect(requestsAtWindowEnd).toBeLessThanOrEqual(32);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+    }
+    expect(fixture.traceRequests.length).toBe(requestsAtWindowEnd);
   });
 
   test('reconciles a named observation.changed SSE event beyond the initial REST snapshot', async ({

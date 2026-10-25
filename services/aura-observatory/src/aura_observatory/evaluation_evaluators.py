@@ -8,7 +8,7 @@ this module.
 
 # Nested projections are validated by the definition boundary and are kept as
 # JSON-compatible mappings so this module remains transport-independent.
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnnecessaryIsInstance=false
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportArgumentType=false, reportUnnecessaryIsInstance=false
 # ruff: noqa: E501
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from time import monotonic
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import UUID, uuid5
 
 from aura_observatory.evaluation_definitions import (
@@ -1176,6 +1176,13 @@ class EvaluationApplicationService:
                     evaluator_version=evaluator_version,
                     component_id=context.component_id,
                     component_version=context.component_version,
+                    code_revision=context.code_revision,
+                    image_digest=context.image_digest,
+                    configuration_revision=context.configuration_revision,
+                    provenance_component=context.provenance_component,
+                    provenance_version=context.provenance_version,
+                    provenance_digest=context.provenance_digest,
+                    execution_provenance=context.execution_provenance,
                     observed_at=context.observed_at,
                     artifact_reference_id=context.artifact_reference_id,
                     case_id=case_id,
@@ -1199,6 +1206,156 @@ class EvaluationApplicationService:
             else:
                 self._record_span(None, "failure", started, error_code="storage_failure")
             raise
+
+    async def evaluate_result(
+        self,
+        *,
+        job_id: str,
+        result_id: str,
+        request_data: Mapping[str, object],
+        result_data: Mapping[str, object],
+    ) -> tuple[EvaluationScore, ...]:
+        """Score one completed runner result using its persisted bindings.
+
+        The runner transport intentionally carries only content-free runtime
+        evidence.  Until a controlled replay projection is available, an
+        empty typed evidence projection is therefore used.  Deterministic
+        evaluators still persist an explicit ``not_observed`` score for every
+        admitted case, retaining coverage and reproducibility without
+        manufacturing evidence or copying evaluation content into this
+        service.
+
+        Case versions are resolved from the exact persisted membership for the
+        admitted dataset version.  A missing or inconsistent membership is a
+        permanent projection validation error; a repository failure remains a
+        storage error so the result consumer can retry instead of acknowledging
+        a completed result with incomplete score coverage.
+        """
+
+        if result_data.get("status") != "completed":
+            return ()
+        raw_case_ids = request_data.get("caseIds")
+        target = request_data.get("targetComponent")
+        provenance = request_data.get("provenance")
+        if (
+            not isinstance(raw_case_ids, list)
+            or not raw_case_ids
+            or any(not isinstance(case_id, str) for case_id in raw_case_ids)
+            or len({case_id for case_id in raw_case_ids if isinstance(case_id, str)})
+            != len(raw_case_ids)
+            or not isinstance(target, Mapping)
+            or not isinstance(provenance, Mapping)
+        ):
+            raise DefinitionValidationError("result scoring bindings are invalid")
+        component_id = target.get("componentId")
+        component_version = target.get("componentVersion")
+        code_revision = target.get("codeRevision")
+        image_digest = target.get("imageDigest")
+        configuration_revision = target.get("configurationRevision")
+        if not all(
+            isinstance(value, str)
+            for value in (
+                component_id,
+                component_version,
+                code_revision,
+                image_digest,
+                configuration_revision,
+            )
+        ):
+            raise DefinitionValidationError("result scoring component is invalid")
+        completed_at = result_data.get("completedAt")
+        if not isinstance(completed_at, str):
+            raise DefinitionValidationError("result scoring timestamp is invalid")
+        try:
+            observed_at = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise DefinitionValidationError("result scoring timestamp is invalid") from error
+        if observed_at.tzinfo is None or observed_at.utcoffset() != UTC.utcoffset(observed_at):
+            raise DefinitionValidationError("result scoring timestamp is invalid")
+        try:
+            result_uuid = UUID(result_id)
+            UUID(job_id)
+        except ValueError as error:
+            raise DefinitionValidationError("result scoring identifiers are invalid") from error
+        execution_provenance = _score_execution_provenance(provenance)
+        evaluators = provenance.get("evaluators")
+        if (
+            not isinstance(evaluators, list)
+            or not evaluators
+            or not isinstance(evaluators[0], Mapping)
+        ):
+            raise DefinitionValidationError("result scoring evaluator is invalid")
+        evaluator_reference = evaluators[0]
+        evaluator_id = evaluator_reference.get("evaluatorId")
+        evaluator_version = evaluator_reference.get("evaluatorVersion")
+        if not isinstance(evaluator_id, str) or not isinstance(evaluator_version, str):
+            raise DefinitionValidationError("result scoring evaluator is invalid")
+        dataset_reference = _resource_reference(provenance, "dataset")
+        suite_reference = _resource_reference(provenance, "suite")
+        case_ids = tuple(cast(str, case_id) for case_id in raw_case_ids)
+        case_versions = await self._definitions.case_versions_for_selection(
+            dataset_reference["resourceId"],
+            dataset_reference["resourceVersion"],
+            case_ids,
+        )
+        if set(case_versions) != set(case_ids):
+            raise DefinitionValidationError("result scoring case membership is invalid")
+        context_base = {
+            "job_id": job_id,
+            "result_id": result_id,
+            "dataset_id": str(dataset_reference["resourceId"]),
+            "suite_id": str(suite_reference["resourceId"]),
+            "evaluator_id": evaluator_id,
+            "evaluator_version": evaluator_version,
+            "component_id": component_id,
+            "component_version": component_version,
+            "code_revision": code_revision,
+            "image_digest": image_digest,
+            "configuration_revision": configuration_revision,
+            "provenance_component": "aura.observatory.deterministic_evaluators",
+            "provenance_version": "1.0.0",
+            "provenance_digest": None,
+            "execution_provenance": execution_provenance,
+            "observed_at": observed_at.astimezone(UTC),
+        }
+        persisted: list[EvaluationScore] = []
+        for raw_case_id in case_ids:
+            case = await self._definitions.get_case(raw_case_id, case_versions[raw_case_id])
+            if case is None:
+                raise DefinitionValidationError("result scoring case definition is missing")
+            context = ScoreContext(
+                score_id=str(uuid5(result_uuid, f"case:{raw_case_id}")),
+                case_id=raw_case_id,
+                dataset_id=context_base["dataset_id"],
+                suite_id=context_base["suite_id"],
+                evaluator_id=evaluator_id,
+                evaluator_version=evaluator_version,
+                component_id=component_id,
+                component_version=component_version,
+                code_revision=code_revision,
+                image_digest=image_digest,
+                configuration_revision=configuration_revision,
+                provenance_component=context_base["provenance_component"],
+                provenance_version=context_base["provenance_version"],
+                provenance_digest=None,
+                execution_provenance=execution_provenance,
+                observed_at=observed_at.astimezone(UTC),
+                job_id=job_id,
+                result_id=result_id,
+            )
+            persisted.extend(
+                await self.evaluate_case(
+                    case_id=case.case_id,
+                    case_version=case.version,
+                    suite_id=context.suite_id,
+                    suite_version=str(suite_reference["resourceVersion"]),
+                    evaluator_id=evaluator_id,
+                    evaluator_version=evaluator_version,
+                    context=context,
+                    evidence=TypedReplayEvidence(),
+                )
+            )
+        return tuple(persisted)
 
     def _record_measurements(
         self, evaluator: EvaluatorDefinition, measurements: tuple[EvaluationMeasurement, ...]
@@ -1270,6 +1427,44 @@ class EvaluationApplicationService:
                 evaluator_duration_ms if evaluator_duration_ms is not None else 0.0,
                 {"evaluator_kind": evaluator.kind},
             )
+
+
+def _resource_reference(provenance: Mapping[str, object], name: str) -> dict[str, str]:
+    value = provenance.get(name)
+    if not isinstance(value, Mapping):
+        raise DefinitionValidationError(f"result scoring {name} reference is invalid")
+    identifier = value.get("id")
+    version = value.get("version")
+    if not isinstance(identifier, str) or not isinstance(version, str):
+        raise DefinitionValidationError(f"result scoring {name} reference is invalid")
+    return {"resourceId": identifier, "resourceVersion": version}
+
+
+def _score_execution_provenance(provenance: Mapping[str, object]) -> dict[str, object]:
+    """Map the runner's v1 provenance spelling to the score projection."""
+
+    dataset = _resource_reference(provenance, "dataset")
+    suite = _resource_reference(provenance, "suite")
+    evaluators = provenance.get("evaluators")
+    components = provenance.get("components")
+    model = provenance.get("model")
+    deployment = provenance.get("deploymentRevision")
+    reproducibility = provenance.get("reproducibility")
+    if not all(
+        isinstance(value, list) and value for value in (evaluators, components)
+    ) or not isinstance(model, Mapping) or not isinstance(deployment, str) or not isinstance(
+        reproducibility, Mapping
+    ):
+        raise DefinitionValidationError("result scoring provenance is invalid")
+    return {
+        "dataset": dataset,
+        "suite": suite,
+        "evaluators": list(evaluators),
+        "components": list(components),
+        "model": dict(model),
+        "deploymentRevision": deployment,
+        "reproducibility": dict(reproducibility),
+    }
 
 
 BUILTIN_EVALUATOR_IDS = _BUILTIN_EVALUATOR_IDS

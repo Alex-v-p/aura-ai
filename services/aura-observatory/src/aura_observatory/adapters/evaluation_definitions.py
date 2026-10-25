@@ -206,6 +206,30 @@ class InMemoryEvaluationDefinitionRepository:
             for case_id in case_ids
         )
 
+    async def case_versions_for_selection(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> dict[str, str]:
+        """Resolve the exact immutable case version bound to a dataset."""
+
+        if not case_ids:
+            return {}
+        dataset = self.datasets.get((dataset_id, version))
+        if dataset is None or not set(case_ids) <= set(dataset.case_ids):
+            return {}
+        resolved: dict[str, str] = {}
+        for case_id in case_ids:
+            matches = [
+                case
+                for case in self.cases.values()
+                if case.case_id == case_id
+                and case.dataset.resource_id == dataset_id
+                and case.dataset.version == version
+            ]
+            if len(matches) != 1:
+                return {}
+            resolved[case_id] = matches[0].version
+        return resolved
+
     def _put(self, store: dict[tuple[str, str], T], definition: T) -> T:
         key = (definition.resource_id, definition.version)
         existing = store.get(key)
@@ -580,6 +604,39 @@ class PostgresEvaluationDefinitionRepository:
                 )
                 row = await result.fetchone()
                 value = bool(row and int(row[0]) == len(set(case_ids)))
+        except Exception:
+            self._record_dependency("read", "failure", started, "database_failure")
+            raise DefinitionStorageError("definition storage failure") from None
+        self._record_dependency("read", "success", started)
+        return value
+
+    async def case_versions_for_selection(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> dict[str, str]:
+        """Return exact persisted dataset membership versions for selected cases."""
+
+        if not case_ids:
+            return {}
+        placeholders = ",".join("%s" for _ in case_ids)
+        started = monotonic()
+        try:
+            async with self._connection_factory() as connection:
+                result = await connection.execute(
+                    f"""SELECT membership.case_id, membership.case_version
+                    FROM observatory_evaluation_dataset_cases AS membership
+                    JOIN observatory_evaluation_cases AS case_definition
+                      ON case_definition.case_id = membership.case_id
+                     AND case_definition.case_version = membership.case_version
+                    WHERE membership.dataset_id = %s
+                      AND membership.dataset_version = %s
+                      AND membership.case_id IN ({placeholders})
+                      AND case_definition.dataset_id = %s
+                      AND case_definition.dataset_version = %s""",
+                    (dataset_id, version, *case_ids, dataset_id, version),
+                )
+                rows = await result.fetchall()
+                resolved = {str(row[0]): str(row[1]) for row in rows}
+                value = resolved if len(resolved) == len(set(case_ids)) else {}
         except Exception:
             self._record_dependency("read", "failure", started, "database_failure")
             raise DefinitionStorageError("definition storage failure") from None

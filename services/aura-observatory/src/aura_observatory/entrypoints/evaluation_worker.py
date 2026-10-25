@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from aura_observatory.composition import (
     build_calibration_service,
+    build_evaluation_application_service,
     build_evaluation_experiment_service,
     build_evaluation_orchestration,
     build_local_judge_service,
@@ -71,11 +72,39 @@ async def run(settings: Settings | None = None, stop: Awaitable[None] | None = N
     judge_service: LocalJudgeService | None = None
     calibration_service: CalibrationService | None = None
     try:
+        score_service: Any | None = None
+        result_scorer: Callable[..., Awaitable[object]] | None = None
+        if getattr(resolved, "database_url", None):
+            try:
+                score_service = build_evaluation_application_service(resolved)
+
+                async def score_result(
+                    job_id: str,
+                    result_id: str,
+                    request_data: Mapping[str, object],
+                    result_data: Mapping[str, object],
+                ) -> object:
+                    return await score_service.evaluate_result(  # type: ignore[union-attr]
+                        job_id=job_id,
+                        result_id=result_id,
+                        request_data=request_data,
+                        result_data=result_data,
+                    )
+
+                result_scorer = score_result
+            except Exception:
+                # Score projection is optional at worker startup.  The result
+                # consumer remains available when ClickHouse is degraded.
+                _LOGGER.warning(
+                    "evaluation score projection unavailable",
+                    extra={"code": "score_projection_unavailable"},
+                )
         service = build_evaluation_orchestration(
             resolved,
             transport=NatsEvaluationTransport(
                 connection, max_bytes=resolved.evaluation_max_envelope_bytes
             ),
+            result_scorer=result_scorer,
         )
         # Drain persisted comparison facts once before dispatch begins, then
         # keep a single bounded recovery loop owned by this worker.  The

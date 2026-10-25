@@ -79,6 +79,7 @@ Read the technology matrix and only the applicable ADRs for architecture, backen
 ## Operational runbooks
 
 - [Authentik relocation](runbooks/authentik-relocation.md) — move the temporary local identity provider to an external instance while preserving Aura's OIDC issuer and subject boundary.
+- [Observatory reliability and acceptance](runbooks/observatory-reliability.md) — run the disposable full-stack and evaluation resilience harnesses, diagnose bounded outages, and collect privacy-safe evidence.
 
 ## Local platform stack
 

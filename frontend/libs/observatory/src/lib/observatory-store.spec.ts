@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
-import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, ownerLoginHref } from './observatory-models';
+import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, needsRunReconciliation, needsSelectedRunReconciliation, ownerLoginHref } from './observatory-models';
 import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
@@ -32,6 +32,7 @@ describe('observatory metadata boundaries', () => {
     const catalogue = { snapshotAt: '2026-10-17T00:00:00.000Z', capturePolicy: 'metadata_only', limits: { defaultWindowHours: 24, maximumWindowDays: 31, maximumPointsPerSeries: 200, maximumSeries: 12, maximumBreakdowns: 50, maximumScannedRows: 1000000, executionTimeoutMs: 5000 }, items: [{ metric: 'operation_duration_ms', unit: 'milliseconds', focusAreas: ['all'], supportedAggregations: ['average', 'p95'], supportedGroupings: ['none', 'component'], availability: 'available', unavailableSignals: [] }] };
     expect(parseAnalyticsMetricCatalogue(catalogue)).not.toBeNull();
     expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], metric: 'document_retrieval_duration_ms' }] })).not.toBeNull();
+    expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], metric: 'evaluation_runner_nats_recovery_count' }] })).not.toBeNull();
     expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: Array.from({ length: 128 }, () => catalogue.items[0]) })).not.toBeNull();
     expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: Array.from({ length: 129 }, () => catalogue.items[0]) })).toBeNull();
     expect(parseAnalyticsMetricCatalogue({ ...catalogue, items: [{ ...catalogue.items[0], supportedAggregations: ['arbitrary'] }] })).toBeNull();
@@ -120,6 +121,22 @@ describe('observatory metadata boundaries', () => {
     expect(visibleRunId).toBe('run-live-1');
     expect(coordinator.isRunning).toBe(false);
     void blockedFullSnapshot;
+  });
+
+  it('requests bounded run reconciliation when overview leads the catalogue', () => {
+    const overview = { runCount: 2 } as Parameters<typeof needsRunReconciliation>[0];
+    const catalogue = { items: [{ runId: 'run-1' }] } as Parameters<typeof needsRunReconciliation>[1];
+    expect(needsRunReconciliation(overview, catalogue)).toBe(true);
+    expect(needsRunReconciliation({ runCount: 1 } as typeof overview, catalogue)).toBe(false);
+    expect(needsRunReconciliation(overview, null)).toBe(false);
+  });
+
+  it('keeps a successful detail response pending until its trace materializes', () => {
+    const detail = { traceId: null } as Parameters<typeof needsSelectedRunReconciliation>[0];
+    const trace = { traceId: '0123456789abcdef0123456789abcdef', spans: [] } as Parameters<typeof needsSelectedRunReconciliation>[1];
+    expect(needsSelectedRunReconciliation(detail, null)).toBe(true);
+    expect(needsSelectedRunReconciliation({ traceId: '0123456789abcdef0123456789abcdef' } as typeof detail, trace)).toBe(false);
+    expect(needsSelectedRunReconciliation(null, null)).toBe(false);
   });
 
   it('connects the live surface when initial catalog loading remains unresolved', async () => {

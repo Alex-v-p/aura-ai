@@ -669,6 +669,10 @@ class EvaluationDefinitionRepository(Protocol):
         self, dataset_id: str, version: str, case_ids: tuple[str, ...]
     ) -> bool: ...
 
+    async def case_versions_for_selection(
+        self, dataset_id: str, version: str, case_ids: tuple[str, ...]
+    ) -> Mapping[str, str]: ...
+
 
 class EvaluationResultReferencePort(Protocol):
     """Read-only result envelope boundary for experiment validation."""

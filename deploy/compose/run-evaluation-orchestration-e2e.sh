@@ -21,6 +21,25 @@ start_timeout=${AURA_E2E_COMPOSE_START_TIMEOUT_SECONDS:-900}
 step_timeout=${AURA_E2E_COMPOSE_STEP_TIMEOUT_SECONDS:-180}
 cleanup_timeout=${AURA_E2E_COMPOSE_CLEANUP_TIMEOUT_SECONDS:-90}
 bounded() { timeout --foreground --signal=TERM --kill-after=10s "${1}s" "${@:2}"; }
+# shellcheck source=e2e/diagnostic-categories.sh
+. "$ROOT/deploy/compose/e2e/diagnostic-categories.sh"
+
+remove_disposable_networks() {
+  local network_rows network_id network_name
+  network_rows=$(docker network ls --filter "label=com.docker.compose.project=$project" \
+    --format '{{.ID}} {{.Name}}' 2>/dev/null || true)
+  while read -r network_id network_name; do
+    [ -n "$network_id" ] || continue
+    case "$network_name" in
+      "${project}_"*)
+        # Compose normally removes these during down. Keep the fallback exact
+        # to this generated project so a failed network create cannot leave a
+        # future run fighting an orphaned disposable subnet.
+        docker network rm "$network_id" >/dev/null 2>&1 || true
+        ;;
+    esac
+  done <<<"$network_rows"
+}
 
 write_secret() {
   local name=$1 value=$2
@@ -28,43 +47,163 @@ write_secret() {
   chmod 0600 "$secret_root/$name"
 }
 
+random_secret() { openssl rand -hex 32; }
+random_access_key() { printf 'GK%s' "$(openssl rand -hex 12)"; }
+
+emit_failure_diagnostics() {
+  local service container_id
+  for service in \
+    observatory-migrate observatory-postgres observatory-clickhouse observatory-session \
+    observatory-api observatory-collector observatory-evaluation-worker \
+    observatory-evaluation-scheduler aura-core-migrate aura-core-postgres \
+    aura-evaluation-runner; do
+    container_id=$(docker compose -p "$project" --env-file "$env_file" \
+      -f "$ROOT/compose.yaml" -f "$override_file" --profile observatory \
+      ps -q "$service" 2>/dev/null | head -n 1 || true)
+    if [ -z "$container_id" ]; then
+      continue
+    fi
+    docker inspect --format "$service status={{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" \
+      "$container_id" 2>/dev/null || true
+    # Never print source log lines or values. Only finite category names/counts
+    # may leave this disposable diagnostic boundary.
+    categories=$(bounded 15 docker logs --tail 100 "$container_id" 2>&1 |
+      classify_diagnostic_stream) || categories=categories=none
+    printf '%s %s\n' "$service" "$categories"
+  done
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [ "$status" -ne 0 ] && [ -f "$env_file" ] && [ -f "$override_file" ]; then
+    emit_failure_diagnostics
+  fi
   if [ -f "$env_file" ]; then
     bounded "$cleanup_timeout" docker compose -p "$project" --env-file "$env_file" \
       -f "$ROOT/compose.yaml" -f "$override_file" --profile observatory \
       down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
+  remove_disposable_networks
   bounded "$cleanup_timeout" find "$fixture_root" -depth -delete 2>/dev/null || true
   exit "$status"
 }
 trap cleanup EXIT INT TERM
 
-for pair in \
-  'aura-core-database-password runner-core-db' \
-  'aura-oidc-client-secret runner-oidc' \
-  'aura-nats-password runner-nats' \
-  'aura-nats-bootstrap-password runner-nats-bootstrap' \
-  'aura-nats-dispatch-password runner-nats-dispatch' \
-  'aura-nats-runner-password runner-nats-runner' \
-  'aura-valkey-password runner-valkey' \
-  'aura-garage-rpc-secret 0000000000000000000000000000000000000000000000000000000000000000' \
-  'aura-garage-access-key GK000000000000000000000000' \
-  'aura-garage-secret-key 1111111111111111111111111111111111111111111111111111111111111111' \
-  'observatory-database-password runner-observatory-db' \
-  'observatory-oidc-client-secret runner-observatory-oidc' \
-  'observatory-session-password runner-observatory-session' \
-  'observatory-ingest-credential runner-observatory-ingest' \
-  'observatory-clickhouse-password runner-observatory-clickhouse' \
-  'observatory-garage-access-key GK111111111111111111111111' \
-  'observatory-garage-secret-key 2222222222222222222222222222222222222222222222222222222222222222' \
-  'aura-evaluation-runner-garage-access-key GK222222222222222222222222' \
-  'aura-evaluation-runner-garage-secret-key 3333333333333333333333333333333333333333333333333333333333333333' \
-  'aura-evaluation-runner-database-password runner-evaluation-db'; do
-  set -- $pair
-  write_secret "$1" "$2"
+# Hold a repository-scoped host lock from IPAM inspection through Compose
+# startup. This prevents two disposable harnesses from selecting the same
+# currently-free subnet before either has created its network.
+root_lock_id=$(printf '%s' "$ROOT" | sha256sum | cut -c1-16)
+network_lock="/tmp/aura-e2e-network-${root_lock_id}.lock"
+exec 9>"$network_lock"
+if ! flock -w "${AURA_E2E_NETWORK_LOCK_TIMEOUT_SECONDS:-30}" 9; then
+  printf '%s\n' 'timed out waiting for the disposable E2E network allocation lock' >&2
+  exit 1
+fi
+
+write_secret aura-core-database-password "$(random_secret)"
+write_secret aura-oidc-client-secret "$(random_secret)"
+write_secret aura-nats-password "$(random_secret)"
+write_secret aura-nats-bootstrap-password "$(random_secret)"
+write_secret aura-nats-dispatch-password "$(random_secret)"
+write_secret aura-nats-runner-password "$(random_secret)"
+write_secret aura-valkey-password "$(random_secret)"
+write_secret aura-garage-rpc-secret "$(random_secret)"
+write_secret aura-garage-access-key "$(random_access_key)"
+write_secret aura-garage-secret-key "$(random_secret)"
+write_secret observatory-database-password "$(random_secret)"
+write_secret observatory-oidc-client-secret "$(random_secret)"
+write_secret observatory-session-password "$(random_secret)"
+write_secret observatory-ingest-credential "$(random_secret)"
+write_secret observatory-clickhouse-password "$(random_secret)"
+write_secret observatory-garage-access-key "$(random_access_key)"
+write_secret observatory-garage-secret-key "$(random_secret)"
+# The local judge bootstrap is also a disposable consumer of the shared Garage
+# layout. Keep its identity fixture-backed so Compose never falls back to the
+# repository's operator .secrets directory.
+write_secret observatory-judge-garage-access-key "$(random_access_key)"
+write_secret observatory-judge-garage-secret-key "$(random_secret)"
+write_secret observatory-api-garage-access-key "$(random_access_key)"
+write_secret observatory-api-garage-secret-key "$(random_secret)"
+write_secret aura-evaluation-runner-garage-access-key "$(random_access_key)"
+write_secret aura-evaluation-runner-garage-secret-key "$(random_secret)"
+write_secret aura-evaluation-runner-database-password "$(random_secret)"
+
+# Allocate every statically-addressed Compose network from disposable pools
+# after inspecting Docker's current IPAM. This keeps the runner compatible
+# with an already-running normal Aura stack and with other E2E projects while
+# giving the frontend its required /24 and the other networks /28s. The
+# provider network is included in the inventory, and COMPOSE_PARALLEL_LIMIT=1
+# preserves deterministic lifecycle ordering.
+mapfile -t network_id_array < <(docker network ls --quiet)
+if [ "${#network_id_array[@]}" -gt 0 ]; then
+  docker network inspect "${network_id_array[@]}" > "$fixture_root/docker-networks.json"
+else
+  printf '%s\n' '[]' > "$fixture_root/docker-networks.json"
+fi
+network_names=(
+  aura-edge aura-frontend aura-core-db aura-core-bus aura-evaluation-bus
+  aura-core-cache aura-document-parser aura-object-storage aura-core-egress
+  observatory-edge observatory-api observatory-db observatory-session
+  observatory-ingest observatory-identity-egress observatory-judge-egress
+  observatory-object-storage
+)
+declare -A network_subnets=()
+while read -r network_name network_subnet; do
+  [ -n "$network_name" ] || continue
+  network_subnets["$network_name"]="$network_subnet"
+done < <(
+  python3 - "$fixture_root/docker-networks.json" "$project" "${network_names[@]}" <<'PY'
+import ipaddress
+import json
+import sys
+
+network_path, project, *network_names = sys.argv[1:]
+with open(network_path, encoding="utf-8") as handle:
+    networks = json.load(handle)
+
+occupied = []
+for network in networks:
+    for config in (network.get("IPAM") or {}).get("Config") or []:
+        value = config.get("Subnet")
+        if not value:
+            continue
+        try:
+            occupied.append(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            continue
+
+frontend_free = [
+    candidate
+    for candidate in ipaddress.ip_network("10.254.128.0/18").subnets(new_prefix=24)
+    if all(not candidate.overlaps(existing) for existing in occupied)
+]
+small_free = [
+    candidate
+    for candidate in ipaddress.ip_network("10.254.192.0/18").subnets(new_prefix=28)
+    if all(not candidate.overlaps(existing) for existing in occupied)
+]
+if not frontend_free:
+    raise SystemExit("no free /24 frontend subnet remains in the dedicated E2E pool")
+if len(small_free) < len(network_names) - 1:
+    raise SystemExit("not enough free /28 subnets remain for the disposable E2E networks")
+
+offset = sum(ord(char) for char in project)
+frontend = frontend_free[offset % len(frontend_free)]
+small_offset = offset % len(small_free)
+selected = [small_free[(small_offset + index) % len(small_free)] for index in range(len(network_names) - 1)]
+print(network_names[0], frontend)
+for name, subnet in zip(network_names[1:], selected):
+    print(name, subnet)
+PY
+)
+for network_name in "${network_names[@]}"; do
+  test -n "${network_subnets[$network_name]:-}"
 done
+frontend_subnet=${network_subnets[aura-frontend]}
+document_parser_subnet=${network_subnets[aura-document-parser]}
+object_storage_subnet=${network_subnets[aura-object-storage]}
+observatory_object_storage_subnet=${network_subnets[observatory-object-storage]}
 
 cat >"$env_file" <<EOF
 AURA_STATE_ROOT=$state_root
@@ -91,6 +230,10 @@ AURA_OBSERVATORY_INGEST_CREDENTIAL_FILE=$secret_root/observatory-ingest-credenti
 AURA_OBSERVATORY_CLICKHOUSE_PASSWORD_FILE=$secret_root/observatory-clickhouse-password
 AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE=$secret_root/observatory-garage-access-key
 AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE=$secret_root/observatory-garage-secret-key
+AURA_OBSERVATORY_JUDGE_OBJECT_ACCESS_KEY_FILE=$secret_root/observatory-judge-garage-access-key
+AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE=$secret_root/observatory-judge-garage-secret-key
+AURA_OBSERVATORY_API_GARAGE_ACCESS_KEY_FILE=$secret_root/observatory-api-garage-access-key
+AURA_OBSERVATORY_API_GARAGE_SECRET_KEY_FILE=$secret_root/observatory-api-garage-secret-key
 AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE=$secret_root/aura-evaluation-runner-garage-access-key
 AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE=$secret_root/aura-evaluation-runner-garage-secret-key
 AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE=$secret_root/aura-evaluation-runner-database-password
@@ -115,6 +258,10 @@ AURA_EVALUATION_RUNNER_MAX_MODEL_CALLS=1
 AURA_EVALUATION_RUNNER_MAX_ARTIFACT_OPERATIONS=0
 AURA_TELEMETRY_OTLP_ENABLED=false
 AURA_TELEMETRY_DEPLOYMENT_ID=aura0092-e2e
+AURA_FRONTEND_SUBNET=$frontend_subnet
+AURA_DOCUMENT_PARSER_SUBNET=$document_parser_subnet
+AURA_OBJECT_STORAGE_SUBNET=$object_storage_subnet
+AURA_OBSERVATORY_OBJECT_STORAGE_SUBNET=$observatory_object_storage_subnet
 EOF
 chmod 0600 "$env_file"
 
@@ -144,6 +291,30 @@ services:
     volumes: !override
       - e2e_garage_data:/var/lib/garage:ro
       - e2e_garage_config:/run/garage-config:ro
+  observatory-judge-garage-bootstrap:
+    volumes: !override
+      - e2e_garage_data:/var/lib/garage:ro
+      - e2e_garage_config:/run/garage-config:ro
+  observatory-api-garage-bootstrap:
+    volumes: !override
+      - e2e_garage_data:/var/lib/garage:ro
+      - e2e_garage_config:/run/garage-config:ro
+  observatory-api:
+    secrets:
+      - observatory-database-password
+      - observatory-oidc-client-secret
+      - observatory-session-password
+      - observatory-ingest-credential
+      - observatory-clickhouse-password
+      - observatory-api-garage-access-key
+      - observatory-api-garage-secret-key
+    networks:
+      - observatory-api
+      - observatory-db
+      - observatory-session
+      - observatory-ingest
+      - observatory-identity-egress
+      - observatory-object-storage
   aura-evaluation-runner-garage-bootstrap:
     volumes: !override
       - e2e_garage_data:/var/lib/garage:ro
@@ -198,6 +369,17 @@ volumes:
   e2e_observatory_session_data: {}
 EOF
 
+# Docker otherwise allocates the unbounded internal networks from its global
+# default pools. Override every network used by this orchestration fixture so
+# a host with many saved Compose projects cannot exhaust those pools.
+{
+  printf '%s\n' 'networks:'
+  for network_name in "${network_names[@]}"; do
+    printf '  %s:\n    ipam: !override\n      config:\n        - subnet: %s\n' \
+      "$network_name" "${network_subnets[$network_name]}"
+  done
+} >> "$override_file"
+
 compose=(docker compose -p "$project" --env-file "$env_file" -f "$ROOT/compose.yaml" -f "$override_file" --profile observatory)
 "${compose[@]}" config --quiet
 wait_running() {
@@ -245,6 +427,33 @@ wait_healthy() {
   return 1
 }
 
+assert_scheduler_scale_prerequisites() {
+  local migration_container migration_status migration_exit
+
+  # The first Compose up above is the mandatory migration barrier. Before
+  # scaling an already-running scheduler, verify that barrier and its direct
+  # runtime dependency explicitly. This keeps the later scale operation from
+  # asking Compose to re-evaluate a one-shot migration service.
+  wait_healthy observatory-postgres observatory-evaluation-scheduler
+  migration_container=$("${compose[@]}" ps -aq observatory-migrate 2>/dev/null | head -n 1 || true)
+  if [ -z "$migration_container" ]; then
+    printf '%s\n' 'AURA_E2E scheduler scale prerequisite missing completed observatory migration' >&2
+    return 1
+  fi
+  migration_status=$(docker inspect -f '{{.State.Status}}' "$migration_container" 2>/dev/null || true)
+  migration_exit=$(docker inspect -f '{{.State.ExitCode}}' "$migration_container" 2>/dev/null || true)
+  if [ "$migration_status" != exited ] || [ "$migration_exit" != 0 ]; then
+    printf 'AURA_E2E scheduler scale prerequisite migration status=%s exit=%s\n' \
+      "$migration_status" "$migration_exit" >&2
+    return 1
+  fi
+}
+
+assert_runner_remains_available() {
+  wait_running aura-evaluation-runner
+  printf '%s\n' 'AURA_E2E Core evaluation runner remained available during Observatory evaluation outage'
+}
+
 if ! bounded "$start_timeout" "${compose[@]}" up --build --detach observatory-api observatory-collector observatory-evaluation-worker observatory-evaluation-scheduler aura-evaluation-runner; then
   # Keep startup failures actionable without emitting credentials, payloads, or
   # provider diagnostics from service logs.
@@ -252,11 +461,9 @@ if ! bounded "$start_timeout" "${compose[@]}" up --build --detach observatory-ap
     container_id=$("${compose[@]}" ps -q "$service" 2>/dev/null || true)
     if [ -n "$container_id" ]; then
       docker inspect --format "$service status={{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" "$container_id"
-      docker inspect --format '{{if .State.Health}}{{range .State.Health.Log}}{{.ExitCode}} {{end}}{{end}}' "$container_id" |
-        sed 's/[[:space:]]\+/ /g; s/^/health-exits=/'
-      docker logs --tail 80 "$container_id" 2>&1 |
-        rg -o -i '[A-Za-z][A-Za-z0-9_]*(?:Error|Exception)|error_code=[A-Za-z0-9_.-]+' |
-        tail -8 || true
+      categories=$(docker logs --tail 80 "$container_id" 2>&1 |
+        classify_diagnostic_stream) || categories=categories=none
+      printf '%s %s\n' "$service" "$categories"
     fi
   done
   exit 1
@@ -440,6 +647,52 @@ async def main() -> None:
                 if (await forbidden.fetchone())[0] != 0:
                     raise SystemExit("privacy field found in persisted evaluation state")
         print(json.dumps({"phase": "health_privacy", "state": "verified"}, sort_keys=True))
+        return
+    if phase == "dependency_metrics":
+        # This is the service-owned persistence boundary for evaluation
+        # dependency metrics.  Do not scrape an unrelated process metric or
+        # print labels/content: assert the exact fixed labels and finite
+        # values after the real PostgreSQL, NATS, and result/score paths.
+        async with _connection(settings.database_url) as connection:
+            result = await connection.execute(
+                "SELECT label_operation, label_outcome, value "
+                "FROM observatory_evaluation_metric_series "
+                "WHERE metric_name='observatory_evaluation_dependency_outcome_count' "
+                "ORDER BY label_operation, label_outcome"
+            )
+            rows = await result.fetchall()
+        allowed_operations = {
+            "postgresql", "evaluation_nats", "clickhouse", "garage", "ollama",
+            "evaluation_definition_state",
+        }
+        allowed_outcomes = {
+            "success", "published", "failed", "failure", "unavailable", "duplicate",
+        }
+        observed: set[tuple[str, str]] = set()
+        for operation, outcome, value in rows:
+            operation_text = str(operation)
+            outcome_text = str(outcome)
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                raise SystemExit("dependency outcome metric was not numeric")
+            if (
+                operation_text not in allowed_operations
+                or outcome_text not in allowed_outcomes
+                or not operation_text.isascii()
+                or not outcome_text.isascii()
+                or len(operation_text) > 64
+                or len(outcome_text) > 64
+                or not math.isfinite(numeric_value)
+                or numeric_value < 0
+                or numeric_value > 1_000_000_000_000
+            ):
+                raise SystemExit("dependency outcome metric was not finite and bounded")
+            observed.add((operation_text, outcome_text))
+        required = {("postgresql", "success"), ("evaluation_nats", "published")}
+        if not required.issubset(observed):
+            raise SystemExit("dependency outcome metric samples missing real PG/NATS paths")
+        print(json.dumps({"phase": "dependency_metrics", "state": "verified", "sample_count": len(rows)}, sort_keys=True))
         return
     if phase == "jetstream_redelivery":
         await _exercise_jetstream_redelivery(settings)
@@ -652,7 +905,11 @@ async def main() -> None:
                 "FROM observations WHERE component_id IN "
                 "('aura.observatory.evaluation_orchestration', "
                 "'aura.observatory.evaluation_scheduler') AND kind='span' "
-                "ORDER BY observed_at DESC LIMIT 512",
+                # Keep a bounded but sufficiently wide verification window.
+                # The Collector recovery phase can append more than 512
+                # metadata-only spans, which otherwise evicts the earlier
+                # transport-failure span required by this assertion.
+                "ORDER BY observed_at DESC LIMIT 4096",
             )
             operations = {str(row.get("operation")) for row in rows}
             dimensions = [row.get("dimensions") if isinstance(row.get("dimensions"), dict) else {} for row in rows]
@@ -983,12 +1240,10 @@ run_probe() {
     for service in observatory-evaluation-worker observatory-evaluation-scheduler aura-evaluation-runner; do
       container_id=$("${compose[@]}" ps -q "$service" 2>/dev/null | head -n 1 || true)
       if [ -n "$container_id" ]; then
-        docker inspect --format "$service status={{.State.Status}} exit={{.State.ExitCode}} restart={{.RestartCount}} oom={{.State.OOMKilled}} error={{.State.Error}}" "$container_id" >&2
+        docker inspect --format "$service status={{.State.Status}} exit={{.State.ExitCode}} restart={{.RestartCount}} oom={{.State.OOMKilled}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" "$container_id" >&2
         categories=$(docker logs --tail 80 "$container_id" 2>&1 |
-          rg -o -i 'Traceback|Error|Exception|psycopg|database|nats|jetstream|permission|connection' |
-          sort -u | paste -sd, - || true)
-        printf 'AURA_E2E service=%s bounded_log_categories=%s\n' \
-          "$service" "${categories:-none}" >&2
+          classify_diagnostic_stream) || categories=categories=none
+        printf 'AURA_E2E service=%s %s\n' "$service" "$categories" >&2
       fi
     done
     return "$status"
@@ -1039,25 +1294,30 @@ run_probe health_privacy
 
 # Two scheduler replicas must materialize one due occurrence.  An explicitly
 # expired schedule lease is then recovered after a scheduler restart.
-bounded "$start_timeout" "${compose[@]}" up --detach --scale observatory-evaluation-scheduler=2 \
+assert_scheduler_scale_prerequisites
+bounded "$start_timeout" "${compose[@]}" up --no-deps --detach --scale observatory-evaluation-scheduler=2 \
   observatory-evaluation-scheduler
 wait_running observatory-evaluation-scheduler
 run_probe schedule_seed
 run_probe schedule_verify
 bounded "$step_timeout" "${compose[@]}" stop observatory-evaluation-scheduler
+assert_runner_remains_available
 run_probe schedule_expire
 bounded "$start_timeout" "${compose[@]}" start observatory-evaluation-scheduler
 wait_running observatory-evaluation-scheduler
+assert_runner_remains_available
 run_probe schedule_recovery
 
 # Verify persisted heartbeat freshness, age, and recovery without waiting for
 # the production two-minute lease horizon.
 run_probe heartbeat_fresh
 bounded "$step_timeout" "${compose[@]}" stop observatory-evaluation-worker
+assert_runner_remains_available
 run_probe heartbeat_stale_seed
 run_probe heartbeat_stale
 bounded "$start_timeout" "${compose[@]}" start observatory-evaluation-worker
 wait_running observatory-evaluation-worker
+assert_runner_remains_available
 run_probe heartbeat_recovered
 
 # Exercise real JetStream ack-failure/redelivery on the Observatory result
@@ -1091,12 +1351,14 @@ for service in observatory-evaluation-worker observatory-evaluation-scheduler; d
     exit 1
   fi
 done
+assert_runner_remains_available
 bounded "$start_timeout" "${compose[@]}" start aura-nats
 bounded "$step_timeout" "${compose[@]}" restart observatory-evaluation-worker
 bounded "$start_timeout" "${compose[@]}" up --detach \
   observatory-api observatory-evaluation-worker observatory-evaluation-scheduler aura-evaluation-runner
 wait_running observatory-api observatory-evaluation-worker observatory-evaluation-scheduler aura-evaluation-runner
 run_probe recovery
+run_probe dependency_metrics
 
 # PostgreSQL failure is classified at the repository boundary and recovery
 # restores the worker lease without touching Core state.
@@ -1108,11 +1370,14 @@ for service in observatory-evaluation-worker observatory-evaluation-scheduler; d
     exit 1
   fi
   container_id=$("${compose[@]}" ps -q "$service" | head -n 1)
-  if docker logs --tail 100 "$container_id" 2>&1 | rg -q 'Traceback|^[[:space:]]*File "'; then
-    printf 'AURA_E2E raw traceback found during PostgreSQL outage\n' >&2
+  categories=$(docker logs --tail 100 "$container_id" 2>&1 |
+    classify_diagnostic_stream) || categories=categories=none
+  if [[ "$categories" == *exception:* ]]; then
+    printf 'AURA_E2E bounded exception category found during PostgreSQL outage\n' >&2
     exit 1
   fi
 done
+assert_runner_remains_available
 bounded "$start_timeout" "${compose[@]}" start observatory-postgres
 wait_running observatory-postgres
 wait_healthy observatory-postgres
@@ -1215,7 +1480,6 @@ if (( collector_recovered == 0 )); then
   printf '%s\n' 'AURA_E2E Collector retry queue did not drain within the bounded recovery window' >&2
   exit 1
 fi
-run_probe trace_verify
 run_probe trace_verify
 
 metrics_container=$("${compose[@]}" ps -q observatory-api | head -n 1)

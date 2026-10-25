@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, EventEmitter, Output, inject } from '@angular/core';
+import { AfterViewChecked, AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, EventEmitter, Output, inject } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { type RunStatus } from '@aura/observatory-api-client';
@@ -9,7 +9,7 @@ import { normalizeRunFilters, type RunFilters } from '../../observatory-models';
   selector: 'observatory-runs', standalone: true, imports: [FormsModule, DatePipe], changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h2 class="panel-title">Recent metadata runs</h2><form class="filters" (ngSubmit)="apply()" aria-label="Run filters"><label>Status <select name="status" [(ngModel)]="draft.status"><option [ngValue]="undefined">All statuses</option>@for (status of statuses; track status) { <option [value]="status">{{ status }}</option> }</select></label><label>Component <input name="component" [(ngModel)]="draft.component" placeholder="component id" /></label><details class="advanced-filters"><summary>More filters</summary><div class="advanced-filter-grid"><label>Model <input name="model" [(ngModel)]="draft.model" placeholder="model label" /></label><label>Deployment <input name="deployment" [(ngModel)]="draft.deployment" placeholder="deployment id" /></label><label>From (UTC) <input name="from" type="datetime-local" [(ngModel)]="draft.from" /></label><label>To (UTC) <input name="to" type="datetime-local" [(ngModel)]="draft.to" /></label></div></details><button type="submit">Apply filters</button><button type="button" class="clear-button" (click)="clearFilters()">Clear filters</button></form><p class="active-filter-summary" role="status" aria-live="polite">{{ activeFilterSummary() }}</p>
-    @if (store.resourceState('runs') === 'loading') { <div class="route-skeleton runs-skeleton" role="status" aria-label="Loading recent runs"><span></span><span></span><span></span></div> } @else if (store.resourceState('runs') === 'error') { <p class="failure" role="alert">Recent runs are unavailable. <button type="button" (click)="retry()">Retry recent runs</button></p> } @else if (store.resourceState('runs') === 'stale') { <p class="notice" role="status">Recent runs could not be refreshed; showing the last known results. <button type="button" (click)="retry()">Retry</button></p> } @else if (store.resourceState('runs') === 'empty') { <section class="empty empty-state" role="status" aria-live="polite"><strong>No metadata runs match these filters.</strong><p>{{ hasActiveFilters() ? 'Adjust the filters or clear them to browse recent runs.' : 'No recent runs are available in the current snapshot.' }}</p>@if (hasActiveFilters()) { <button type="button" class="clear-button" (click)="clearFilters()">Clear filters</button> } @else { <button type="button" (click)="retry()">Refresh runs</button> }</section> } @else { <div class="table-wrap"><table><caption class="sr-only">Recent Observatory runs</caption><thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Model</th><th scope="col">Deployment</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>@for (run of store.snapshot().runs?.items ?? []; track run.runId) { <tr><th scope="row"><button class="link" type="button" (click)="select(run.runId)">{{ run.runId }}</button></th><td><span class="status" [class]="'status-' + run.status">{{ run.status }}</span></td><td>{{ run.startedAt | date:'short' }}</td><td>{{ run.durationMs === null ? '—' : (run.durationMs + ' ms') }}</td><td>{{ run.model ?? '—' }}</td><td>{{ run.deploymentId }}</td><td>@if (run.traceId) { <button class="link" type="button" (click)="select(run.runId)">Trace</button> }</td></tr> }</tbody></table></div> }
+    @if (store.resourceState('runs') === 'loading') { <div class="route-skeleton runs-skeleton" role="status" aria-label="Loading recent runs"><span></span><span></span><span></span></div> } @else if (store.resourceState('runs') === 'error') { <p class="failure" role="alert">Recent runs are unavailable. <button type="button" (click)="retry()">Retry recent runs</button></p> } @else if (store.resourceState('runs') === 'empty') { <section class="empty empty-state" role="status" aria-live="polite"><strong>No metadata runs match these filters.</strong><p>{{ hasActiveFilters() ? 'Adjust the filters or clear them to browse recent runs.' : 'No recent runs are available in the current snapshot.' }}</p>@if (hasActiveFilters()) { <button type="button" class="clear-button" (click)="clearFilters()">Clear filters</button> } @else { <button type="button" (click)="retry()">Refresh runs</button> }</section> } @else { @if (store.resourceState('runs') === 'stale') { <p class="notice" role="status">Recent runs could not be refreshed; showing the last known results. <button type="button" (click)="retry()">Retry</button></p> } <div class="table-wrap"><table><caption class="sr-only">Recent Observatory runs</caption><thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Model</th><th scope="col">Deployment</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>@for (run of store.snapshot().runs?.items ?? []; track run.runId) { <tr><th scope="row"><button class="link" type="button" (click)="select(run.runId)">{{ run.runId }}</button></th><td><span class="status" [class]="'status-' + run.status">{{ run.status }}</span></td><td>{{ run.startedAt | date:'short' }}</td><td>{{ run.durationMs === null ? '—' : (run.durationMs + ' ms') }}</td><td>{{ run.model ?? '—' }}</td><td>{{ run.deploymentId }}</td><td>@if (run.traceId) { <button class="link" type="button" (click)="select(run.runId)">Trace</button> }</td></tr> }</tbody></table></div> }
     @if (store.snapshot().state === 'stale' || store.snapshot().state === 'disconnected') { <p class="notice" role="status">Data may be stale: {{ store.snapshot().error }}</p> }
   `,
   styles: [`
@@ -50,11 +50,42 @@ import { normalizeRunFilters, type RunFilters } from '../../observatory-models';
     @media (max-width:700px) { .filters { padding:1rem; } .filters > button,.filters > .clear-button { justify-self:stretch; } }
   `],
 })
-export class ObservatoryRunsComponent {
+export class ObservatoryRunsComponent implements AfterViewChecked, AfterViewInit {
   readonly store = inject(ObservatoryStore);
+  private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly destroyRef = inject(DestroyRef);
+  private visibilityObserver: MutationObserver | null = null;
+  private active = false;
   readonly statuses: RunStatus[] = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown'];
   draft: RunFilters = {};
   @Output() readonly runSelected = new EventEmitter<string>();
+  ngAfterViewInit(): void {
+    this.syncActivation();
+    if (typeof MutationObserver !== 'undefined') {
+      this.visibilityObserver = new MutationObserver(() => this.syncActivation());
+      this.visibilityObserver.observe(this.host.nativeElement, { attributes: true, attributeFilter: ['hidden', 'style'] });
+    }
+    this.destroyRef.onDestroy(() => {
+      this.visibilityObserver?.disconnect();
+      this.visibilityObserver = null;
+      this.store.deactivateRunsView();
+    });
+  }
+  ngAfterViewChecked(): void {
+    // The shell keeps this workspace mounted and toggles its host visibility
+    // during the parent's change-detection pass. A view check observes that
+    // route boundary synchronously, even when a browser does not deliver the
+    // corresponding attribute mutation before the first catalogue response.
+    this.syncActivation();
+  }
+  private syncActivation(): void {
+    const element = this.host.nativeElement;
+    const active = !element.hidden && element.style.display !== 'none';
+    if (active === this.active) return;
+    this.active = active;
+    if (active) this.store.activateRunsView();
+    else this.store.deactivateRunsView();
+  }
   apply(): void { this.store.setFilters(normalizeRunFilters(this.draft)); }
   retry(): void { void this.store.load(); }
   clearFilters(): void { this.draft = {}; this.apply(); }

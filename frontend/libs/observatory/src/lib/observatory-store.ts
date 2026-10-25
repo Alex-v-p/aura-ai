@@ -1,8 +1,14 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { type ComponentHealth, type EvaluationLiveEvent } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, needsRunReconciliation, needsSelectedRunReconciliation, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 import { parseEvaluationLiveEvent } from './features/evaluation/evaluation-dto-adapter';
+
+// The run projection can lag Core ingestion well beyond a normal SSE retry.
+// Keep recovery active for one minute, but at a cadence that cannot turn an
+// unavailable Observatory into a request storm.
+const RUN_RECONCILIATION_DELAY_MS = 2_000;
+const MAX_RUN_RECONCILIATION_ATTEMPTS = 30;
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -34,6 +40,11 @@ export class ObservatoryStore {
   readonly authGenerationRevision = signal(0);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private runReconciliationTimer: ReturnType<typeof setTimeout> | null = null;
+  private runReconciliationAttempts = 0;
+  private runsViewActive = false;
+  private selectedRunReconciliationTimer: ReturnType<typeof setTimeout> | null = null;
+  private selectedRunReconciliationAttempts = 0;
   private loadSequence = 0;
   private openRunSequence = 0;
   private authGeneration = 0;
@@ -41,6 +52,7 @@ export class ObservatoryStore {
   private pendingRecoveryState: ObservatoryAuthState | null = null;
   private readonly componentHealthRequests = new RequestGenerationGate();
   private readonly liveRefresh = new LiveRefreshCoordinator();
+  private lastEvaluationEventId: string | null = null;
   private readonly healthHistoryRefresh = new LiveRefreshCoordinator();
   private readonly catalogRefresh = new LiveRefreshCoordinator();
   private readonly analyticsRefresh = new LiveRefreshCoordinator();
@@ -141,19 +153,59 @@ export class ObservatoryStore {
   reconnectLive(): void { this.liveDisconnected.set(true); this.gateway.reconnectLive(this.handleLiveOpen, this.handleLiveMessage, this.handleLiveError); }
   reconnectEvaluationLive(): void { this.evaluationLiveDisconnected.set(true); this.gateway.reconnectEvaluationLive(this.handleEvaluationLiveOpen, this.handleEvaluationLiveMessage, this.handleEvaluationLiveError); }
   disconnectLive(): void { this.gateway.disconnectLive(); this.gateway.disconnectEvaluationLive(); this.liveDisconnected.set(false); this.evaluationLiveDisconnected.set(false); }
+  /** Start a fresh bounded catalogue recovery when the Runs workspace becomes active. */
+  activateRunsView(): void {
+    if (this.sessionRequired() || this.authState() !== 'authenticated') return;
+    this.runsViewActive = true;
+    this.resetRunReconciliation();
+    this.queueRunReconciliation();
+    this.queueLiveRefresh();
+  }
+  /** Stop a Runs-owned recovery generation when its view is destroyed. */
+  deactivateRunsView(): void {
+    this.runsViewActive = false;
+    this.resetRunReconciliation();
+  }
   async openRun(runId: string): Promise<void> {
-    const sequence = ++this.openRunSequence;
+    this.resetSelectedRunReconciliation();
+    const previousRun = this.selectedRun();
+    const preserveSelectedRun = this.selectedRunId() === runId && Boolean(previousRun.detail || previousRun.trace);
     this.selectedRunId.set(runId);
-    this.selectedRun.set({ detail: null, trace: null });
+    if (!preserveSelectedRun) this.selectedRun.set({ detail: null, trace: null });
+    await this.loadSelectedRun(runId, preserveSelectedRun);
+  }
+  private async loadSelectedRun(runId: string, preserveSelectedRun: boolean): Promise<void> {
+    const sequence = ++this.openRunSequence;
     this.selectedRunState.set('loading');
     this.selectedRunError.set(null);
     try {
       const detail = await this.gateway.execute('getRun', { ...blankInput('getRun'), path: { run_id: runId }, query: {} });
-      const trace = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }) : null;
+      if (sequence !== this.openRunSequence) return;
+      const previousTrace = this.selectedRun().trace;
+      this.selectedRun.set({ detail, trace: previousTrace });
+      const trace = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }) : previousTrace;
       if (sequence !== this.openRunSequence) return;
       this.selectedRun.set({ detail, trace });
-      this.selectedRunState.set('ready');
-    } catch (error) { if (sequence !== this.openRunSequence) return; if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; } this.selectedRun.set({ detail: null, trace: null }); this.selectedRunState.set('error'); this.selectedRunError.set(error instanceof Error ? error.message : 'Run detail is unavailable.'); this.snapshot.update((value) => ({ ...value, error: this.selectedRunError(), state: 'stale' })); }
+      const retryScheduled = needsSelectedRunReconciliation(detail, trace) && this.queueSelectedRunReconciliation(runId);
+      this.selectedRunState.set(retryScheduled ? 'loading' : needsSelectedRunReconciliation(detail, trace) ? 'error' : 'ready');
+      if (!needsSelectedRunReconciliation(detail, trace)) this.resetSelectedRunReconciliation();
+      if (!retryScheduled && needsSelectedRunReconciliation(detail, trace)) this.selectedRunError.set('The selected run trace is not available yet.');
+    } catch (error) {
+      if (sequence !== this.openRunSequence) return;
+      if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
+      const message = error instanceof Error ? error.message : 'Run detail is unavailable.';
+      const hasSelectedEvidence = preserveSelectedRun || Boolean(this.selectedRun().detail || this.selectedRun().trace);
+      if (!hasSelectedEvidence) this.selectedRun.set({ detail: null, trace: null });
+      this.selectedRunError.set(message);
+      this.snapshot.update((value) => ({ ...value, error: message, state: 'stale' }));
+      // A previously rendered trace remains actionable with an explicit
+      // manual retry. Only an initially uncaptured trace gets automatic
+      // projection reconciliation; this preserves true refresh failures.
+      const retryNeeded = !this.selectedRun().trace;
+      const retryScheduled = retryNeeded && this.queueSelectedRunReconciliation(runId);
+      this.selectedRunState.set(retryScheduled ? 'loading' : 'error');
+      if (!retryScheduled && retryNeeded) this.selectedRunError.set('The selected run trace is not available yet.');
+    }
   }
   /** Compare exactly two in-memory selections; no route, storage, or URL state is used. */
   async compareRuns(leftRunId: string, rightRunId: string): Promise<void> {
@@ -249,6 +301,10 @@ export class ObservatoryStore {
     const message = event as MessageEvent<string>;
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
     if (event.type !== 'heartbeat') this.queueLiveRefresh();
+    if (event.type === 'observation.changed' || event.type === 'retention.changed' || event.type === 'snapshot') {
+      const selectedRunId = this.selectedRunId();
+      if (selectedRunId) this.queueSelectedRunReconciliation(selectedRunId);
+    }
     if (event.type === 'health.changed') this.queueHealthHistory();
     if (this.analytics().catalogue || this.analytics().snapshot) this.queueAnalyticsRefresh();
     if (isComparisonInvalidationEvent(event.type) && this.comparison().state !== 'loading' && this.comparison().leftRunId && this.comparison().rightRunId) this.queueComparisonRefresh();
@@ -258,12 +314,20 @@ export class ObservatoryStore {
   private readonly handleEvaluationLiveMessage = (event: Event): void => {
     const parsed = parseEvaluationLiveEvent((event as MessageEvent<string>).data);
     if (parsed) {
+      if (parsed.eventId === this.lastEvaluationEventId) return;
+      this.lastEvaluationEventId = parsed.eventId;
       this.evaluationChange.set(parsed);
       this.evaluationRevision.update((value) => value + 1);
     }
   };
+  // An EventSource open is only transport state. Keep a pending run recovery
+  // window alive until a snapshot actually converges the independently
+  // materialized catalogue; flapping open/error callbacks must not starve it.
   private readonly handleLiveOpen = (): void => { this.liveDisconnected.set(false); this.snapshot.update((value) => ({ ...value, state: value.overview && value.runs ? this.stateFor(value.overview, value.runs.items.length) : 'loading', error: null })); if (this.analytics().state === 'disconnected') { this.analytics.update((value) => ({ ...value, state: value.snapshot ? 'stale' : 'loading', error: null })); this.queueAnalyticsRefresh(); } if (this.comparison().state === 'disconnected') { this.comparison.update((value) => ({ ...value, state: value.result ? 'refreshing' : 'loading', error: null })); this.queueComparisonRefresh(); } };
-  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); if (this.comparison().result) this.comparison.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last comparison until refresh.' })); this.queueLiveRefresh(); };
+  // Once an overview exists, the bounded catalogue timer is the sole recovery
+  // driver. Repeated EventSource errors must not bypass its cap with an
+  // uncoalesced immediate snapshot request.
+  private readonly handleLiveError = (): void => { this.liveDisconnected.set(true); this.healthHistory.update(healthHistoryAfterDisconnect); this.snapshot.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Reconnecting…' })); if (this.analytics().snapshot) this.analytics.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last known analytics snapshot.' })); if (this.comparison().result) this.comparison.update((value) => ({ ...value, state: 'disconnected', error: 'Live updates are disconnected. Showing the last comparison until refresh.' })); if (this.snapshot().overview) { this.queueRunReconciliation(); } else { this.queueLiveRefresh(); } };
 
   private queueLiveRefresh(): void {
     this.liveRefresh.request(() => this.loadLiveSnapshot(), () => this.authState() === 'authenticated' && !this.sessionRequired());
@@ -372,6 +436,46 @@ export class ObservatoryStore {
     }
   }
 
+  /** Reconcile the independently materialized run projection a bounded number of times. */
+  private queueRunReconciliation(): void {
+    if (this.runReconciliationTimer || this.runReconciliationAttempts >= MAX_RUN_RECONCILIATION_ATTEMPTS || this.sessionRequired()) return;
+    this.runReconciliationAttempts += 1;
+    this.runReconciliationTimer = setTimeout(() => {
+      this.runReconciliationTimer = null;
+      // Route retries through the coordinator so a live-event refresh and a
+      // reconciliation can never issue duplicate snapshots concurrently.
+      this.queueLiveRefresh();
+    }, RUN_RECONCILIATION_DELAY_MS);
+  }
+
+  private resetRunReconciliation(): void {
+    if (this.runReconciliationTimer) clearTimeout(this.runReconciliationTimer);
+    this.runReconciliationTimer = null;
+    this.runReconciliationAttempts = 0;
+  }
+
+  /** Retry an initially unavailable selected-run projection for the same bounded recovery window. */
+  private queueSelectedRunReconciliation(runId: string): boolean {
+    // The initial detail/trace load is intentionally still marked loading when
+    // it discovers a projection gap. The timer is the concurrency gate; using
+    // selectedRunState here would reject the first retry and strand the run in
+    // an error state after a single trace request.
+    if (this.selectedRunReconciliationTimer || this.selectedRunReconciliationAttempts >= MAX_RUN_RECONCILIATION_ATTEMPTS || this.sessionRequired() || this.selectedRunId() !== runId) return false;
+    this.selectedRunReconciliationAttempts += 1;
+    this.selectedRunReconciliationTimer = setTimeout(() => {
+      this.selectedRunReconciliationTimer = null;
+      if (this.selectedRunId() !== runId || this.sessionRequired()) return;
+      void this.loadSelectedRun(runId, true);
+    }, RUN_RECONCILIATION_DELAY_MS);
+    return true;
+  }
+
+  private resetSelectedRunReconciliation(): void {
+    if (this.selectedRunReconciliationTimer) clearTimeout(this.selectedRunReconciliationTimer);
+    this.selectedRunReconciliationTimer = null;
+    this.selectedRunReconciliationAttempts = 0;
+  }
+
   private queueCatalogRefresh(): void {
     this.catalogRefresh.request(() => this.loadCatalogResources(), () => this.authState() === 'authenticated' && !this.sessionRequired());
   }
@@ -417,6 +521,17 @@ export class ObservatoryStore {
         partial: allResourceErrors.length > 0,
         resourceErrors: allResourceErrors,
       }));
+      const runsResourceUnavailable = this.resourceState('runs') === 'error' || this.resourceState('runs') === 'stale';
+      // While SSE is disconnected, the list projection may contain the wrong
+      // run identities with an apparently current count. Keep the bounded
+      // catalogue recovery window active regardless of item count.
+      // A selected Runs workspace owns a fresh bounded recovery generation.
+      // The list projection can be same-count and still predate a durable
+      // target while SSE is open or an event races subscription, so a
+      // successful response alone is not proof of identity convergence.
+      const shouldReconcile = this.runsViewActive || this.liveDisconnected() || needsRunReconciliation(overview, runs) || runsResourceUnavailable;
+      if (shouldReconcile) this.queueRunReconciliation();
+      else if (results[1].status === 'fulfilled') this.resetRunReconciliation();
     } catch (error) {
       if (!isCurrentLoadSequence(sequence, this.loadSequence) || generation !== this.authGeneration) return;
       if (error instanceof ObservatorySessionRequiredError) this.markSignedOut('Owner Observatory session required.');
@@ -485,6 +600,9 @@ export class ObservatoryStore {
     this.disconnectLive();
     this.liveRefresh.cancel();
     this.catalogRefresh.cancel();
+    this.runsViewActive = false;
+    this.resetRunReconciliation();
+    this.resetSelectedRunReconciliation();
     this.analyticsRefresh.cancel();
     this.healthHistoryRefresh.cancel();
     this.catalogLoadSequence += 1;
@@ -530,6 +648,7 @@ export class ObservatoryStore {
     this.authGenerationRevision.update((value) => value + 1);
     this.evaluationRevision.update((value) => value + 1);
     this.openRunSequence += 1;
+    this.resetSelectedRunReconciliation();
     this.selectedRun.set({ detail: null, trace: null });
     this.selectedRunId.set(null);
     this.selectedRunState.set('idle');
