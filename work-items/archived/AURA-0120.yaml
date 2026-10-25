@@ -1,0 +1,106 @@
+id: AURA-0120
+title: Correct run-evidence Garage grant parsing
+status: integrated
+change_class: bugfix
+intent: >
+  Make the dedicated run-evidence Garage bootstraps parse Garage 2.1 key grant
+  tables without treating the header row as a bucket grant, while preserving
+  fail-closed detection of real unexpected bucket access.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0119.yaml
+    - Reuse the existing Garage 2.1-aware authorized-bucket parser pattern already used by Observatory evaluation identities.
+    - Preserve the dedicated bucket and least-privilege worker/API identities; do not relax or bypass unexpected-grant checks.
+  contracts: []
+feature_references: [OBS-020, GOV-020]
+ownership_zones:
+  - platform.compose.run-evidence
+  - evaluation.aura0120
+  - delivery.aura0120
+allowed_paths:
+  - work-items/active/AURA-0120.yaml
+  - work-items/archived/AURA-0120.yaml
+  - work-items/handoffs/AURA-0120-*.yaml
+  - work-items/reviews/AURA-0120-*.yaml
+  - work-items/integration/AURA-0120.yaml
+  - compose.yaml
+  - deploy/tests/test_aura0119_topology.py
+  - deploy/tests/test_aura0120_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: run-evidence-deployment
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Header parsing must not weaken fail-closed rejection of grants to any bucket other than the dedicated run-evidence bucket.
+    - Worker remains write-only and API remains read/write without owner permission.
+  data_classes:
+    - deployment_credentials
+    - owner_private_run_evidence_bytes
+required_agents:
+  implementation:
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Empty Garage 2.1 bucket tables do not produce a false unexpected-grant failure.
+  - The parser returns only valid bucket aliases or IDs and ignores the table header.
+  - Grants to Core evaluation or any unrelated bucket still fail closed.
+  - Worker and API permission verification remains W and RW respectively with owner denied.
+  - The local Compose startup completes with the dedicated evidence bucket and full-content capture enabled.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0120.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0120.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0120.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check deploy/tests/test_aura0119_topology.py deploy/tests/test_aura0120_*.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/tests/test_aura0119_topology.py deploy/tests/test_aura0120_*.py -q
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

@@ -1,0 +1,60 @@
+agent: platform_worker
+work_item: AURA-0120
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0117_platform
+  worktree: shared-main
+scope:
+  ownership_zone: platform.compose.run-evidence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - compose.yaml
+  - deploy/tests/test_aura0120_garage_grants.py
+  - work-items/handoffs/AURA-0120-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0120.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0120.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0120.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check deploy/tests/test_aura0119_topology.py deploy/tests/test_aura0120_*.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/tests/test_aura0119_topology.py deploy/tests/test_aura0120_*.py -q (12 passed)
+    - docker compose config --quiet
+    - docker compose --profile observatory config --quiet
+    - git diff --check
+    - implementation-handoff.schema.json validation for this handoff
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Both dedicated run-evidence Garage bootstraps now use the Garage 2.1-aware
+    extract_authorized_buckets parser, which ignores the grant-table header,
+    accepts only rows with a 16-hex-character bucket ID, and resolves the
+    expected alias without treating formatting fields as grants.
+  - >-
+    Worker and API bootstraps retain fail-closed unexpected-grant detection,
+    re-fetch and verify exactly one dedicated bucket grant after mutation, and
+    preserve W/RW permission checks with owner denied. Malformed nonblank rows
+    now emit a bounded parse-error sentinel and cause bootstrap exit 78 rather
+    than being silently ignored.
+  - >-
+    No Core, Observatory service source, contract, frontend, credential, or
+    retention behavior was changed; the focused test exercises both parsers
+    against empty, valid, and unrelated Garage 2.1 grant tables.
+risks:
+  - >-
+    Full-stack deployment acceptance remains integration-owned; this handoff
+    covers parser correctness and Compose topology checks only.
+unresolved: []

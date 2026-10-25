@@ -610,19 +610,48 @@ services:
         secret_key="$$(cat /run/secrets/observatory-run-evidence-worker-secret-key)";
         if [ -z "$${AURA_GARAGE_BUCKET}" ] || [ -z "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ] || [ -z "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" ] || [ "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" = "$${AURA_GARAGE_BUCKET}" ] || [ "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" = "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ]; then echo 'run-evidence Garage bucket must be configured and distinct' >&2; exit 78; fi;
         until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        extract_authorized_buckets() { printf '%s\n' "$${1}" | awk -v expected="$${2}" '
+          function emit_row(line, count, fields, alias) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line);
+            count = split(line, fields, /[[:space:]]+/);
+            if (count < 2 || fields[2] !~ /^[[:xdigit:]]+$/ || length(fields[2]) != 16) {
+              print "__AURA_GRANT_PARSE_ERROR__";
+              return;
+            }
+            alias = "";
+            if (count >= 3 && fields[3] != "-" && fields[3] != "—") alias = fields[3];
+            else if (count >= 4 && fields[4] != "-" && fields[4] != "—") alias = fields[4];
+            if (alias == expected && expected != "") print expected;
+            else if (alias != "") print alias;
+            else print fields[2];
+          }
+          /^[[:space:]]*==== BUCKETS FOR THIS KEY ====[[:space:]]*$/ { table = 1; next }
+          table && /^[[:space:]]*Permissions[[:space:]]+ID[[:space:]]+Global aliases[[:space:]]+Local aliases[[:space:]]*$/ { next }
+          table && /^[[:space:]]*$/ { table = 0; next }
+          table && NF { emit_row($$0); next }
+        '; };
         key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
         if [ -z "$${key_info}" ]; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage key import failed closed' >&2; exit 78; }; fi;
         key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
         if [ -z "$${key_info}" ]; then echo 'run-evidence worker Garage key could not be inspected' >&2; exit 78; fi;
-        grants="$$(printf '%s\n' "$${key_info}" | awk '/==== BUCKETS FOR THIS KEY ====/{table=1; next} table && NF >= 2 {print $$NF} table && NF < 2 {table=0}')";
-        if [ -n "$${grants}" ] && { printf '%s\n' "$${grants}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null || printf '%s\n' "$${grants}" | grep -Fqx -- "$${AURA_GARAGE_BUCKET}" || printf '%s\n' "$${grants}" | grep -Fqx -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}"; }; then echo 'run-evidence worker Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}")";
+        if printf '%s\n' "$${existing_buckets}" | grep -Fqx -- '__AURA_GRANT_PARSE_ERROR__'; then echo 'run-evidence worker Garage grant table could not be parsed safely' >&2; exit 78; fi;
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ] || { [ -n "$${AURA_GARAGE_BUCKET}" ] && printf '%s\n' "$${existing_buckets}" | grep -Fqx -- "$${AURA_GARAGE_BUCKET}"; } || { [ -n "$${AURA_OBSERVATORY_GARAGE_BUCKET}" ] && printf '%s\n' "$${existing_buckets}" | grep -Fqx -- "$${AURA_OBSERVATORY_GARAGE_BUCKET}"; }; then echo 'run-evidence worker Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
         /garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || /garage --config /run/garage-config/garage.toml bucket create "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}";
         /garage --config /run/garage-config/garage.toml bucket allow --write --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage write grant failed closed' >&2; exit 78; };
         /garage --config /run/garage-config/garage.toml bucket deny --read --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage read deny failed closed' >&2; exit 78; };
         /garage --config /run/garage-config/garage.toml bucket deny --owner --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence worker Garage owner deny failed closed' >&2; exit 78; };
         permissions="$$(/garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" 2>/dev/null | awk -v key="$${access_key}" 'index($$0, key) && NF {print $$1; exit}')";
         if [ "$${permissions}" != "W" ]; then echo 'run-evidence worker Garage permission verification failed closed (expected W)' >&2; exit 78; fi;
-        unset access_key secret_key key_info grants permissions
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then echo 'run-evidence worker Garage key could not be verified after grant' >&2; exit 78; fi;
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}")";
+        if printf '%s\n' "$${existing_buckets}" | grep -Fqx -- '__AURA_GRANT_PARSE_ERROR__'; then echo 'run-evidence worker Garage grant table could not be parsed safely' >&2; exit 78; fi;
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        target_bucket_count="$$(printf '%s\n' "$${existing_buckets}" | grep -Fxc -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ] || [ "$${target_bucket_count}" -ne 1 ]; then echo 'run-evidence worker Garage key grant verification failed closed' >&2; exit 78; fi;
+        unset access_key secret_key key_info existing_buckets unexpected_buckets target_bucket_count permissions
     environment:
       AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
       AURA_GARAGE_BUCKET: ${AURA_GARAGE_BUCKET:-aura-documents}
@@ -655,18 +684,47 @@ services:
         secret_key="$$(cat /run/secrets/observatory-run-evidence-api-secret-key)";
         if [ -z "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" ]; then echo 'run-evidence API Garage bucket is required' >&2; exit 78; fi;
         until /garage --config /run/garage-config/garage.toml status >/dev/null 2>&1; do sleep 2; done;
+        extract_authorized_buckets() { printf '%s\n' "$${1}" | awk -v expected="$${2}" '
+          function emit_row(line, count, fields, alias) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line);
+            count = split(line, fields, /[[:space:]]+/);
+            if (count < 2 || fields[2] !~ /^[[:xdigit:]]+$/ || length(fields[2]) != 16) {
+              print "__AURA_GRANT_PARSE_ERROR__";
+              return;
+            }
+            alias = "";
+            if (count >= 3 && fields[3] != "-" && fields[3] != "—") alias = fields[3];
+            else if (count >= 4 && fields[4] != "-" && fields[4] != "—") alias = fields[4];
+            if (alias == expected && expected != "") print expected;
+            else if (alias != "") print alias;
+            else print fields[2];
+          }
+          /^[[:space:]]*==== BUCKETS FOR THIS KEY ====[[:space:]]*$/ { table = 1; next }
+          table && /^[[:space:]]*Permissions[[:space:]]+ID[[:space:]]+Global aliases[[:space:]]+Local aliases[[:space:]]*$/ { next }
+          table && /^[[:space:]]*$/ { table = 0; next }
+          table && NF { emit_row($$0); next }
+        '; };
         key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
         if [ -z "$${key_info}" ]; then /garage --config /run/garage-config/garage.toml key import --yes "$${access_key}" "$${secret_key}" >/dev/null 2>&1 || { echo 'run-evidence API Garage key import failed closed' >&2; exit 78; }; fi;
         key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
         if [ -z "$${key_info}" ]; then echo 'run-evidence API Garage key could not be inspected' >&2; exit 78; fi;
-        grants="$$(printf '%s\n' "$${key_info}" | awk '/==== BUCKETS FOR THIS KEY ====/{table=1; next} table && NF >= 2 {print $$NF} table && NF < 2 {table=0}')";
-        if [ -n "$${grants}" ] && printf '%s\n' "$${grants}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null; then echo 'run-evidence API Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}")";
+        if printf '%s\n' "$${existing_buckets}" | grep -Fqx -- '__AURA_GRANT_PARSE_ERROR__'; then echo 'run-evidence API Garage grant table could not be parsed safely' >&2; exit 78; fi;
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ]; then echo 'run-evidence API Garage key has an unexpected preexisting bucket grant' >&2; exit 78; fi;
         /garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence bucket must be created by worker bootstrap first' >&2; exit 78; };
         /garage --config /run/garage-config/garage.toml bucket allow --read --write --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence API Garage read/write grant failed closed' >&2; exit 78; };
         /garage --config /run/garage-config/garage.toml bucket deny --owner --key "$${access_key}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" >/dev/null 2>&1 || { echo 'run-evidence API Garage owner deny failed closed' >&2; exit 78; };
         permissions="$$(/garage --config /run/garage-config/garage.toml bucket info "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" 2>/dev/null | awk -v key="$${access_key}" 'index($$0, key) && NF {print $$1; exit}')";
         if [ "$${permissions}" != "RW" ]; then echo 'run-evidence API Garage permission verification failed closed (expected RW)' >&2; exit 78; fi;
-        unset access_key secret_key key_info grants permissions
+        key_info="$$(/garage --config /run/garage-config/garage.toml key info "$${access_key}" 2>/dev/null || true)";
+        if [ -z "$${key_info}" ]; then echo 'run-evidence API Garage key could not be verified after grant' >&2; exit 78; fi;
+        existing_buckets="$$(extract_authorized_buckets "$${key_info}" "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}")";
+        if printf '%s\n' "$${existing_buckets}" | grep -Fqx -- '__AURA_GRANT_PARSE_ERROR__'; then echo 'run-evidence API Garage grant table could not be parsed safely' >&2; exit 78; fi;
+        unexpected_buckets="$$(printf '%s\n' "$${existing_buckets}" | grep -Fvx -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        target_bucket_count="$$(printf '%s\n' "$${existing_buckets}" | grep -Fxc -- "$${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET}" || true)";
+        if [ -n "$${unexpected_buckets}" ] || [ "$${target_bucket_count}" -ne 1 ]; then echo 'run-evidence API Garage key grant verification failed closed' >&2; exit 78; fi;
+        unset access_key secret_key key_info existing_buckets unexpected_buckets target_bucket_count permissions
     environment:
       AURA_GARAGE_IMAGE: ${AURA_GARAGE_IMAGE:-dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a}
       AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET: ${AURA_OBSERVATORY_RUN_EVIDENCE_OBJECT_BUCKET:-aura-observatory-run-evidence}
