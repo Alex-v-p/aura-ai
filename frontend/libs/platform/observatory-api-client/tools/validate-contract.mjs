@@ -193,4 +193,70 @@ assert(traceDetail.required?.includes('partial'), 'TraceDetail must disclose par
 assert(traceDetail.required?.includes('nextCursor'), 'TraceDetail must expose continuation');
 assert(traceDetail.properties.spans?.maxItems === 10000, 'TraceDetail spans must remain bounded');
 
+const runInspection = document.paths?.['/api/v1/runs/{run_id}/inspection']?.get;
+assert(runInspection?.operationId === 'getRunInspection', 'Run inspection operation is missing or renamed');
+assert(
+  runInspection.responses?.['200']?.headers?.['Cache-Control']?.schema?.const === 'no-store',
+  'Run inspection must prevent authenticated response caching',
+);
+const inspectionSchema = document.components.schemas.RunInspection;
+assert(inspectionSchema?.additionalProperties === false, 'Run inspection must be closed');
+assert(inspectionSchema?.properties?.steps?.maxItems === 1000, 'Run inspection steps must remain bounded');
+
+const runEvidence = document.paths?.['/api/v1/runs/{run_id}/evidence/{evidence_id}']?.get;
+assert(runEvidence?.operationId === 'getRunEvidence', 'Run evidence operation is missing or renamed');
+const evidenceResponse = runEvidence.responses?.['200'];
+assert(
+  evidenceResponse?.headers?.['Cache-Control']?.schema?.const === 'no-store',
+  'Run evidence must prevent authenticated response caching',
+);
+assert(
+  evidenceResponse?.headers?.['Content-Length']?.schema?.maximum === 1048576,
+  'Run evidence must remain capped at one MiB',
+);
+assert(!evidenceResponse?.headers?.Digest, 'Run evidence must not misuse the standard Digest header');
+assert(
+  evidenceResponse?.headers?.['X-Observatory-Evidence-Digest']?.schema?.$ref ===
+    '#/components/schemas/EvidenceDigest',
+  'Run evidence must expose the exact custom manifest digest header',
+);
+const approvedEvidenceMedia = [
+  'application/json',
+  'text/plain',
+  'text/markdown',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+];
+assert(
+  JSON.stringify(Object.keys(evidenceResponse?.content ?? {})) === JSON.stringify(approvedEvidenceMedia),
+  'Run evidence media types must remain explicitly approved and ordered',
+);
+assert(
+  Object.values(evidenceResponse?.content ?? {}).every(
+    (media) => media.schema?.$ref === '#/components/schemas/BoundedEvidenceBytes',
+  ),
+  'Every run evidence media type must use the bounded binary schema',
+);
+
+const deleteRunEvidence = document.paths?.['/api/v1/runs/{run_id}/evidence']?.delete;
+assert(deleteRunEvidence?.operationId === 'deleteRunEvidence', 'Run evidence deletion is missing or renamed');
+for (const requiredParameter of ['CsrfToken', 'RunEvidenceIdempotencyKey', 'DeleteRunEvidenceConfirmation']) {
+  assert(
+    deleteRunEvidence.parameters?.some(
+      (parameter) => parameter.$ref === `#/components/parameters/${requiredParameter}`,
+    ),
+    `Run evidence deletion must require ${requiredParameter}`,
+  );
+}
+assert(
+  document.components.schemas.RunInspectionInvalidationEvent?.properties?.resourceType?.const === 'run' &&
+    document.components.schemas.RunInspectionInvalidationEvent?.properties?.resourceId?.$ref ===
+      '#/components/schemas/Uuid' &&
+    document.components.schemas.RunInspectionInvalidationEvent?.properties?.capturePolicy?.const ===
+      'metadata_only',
+  'Run invalidation must be UUID-scoped and metadata-only',
+);
+
 process.stdout.write('Observatory OpenAPI response-schema invariants passed.\n');

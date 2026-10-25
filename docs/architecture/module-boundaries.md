@@ -63,9 +63,23 @@ Core owns production behavior and data. Observatory owns monitoring, analysis, e
 
 Shared packages are limited to intentional contracts and SDK machinery: versioned schemas and identifiers, observability helpers, evaluation/replay contracts, generated clients, and supported extension interfaces. They must not become a home for private business logic or miscellaneous helpers.
 
+`run-evidence-v1` is an intentional contract boundary, not a shared runtime
+module. Core owns explicit evidence serializers and a bounded nonblocking
+export port. Observatory owns ingestion, manifests, authorization, storage,
+deletion, query assembly, and its generated browser transport. Core never
+imports Observatory implementation or reads Observatory state; Observatory
+never imports Core serializers or reads Core tables. OTLP, SSE, and ClickHouse
+remain content-free.
+
 ## Frontend boundaries
 
 Frontend applications compose routes, layout, navigation, and global providers. Feature behavior belongs in domain libraries. Applications do not import from one another; Observatory feature code does not import Aura feature implementations; generic UI libraries contain no Aura or Observatory business logic; generated API types are not manually duplicated.
+
+Aura Web and its libraries must not import the run-evidence contract or the
+Observatory API client, and must not contain an Observatory link, label, route,
+configuration, shared session, or browser communication. Only Observatory Web
+may request governed evidence through its separate owner authorization
+boundary.
 
 ## Governance and dependency direction
 

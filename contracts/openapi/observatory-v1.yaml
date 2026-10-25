@@ -3,9 +3,11 @@
   "info": {
     "title": "Observatory v1",
     "version": "1.0.0",
-    "description": "Owner-only Observatory authentication, metadata-only operational and evaluation query, live-notification, command, and manual-retention transport. Evaluation resources expose only bounded definitions, states, finite scores, provenance, authorization references, and opaque artifact metadata; raw prompts, rubrics, responses, case content, comments, hidden reasoning, storage locations, filenames, tool arguments or results, credentials, endpoints, bearer tokens, arbitrary attributes, and owner identity are outside this contract. The authentication resource exposes only an in-memory anti-CSRF value.",
+    "description": "Owner-only Observatory authentication, operational and evaluation query, live-notification, command, manual-retention, and governed run-inspection transport. Ordinary telemetry and SSE remain metadata-only. Exact run evidence is available only through the separate owner-authorized no-store run evidence resources; credentials, secret-bearing fields, bearer material, provider-hidden reasoning, arbitrary attributes, storage locations, and owner identity remain outside the contract. The authentication resource exposes only an in-memory anti-CSRF value.",
     "x-contract-id": "observatory-v1",
     "x-capture-policy": "metadata_only",
+    "x-run-evidence-contract": "run-evidence-v1",
+    "x-run-evidence-retention": "manual_only",
     "x-authenticated-response-cache-policy": "no-store"
   },
   "servers": [{ "url": "/", "description": "Same-origin Observatory BFF" }],
@@ -141,6 +143,72 @@
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/inspection": {
+      "get": {
+        "operationId": "getRunInspection",
+        "tags": ["Runs"],
+        "description": "Return the authoritative owner-only run inspection snapshot assembled from content-free observations and governed evidence manifests. Steps are ordered by sequence, observedAt, and stepId. Evidence content is never embedded in this response or SSE.",
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/InspectionPageSize" }],
+        "responses": {
+          "200": { "description": "Bounded run inspection snapshot", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunInspection" } } } },
+          "400": { "$ref": "#/components/responses/RunEvidenceBadRequest" },
+          "401": { "$ref": "#/components/responses/RunEvidenceUnauthorized" },
+          "403": { "$ref": "#/components/responses/RunEvidenceForbidden" },
+          "404": { "$ref": "#/components/responses/RunEvidenceNotFound" },
+          "503": { "$ref": "#/components/responses/RunEvidenceServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/evidence/{evidence_id}": {
+      "get": {
+        "operationId": "getRunEvidence",
+        "tags": ["Runs"],
+        "description": "Stream one digest-verified owner-authorized evidence item using only an approved inspectable media type. The response is capped at one MiB and must not be buffered generically, cached, logged, persisted by the browser, or published through SSE.",
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/EvidenceId" }],
+        "responses": {
+          "200": {
+            "description": "Exact evidence bytes in the manifest-declared approved media type",
+            "headers": {
+              "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } },
+              "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 0, "maximum": 1048576 } },
+              "X-Observatory-Evidence-Digest": { "required": true, "description": "Exact manifest digest token; deliberately not the standards-defined Content-Digest or Digest header.", "schema": { "$ref": "#/components/schemas/EvidenceDigest" } },
+              "X-Content-Type-Options": { "required": true, "schema": { "type": "string", "const": "nosniff" } }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "text/plain": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "text/markdown": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "image/png": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "image/jpeg": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "image/webp": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } },
+              "application/pdf": { "schema": { "$ref": "#/components/schemas/BoundedEvidenceBytes" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/RunEvidenceUnauthorized" },
+          "403": { "$ref": "#/components/responses/RunEvidenceForbidden" },
+          "404": { "$ref": "#/components/responses/RunEvidenceNotFound" },
+          "410": { "$ref": "#/components/responses/RunEvidenceGone" },
+          "503": { "$ref": "#/components/responses/RunEvidenceServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/evidence": {
+      "delete": {
+        "operationId": "deleteRunEvidence",
+        "tags": ["Runs"],
+        "description": "Request durable manual deletion of all evidence bytes for one run. Repeating the same UUID idempotency key returns the same deletion truth; metadata and a content-free audit remain.",
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/RunEvidenceIdempotencyKey" }, { "$ref": "#/components/parameters/DeleteRunEvidenceConfirmation" }],
+        "responses": {
+          "202": { "description": "Deletion accepted or replayed idempotently", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceDeletion" } } } },
+          "400": { "$ref": "#/components/responses/RunEvidenceBadRequest" },
+          "401": { "$ref": "#/components/responses/RunEvidenceUnauthorized" },
+          "403": { "$ref": "#/components/responses/RunEvidenceForbidden" },
+          "404": { "$ref": "#/components/responses/RunEvidenceNotFound" },
+          "409": { "$ref": "#/components/responses/RunEvidenceConflict" },
+          "503": { "$ref": "#/components/responses/RunEvidenceServiceUnavailable" }
         }
       }
     },
@@ -532,6 +600,7 @@
         "operationId": "streamEvents",
         "tags": ["Live"],
         "description": "Authenticated same-origin stream. Each connection begins with the current REST overview snapshot, then emits persisted metadata-only changes; reconnects use Last-Event-ID for catch-up. Credentials are accepted only through the HttpOnly session cookie.",
+        "x-canonical-run-invalidation-schema": "#/components/schemas/RunInspectionInvalidationEvent",
         "parameters": [{ "$ref": "#/components/parameters/LastEventId" }],
         "responses": {
           "200": { "description": "Initial overview snapshot followed by SSE metadata change notifications", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/SsePayload" } } } },
@@ -590,7 +659,9 @@
       "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "Opaque stable cursor; clients must not parse it.", "schema": { "$ref": "#/components/schemas/Cursor" } },
       "PageSize": { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
       "DetailPageSize": { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 10000 } },
+      "InspectionPageSize": { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 250 } },
       "RunId": { "name": "run_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "EvidenceId": { "name": "evidence_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "TraceId": { "name": "trace_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/TraceId" } },
       "ComponentId": { "name": "component_id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ComponentId" } },
       "ComponentVersion": { "name": "component_version", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/SafeLabel" } },
@@ -625,10 +696,12 @@
       "LastEventId": { "name": "Last-Event-ID", "in": "header", "required": false, "description": "Last persisted metadata event identifier received by the browser; catch-up is bounded and REST remains authoritative.", "schema": { "$ref": "#/components/schemas/Uuid" } },
       "CsrfToken": { "name": "X-Observatory-CSRF", "in": "header", "required": true, "schema": { "type": "string", "minLength": 32, "maxLength": 256 } },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" } },
+      "RunEvidenceIdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "description": "UUID idempotency key retained with the durable manual deletion command.", "schema": { "$ref": "#/components/schemas/Uuid" } },
       "EvaluationIdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "description": "UUID idempotency key passed unchanged to the durable evaluation command.", "schema": { "$ref": "#/components/schemas/Uuid" } },
       "EvaluationConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "description": "Exact closed acknowledgement for the requested evaluation command.", "schema": { "type": "string", "enum": ["cancel-job", "qualify-judge", "revoke-qualification"] } },
       "BaselinePromotionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "description": "Exact irreversible acknowledgement for immutable manual promotion.", "schema": { "type": "string", "const": "PROMOTE_IMMUTABLE_BASELINE" } },
       "EvaluationDeletionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "description": "Exact acknowledgement passed unchanged to the durable evaluation deletion command.", "schema": { "type": "string", "const": "DELETE_EVALUATION_ARTIFACTS" } },
+      "DeleteRunEvidenceConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "description": "Exact acknowledgement for durable manual deletion of one run's evidence bytes.", "schema": { "type": "string", "const": "DELETE_RUN_EVIDENCE" } },
       "DashboardDeletionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "schema": { "type": "string", "const": "delete-dashboard" } },
       "SavedQueryDeletionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "schema": { "type": "string", "const": "delete-saved-query" } },
       "AnnotationDeletionConfirmation": { "name": "X-Observatory-Confirmation", "in": "header", "required": true, "schema": { "type": "string", "const": "delete-annotation" } },
@@ -643,9 +716,17 @@
       "Unauthorized": { "description": "Valid owner session required", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
       "Forbidden": { "description": "Owner authorization, same-origin request, or anti-CSRF validation failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
       "NotFound": { "description": "Resource not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
+      "Gone": { "description": "Evidence was manually deleted; content-free metadata remains available through the inspection resource", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
       "Conflict": { "description": "Idempotency key was reused with a different command", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
       "UnprocessableEntity": { "description": "Semantically invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } },
       "ServiceUnavailable": { "description": "A required Observatory-owned store is unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Problem" } } } }
+      ,"RunEvidenceBadRequest": { "description": "Malformed bounded run-evidence request", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceUnauthorized": { "description": "Valid owner session required", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceForbidden": { "description": "Owner authorization, same-origin, or anti-CSRF validation failed", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceNotFound": { "description": "Run or evidence manifest not found", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceGone": { "description": "Evidence bytes were manually deleted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceConflict": { "description": "Idempotency key collision", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
+      ,"RunEvidenceServiceUnavailable": { "description": "A required Observatory-owned evidence store is unavailable", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunEvidenceProblem" } } } }
     },
     "schemas": {
       "Uuid": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
@@ -1600,6 +1681,16 @@
           "traceId": { "$ref": "#/components/schemas/TraceId" }
         }
       },
+      "RunEvidenceProblem": {
+        "type": "object", "additionalProperties": false,
+        "required": ["code", "retryable", "traceId"],
+        "properties": {
+          "code": { "type": "string", "enum": ["invalid_request", "owner_session_required", "owner_authorization_failed", "evidence_not_found", "evidence_deleted", "idempotency_collision", "evidence_store_unavailable"] },
+          "retryable": { "type": "boolean" },
+          "traceId": { "$ref": "#/components/schemas/TraceId" }
+        },
+        "description": "Closed content-free error. It contains no evidence content, request values, storage details, owner identity, or arbitrary message."
+      },
       "IngestCounts": {
         "type": "object", "additionalProperties": false,
         "required": ["accepted", "rejected", "duplicate", "malformed", "storageFailure"],
@@ -1695,6 +1786,138 @@
         "properties": {
           "runId": { "$ref": "#/components/schemas/Uuid" }, "status": { "$ref": "#/components/schemas/RunStatus" }, "startedAt": { "$ref": "#/components/schemas/UtcInstant" }, "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] }, "durationMs": { "type": ["number", "null"], "minimum": 0 }, "model": { "oneOf": [{ "$ref": "#/components/schemas/SafeLabel" }, { "type": "null" }] }, "deploymentId": { "$ref": "#/components/schemas/SafeLabel" }, "componentIds": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ComponentId" } }, "traceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] }, "observations": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/components/schemas/ObservationSummary" } }, "partial": { "type": "boolean", "description": "True when more observations remain after this bounded page." }, "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] }
         }
+      },
+      "EvidenceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71 },
+      "BoundedEvidenceBytes": { "type": "string", "format": "binary", "maxLength": 1048576, "description": "At most one MiB. The transport streams this approved media type and does not provide generic octet-stream buffering." },
+      "RunInspectionStepCategory": { "type": "string", "enum": ["admission", "context", "retrieval", "prompt", "routing", "generation", "thinking", "tool", "policy", "synthesis", "persistence", "delivery", "worker", "automation", "schedule", "evaluation"] },
+      "RunInspectionStepState": { "type": "string", "enum": ["pending", "running", "succeeded", "failed", "cancelled", "rejected", "unavailable"] },
+      "RunEvidenceKind": { "type": "string", "enum": ["admitted_request", "admitted_trigger", "compiled_prompt", "conversation_context", "memory_chunk", "document_chunk", "model_visible_attachment", "model_routing", "displayed_thinking", "generation_output", "tool_arguments", "tool_result", "policy_decision", "approval_decision", "execution_outcome", "response_synthesis", "persistence_record", "delivery_record", "worker_input", "worker_output", "automation_input", "automation_output", "schedule_input", "schedule_output", "evaluation_input", "evaluation_output"] },
+      "RunEvidenceCaptureState": { "type": "string", "enum": ["captured", "excluded", "partial", "dropped", "deleted"] },
+      "RunEvidencePartialReason": { "type": "string", "enum": ["capture_disabled", "credential_material_rejected", "secret_bearing_field_rejected", "bearer_material_rejected", "provider_hidden_reasoning_excluded", "unsupported_media_type", "payload_limit_exceeded", "queue_pressure", "export_unavailable", "transport_failure", "ingest_rejected", "storage_failure", "manually_deleted", "unknown_capture_gap", "missing_parent", "late_delivery", "page_truncated"] },
+      "RunEvidenceMediaClassification": { "type": "string", "enum": ["text", "structured", "image", "document"] },
+      "RunEvidenceMediaType": { "type": "string", "enum": ["application/json", "text/plain", "text/markdown", "image/png", "image/jpeg", "image/webp", "application/pdf"] },
+      "RunEvidenceManifest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["evidenceId", "eventId", "sequence", "kind", "captureState", "mediaClassification", "mediaType", "digest", "byteCount", "capturedAt", "reason"],
+        "properties": {
+          "evidenceId": { "$ref": "#/components/schemas/Uuid" },
+          "eventId": { "$ref": "#/components/schemas/Uuid" },
+          "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "kind": { "$ref": "#/components/schemas/RunEvidenceKind" },
+          "captureState": { "$ref": "#/components/schemas/RunEvidenceCaptureState" },
+          "mediaClassification": { "$ref": "#/components/schemas/RunEvidenceMediaClassification" },
+          "mediaType": { "$ref": "#/components/schemas/RunEvidenceMediaType" },
+          "digest": { "oneOf": [{ "$ref": "#/components/schemas/EvidenceDigest" }, { "type": "null" }] },
+          "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+          "capturedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "reason": { "oneOf": [{ "$ref": "#/components/schemas/RunEvidencePartialReason" }, { "type": "null" }] }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "captureState": { "const": "captured" } }, "required": ["captureState"] },
+            "then": { "properties": { "digest": { "$ref": "#/components/schemas/EvidenceDigest" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "reason": { "type": "null" } } },
+            "else": { "properties": { "digest": { "type": "null" }, "byteCount": { "type": "integer", "const": 0 }, "reason": { "$ref": "#/components/schemas/RunEvidencePartialReason" } } }
+          },
+          { "if": { "properties": { "captureState": { "const": "deleted" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "const": "manually_deleted" } } } },
+          { "if": { "properties": { "captureState": { "const": "excluded" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["capture_disabled", "provider_hidden_reasoning_excluded"] } } } },
+          { "if": { "properties": { "captureState": { "const": "partial" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["credential_material_rejected", "secret_bearing_field_rejected", "bearer_material_rejected", "unsupported_media_type", "payload_limit_exceeded", "ingest_rejected", "unknown_capture_gap", "missing_parent", "late_delivery", "page_truncated"] } } } },
+          { "if": { "properties": { "captureState": { "const": "dropped" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["queue_pressure", "export_unavailable", "transport_failure", "storage_failure"] } } } }
+        ],
+        "description": "Content-free manifest only. Captured bytes are fetched lazily from the run-scoped evidence resource. Deleted and unavailable content remains truthfully represented."
+      },
+      "RunInspectionMeasurement": {
+        "type": "object", "additionalProperties": false, "required": ["name", "value", "unit"],
+        "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]{0,95}$" }, "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 }, "unit": { "type": "string", "enum": ["count", "milliseconds", "bytes", "tokens", "ratio", "score"] } }
+      },
+      "RunInspectionStep": {
+        "type": "object", "additionalProperties": false,
+        "required": ["stepId", "parentStepId", "spanId", "parentSpanId", "sequence", "category", "label", "state", "startedAt", "finishedAt", "durationMs", "depth", "measurements", "evidence", "partial", "partialReasons"],
+        "properties": {
+          "stepId": { "$ref": "#/components/schemas/Uuid" },
+          "parentStepId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "spanId": { "oneOf": [{ "$ref": "#/components/schemas/SpanId" }, { "type": "null" }] },
+          "parentSpanId": { "oneOf": [{ "$ref": "#/components/schemas/SpanId" }, { "type": "null" }] },
+          "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "category": { "$ref": "#/components/schemas/RunInspectionStepCategory" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "state": { "$ref": "#/components/schemas/RunInspectionStepState" },
+          "startedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "durationMs": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 31536000000 }, { "type": "null" }] },
+          "depth": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "measurements": { "type": "array", "maxItems": 128, "items": { "$ref": "#/components/schemas/RunInspectionMeasurement" } },
+          "evidence": { "type": "array", "maxItems": 256, "items": { "$ref": "#/components/schemas/RunEvidenceManifest" } },
+          "partial": { "type": "boolean" },
+          "partialReasons": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/RunEvidencePartialReason" } }
+        },
+        "allOf": [{ "if": { "properties": { "partial": { "const": false } }, "required": ["partial"] }, "then": { "properties": { "partialReasons": { "maxItems": 0 } } }, "else": { "properties": { "partialReasons": { "minItems": 1 } } } }]
+      },
+      "RunInspectionCompleteness": {
+        "type": "object", "additionalProperties": false,
+        "required": ["state", "expectedEvidenceCount", "capturedEvidenceCount", "excludedEvidenceCount", "partialEvidenceCount", "droppedEvidenceCount", "deletedEvidenceCount", "reasons"],
+        "properties": {
+          "state": { "type": "string", "enum": ["complete", "partial", "unavailable", "deleted"] },
+          "expectedEvidenceCount": { "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 1000000 }, { "type": "null" }] },
+          "capturedEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "excludedEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "partialEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "droppedEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "deletedEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "reasons": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/RunEvidencePartialReason" } }
+        },
+        "allOf": [
+          { "if": { "properties": { "state": { "const": "complete" } }, "required": ["state"] }, "then": { "properties": { "partialEvidenceCount": { "const": 0 }, "droppedEvidenceCount": { "const": 0 }, "deletedEvidenceCount": { "const": 0 }, "reasons": { "maxItems": 0 } } } },
+          { "if": { "properties": { "state": { "const": "partial" } }, "required": ["state"] }, "then": { "properties": { "reasons": { "minItems": 1 } } } },
+          { "if": { "properties": { "state": { "const": "unavailable" } }, "required": ["state"] }, "then": { "properties": { "reasons": { "minItems": 1 } } } },
+          { "if": { "properties": { "state": { "const": "deleted" } }, "required": ["state"] }, "then": { "properties": { "capturedEvidenceCount": { "const": 0 }, "deletedEvidenceCount": { "minimum": 1 }, "reasons": { "contains": { "const": "manually_deleted" }, "minItems": 1 } } } }
+        ],
+        "description": "Every manifest is counted exactly once by capture state. When expectedEvidenceCount is non-null it equals capturedEvidenceCount + excludedEvidenceCount + partialEvidenceCount + droppedEvidenceCount + deletedEvidenceCount."
+      },
+      "RunInspection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "runId", "traceId", "status", "startedAt", "finishedAt", "durationMs", "steps", "completeness", "snapshotAt", "partial", "partialReasons", "nextCursor"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "runId": { "$ref": "#/components/schemas/Uuid" },
+          "traceId": { "oneOf": [{ "$ref": "#/components/schemas/TraceId" }, { "type": "null" }] },
+          "status": { "$ref": "#/components/schemas/RunStatus" },
+          "startedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "finishedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "durationMs": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 31536000000 }, { "type": "null" }] },
+          "steps": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/components/schemas/RunInspectionStep" }, "description": "Deterministic hierarchy ordered by sequence, observed time, and step identifier. Retries and concurrent branches remain separate steps." },
+          "completeness": { "$ref": "#/components/schemas/RunInspectionCompleteness" },
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "partial": { "type": "boolean" },
+          "partialReasons": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/RunEvidencePartialReason" } },
+          "nextCursor": { "oneOf": [{ "$ref": "#/components/schemas/Cursor" }, { "type": "null" }] }
+        },
+        "allOf": [
+          { "if": { "properties": { "partial": { "const": false } }, "required": ["partial"] }, "then": { "properties": { "partialReasons": { "maxItems": 0 }, "nextCursor": { "type": "null" } } }, "else": { "anyOf": [{ "properties": { "partialReasons": { "minItems": 1 } } }, { "properties": { "nextCursor": { "$ref": "#/components/schemas/Cursor" } } }] } },
+          { "if": { "properties": { "completeness": { "properties": { "state": { "const": "complete" } }, "required": ["state"] } }, "required": ["completeness"] }, "then": { "properties": { "partial": { "const": false }, "steps": { "items": { "properties": { "partial": { "const": false }, "evidence": { "items": { "properties": { "captureState": { "enum": ["captured", "excluded"] } } } } } } } } } },
+          { "if": { "properties": { "completeness": { "properties": { "state": { "const": "partial" } }, "required": ["state"] } }, "required": ["completeness"] }, "then": { "properties": { "partial": { "const": true } } } },
+          { "if": { "properties": { "completeness": { "properties": { "state": { "const": "unavailable" } }, "required": ["state"] } }, "required": ["completeness"] }, "then": { "properties": { "partial": { "const": true }, "partialReasons": { "minItems": 1 } } } },
+          { "if": { "properties": { "completeness": { "properties": { "state": { "const": "deleted" } }, "required": ["state"] } }, "required": ["completeness"] }, "then": { "properties": { "steps": { "items": { "properties": { "evidence": { "items": { "properties": { "captureState": { "enum": ["deleted", "excluded"] } } } } } } } } } }
+        ]
+      },
+      "RunEvidenceDeletion": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "deletionId", "runId", "status", "requestedAt", "completedAt", "deletedEvidenceCount", "auditMode", "failureCode"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "deletionId": { "$ref": "#/components/schemas/Uuid" },
+          "runId": { "$ref": "#/components/schemas/Uuid" },
+          "status": { "type": "string", "enum": ["accepted", "in_progress", "completed", "failed"] },
+          "requestedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "completedAt": { "oneOf": [{ "$ref": "#/components/schemas/UtcInstant" }, { "type": "null" }] },
+          "deletedEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "auditMode": { "type": "string", "const": "content_free" },
+          "failureCode": { "oneOf": [{ "type": "string", "enum": ["manifest_store_unavailable", "object_store_unavailable", "object_delete_failed", "audit_persist_failed", "unknown_deletion_failure"] }, { "type": "null" }] }
+        },
+        "oneOf": [
+          { "properties": { "status": { "enum": ["accepted", "in_progress"] }, "completedAt": { "type": "null" }, "failureCode": { "type": "null" } }, "required": ["status", "completedAt", "failureCode"] },
+          { "properties": { "status": { "const": "completed" }, "completedAt": { "$ref": "#/components/schemas/UtcInstant" }, "failureCode": { "type": "null" } }, "required": ["status", "completedAt", "failureCode"] },
+          { "properties": { "status": { "const": "failed" }, "completedAt": { "type": "null" }, "failureCode": { "type": "string", "enum": ["manifest_store_unavailable", "object_store_unavailable", "object_delete_failed", "audit_persist_failed", "unknown_deletion_failure"] } }, "required": ["status", "completedAt", "failureCode"] }
+        ]
       },
       "ObservationSummary": {
         "type": "object", "additionalProperties": false,
@@ -1802,7 +2025,14 @@
       "LiveEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "resourceType", "resourceId", "capturePolicy"],
-        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "$ref": "#/components/schemas/Uuid" }, "eventType": { "$ref": "#/components/schemas/LiveEventType" }, "occurredAt": { "$ref": "#/components/schemas/UtcInstant" }, "resourceType": { "type": "string", "enum": ["observation", "run", "trace", "component", "deployment", "retention", "system"] }, "resourceId": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" }, "capturePolicy": { "type": "string", "const": "metadata_only" } }
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "$ref": "#/components/schemas/Uuid" }, "eventType": { "$ref": "#/components/schemas/LiveEventType" }, "occurredAt": { "$ref": "#/components/schemas/UtcInstant" }, "resourceType": { "type": "string", "enum": ["observation", "run", "trace", "component", "deployment", "retention", "system"] }, "resourceId": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" }, "capturePolicy": { "type": "string", "const": "metadata_only" } },
+        "description": "Backward-compatible metadata-only live event. New selected-run invalidation producers use RunInspectionInvalidationEvent; legacy run events remain accepted during rollout."
+      },
+      "RunInspectionInvalidationEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "resourceType", "resourceId", "capturePolicy"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "$ref": "#/components/schemas/Uuid" }, "eventType": { "type": "string", "const": "observation.changed" }, "occurredAt": { "$ref": "#/components/schemas/UtcInstant" }, "resourceType": { "type": "string", "const": "run" }, "resourceId": { "$ref": "#/components/schemas/Uuid" }, "capturePolicy": { "type": "string", "const": "metadata_only" } },
+        "description": "Content-free selected-run invalidation only. REST inspection snapshots remain authoritative; evidence content and manifests are forbidden."
       },
       "EvaluationLiveEvent": {
         "type": "object", "additionalProperties": false,

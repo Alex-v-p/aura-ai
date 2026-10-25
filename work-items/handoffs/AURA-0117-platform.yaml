@@ -1,0 +1,52 @@
+agent: platform_worker
+work_item: AURA-0117
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0117_platform
+  worktree: shared-main
+scope:
+  ownership_zone: delivery.aura0117
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0117-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0117.yaml (declared not applicable; skipped)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0117.yaml (no protected changes; skipped)
+    - UV_CACHE_DIR=/tmp/aura-0117-uv uv run pytest -q contracts/tests/test_aura0117_run_evidence_contract.py contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py (36 passed)
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && corepack pnpm exec nx test observatory-api-client --skip-nx-cache (9 passed)
+    - cd frontend && corepack pnpm exec nx lint observatory-api-client --skip-nx-cache
+    - git diff --check
+    - AURA-0098 is present only under work-items/archived and has status integrated
+    - Current changed-path validation covers 20 paths; all remain inside AURA-0117 allowed_paths, including the landed AURA-0117 general review artifact
+  failed: []
+  not_run: []
+decisions:
+  - Accepted ADR-0017 and the additive run-evidence-v1 and observatory-v1 contract changes preserve separate Core and Observatory products, one-way asynchronous direction, and Core execution independence.
+  - The current change set introduces no deployable service, package, framework, deployment topology change, database migration, shared runtime dependency, Aura Web change, or protected baseline mutation.
+  - Ordinary OTLP, ClickHouse, and SSE remain content-free; full run evidence is governed by the separate versioned channel and Observatory-owned storage contract.
+  - AURA-0098 is already completed and archived before AURA-0117 activation, satisfying the sequencing prerequisite.
+risks:
+  - Follow-up Core capture and Observatory implementation work must retain the accepted isolation, bounded nonblocking export, dedicated storage, owner authorization, and manual deletion guarantees.
+  - Runtime ingestion must enforce cross-field evidence-kind and payload agreement, digest and byte-count verification, duplicate collision rejection, and out-of-order assembly as noted by the contract handoffs.
+unresolved: []

@@ -17,6 +17,7 @@ Authority follows the repository documentation policy: the current user/work ite
 | [0014](0014-aura-owned-execution-langgraph-backend.md) | Aura-owned execution with optional LangGraph backend | Agent runtime and evaluation |
 | [0015](0015-authentik-bff-secrets-extensions.md) | Authentik BFF sessions, SOPS/age, and isolated extensions | Identity, secrets, integrations, extensions |
 | [0016](0016-api-realtime-pwa-and-voice-protocols.md) | API/realtime, generated clients, PWA, gRPC/WebRTC, and local voice | Web, Wall, satellites, Core API |
+| [0017](0017-governed-production-run-evidence.md) | Owner-enabled full production run evidence on a separate governed channel | Core evidence export, Observatory storage and inspection |
 
 ## Review expectation
 

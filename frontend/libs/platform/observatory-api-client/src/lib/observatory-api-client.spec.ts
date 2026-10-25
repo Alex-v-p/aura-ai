@@ -29,6 +29,9 @@ import {
   type EvaluationQueuedAttempt,
   type ObservatoryOperationResponse,
   type ObservatoryApiOperations,
+  type RunInspection,
+  type RunEvidenceDeletion,
+  type RunEvidenceManifest,
   type SavedQueryExecutionResult,
 } from './generated/observatory-api';
 import { ObservatoryApiClient, type ObservatoryTransport } from './observatory-api-client';
@@ -208,5 +211,69 @@ describe('ObservatoryApiClient', () => {
     expectTypeOf<EvaluationSuite['variantBindings']>().toEqualTypeOf<
       ReadonlyArray<EvaluationExperimentVariant> | undefined
     >();
+  });
+
+  it('exposes bounded run inspection and streamed evidence as transport-only operations', () => {
+    expect(OBSERVATORY_API_OPERATIONS.getRunInspection).toEqual({
+      method: 'GET',
+      pathTemplate: '/api/v1/runs/{run_id}/inspection',
+      requestMode: 'none',
+      responseMode: 'json',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.getRunEvidence).toEqual({
+      method: 'GET',
+      pathTemplate: '/api/v1/runs/{run_id}/evidence/{evidence_id}',
+      requestMode: 'none',
+      responseMode: 'blob',
+    });
+    expect(OBSERVATORY_API_OPERATIONS.deleteRunEvidence).toEqual({
+      method: 'DELETE',
+      pathTemplate: '/api/v1/runs/{run_id}/evidence',
+      requestMode: 'none',
+      responseMode: 'json',
+    });
+    expectTypeOf<ObservatoryOperationResponse<'getRunInspection'>>().toEqualTypeOf<RunInspection>();
+    expectTypeOf<ObservatoryOperationResponse<'getRunEvidence'>>().toEqualTypeOf<Blob>();
+    expectTypeOf<RunInspection['steps'][number]['evidence'][number]>().toEqualTypeOf<RunEvidenceManifest>();
+    expectTypeOf<RunEvidenceManifest['captureState']>().toEqualTypeOf<
+      'captured' | 'excluded' | 'partial' | 'dropped' | 'deleted'
+    >();
+    expectTypeOf<RunEvidenceManifest['digest']>().toEqualTypeOf<string | null>();
+    expectTypeOf<ObservatoryOperationResponse<'deleteRunEvidence'>>().toEqualTypeOf<RunEvidenceDeletion>();
+    expectTypeOf<RunEvidenceDeletion['failureCode']>().toEqualTypeOf<
+      | 'manifest_store_unavailable'
+      | 'object_store_unavailable'
+      | 'object_delete_failed'
+      | 'audit_persist_failed'
+      | 'unknown_deletion_failure'
+      | null
+    >();
+  });
+
+  it('passes an approved evidence Blob through the generated transport unchanged', async () => {
+    const evidence = new Blob(['fixture evidence'], { type: 'text/plain' });
+    const execute = vi.fn().mockResolvedValue(evidence);
+    const client = new ObservatoryApiClient({ execute } as unknown as ObservatoryTransport);
+    const input = {
+      path: {
+        run_id: '8f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a03',
+        evidence_id: '7f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a02',
+      },
+      query: {},
+      headers: {},
+      body: undefined as never,
+    };
+
+    await expect(client.execute('getRunEvidence', input)).resolves.toBe(evidence);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(OBSERVATORY_API_OPERATIONS.getRunEvidence, input);
+    expect(evidence).toBeInstanceOf(Blob);
+    expect(evidence.type).toBe('text/plain');
+    expect(evidence.size).toBeGreaterThan(0);
+    expectTypeOf<ObservatoryApiOperations['deleteRunEvidence']['headers']>().toEqualTypeOf<{
+      readonly 'X-Observatory-CSRF': string;
+      readonly 'Idempotency-Key': string;
+      readonly 'X-Observatory-Confirmation': string;
+    }>();
   });
 });

@@ -1,0 +1,64 @@
+agent: integration_maintainer
+work_item: AURA-0117
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0117-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0117-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0117-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0117-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0117.yaml
+  - work-items/integration/AURA-0117.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+checks:
+  passed:
+    - >-
+      All three implementation handoffs were read and report complete status,
+      authorized ownership paths, no migrations, and no unresolved items. All
+      four required review artifacts are schema-valid PASS verdicts with no
+      findings.
+    - >-
+      The archived work item and 23 changed paths passed work-item, changed
+      path, repository-shape, module-registry, import-boundary,
+      service-isolation, observability, contract-change, baseline-protection,
+      and whitespace checks.
+    - >-
+      The run-evidence and Observatory contract suite passed all 36 tests.
+      Generated Observatory client contract validation and synchronization
+      checks passed; the client suite passed 9 tests and client lint passed.
+    - >-
+      Handoff, review, archived work-item, and integration-report documents
+      validate against their repository schemas.
+    - >-
+      The checkpoint records the owner-authorized, additive architecture and
+      contract phase only. No Core runtime capture, Observatory storage/API
+      implementation, UI behavior, deployment change, migration, or protected
+      baseline was added.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Follow-up work must implement bounded explicit Core serializers and
+    nonblocking export isolation, Observatory PostgreSQL manifests and
+    dedicated Garage storage, API streaming/deletion behavior, inert UI
+    rendering, and full-stack outage/recovery acceptance before full-content
+    capture is enabled.
+  - >-
+    Runtime ingestion must enforce cross-field evidence-kind/payload agreement,
+    digest and byte-count verification, duplicate collision rejection, and
+    deterministic out-of-order assembly.
+  - >-
+    The generated Blob transport contract does not itself provide browser
+    persistence, screenshot exclusion, or lazy inert rendering guarantees;
+    those remain assigned to later implementation work.

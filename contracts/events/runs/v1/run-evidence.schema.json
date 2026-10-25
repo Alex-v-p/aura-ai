@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/runs/v1/run-evidence.schema.json",
+  "title": "Aura run evidence v1",
+  "description": "Closed, bounded, at-least-once envelope for exact model-visible and executor-visible run evidence. Before serialization, an explicit producer serializer inspects the complete item bytes for every media type and rejects the whole item when credential material, secret-bearing fields, bearer material, provider-hidden reasoning, malformed encoding, or unsupported media is detected. canonicalEvidenceBytes are decoded contentBase64 bytes for every model_visible_attachment, including JSON and text attachments; the evidence endpoint streams those decoded bytes with the declared mediaType, never the base64 wrapper. For all other evidence they are RFC 8785 canonical JSON serialization of payload for application/json or UTF-8 bytes of the payload's sole content-bearing text field for text/plain or text/markdown. digest and byteCount are computed over canonicalEvidenceBytes. Sequence is monotonic within a run. eventId and evidenceId are stable across delivery attempts; deliveryId is unique per attempt. An exact duplicate has identical stable IDs, digest, byteCount, kind, correlation, sequence, capture-policy revision, content-admission attestation, and canonical bytes and is idempotently accepted. Reuse of either stable ID with any different immutable value is a duplicate collision and is rejected content-free. Consumers tolerate out-of-order delivery.",
+  "$ref": "#/$defs/envelope",
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "maxLength": 36 },
+    "utcInstant": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$", "maxLength": 40 },
+    "boundedId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" },
+    "spanId": { "type": "string", "pattern": "^[0-9a-f]{16}$", "maxLength": 16 },
+    "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$", "maxLength": 32 },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71 },
+    "shortText": { "type": "string", "maxLength": 4096 },
+    "contentText": { "type": "string", "maxLength": 1048576 },
+    "contentRole": { "type": "string", "enum": ["system", "developer", "user", "assistant", "tool"] },
+    "stepCategory": {
+      "type": "string",
+      "enum": ["admission", "context", "retrieval", "prompt", "routing", "generation", "thinking", "tool", "policy", "synthesis", "persistence", "delivery", "worker", "automation", "schedule", "evaluation"]
+    },
+    "evidenceKind": {
+      "type": "string",
+      "enum": ["admitted_request", "admitted_trigger", "compiled_prompt", "conversation_context", "memory_chunk", "document_chunk", "model_visible_attachment", "model_routing", "displayed_thinking", "generation_output", "tool_arguments", "tool_result", "policy_decision", "approval_decision", "execution_outcome", "response_synthesis", "persistence_record", "delivery_record", "worker_input", "worker_output", "automation_input", "automation_output", "schedule_input", "schedule_output", "evaluation_input", "evaluation_output"]
+    },
+    "mediaClassification": { "type": "string", "enum": ["text", "structured", "image", "document"] },
+    "mediaType": { "type": "string", "enum": ["application/json", "text/plain", "text/markdown", "image/png", "image/jpeg", "image/webp", "application/pdf"] },
+    "captureState": { "type": "string", "enum": ["captured", "excluded", "partial", "dropped", "deleted"] },
+    "boundedReason": {
+      "type": "string",
+      "enum": ["capture_disabled", "credential_material_rejected", "secret_bearing_field_rejected", "bearer_material_rejected", "provider_hidden_reasoning_excluded", "unsupported_media_type", "payload_limit_exceeded", "queue_pressure", "export_unavailable", "transport_failure", "ingest_rejected", "storage_failure", "manually_deleted", "unknown_capture_gap"]
+    },
+    "deliveryIdentity": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "producerId", "deliveryId", "attempt"], "properties": { "kind": { "const": "initial" }, "producerId": { "$ref": "#/$defs/boundedId" }, "deliveryId": { "$ref": "#/$defs/uuid" }, "attempt": { "type": "integer", "const": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "producerId", "deliveryId", "attempt", "firstDeliveryId"], "properties": { "kind": { "const": "retry" }, "producerId": { "$ref": "#/$defs/boundedId" }, "deliveryId": { "$ref": "#/$defs/uuid" }, "attempt": { "type": "integer", "minimum": 2, "maximum": 100 }, "firstDeliveryId": { "$ref": "#/$defs/uuid" } } }
+      ]
+    },
+    "contentAdmission": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["outcome", "scannerRevision", "policyRevision", "inspectedAt", "inspectionModes"], "properties": { "outcome": { "const": "passed" }, "scannerRevision": { "$ref": "#/$defs/boundedId" }, "policyRevision": { "$ref": "#/$defs/boundedId" }, "inspectedAt": { "$ref": "#/$defs/utcInstant" }, "inspectionModes": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "enum": ["decoded_text", "metadata", "container_structure", "ocr"] } } } },
+        { "type": "object", "additionalProperties": false, "required": ["outcome", "scannerRevision", "policyRevision", "inspectedAt", "inspectionModes"], "properties": { "outcome": { "const": "rejected_prohibited_material" }, "scannerRevision": { "$ref": "#/$defs/boundedId" }, "policyRevision": { "$ref": "#/$defs/boundedId" }, "inspectedAt": { "$ref": "#/$defs/utcInstant" }, "inspectionModes": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "enum": ["decoded_text", "metadata", "container_structure", "ocr"] } } } },
+        { "type": "object", "additionalProperties": false, "required": ["outcome"], "properties": { "outcome": { "const": "not_applicable" } } }
+      ],
+      "description": "Closed content-free producer admission attestation. Ingestion validates its shape and allowlisted scanner/policy revisions before accepting captured evidence."
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "contractId", "eventId", "evidenceId", "runId", "traceId", "spanId", "parentSpanId", "sequence", "stepCategory", "evidenceKind", "mediaClassification", "mediaType", "digest", "byteCount", "capturePolicyRevision", "observedAt", "emittedAt", "delivery", "contentAdmission", "captureState", "reason"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "contractId": { "type": "string", "const": "run-evidence-v1" },
+        "eventId": { "$ref": "#/$defs/uuid" },
+        "evidenceId": { "$ref": "#/$defs/uuid" },
+        "runId": { "$ref": "#/$defs/uuid" },
+        "traceId": { "$ref": "#/$defs/traceId" },
+        "spanId": { "$ref": "#/$defs/spanId" },
+        "parentSpanId": { "oneOf": [{ "$ref": "#/$defs/spanId" }, { "type": "null" }] },
+        "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "stepCategory": { "$ref": "#/$defs/stepCategory" },
+        "evidenceKind": { "$ref": "#/$defs/evidenceKind" },
+        "mediaClassification": { "$ref": "#/$defs/mediaClassification" },
+        "mediaType": { "$ref": "#/$defs/mediaType" },
+        "digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "capturePolicyRevision": { "$ref": "#/$defs/boundedId" },
+        "observedAt": { "$ref": "#/$defs/utcInstant" },
+        "emittedAt": { "$ref": "#/$defs/utcInstant" },
+        "delivery": { "$ref": "#/$defs/deliveryIdentity" },
+        "contentAdmission": { "$ref": "#/$defs/contentAdmission" },
+        "captureState": { "$ref": "#/$defs/captureState" },
+        "reason": { "oneOf": [{ "$ref": "#/$defs/boundedReason" }, { "type": "null" }] },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "captureState": { "const": "captured" } }, "required": ["captureState"] },
+          "then": {
+            "required": ["payload"],
+            "properties": { "reason": { "type": "null" }, "digest": { "$ref": "#/$defs/digest" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "contentAdmission": { "properties": { "outcome": { "const": "passed" } }, "required": ["outcome"] } },
+            "allOf": [
+              { "oneOf": [
+                { "properties": { "evidenceKind": { "const": "admitted_request" }, "stepCategory": { "const": "admission" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "admitted_request" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "admitted_trigger" }, "stepCategory": { "const": "admission" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "admitted_trigger" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "compiled_prompt" }, "stepCategory": { "const": "prompt" }, "mediaClassification": { "const": "text" }, "mediaType": { "enum": ["text/plain", "text/markdown"] }, "payload": { "properties": { "kind": { "const": "compiled_prompt" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "conversation_context" }, "stepCategory": { "const": "context" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "conversation_context" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "memory_chunk" }, "stepCategory": { "const": "retrieval" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "memory_chunk" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "document_chunk" }, "stepCategory": { "const": "retrieval" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "document_chunk" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "stepCategory": { "const": "context" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "model_visible_attachment" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "stepCategory": { "const": "context" }, "mediaClassification": { "const": "text" }, "mediaType": { "enum": ["text/plain", "text/markdown"] }, "payload": { "properties": { "kind": { "const": "model_visible_attachment" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "stepCategory": { "const": "context" }, "mediaClassification": { "const": "image" }, "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp"] }, "payload": { "properties": { "kind": { "const": "model_visible_attachment" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "stepCategory": { "const": "context" }, "mediaClassification": { "const": "document" }, "mediaType": { "const": "application/pdf" }, "payload": { "properties": { "kind": { "const": "model_visible_attachment" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "model_routing" }, "stepCategory": { "const": "routing" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "model_routing" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "displayed_thinking" }, "stepCategory": { "const": "thinking" }, "mediaClassification": { "const": "text" }, "mediaType": { "const": "text/plain" }, "payload": { "properties": { "kind": { "const": "displayed_thinking" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "generation_output" }, "stepCategory": { "const": "generation" }, "mediaClassification": { "const": "text" }, "mediaType": { "enum": ["text/plain", "text/markdown"] }, "payload": { "properties": { "kind": { "const": "generation_output" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "tool_arguments" }, "stepCategory": { "const": "tool" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "tool_arguments" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "tool_result" }, "stepCategory": { "const": "tool" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "tool_result" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "policy_decision" }, "stepCategory": { "const": "policy" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "policy_decision" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "approval_decision" }, "stepCategory": { "const": "policy" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "approval_decision" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "execution_outcome" }, "stepCategory": { "const": "tool" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "execution_outcome" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "response_synthesis" }, "stepCategory": { "const": "synthesis" }, "mediaClassification": { "const": "text" }, "mediaType": { "enum": ["text/plain", "text/markdown"] }, "payload": { "properties": { "kind": { "const": "response_synthesis" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "persistence_record" }, "stepCategory": { "const": "persistence" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "persistence_record" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "delivery_record" }, "stepCategory": { "const": "delivery" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "delivery_record" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "worker_input" }, "stepCategory": { "const": "worker" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "worker_input" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "worker_output" }, "stepCategory": { "const": "worker" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "worker_output" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "automation_input" }, "stepCategory": { "const": "automation" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "automation_input" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "automation_output" }, "stepCategory": { "const": "automation" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "automation_output" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "schedule_input" }, "stepCategory": { "const": "schedule" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "schedule_input" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "schedule_output" }, "stepCategory": { "const": "schedule" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "schedule_output" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "evaluation_input" }, "stepCategory": { "const": "evaluation" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "evaluation_input" } }, "required": ["kind"] } } },
+                { "properties": { "evidenceKind": { "const": "evaluation_output" }, "stepCategory": { "const": "evaluation" }, "mediaClassification": { "const": "structured" }, "mediaType": { "const": "application/json" }, "payload": { "properties": { "kind": { "const": "evaluation_output" } }, "required": ["kind"] } } }
+              ] }
+            ]
+          },
+          "else": {
+            "properties": {
+              "payload": false,
+              "captureState": { "enum": ["excluded", "partial", "dropped", "deleted"] },
+              "reason": { "$ref": "#/$defs/boundedReason" },
+              "digest": { "type": "null" },
+              "byteCount": { "type": "integer", "const": 0 },
+              "contentAdmission": { "properties": { "outcome": { "enum": ["rejected_prohibited_material", "not_applicable"] } }, "required": ["outcome"] }
+            }
+          }
+        },
+        { "if": { "properties": { "captureState": { "const": "deleted" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "const": "manually_deleted" }, "contentAdmission": { "properties": { "outcome": { "const": "not_applicable" } }, "required": ["outcome"] } } } },
+        { "if": { "properties": { "captureState": { "const": "excluded" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["capture_disabled", "provider_hidden_reasoning_excluded"] }, "contentAdmission": { "properties": { "outcome": { "const": "not_applicable" } }, "required": ["outcome"] } } } },
+        { "if": { "properties": { "captureState": { "const": "partial" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["credential_material_rejected", "secret_bearing_field_rejected", "bearer_material_rejected", "unsupported_media_type", "payload_limit_exceeded", "ingest_rejected", "unknown_capture_gap"] } } } },
+        { "if": { "properties": { "reason": { "enum": ["credential_material_rejected", "secret_bearing_field_rejected", "bearer_material_rejected"] } }, "required": ["reason"] }, "then": { "properties": { "contentAdmission": { "properties": { "outcome": { "const": "rejected_prohibited_material" } }, "required": ["outcome"] } } } },
+        { "if": { "properties": { "mediaClassification": { "const": "text" }, "contentAdmission": { "properties": { "outcome": { "enum": ["passed", "rejected_prohibited_material"] } }, "required": ["outcome"] } }, "required": ["mediaClassification", "contentAdmission"] }, "then": { "properties": { "contentAdmission": { "properties": { "inspectionModes": { "contains": { "const": "decoded_text" } } }, "required": ["inspectionModes"] } } } },
+        { "if": { "properties": { "mediaClassification": { "const": "structured" }, "contentAdmission": { "properties": { "outcome": { "enum": ["passed", "rejected_prohibited_material"] } }, "required": ["outcome"] } }, "required": ["mediaClassification", "contentAdmission"] }, "then": { "properties": { "contentAdmission": { "properties": { "inspectionModes": { "allOf": [{ "contains": { "const": "decoded_text" } }, { "contains": { "const": "container_structure" } }] } }, "required": ["inspectionModes"] } } } },
+        { "if": { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "mediaClassification": { "const": "image" }, "contentAdmission": { "properties": { "outcome": { "enum": ["passed", "rejected_prohibited_material"] } }, "required": ["outcome"] } }, "required": ["evidenceKind", "mediaClassification", "contentAdmission"] }, "then": { "properties": { "contentAdmission": { "properties": { "inspectionModes": { "allOf": [{ "contains": { "const": "metadata" } }, { "contains": { "const": "container_structure" } }, { "contains": { "const": "ocr" } }] } }, "required": ["inspectionModes"] } } } },
+        { "if": { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "mediaClassification": { "const": "document" }, "contentAdmission": { "properties": { "outcome": { "enum": ["passed", "rejected_prohibited_material"] } }, "required": ["outcome"] } }, "required": ["evidenceKind", "mediaClassification", "contentAdmission"] }, "then": { "properties": { "contentAdmission": { "properties": { "inspectionModes": { "allOf": [{ "contains": { "const": "decoded_text" } }, { "contains": { "const": "metadata" } }, { "contains": { "const": "container_structure" } }, { "contains": { "const": "ocr" } }] } }, "required": ["inspectionModes"] } } } },
+        { "if": { "properties": { "evidenceKind": { "const": "model_visible_attachment" }, "mediaClassification": { "enum": ["text", "structured"] }, "contentAdmission": { "properties": { "outcome": { "enum": ["passed", "rejected_prohibited_material"] } }, "required": ["outcome"] } }, "required": ["evidenceKind", "mediaClassification", "contentAdmission"] }, "then": { "properties": { "contentAdmission": { "properties": { "inspectionModes": { "allOf": [{ "contains": { "const": "decoded_text" } }, { "contains": { "const": "container_structure" } }] } }, "required": ["inspectionModes"] } } } },
+        { "if": { "properties": { "captureState": { "const": "dropped" } }, "required": ["captureState"] }, "then": { "properties": { "reason": { "enum": ["queue_pressure", "export_unavailable", "transport_failure", "storage_failure"] }, "contentAdmission": { "properties": { "outcome": { "const": "not_applicable" } }, "required": ["outcome"] } } } }
+      ]
+    },
+    "message": {
+      "type": "object", "additionalProperties": false, "required": ["role", "content"],
+      "properties": { "role": { "$ref": "#/$defs/contentRole" }, "content": { "$ref": "#/$defs/contentText" } }
+    },
+    "chunk": {
+      "type": "object", "additionalProperties": false, "required": ["sourceId", "ordinal", "content", "score"],
+      "properties": { "sourceId": { "$ref": "#/$defs/boundedId" }, "ordinal": { "type": "integer", "minimum": 0, "maximum": 1000000 }, "content": { "$ref": "#/$defs/contentText" }, "score": { "oneOf": [{ "type": "number", "minimum": -1000000, "maximum": 1000000 }, { "type": "null" }] } }
+    },
+    "namedContent": {
+      "type": "object", "additionalProperties": false, "required": ["name", "content"],
+      "properties": { "name": { "$ref": "#/$defs/boundedId" }, "content": { "$ref": "#/$defs/contentText" } }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false, "required": ["decision", "reason"],
+      "properties": { "decision": { "$ref": "#/$defs/boundedId" }, "reason": { "$ref": "#/$defs/shortText" } }
+    },
+    "payload": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "request"], "properties": { "kind": { "const": "admitted_request" }, "request": { "$ref": "#/$defs/message" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "triggerType", "content"], "properties": { "kind": { "const": "admitted_trigger" }, "triggerType": { "$ref": "#/$defs/boundedId" }, "content": { "$ref": "#/$defs/contentText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "prompt"], "properties": { "kind": { "const": "compiled_prompt" }, "prompt": { "$ref": "#/$defs/contentText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "messages"], "properties": { "kind": { "const": "conversation_context" }, "messages": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/message" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "chunk"], "properties": { "kind": { "enum": ["memory_chunk", "document_chunk"] }, "chunk": { "$ref": "#/$defs/chunk" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentId", "displayName", "contentBase64"], "properties": { "kind": { "const": "model_visible_attachment" }, "attachmentId": { "$ref": "#/$defs/boundedId" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 256 }, "contentBase64": { "type": "string", "contentEncoding": "base64", "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$", "maxLength": 1398104 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "provider", "model", "routeReason"], "properties": { "kind": { "const": "model_routing" }, "provider": { "$ref": "#/$defs/boundedId" }, "model": { "$ref": "#/$defs/boundedId" }, "routeReason": { "$ref": "#/$defs/shortText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "text"], "properties": { "kind": { "enum": ["displayed_thinking", "generation_output", "response_synthesis"] }, "text": { "$ref": "#/$defs/contentText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "toolName", "content"], "properties": { "kind": { "enum": ["tool_arguments", "tool_result"] }, "toolName": { "$ref": "#/$defs/boundedId" }, "content": { "$ref": "#/$defs/contentText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "decision"], "properties": { "kind": { "enum": ["policy_decision", "approval_decision"] }, "decision": { "$ref": "#/$defs/decision" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "outcome", "detail"], "properties": { "kind": { "const": "execution_outcome" }, "outcome": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "rejected", "timed_out"] }, "detail": { "$ref": "#/$defs/shortText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "record"], "properties": { "kind": { "enum": ["persistence_record", "delivery_record"] }, "record": { "$ref": "#/$defs/namedContent" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "content"], "properties": { "kind": { "enum": ["worker_input", "worker_output", "automation_input", "automation_output", "schedule_input", "schedule_output", "evaluation_input", "evaluation_output"] }, "content": { "$ref": "#/$defs/namedContent" } } }
+      ]
+    }
+  }
+}

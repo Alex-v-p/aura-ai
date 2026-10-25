@@ -20,12 +20,6 @@ function typeExpression(schema) {
   if (schema.type === 'string' && schema.format === 'binary') return 'Blob';
   if (schema.const !== undefined) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
-  if (schema.oneOf && schema.type !== 'object') return schema.oneOf.map(typeExpression).join(' | ');
-  if (schema.allOf) return schema.allOf.map(typeExpression).join(' & ');
-  if (Array.isArray(schema.type)) {
-    return schema.type.map((value) => typeExpression({ ...schema, enum: undefined, type: value })).join(' | ');
-  }
-  if (schema.type === 'array') return `ReadonlyArray<${typeExpression(schema.items)}>`;
   if (schema.type === 'object') {
     if (schema.additionalProperties && typeof schema.additionalProperties === 'object' && !schema.properties) {
       return `Readonly<Record<string, ${typeExpression(schema.additionalProperties)}>>`;
@@ -36,6 +30,12 @@ function typeExpression(schema) {
     );
     return `{ ${properties.join(' ')} }`;
   }
+  if (schema.oneOf && schema.type !== 'object') return schema.oneOf.map(typeExpression).join(' | ');
+  if (schema.allOf) return schema.allOf.map(typeExpression).join(' & ');
+  if (Array.isArray(schema.type)) {
+    return schema.type.map((value) => typeExpression({ ...schema, enum: undefined, type: value })).join(' | ');
+  }
+  if (schema.type === 'array') return `ReadonlyArray<${typeExpression(schema.items)}>`;
   if (schema.type === 'integer' || schema.type === 'number') return 'number';
   if (schema.type === 'boolean') return 'boolean';
   if (schema.type === 'null') return 'null';
@@ -72,6 +72,30 @@ function assertSupportedContent(content, allowed, context) {
 
 function responseType(operation) {
   const content = successResponse(operation)?.content;
+  if (operation.operationId === 'getRunEvidence') {
+    const approved = [
+      'application/json',
+      'text/plain',
+      'text/markdown',
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+      'application/pdf',
+    ];
+    const mediaTypes = Object.keys(content ?? {});
+    const unsupported = mediaTypes.filter((mediaType) => !approved.includes(mediaType));
+    if (unsupported.length > 0) throw new Error(`Unsupported getRunEvidence response media type(s): ${unsupported.join(', ')}`);
+    if (mediaTypes.length !== approved.length || approved.some((mediaType) => !mediaTypes.includes(mediaType))) {
+      throw new Error('getRunEvidence must expose exactly the approved bounded evidence media types');
+    }
+    if (Object.values(content).some((media) => media.schema?.$ref !== '#/components/schemas/BoundedEvidenceBytes')) {
+      throw new Error('getRunEvidence responses must use BoundedEvidenceBytes');
+    }
+    if (schemas.BoundedEvidenceBytes?.format !== 'binary' || schemas.BoundedEvidenceBytes?.maxLength !== 1048576) {
+      throw new Error('BoundedEvidenceBytes must remain a one-MiB binary schema');
+    }
+    return 'Blob';
+  }
   assertSupportedContent(content, ['application/json', 'text/event-stream'], `${operation.operationId} response`);
   const schema = content?.['application/json']?.schema ?? content?.['text/event-stream']?.schema;
   return schema ? typeExpression(schema) : 'void';
@@ -112,6 +136,8 @@ for (const [path, pathItem] of Object.entries(document.paths)) {
           : 'none',
       responseMode: successResponse(operation)?.content?.['text/event-stream']
         ? 'event-stream'
+        : operation.operationId === 'getRunEvidence'
+          ? 'blob'
         : successResponse(operation)?.content
           ? 'json'
           : 'none',
@@ -126,7 +152,7 @@ const operationTypes = operations.map((operation) =>
 const descriptors = operations.map((operation) =>
   `  ${operation.id}: { method: '${operation.method}', pathTemplate: '${operation.path}', requestMode: '${operation.requestMode}', responseMode: '${operation.responseMode}' },`,
 ).join('\n');
-const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json' | 'multipart';\n  readonly responseMode: 'none' | 'json' | 'event-stream';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
+const generated = `// Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.\n// Contract SHA-256: ${digest}\n\n${Object.entries(schemas).map(([name, schema]) => `export type ${name} = ${typeExpression(schema)};`).join('\n\n')}\n\nexport interface ObservatoryApiOperations {\n${operationTypes}\n}\n\nexport type ObservatoryOperationId = keyof ObservatoryApiOperations;\nexport type ObservatoryOperationInput<K extends ObservatoryOperationId> = Readonly<{\n  path: ObservatoryApiOperations[K]['path'];\n  query: ObservatoryApiOperations[K]['query'];\n  headers: ObservatoryApiOperations[K]['headers'];\n  body: ObservatoryApiOperations[K]['body'];\n}>;\nexport type ObservatoryOperationResponse<K extends ObservatoryOperationId> = ObservatoryApiOperations[K]['response'];\n\nexport interface ObservatoryOperationDescriptor {\n  readonly method: string;\n  readonly pathTemplate: string;\n  readonly requestMode: 'none' | 'json' | 'multipart';\n  readonly responseMode: 'none' | 'json' | 'event-stream' | 'blob';\n}\n\nexport const OBSERVATORY_API_OPERATIONS = {\n${descriptors}\n} as const satisfies Readonly<Record<ObservatoryOperationId, ObservatoryOperationDescriptor>>;\n`;
 
 if (process.argv.includes('--check')) {
   if (readFileSync(outputPath, 'utf8') !== generated) {
