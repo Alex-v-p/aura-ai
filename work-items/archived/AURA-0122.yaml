@@ -1,0 +1,157 @@
+id: AURA-0122
+title: Make Observatory traces and components operator-first
+status: integrated
+change_class: feature
+intent: >
+  Replace the Observatory Trace diagnostic dump and Components card wall with
+  concise operator-first workspaces that explain outcomes, bottlenecks,
+  failures, evidence coverage, and component health before exposing bounded
+  technical detail on demand. Preserve exact inspection access and the strict
+  Aura Web and Observatory product boundary.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0121.yaml
+    - The initial view answers what happened what was slow what failed and what evidence is available before showing individual events or spans.
+    - Trace uses a stage accordion as its primary mental model with phase coverage merged into stage summaries and raw events and spans grouped under an Advanced disclosure.
+    - Components uses a compact problem-first list with one selected detail surface and no optional eager card view.
+    - Span bars are labelled relative duration unless both normalized start offset and duration are rendered against a common time axis.
+    - Operator KPIs are terminal status authoritative duration failed partial and running counts evidence completeness slowest stage and applicable retrieval tool and generation counts; component KPIs are total degraded no-data missing-definition stale and healthy counts.
+    - Raw inspection steps spans measurements topology and evidence remain exact and accessible through explicit bounded progressive disclosure.
+    - Existing Observatory APIs generated clients store behavior and lazy owner-only no-store evidence retrieval remain authoritative and unchanged.
+    - Aura Web Core Observatory backend contracts databases and deployment topology remain unchanged.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+feature_references: [OBS-006, OBS-007, OBS-008, OBS-009, OBS-020, OBS-035]
+ownership_zones:
+  - observatory-web.run-inspection
+  - observatory-web.component-catalogue
+  - evaluation.aura0122
+  - delivery.aura0122
+allowed_paths:
+  - work-items/active/AURA-0122.yaml
+  - work-items/archived/AURA-0122.yaml
+  - work-items/handoffs/AURA-0122-*.yaml
+  - work-items/reviews/AURA-0122-*.yaml
+  - work-items/integration/AURA-0122.yaml
+  - frontend/libs/observatory/src/lib/features/traces/**
+  - frontend/libs/observatory/src/lib/features/components/**
+  - frontend/apps/storybook/src/observatory-trace.stories.ts
+  - frontend/apps/storybook/src/observatory-destinations.stories.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - compose.yaml
+  - frontend/apps/observatory-web/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected:
+    - existing observatory-v1 run inspection trace and component catalogue consumer behavior
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: observatory-web
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.run_inspection_query
+  required_metrics: []
+  required_evaluators:
+    - run_inspection_projection_truth
+    - metadata_v2_allowlist
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Exact owner-private evidence remains collapsed and is fetched only after explicit disclosure through the existing no-store owner-authorized flow.
+    - Evidence content identifiers digests and deletion detail never enter URLs logs metrics SSE browser storage service-worker caches or screenshots.
+    - Progressive disclosure must release loaded evidence when collapsed and preserve truthful partial unavailable excluded and deleted states.
+    - Aura Web retains zero Observatory links labels routes imports configuration sessions browser communication or client dependencies.
+  data_classes:
+    - metadata_only_operational_observations
+    - owner_private_run_evidence
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Trace opens with a plain-language run verdict total duration terminal status bottleneck error count tool retrieval generation and evidence summaries before technical records.
+  - Trace initially renders no more than twelve aggregate stage rows no expanded event bodies and no raw span rows; exact events measurements lineage evidence manifests and spans require explicit disclosure and are paged or incrementally revealed in batches of at most twenty.
+  - The primary Trace document at 1440 by 1000 remains under two viewport heights and at 390 by 844 under three viewport heights before any disclosure for fixtures containing at least two hundred steps and two hundred spans.
+  - Aggregate stages preserve chronology parallel branches terminal boundaries retries partial reasons and running states without inventing timing or completeness and identify the slowest meaningful stage.
+  - Evidence coverage distinguishes captured excluded partial unavailable and deleted states without fetching evidence bytes until the owner explicitly opens an evidence item.
+  - Live run invalidation preserves open aggregate sections but does not automatically open technical detail refetch collapsed evidence or cause terminal timings to change without new authoritative records.
+  - Components opens with catalogue-level healthy degraded no-data and definition-gap summaries and a compact problem-first list showing component identity health samples P95 error rate and definition state.
+  - Components initially renders at most twenty compact catalogue rows; trends versions measurements outcomes definition and topology appear in one selected-component detail surface rather than being repeated in every row.
+  - The selected component detail is visible alongside the catalogue at desktop widths and replaces the catalogue with an accessible back action at narrow widths; topology details are collapsed by default.
+  - Trace and Components use clear semantic Observatory icons labels units rounded human-readable durations and accessible state text without relying on color alone.
+  - Keyboard focus disclosure state screen-reader structure reduced motion forced colors zoom and 390 by 844 layouts remain usable with no nested page scroll traps or horizontal page overflow.
+  - Storybook includes two-hundred-record Trace and sixty-component catalogue states proving concise defaults plus loading empty stale disconnected partial error deleted and narrow-screen states.
+  - Browser acceptance asserts the initial row and document-height budgets progressive disclosure lazy evidence retrieval focus restoration live refresh stability and zero browser persistence.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0122.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0122.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0122.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0122.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0122.yaml
+  - pnpm --dir frontend exec nx lint observatory-web
+  - pnpm --dir frontend exec nx test observatory-web
+  - pnpm --dir frontend exec nx test observatory
+  - pnpm --dir frontend exec nx build observatory-web --configuration=production
+  - pnpm --dir frontend exec nx build-storybook storybook
+  - pnpm --dir frontend exec nx e2e observatory-web-e2e
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

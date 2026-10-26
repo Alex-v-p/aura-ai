@@ -1,4 +1,5 @@
 import type { RunInspection, TraceDetail } from '@aura/observatory-api-client';
+import { formatDurationMs } from '../../observatory-models';
 
 export type PhaseKey = 'request' | 'context' | 'prompt' | 'routing' | 'generation' | 'thinking' | 'tools' | 'persistence' | 'delivery' | 'other';
 export type PhaseItem = { readonly id: string; readonly label: string; readonly operation: string; readonly componentId: string; readonly component: string; readonly outcome: string; readonly startedAt: string; readonly durationMs: number | null; readonly measurementValue: number | null; readonly measurementUnit: string | null; readonly partial: boolean; readonly kind: 'span' | 'measurement' };
@@ -7,6 +8,11 @@ export type ContinuationSummary = { readonly count: number; readonly startedAt: 
 
 export function lineageLabel(parentStepId: string | null, parentSpanId: string | null): string {
   return parentStepId ? `parent step ${parentStepId}` : parentSpanId ? `parent span ${parentSpanId}` : 'root branch';
+}
+
+/** Reveal only the requested client batch; callers can continue until the loaded page ends. */
+export function revealBatch<T>(items: ReadonlyArray<T>, visibleCount: number): ReadonlyArray<T> {
+  return items.slice(0, Math.max(0, visibleCount));
 }
 
 export function spanLineageLabel(parentSpanId: string | null): string { return parentSpanId ? `parent ${parentSpanId}` : 'root span'; }
@@ -144,4 +150,19 @@ export function foregroundPhaseItemsFor(key: PhaseKey, spans: ReadonlyArray<Phas
 /** Keep the lifecycle's canonical phase order while moving observed phases ahead of compact gaps. */
 export function orderPhases<T extends { readonly key: PhaseKey }>(phases: ReadonlyArray<T>, observed: ReadonlySet<PhaseKey>): ReadonlyArray<T> {
   return phases.map((phase, index) => ({ phase, index })).sort((left, right) => Number(!observed.has(left.phase.key)) - Number(!observed.has(right.phase.key)) || left.index - right.index).map(({ phase }) => phase);
+}
+
+/** Close nested evidence disclosures before their in-memory bytes are released. */
+export function closeOpenEvidenceDetails(root: { querySelectorAll: (selector: string) => ArrayLike<{ removeAttribute: (name: string) => void }> } | null): void {
+  if (!root) return;
+  for (const child of Array.from(root.querySelectorAll('details.evidence-item[open]'))) child.removeAttribute('open');
+}
+
+export type StageOutcomeCounts = { readonly failed: number; readonly running: number; readonly partial: number; readonly cancelled: number; readonly unavailable: number };
+export function stageOutcomeCounts(states: ReadonlyArray<string>, partialFlags: ReadonlyArray<boolean>): StageOutcomeCounts {
+  return { failed: states.filter((state) => ['failed', 'rejected', 'error'].includes(state)).length, running: states.filter((state) => ['running', 'pending'].includes(state)).length, partial: partialFlags.filter(Boolean).length, cancelled: states.filter((state) => state === 'cancelled').length, unavailable: states.filter((state) => ['unknown', 'unavailable'].includes(state)).length };
+}
+
+export function stageSummaryLabel(state: string, durationMs: number | null): string {
+  return `${state} · ${durationMs === null ? 'longest operation unavailable' : `longest operation ${formatDurationMs(durationMs)}`}`;
 }

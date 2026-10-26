@@ -280,47 +280,61 @@ function runDetail() {
   };
 }
 
-function traceDetail() {
+function traceDetail(spanCount = 3) {
+  const baseSpans = [
+    {
+      spanId: 'aaaaaaaaaaaaaaaa',
+      parentSpanId: null,
+      componentId: 'aura.core.api',
+      operation: 'request',
+      startedAt: '2026-10-15T08:59:55.000Z',
+      durationMs: 5000,
+      outcome: 'succeeded',
+      depth: 0,
+      partial: false,
+    },
+    {
+      spanId: 'bbbbbbbbbbbbbbbb',
+      parentSpanId: 'aaaaaaaaaaaaaaaa',
+      componentId: 'aura.core.worker',
+      operation: 'job',
+      startedAt: '2026-10-15T08:59:56.000Z',
+      durationMs: 3200,
+      outcome: 'succeeded',
+      depth: 1,
+      partial: false,
+    },
+    {
+      spanId: 'cccccccccccccccc',
+      parentSpanId: 'missing-parent-1',
+      componentId: 'aura.core.scheduler',
+      operation: 'schedule',
+      startedAt: '2026-10-15T08:59:57.000Z',
+      durationMs: 100,
+      outcome: 'unknown',
+      depth: 0,
+      partial: true,
+    },
+  ];
+  const spans = spanCount <= baseSpans.length
+    ? baseSpans.slice(0, spanCount)
+    : Array.from({ length: spanCount }, (_, index) => ({
+        spanId: (index + 1).toString(16).padStart(16, '0'),
+        parentSpanId: index === 0 ? null : '0000000000000001',
+        componentId: ['aura.core.api', 'aura.core.worker', 'aura.core.scheduler'][index % 3],
+        operation: index === spanCount - 1 ? 'final-large-span' : ['request', 'job', 'schedule'][index % 3],
+        startedAt: new Date(Date.parse('2026-10-15T08:59:55.000Z') + index * 10).toISOString(),
+        durationMs: Math.max(1, 5000 - index),
+        outcome: index % 17 === 0 ? 'failed' : 'succeeded',
+        depth: index === 0 ? 0 : 1,
+        partial: index % 29 === 0,
+      }));
   return {
     traceId,
     runId,
     partial: true,
     nextCursor: null,
-    spans: [
-      {
-        spanId: 'aaaaaaaaaaaaaaaa',
-        parentSpanId: null,
-        componentId: 'aura.core.api',
-        operation: 'request',
-        startedAt: '2026-10-15T08:59:55.000Z',
-        durationMs: 5000,
-        outcome: 'succeeded',
-        depth: 0,
-        partial: false,
-      },
-      {
-        spanId: 'bbbbbbbbbbbbbbbb',
-        parentSpanId: 'aaaaaaaaaaaaaaaa',
-        componentId: 'aura.core.worker',
-        operation: 'job',
-        startedAt: '2026-10-15T08:59:56.000Z',
-        durationMs: 3200,
-        outcome: 'succeeded',
-        depth: 1,
-        partial: false,
-      },
-      {
-        spanId: 'cccccccccccccccc',
-        parentSpanId: 'missing-parent-1',
-        componentId: 'aura.core.scheduler',
-        operation: 'schedule',
-        startedAt: '2026-10-15T08:59:57.000Z',
-        durationMs: 100,
-        outcome: 'unknown',
-        depth: 0,
-        partial: true,
-      },
-    ],
+    spans,
   };
 }
 
@@ -360,7 +374,15 @@ function runInspection(
     capturedAt: observedAt,
     reason: state === 'excluded' ? 'capture_disabled' : state === 'deleted' ? 'manually_deleted' : null,
   });
-  const step = (sequence: number, category: string, label: string, durationMs: number, evidence: unknown[] = [], state = 'succeeded') => ({
+  const step = (
+    sequence: number,
+    category: string,
+    label: string,
+    durationMs: number,
+    evidence: unknown[] = [],
+    state = 'succeeded',
+    measurementCount = 1,
+  ) => ({
     stepId: `7a4f1d14-2adf-4e6d-9cc8-${String(sequence).padStart(12, '0')}`,
     parentStepId: null,
     spanId: null,
@@ -373,13 +395,22 @@ function runInspection(
     finishedAt: observedAt,
     durationMs,
     depth: 0,
-    measurements: [{ name: `${category}.duration`, value: durationMs, unit: 'milliseconds' }],
+    measurements: Array.from({ length: measurementCount }, (_, index) => ({
+      name: `${category}.${index === 0 ? 'duration' : `measurement_${index + 1}`}`,
+      value: index === 0 ? durationMs : index,
+      unit: index === 0 ? 'milliseconds' : 'count',
+    })),
     evidence,
     partial: state === 'unavailable',
     partialReasons: state === 'unavailable' ? ['provider_hidden_reasoning_excluded'] : [],
   });
   const steps = mode === 'large'
-    ? Array.from({ length: 512 }, (_, index) => step(index + 1, index % 2 ? 'worker' : 'tool', `Large step ${index + 1}`, 1))
+    ? Array.from({ length: 220 }, (_, index) => {
+        const categories = ['admission', 'context', 'prompt', 'routing', 'generation', 'thinking', 'tool', 'persistence', 'delivery'];
+        const category = categories[index % categories.length];
+        const label = index === 219 ? 'final-large-step' : `${category} record ${index + 1}`;
+        return step(index + 1, category, label, 1, [], 'succeeded', index === 0 ? 24 : 1);
+      })
     : [
         step(1, 'admission', 'Request admission', 1200, [manifest('request', 'admitted_request')]),
         step(2, 'context', 'Context & retrieval', 800, [manifest('context', 'document_chunk')]),
@@ -595,6 +626,8 @@ type FixtureOptions = {
   traceInitialFailure?: boolean;
   traceUnavailable?: boolean;
   traceMaterializesAfterAttempts?: number;
+  largeTrace?: boolean;
+  largeComponents?: boolean;
   runInspection?: InspectionFixtureMode;
   evidenceMedia?: 'text' | 'image';
   deferEvidence?: boolean;
@@ -963,7 +996,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         await route.abort('failed');
         return;
       }
-      await route.fulfill({ json: traceDetail() });
+      await route.fulfill({ json: traceDetail(options.largeTrace ? 220 : 3) });
       return;
     }
     if (path.endsWith(`/traces/${comparisonRun.traceId}`)) {
@@ -1000,6 +1033,41 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       }
       if (options.componentTopology === 'empty') {
         await route.fulfill({ json: { snapshotAt: observedAt, items: [] } });
+        return;
+      }
+      if (options.largeComponents) {
+        await route.fulfill({
+          json: {
+            snapshotAt: observedAt,
+            items: Array.from({ length: 60 }, (_, index) => {
+              const componentId = index === 0
+                ? 'aura.observatory.query_api'
+                : `aura.observatory.component_${String(index).padStart(3, '0')}`;
+              // Keep the two problems beyond the first 20 source records so
+              // the acceptance check proves problem-first promotion rather
+              // than relying on fixture ordering.
+              const degraded = index === 0 || index === 37;
+              const noData = index === 42;
+              return {
+                componentId,
+                versions: ['1.0.0'],
+                firstSeenAt: observedAt,
+                lastSeenAt: observedAt,
+                definitionState: noData ? 'observed_only' : 'declared',
+                definitionVersions: noData ? [] : ['1.0.0'],
+                health: {
+                  ...componentHealth,
+                  sampleCount: 4 + index,
+                  errorRate: noData ? null : degraded ? 0.25 : 0.01,
+                  latencyP95Ms: noData ? null : degraded ? 240 : 44 + index,
+                  outcomes: noData
+                    ? { succeeded: 0, failed: 0, cancelled: 0, unknown: 4 + index }
+                    : { succeeded: 4 + index, failed: degraded ? 2 : 0, cancelled: 0, unknown: 0 },
+                },
+              };
+            }),
+          },
+        });
         return;
       }
       if (
@@ -1512,6 +1580,23 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
               resolution: 'missing_definition',
             },
           ],
+        },
+      });
+      return;
+    }
+    if (options.largeComponents && path.endsWith('/health') && path.includes('/components/')) {
+      const componentId = decodeURIComponent(path.split('/components/')[1]?.split('/health')[0] ?? 'aura.observatory.component_000');
+      const degraded = componentId.includes('query_api') || componentId.endsWith('037');
+      const noData = componentId.endsWith('042');
+      await route.fulfill({
+        json: {
+          componentId,
+          summary: {
+            ...componentHealth,
+            errorRate: noData ? null : degraded ? 0.25 : 0.01,
+            latencyP95Ms: noData ? null : degraded ? 240 : 44,
+          },
+          points: [{ startAt: oldObservedAt, endAt: observedAt, summary: componentHealth }],
         },
       });
       return;
@@ -3316,7 +3401,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(trace.locator('.run-card .status')).toHaveText(/succeeded/i);
 
     releaseSecond();
-    await expect(trace.getByText('7.00 s', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('7.00 s', { timeout: 10_000 });
 
     // A burst must not fan out into one request per invalidation, and the
     // trailing response must be the latest projection after the burst.
@@ -3405,6 +3490,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
     await expect(trace.locator('[aria-label="Loading the selected run inspector"]')).toHaveCount(0);
     await expect(trace.locator('#selected-run-title')).toHaveText(runId);
+    const rawDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawDisclosure).toBeVisible();
+    await rawDisclosure.click();
     await expect(trace.getByRole('heading', { name: traceId, exact: true })).toBeVisible();
     await expect(trace.locator('.trace-card')).toBeVisible();
     await expect(trace.getByRole('heading', { name: 'Trace lineage unavailable', exact: true })).toHaveCount(0);
@@ -3640,12 +3728,15 @@ test.describe('Observatory Web mocked browser acceptance', () => {
         .locator('observatory-trace')
         .getByRole('heading', { name: 'Run inspector', exact: true }),
     ).toBeVisible();
-    const traceList = page.getByRole('tree', { name: 'Trace span lineage' });
+    const rawDisclosure = page.locator('observatory-trace details.trace-disclosure > summary');
+    await expect(rawDisclosure).toBeVisible();
+    await rawDisclosure.click();
+    const traceList = page.locator('.trace-tree[aria-label="Trace span lineage"]');
     await expect(traceList).toHaveCount(1);
     await expect(traceList.getByText('request', { exact: true })).toBeVisible();
     await expect(traceList.getByText('job', { exact: true })).toBeVisible();
     await expect(traceList.getByText('partial / missing parent', { exact: true })).toBeVisible();
-    await expect(traceList.getByRole('treeitem')).toHaveCount(3);
+    await expect(traceList.locator('.span-row')).toHaveCount(3);
   });
 
   test('AURA-0114 keeps terminal run headers readable and labels metadata-only evidence gaps', async ({
@@ -3668,7 +3759,10 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
     await expect(trace.getByText('Governed capture.', { exact: false })).toBeVisible();
     await expect(trace.getByRole('heading', { name: 'Execution timeline', exact: true })).toBeVisible();
-    const timeline = trace.getByRole('tree', { name: 'Run execution steps', exact: true });
+    const technicalDisclosure = trace.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const timeline = trace.getByRole('list', { name: 'Aggregate execution stages', exact: true });
     await expect(trace.locator('.summary-value strong')).toHaveText('5.00 s');
     await expect(trace.locator('.summary-value')).toHaveAttribute('aria-label', '5000 milliseconds');
     await expect(trace.locator('.item-time[aria-label="3 count"]')).toHaveText('3 count');
@@ -3689,21 +3783,27 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       await expect(timeline.getByRole('heading', { name: phase, exact: true })).toBeVisible();
     }
 
-    for (const excluded of [
-      'Request & lifecycle',
-      'Chunks & context',
-      'Prompt text',
-      'Generated content',
-      'Displayed thinking',
-      'Tool payloads',
+    const coverage = trace.locator('.coverage-inline');
+    await expect(coverage).toBeVisible();
+    for (const [label, state] of [
+      ['Request & lifecycle', 'Excluded by policy'],
+      ['Chunks & context', 'Excluded by policy'],
+      ['Prompt text', 'Excluded by policy'],
+      ['Generated content', 'Excluded by policy'],
+      ['Displayed thinking', 'Excluded by policy'],
+      ['Tool payloads', 'Excluded by policy'],
     ]) {
-      await expect(
-        trace.locator('.coverage-item').filter({ hasText: excluded }),
-      ).toContainText('Excluded by policy');
+      await expect(coverage.locator('span').filter({ hasText: label })).toContainText(state);
     }
 
+    const phaseDisclosure = trace.locator('details.phase-disclosure > summary');
+    await expect(phaseDisclosure).toBeVisible();
+    await phaseDisclosure.click();
     await expect(trace.getByRole('list', { name: 'Run phase coverage', exact: true })).toBeVisible();
-    await expect(trace.getByRole('tree', { name: 'Trace span lineage', exact: true })).toBeVisible();
+    const rawTraceDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawTraceDisclosure).toBeVisible();
+    await rawTraceDisclosure.click();
+    await expect(trace.locator('.trace-tree[aria-label="Trace span lineage"]')).toBeVisible();
     await expectNoA11yViolations(page);
   });
 
@@ -3736,14 +3836,17 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
+    const continuationDisclosure = trace.locator('details.continuation-disclosure > summary');
+    await expect(continuationDisclosure).toBeVisible();
+    await continuationDisclosure.click();
     await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
     await expect(trace.locator('.phase-count').filter({ hasText: '40+ loaded records' })).toBeVisible();
     await expect(trace.getByText(/Loaded metadata window:/)).toBeVisible();
     const continuation = trace.locator('details.continuation-details');
     await expect(continuation).not.toHaveAttribute('open', '');
     await continuation.locator('summary').click();
-    await expect(continuation.locator('li')).toHaveCount(25);
-    await expect(trace.getByText(/Showing at most the first 25 records from this loaded metadata page/)).toBeVisible();
+    await expect(continuation.locator('li')).toHaveCount(20);
+    await expect(trace.getByText(/Showing at most the first 20 records from this loaded metadata page/)).toBeVisible();
     await expect(trace.getByText(/More correlated metadata may exist beyond this page/)).toBeVisible();
     await expectNoA11yViolations(page);
   });
@@ -3776,11 +3879,17 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
+    const continuationDisclosure = trace.locator('details.continuation-disclosure > summary');
+    await expect(continuationDisclosure).toBeVisible();
+    await continuationDisclosure.click();
     await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
     await expect(trace.locator('.phase-count').filter({ hasText: 'Page incomplete' })).toBeVisible();
     await expect(trace.getByText('Further correlated metadata was not loaded; no post-run count or range is known from this page.', { exact: true })).toBeVisible();
     await expect(trace.locator('details.continuation-details')).toHaveCount(0);
-    await expect(trace.getByRole('tree', { name: 'Trace span lineage', exact: true }).getByText('request', { exact: true })).toBeVisible();
+    const rawTraceDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawTraceDisclosure).toBeVisible();
+    await rawTraceDisclosure.click();
+    await expect(trace.locator('.trace-tree[aria-label="Trace span lineage"]').getByText('request', { exact: true })).toBeVisible();
     await expectNoA11yViolations(page);
   });
 
@@ -3793,7 +3902,10 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     const inspector = page.locator('observatory-trace');
     await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
-    const timeline = inspector.getByRole('tree', { name: 'Run execution steps', exact: true });
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const timeline = inspector.getByRole('list', { name: 'Aggregate execution stages', exact: true });
     for (const label of [
       'Request admission',
       'Context & retrieval',
@@ -3853,6 +3965,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     const inspector = page.locator('observatory-trace');
     await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
     const disclosure = inspector.locator('details.evidence-item > summary').first();
     await disclosure.click();
     await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
@@ -3879,10 +3994,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     const inspector = page.locator('observatory-trace');
     await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
-    const renderedLargeSteps = inspector.getByText(/Large step \d+/, { exact: false });
-    await expect.poll(() => renderedLargeSteps.count()).toBeLessThanOrEqual(200);
-    await expect(inspector.getByText(/bounded|truncated|page|more/i).first()).toBeVisible();
-
+    const stageAccordions = inspector.locator('details.stage-accordion');
+    expect(await stageAccordions.count()).toBeLessThanOrEqual(12);
+    await expect(inspector.locator('.trace-tree[aria-label="Trace span lineage"]:visible')).toHaveCount(0);
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await expect(technicalDisclosure).toContainText(/bounded, paged records/i);
+    await technicalDisclosure.click();
     const deleteButton = inspector.getByRole('button', { name: /delete .*evidence/i }).first();
     await expect(deleteButton).toBeVisible();
     let confirmationSeen = false;
@@ -3898,6 +4016,166 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expectNoA11yViolations(page);
   });
 
+  test('AURA-0122 opens an operator-first Trace with bounded stage disclosure and raw-record paging', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const compact = (page.viewportSize()?.width ?? 1280) <= 832;
+    await page.setViewportSize(compact ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
+    const fixture = await openFixture(page, { runInspection: 'large', largeTrace: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(inspector.getByText(runId, { exact: true })).toBeVisible();
+    await expect(inspector.getByText('5.00 s', { exact: true }).first()).toBeVisible();
+    await expect(inspector.getByText(/succeeded|healthy|complete/i).first()).toBeVisible();
+    const operatorSummary = inspector.locator('.operator-summary');
+    await expect(operatorSummary).toContainText(/Total duration/i);
+    await expect(operatorSummary).toContainText(/Evidence coverage/i);
+
+    const stageAccordions = inspector.locator('details.stage-accordion');
+    await expect.poll(() => stageAccordions.count()).toBeLessThanOrEqual(12);
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Generation/i })).toBeVisible();
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Retrieval/i })).toBeVisible();
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Tools/i })).toBeVisible();
+    await expect(inspector.locator('.trace-tree[aria-label="Trace span lineage"]:visible')).toHaveCount(0);
+    await expect(inspector.locator('.span-row:visible')).toHaveCount(0);
+    const documentSize = await page.evaluate(() => ({ height: document.documentElement.scrollHeight, viewport: window.innerHeight }));
+    expect(documentSize.height).toBeLessThanOrEqual(documentSize.viewport * (compact ? 3 : 2) + 2);
+    expect(fixture.evidenceRequests).toHaveLength(0);
+
+    const advanced = inspector.locator('summary').filter({ hasText: /Advanced|exact execution steps/i }).first();
+    await expect(advanced).toBeVisible();
+    await advanced.click();
+
+    const inspectionTimeline = inspector.locator('ol.inspection-timeline[aria-label="Run execution steps"]');
+    await expect(inspectionTimeline.locator('.inspection-step')).toHaveCount(20);
+    const firstStep = inspectionTimeline.locator('.inspection-step').first();
+    const measurementCells = firstStep.locator('.measurement-row span');
+    await expect(measurementCells).toHaveCount(20);
+    const measurementPager = firstStep.locator('button.load-more');
+    await expect(measurementPager).toBeVisible();
+    await measurementPager.click();
+    await expect(measurementCells).toHaveCount(24);
+
+    const stepPager = inspector.locator('details.technical-disclosure:not(.phase-disclosure):not(.continuation-disclosure):not(.trace-disclosure) ol.inspection-timeline + button.load-more');
+    let stepPages = 0;
+    for (; stepPages < 40 && (await stepPager.count()) > 0 && await stepPager.isVisible(); stepPages += 1) {
+      const before = await inspectionTimeline.locator('.inspection-step').count();
+      await stepPager.dispatchEvent('click');
+      await expect.poll(() => inspectionTimeline.locator('.inspection-step').count()).toBeGreaterThan(before);
+    }
+    expect(stepPages).toBeGreaterThan(1);
+    await expect(inspectionTimeline.locator('.inspection-step')).toHaveCount(220);
+    await expect(inspectionTimeline.locator('.inspection-step').last()).toContainText('final-large-step');
+    await expect(inspector.getByText(/Server continuation available:.*cursor/i)).toBeVisible();
+
+    const rawDisclosure = inspector.locator('details.trace-disclosure > summary');
+    if (await rawDisclosure.count()) {
+      await rawDisclosure.click();
+    }
+    const rawTree = inspector.locator('.trace-tree[aria-label="Trace span lineage"]');
+    await expect(rawTree).toBeVisible();
+    await expect(rawTree.locator('.span-row')).toHaveCount(20);
+    await expect(rawTree.getByRole('img', { name: /relative duration bar/i }).first()).toBeVisible();
+    await expect(
+      inspector.locator('.trace-disclosure button.load-more:visible, .trace-disclosure .evidence-limit:visible').first(),
+    ).toBeVisible();
+    const spanPager = inspector.locator('details.trace-disclosure button.load-more');
+    let spanPages = 0;
+    for (; spanPages < 20 && (await spanPager.count()) > 0 && await spanPager.isVisible(); spanPages += 1) {
+      const before = await rawTree.locator('.span-row').count();
+      await spanPager.dispatchEvent('click');
+      await expect.poll(() => rawTree.locator('.span-row').count()).toBeGreaterThan(before);
+    }
+    expect(spanPages).toBeGreaterThan(1);
+    await expect(rawTree.locator('.span-row')).toHaveCount(220);
+    await expect(rawTree.locator('.span-row').last()).toContainText('final-large-span');
+    await expectNoA11yViolations(page);
+
+    const storage = await page.evaluate(() => ({
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      url: location.href,
+    }));
+    expect(storage.local).toEqual([]);
+    expect(storage.session).toEqual([]);
+    expect(storage.url).not.toMatch(/evidence|secret|token|spanId/i);
+  });
+
+  test('AURA-0122 preserves an open stage and closed evidence across run invalidation', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runInspection: 'full', largeTrace: true });
+    let inspectionResponses = 0;
+    await page.route(`**/api/v1/runs/${runId}/inspection`, async (route) => {
+      inspectionResponses += 1;
+      await route.fulfill({ json: runInspection('full', inspectionResponses > 1 ? 2 : 1) });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const stage = inspector.locator('details.stage-accordion').first();
+    await expect(stage).toBeVisible();
+    await stage.locator('summary').click();
+    await expect(stage).toHaveAttribute('open', '');
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(0);
+    await expect
+      .poll(() => page.evaluate(() => typeof (window as unknown as { emitRunInvalidation?: unknown }).emitRunInvalidation))
+      .toBe('function');
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => inspectionResponses).toBeGreaterThanOrEqual(2);
+    await expect(stage).toHaveAttribute('open', '');
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(0);
+    await expect(inspector.getByText('5.00 s', { exact: true }).first()).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0122 aborts disclosed and pending evidence when the parent technical panel collapses', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full', deferEvidence: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const evidenceDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await evidenceDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toContainText('Captured fixture evidence');
+
+    // Collapsing the owning technical disclosure must dispose of an already
+    // loaded payload, rather than leaving bytes hidden in the DOM.
+    await technicalDisclosure.click();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+
+    // A second request is intentionally left pending and then cancelled by
+    // the same parent collapse before the fixture releases its response.
+    await technicalDisclosure.click();
+    await inspector.locator('details.evidence-item > summary').first().click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await technicalDisclosure.click();
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(fixture.evidenceRequests).toHaveLength(2);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
   test('AURA-0121 completes confirmed evidence deletion exactly once and keeps metadata visible', async ({
     page,
   }) => {
@@ -3907,6 +4185,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     const inspector = page.locator('observatory-trace');
     await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
     const deleteButton = inspector.getByRole('button', { name: 'Delete retained evidence', exact: true });
     await expect(deleteButton).toBeVisible();
     let confirmationSeen = false;
@@ -3919,9 +4200,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await deleteButton.click();
     await expect.poll(() => confirmationSeen).toBe(true);
     await expect.poll(() => fixture.evidenceDeletionRequests.length).toBe(1);
-    await expect(inspector.getByText('Evidence deleted', { exact: true })).toBeVisible();
+    await expect(inspector.getByText('Evidence deleted', { exact: true }).first()).toBeVisible();
     await expect(inspector.getByText('Retained evidence was deleted by the owner. Metadata and step timing remain visible.', { exact: true })).toBeVisible();
-    await expect(inspector.getByRole('tree', { name: 'Run execution steps', exact: true }).getByText('Request admission', { exact: true })).toBeVisible();
+    await expect(inspector.getByRole('list', { name: 'Aggregate execution stages', exact: true }).getByText('Request admission', { exact: true })).toBeVisible();
     await expect(inspector.locator('.evidence-state.state-deleted').first()).toBeVisible();
     await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
     expect(fixture.evidenceDeletionRequests).toHaveLength(1);
@@ -3937,6 +4218,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     let inspector = page.locator('observatory-trace');
     await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    let technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
 
     const firstDisclosure = inspector.locator('details.evidence-item > summary').first();
     await firstDisclosure.click();
@@ -3950,6 +4234,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     inspector = page.locator('observatory-trace');
+    technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    if (await technicalDisclosure.locator('..').getAttribute('open') === null) {
+      await technicalDisclosure.click();
+    }
     const secondDisclosure = inspector.locator('details.evidence-item > summary').first();
     await secondDisclosure.click();
     await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
@@ -3983,6 +4272,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const inspector = page.locator('observatory-trace');
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
     const disclosure = inspector.locator('details.evidence-item > summary').first();
     await disclosure.click();
     await expect(inspector.locator('img.evidence-image')).toHaveAttribute('src', /^blob:/);
@@ -4048,23 +4340,88 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   });
 
   test('shows component health summaries and a bounded trend', async ({ page }) => {
-    await openFixture(page);
+    await openFixture(page, { componentTopology: 'declared' });
     await openDestination(page, 'Components');
     const components = page.locator('observatory-components');
-    await expect(components.getByText('aura.core.api', { exact: true })).toBeVisible();
+    await expect(components.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
     await expect(components.getByText(/p50|latency/i).first()).toBeVisible();
     await expect(components.getByText(/errors?/i).first()).toBeVisible();
-    const firstComponent = components.getByRole('article').first();
+    const firstComponent = components.getByRole('article', { name: 'aura.observatory.query_api' });
     await expect(
-      firstComponent.locator('dt').filter({ hasText: 'Samples' }).locator('..').locator('dd'),
+      firstComponent.locator('.component-metrics span').filter({ hasText: 'samples' }).locator('strong'),
     ).toHaveText('4');
-    const trendValues = page.locator('observatory-components [role="img"][aria-label]');
+    const inspect = firstComponent.locator('button[aria-controls="component-details-panel"]');
+    await inspect.click();
+    const trendValues = page.locator('observatory-components .trend [role="img"][aria-label]');
     await expect(trendValues.first()).toBeVisible({ timeout: 10_000 });
     expect(
       await trendValues.evaluateAll((items) =>
         items.every((item) => /samples at/i.test(item.getAttribute('aria-label') ?? '')),
       ),
     ).toBe(true);
+  });
+
+  test('AURA-0122 opens a compact problem-first Components catalogue with one progressive detail surface', async ({
+    page,
+  }) => {
+    const compact = (page.viewportSize()?.width ?? 1280) <= 832;
+    await page.setViewportSize(compact ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
+    await openFixture(page, { largeComponents: true });
+    await openDestination(page, 'Components');
+    const components = page.locator('observatory-components');
+    const kpis = components.locator('.catalogue-kpis');
+    await expect(kpis).toBeVisible();
+    await expect(kpis.locator('div').filter({ hasText: /^60\s*Total$/i })).toHaveCount(1);
+    await expect(kpis.locator('div').filter({ hasText: /^2\s*Degraded$/i })).toHaveCount(1);
+    await expect(kpis.locator('div').filter({ hasText: /^1\s*No outcome data$/i })).toHaveCount(1);
+    await expect(components.locator('.catalogue-summary')).toContainText('Showing 60 of 60 components');
+    for (const summary of ['Degraded', 'No (?:outcome )?data', 'definition', 'Healthy']) {
+      await expect(components.getByText(new RegExp(summary, 'i')).first()).toBeVisible();
+    }
+
+    const catalogue = components.locator('[aria-label="Component catalogue"]');
+    await expect(catalogue).toBeVisible();
+    const rows = catalogue.locator('.component-card, [role="listitem"]');
+    await expect(rows).toHaveCount(20);
+    await expect(rows.first()).toContainText(/Degraded|No outcome data/i);
+    await expect(rows.filter({ hasText: /No outcome data/i }).first()).toBeVisible();
+    await expect(rows.first()).toContainText(/samples|p95|error|definition/i);
+    await expect(rows.locator('[role="img"]')).toHaveCount(0);
+
+    const firstRow = rows.filter({ hasText: 'aura.observatory.query_api' }).first();
+    const open = firstRow.getByRole('button').first();
+    await open.focus();
+    await page.keyboard.press('Enter');
+    const detail = components.locator('#component-details-panel');
+    await expect(detail).toBeVisible();
+    await expect(detail.getByRole('heading').first()).toBeFocused();
+    const topology = detail.locator('details').filter({ hasText: /topology|dependencies/i }).first();
+    await expect(topology).toBeVisible();
+    await expect(topology).not.toHaveAttribute('open', '');
+    await topology.locator('summary').click();
+    await expect(topology).toHaveAttribute('open', '');
+    await expect(topology.getByRole('region', { name: /dependency relationship table/i })).toBeVisible();
+    await topology.locator('summary').click();
+    await expect(topology).not.toHaveAttribute('open', '');
+
+    if (compact) {
+      const catalogueSection = components.locator('.catalogue-section');
+      await expect(catalogueSection).toHaveClass(/catalogue-hidden-small/);
+      await expect(catalogueSection).not.toBeVisible();
+      await expect(detail.getByRole('button', { name: /back|close details/i })).toBeVisible();
+    } else {
+      await expect(components.locator('.catalogue-section')).toBeVisible();
+      await expect(detail).toBeVisible();
+    }
+    const layout = await page.evaluate(() => ({
+      width: document.documentElement.scrollWidth,
+      viewport: window.innerWidth,
+      height: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(layout.width).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.height).toBeLessThanOrEqual(layout.viewportHeight * (compact ? 3 : 4) + 2);
+    await expectNoA11yViolations(page);
   });
 
   test('keeps the component catalogue structural loading state while its request is pending', async ({
@@ -4104,7 +4461,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     const observedOnly = components.getByRole('article').filter({ hasText: 'aura.core.scheduler' });
     await expect(observedOnly).toContainText('Observed only');
     await expect(observedOnly).toContainText(
-      'No approved definition is available for this observed component.',
+      'Observed metadata only; no approved definition is available.',
     );
     await expect(observedOnly).toContainText('No outcome data');
     await expect(observedOnly).not.toContainText(/Healthy|Degraded/);
@@ -4122,6 +4479,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(page.locator('#component-details-title')).toBeVisible();
     await expect(open).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('#component-details-title')).toBeFocused();
+    const topologyDisclosure = page.locator('#component-details-panel details.topology-disclosure');
+    await expect(topologyDisclosure).toBeVisible();
+    await topologyDisclosure.locator('summary').click();
     const table = page.getByRole('table', { name: /Complete dependency relationships/ });
     await expect(table).toBeVisible();
     await expect(table.getByText('Missing definition', { exact: true })).toBeVisible();
@@ -4141,7 +4501,8 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'partial' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    await page.locator('button[aria-controls="component-details-panel"]').first().click();
+    await page.locator('#component-details-panel details.topology-disclosure summary').click();
     await expect(
       page.getByText('Partial health; some observations are unavailable.', { exact: true }),
     ).toBeVisible();
@@ -4173,7 +4534,8 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   test('matches topology availability and health to each target version', async ({ page }) => {
     await openFixture(page, { componentTopology: 'multi-version' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    await page.locator('button[aria-controls="component-details-panel"]').first().click();
+    await page.locator('#component-details-panel details.topology-disclosure summary').click();
     const table = page.getByRole('table', { name: /Complete dependency relationships/ });
     const versionOne = table.locator('tbody tr').filter({ hasText: '2.0.0' }).first();
     const versionZero = table.locator('tbody tr').filter({ hasText: '1.0.0' }).first();
@@ -4192,19 +4554,22 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'dependencies' });
     await openDestination(page, 'Components');
-    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    await expect(page.locator('observatory-components .component-card').filter({ hasText: 'aura.observatory.query_api' })).toBeVisible({ timeout: 10_000 });
+    const opener = page.locator('button[aria-controls="component-details-panel"]').first();
     await opener.press('Enter');
-    await expect(page.getByRole('status').filter({ hasText: 'partially loaded' })).toBeVisible();
     const retry = page.getByRole('button', { name: 'Retry details', exact: true });
     const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible({ timeout: 10_000 });
+    await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible();
     await retry.focus();
     await retry.press('Enter');
+    await details.locator('details.topology-disclosure summary').click();
     await expect(
       page.getByRole('table', { name: /Complete dependency relationships/ }),
     ).toBeVisible();
-    await expect(page.locator('#component-details-title')).toBeFocused();
+    await expect(page.locator('#component-details-title')).toBeVisible();
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await expect(page.locator('.sr-only[role="status"]')).toContainText('loaded');
     await expectNoA11yViolations(page);
@@ -4213,8 +4578,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   test('keeps malformed definition data in a recoverable detail state', async ({ page }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().press('Enter');
-    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('observatory-components .component-card').filter({ hasText: 'aura.observatory.query_api' })).toBeVisible({ timeout: 10_000 });
+    await page.locator('button[aria-controls="component-details-panel"]').first().press('Enter');
+    const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible({ timeout: 10_000 });
+    await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('#component-details-title')).toBeFocused();
     await expect(page.getByRole('button', { name: 'Retry details', exact: true })).toBeVisible();
     await expectNoA11yViolations(page);
@@ -4225,13 +4593,15 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed-topology' });
     await openDestination(page, 'Components');
-    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    const opener = page.locator('button[aria-controls="component-details-panel"]').first();
     await opener.click();
     const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible();
     await expect(details.locator('#component-details-title')).toBeFocused();
     await expect(details.getByRole('alert')).toContainText('Partial component details');
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await details.getByRole('button', { name: 'Retry details', exact: true }).press('Enter');
+    await details.locator('details.topology-disclosure summary').click();
     await expect(
       details.getByRole('table', { name: /Complete dependency relationships/ }),
     ).toBeVisible();

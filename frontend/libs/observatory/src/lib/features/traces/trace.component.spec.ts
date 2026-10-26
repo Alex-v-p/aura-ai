@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { durationAriaLabel, formatDurationMs } from '../../observatory-models';
-import { aggregateInspectionSteps, continuationSummary, foregroundPhaseItemsFor, hasParallelBranch, inspectionStepPosition, inspectionStepSetSize, isAtOrBeforeBoundary, lineageLabel, orderPhases, phaseFor, phaseItemsFor, spanLineageLabel, terminalLifecycleAt, terminalObservationBoundary, traceSpanPosition, traceSpanSetSize, type PhaseItem, type PhaseKey } from './trace-inspector.utils';
+import { aggregateInspectionSteps, closeOpenEvidenceDetails, continuationSummary, foregroundPhaseItemsFor, hasParallelBranch, inspectionStepPosition, inspectionStepSetSize, isAtOrBeforeBoundary, lineageLabel, orderPhases, phaseFor, phaseItemsFor, revealBatch, spanLineageLabel, stageOutcomeCounts, stageSummaryLabel, terminalLifecycleAt, terminalObservationBoundary, traceSpanPosition, traceSpanSetSize, type PhaseItem, type PhaseKey } from './trace-inspector.utils';
 
 describe('run inspector presentation', () => {
   it('formats stable durations into bounded readable units', () => {
@@ -18,6 +18,18 @@ describe('run inspector presentation', () => {
     const aggregated = aggregateInspectionSteps(steps, 1);
     expect(aggregated).toHaveLength(1);
     expect(aggregated[0].state).toBe('failed');
+  });
+
+  it('continues through the final loaded step, span, and measurement record after the initial batch', () => {
+    const steps = Array.from({ length: 205 }, (_, index) => ({ stepId: `step-${index}`, sequence: index, value: index }));
+    const spans = Array.from({ length: 205 }, (_, index) => ({ spanId: `span-${index}`, value: index }));
+    const measurements = Array.from({ length: 128 }, (_, index) => ({ name: `measurement-${index}`, value: index }));
+    expect(revealBatch(steps, 20)).toHaveLength(20);
+    expect(revealBatch(steps, 220).at(-1)?.stepId).toBe('step-204');
+    expect(revealBatch(spans, 20)).toHaveLength(20);
+    expect(revealBatch(spans, 220).at(-1)?.spanId).toBe('span-204');
+    expect(revealBatch(measurements, 20)).toHaveLength(20);
+    expect(revealBatch(measurements, 128).at(-1)?.name).toBe('measurement-127');
   });
 
   it('keeps exact timing available to assistive technology', () => {
@@ -64,6 +76,24 @@ describe('run inspector presentation', () => {
     expect([traceSpanPosition(childB, spans), traceSpanSetSize(childB, spans)]).toEqual([2, 2]);
     expect([traceSpanPosition(childOther, spans), traceSpanSetSize(childOther, spans)]).toEqual([1, 1]);
   });
+
+  it('closes nested evidence disclosures before releasing their payloads', () => {
+    const first = { removeAttribute: vi.fn() };
+    const second = { removeAttribute: vi.fn() };
+    closeOpenEvidenceDetails({ querySelectorAll: () => [first, second] });
+    expect(first.removeAttribute).toHaveBeenCalledWith('open');
+    expect(second.removeAttribute).toHaveBeenCalledWith('open');
+  });
+
+  it('keeps stage outcome facets independent', () => {
+    expect(stageOutcomeCounts(['failed', 'running', 'cancelled', 'unavailable'], [false, true, false, true])).toEqual({ failed: 1, running: 1, partial: 2, cancelled: 1, unavailable: 1 });
+  });
+
+  it('qualifies stage highlights as longest operations', () => {
+    expect(stageSummaryLabel('succeeded', 1_250)).toBe('succeeded · longest operation 1.25 s');
+    expect(stageSummaryLabel('unavailable', null)).toBe('unavailable · longest operation unavailable');
+  });
+
 
   it('counts one canonical phase record when a span mirrors its observation', () => {
     const base: PhaseItem = {
