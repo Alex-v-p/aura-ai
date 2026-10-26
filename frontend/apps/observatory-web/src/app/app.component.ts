@@ -117,16 +117,18 @@ interface ObservatoryNavGroup {
         </aside>
 
         <main id="observatory-main" tabindex="-1" class="shell-main">
-            <observatory-overview [hidden]="destination() !== 'overview'" [style.display]="destination() === 'overview' ? 'block' : 'none'" />
-            <observatory-runs [hidden]="destination() !== 'runs'" [style.display]="destination() === 'runs' ? 'block' : 'none'" (runSelected)="openTraceFromRun()" />
-            <observatory-trace [hidden]="destination() !== 'trace'" [style.display]="destination() === 'trace' ? 'block' : 'none'" (browseRuns)="openDestination('runs')" />
-            <observatory-comparison [hidden]="destination() !== 'comparison'" [style.display]="destination() === 'comparison' ? 'block' : 'none'" />
-            <observatory-components [hidden]="destination() !== 'components'" [style.display]="destination() === 'components' ? 'block' : 'none'" />
-            <observatory-analytics [hidden]="destination() !== 'analytics'" [style.display]="destination() === 'analytics' ? 'block' : 'none'" />
-            <observatory-operations-workspace [hidden]="destination() !== 'operations'" [style.display]="destination() === 'operations' ? 'block' : 'none'" />
-            <observatory-retention [hidden]="destination() !== 'retention'" [style.display]="destination() === 'retention' ? 'block' : 'none'" />
-            <observatory-evaluation-workspace [hidden]="destination() !== 'evaluation'" [style.display]="destination() === 'evaluation' ? 'block' : 'none'" />
-            <observatory-experiment-workspace [hidden]="destination() !== 'experiments'" [style.display]="destination() === 'experiments' ? 'block' : 'none'" />
+            @switch (destination()) {
+              @case ('overview') { <observatory-overview /> }
+              @case ('runs') { <observatory-runs (runSelected)="openTraceFromRun()" /> }
+              @case ('trace') { <observatory-trace (browseRuns)="openDestination('runs')" /> }
+              @case ('comparison') { <observatory-comparison /> }
+              @case ('components') { <observatory-components /> }
+              @case ('analytics') { <observatory-analytics /> }
+              @case ('operations') { <observatory-operations-workspace /> }
+              @case ('retention') { <observatory-retention /> }
+              @case ('evaluation') { <observatory-evaluation-workspace /> }
+              @case ('experiments') { <observatory-experiment-workspace /> }
+            }
         </main>
       </div>
     } @else {
@@ -200,11 +202,18 @@ export class AppComponent {
   }
 
   openDestination(destination: ObservatoryDestination): void {
+    if (this.destination() === 'operations' && destination !== 'operations') this.operationsStore.disconnect(true);
+    if (this.destination() === 'trace' && destination !== 'trace') this.store.deactivateSelectedRunView();
+    if (this.destination() === 'analytics' && destination !== 'analytics') this.store.deactivateAnalyticsView();
+    if (this.destination() === 'comparison' && destination !== 'comparison') this.store.deactivateComparisonView();
     if (destination === 'components' && this.destination() !== destination) this.store.refreshCatalog();
+    if (destination === 'analytics' && this.destination() !== destination) { this.store.activateAnalyticsView(); this.store.refreshAnalytics(); }
+    if (destination === 'comparison' && this.destination() !== destination) this.store.activateComparisonView();
     // Close the modal before changing the destination so focus never lands in
     // a workspace underneath an active navigation dialog.
     this.closeNavigation(false);
     this.destination.set(destination);
+    if (destination === 'trace' && this.destination() === destination) this.store.activateSelectedRunView();
     // Each destination is a distinct workspace. Restore the page origin so
     // route switching never opens a new surface halfway down the prior one.
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });

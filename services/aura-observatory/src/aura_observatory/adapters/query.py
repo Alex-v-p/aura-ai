@@ -3412,7 +3412,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         heartbeat_at = asyncio.get_running_loop().time() + 15.0
         while True:
             rows = await self._query_rows(
-                "SELECT observation_id, run_id, trace_id, ingest_sequence FROM observations "
+                "SELECT observation_id, run_id, trace_id, component_id, ingest_sequence FROM observations "
                 f"WHERE ingest_sequence > {anchor} AND ingest_sequence <= {upper} "
                 "ORDER BY ingest_sequence LIMIT 1000"
             )
@@ -3432,6 +3432,11 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         "observationId": row["observation_id"],
                         "runId": row.get("run_id") or None,
                         "traceId": row.get("trace_id") or None,
+                        # Internal projection context used to prevent
+                        # Observatory's own query telemetry from invalidating
+                        # the run currently being inspected.  The API SSE
+                        # renderer deliberately strips this field.
+                        "componentId": row.get("component_id") or None,
                     },
                 }
                 for row in rows

@@ -1,0 +1,45 @@
+agent: general_reviewer
+work_item: AURA-0123
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the complete current AURA-0123 diff against the active work
+    item, architecture handover, closed live-event contract boundary, worker
+    handoffs, and the three findings from the initial BLOCK verdict. Traced
+    shell mount/unmount behavior, primary and operations SSE dispatch, refresh
+    coordinators, Runs reconciliation, selected-run loading, evidence-deletion
+    polling, and backend run identity projection.
+  - >-
+    Verified active Runs now schedules continued recovery only for a concrete
+    disconnected, unavailable, stale, or complete-page count gap. A page with
+    nextCursor is not misclassified as projection lag, and successful
+    convergence cancels the activation timer instead of polling for the full
+    thirty-attempt window.
+  - >-
+    Verified selected-run pending work preserves its source: a genuine live
+    invalidation receives the 500 ms trailing cadence while a retry-only
+    projection gap retains the two-second recovery cadence. Deactivation
+    clears the timer and aborts the selected-run request.
+  - >-
+    Verified Trace deactivation cancels evidence-deletion polling and every
+    poll checks selectedRunViewActive before issuing or rescheduling a read.
+    Clearing disclosed evidence preserves an accepted deletion lifecycle and
+    idempotency key, allowing durable status reconciliation to resume only
+    after Trace is mounted again.
+  - >-
+    Verified generic/self-observation and heartbeat frames cannot trigger the
+    REST feedback loop, backend run classification keeps Observatory-owned
+    observations observation-scoped, run-correlated external observations
+    retain existing run invalidation identity, and the public SSE envelope
+    remains closed and metadata-only.
+  - >-
+    Independently ran the three exact desktop regression scenarios: paginated
+    Runs convergence, retry-only selected-run two-second floor, and accepted
+    deletion pause/resume all passed (3/3).
+  - >-
+    Independently ran the focused Observatory backend suite (5 passed), all
+    Observatory library unit tests (81 passed), and git diff validation
+    successfully.
+findings: []
+risks: []
+unresolved: []

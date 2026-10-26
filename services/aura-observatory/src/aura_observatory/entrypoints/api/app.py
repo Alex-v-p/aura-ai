@@ -1143,19 +1143,11 @@ def create_app(
                     data = {}
                 event_type = str(event.get("type", "heartbeat"))
                 event_id = event.get("id")
-                event_payload = {
-                    "schemaVersion": 1,
-                    "eventId": event_id or str(uuid4()),
-                    "eventType": event_type,
-                    "occurredAt": _now_iso(),
-                    "resourceType": "system"
-                    if event_type == "health.changed"
-                    else "observation",
-                    "resourceId": data.get("observationId")
-                    if event_type != "health.changed"
-                    else None,
-                    "capturePolicy": "metadata_only",
-                }
+                event_payload = _query_live_event_payload(
+                    event_type,
+                    data,
+                    event_id=event_id,
+                )
                 id_line = f"id: {event_id}\n" if event_id else ""
                 return f"{id_line}event: {event_type}\ndata: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
 
@@ -1359,6 +1351,51 @@ def create_app(
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _query_live_event_payload(
+    event_type: str,
+    data: Mapping[str, object],
+    *,
+    event_id: object = None,
+) -> dict[str, object]:
+    """Render the closed, metadata-only payload for one query-stream event.
+
+    A query observation correlated to a canonical run invalidates that run so
+    selected-run views can refresh without inventing a new SSE schema.  Legacy
+    observations without a valid run correlation keep their observation
+    identity.  The payload deliberately remains the existing closed set of
+    fields; no observation attributes or content are copied into the stream.
+    """
+
+    if event_type == "health.changed":
+        resource_type = "system"
+        resource_id: object = None
+    else:
+        run_id = data.get("runId")
+        component_id = data.get("componentId")
+        is_observatory_self_observation = (
+            isinstance(component_id, str) and component_id.startswith("aura.observatory.")
+        )
+        if (
+            isinstance(run_id, str)
+            and _UUID_RE.fullmatch(run_id)
+            and not is_observatory_self_observation
+        ):
+            resource_type = "run"
+            resource_id = run_id
+        else:
+            resource_type = "observation"
+            resource_id = data.get("observationId")
+    return {
+        "schemaVersion": 1,
+        "eventId": event_id or str(uuid4()),
+        "eventType": event_type,
+        "occurredAt": _now_iso(),
+        "resourceType": resource_type,
+        "resourceId": resource_id,
+        "capturePolicy": "metadata_only",
+    }
 
 
 def _overview_payload(value: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,142 @@
+id: AURA-0123
+title: Bound Observatory live refresh traffic
+status: integrated
+change_class: bugfix
+intent: >
+  Keep Observatory views live while eliminating request amplification from
+  hidden workspaces, per-observation invalidations, paginated run
+  reconciliation, and overlapping operations refreshes. Browser reads must
+  not create a self-sustaining telemetry and SSE feedback loop.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - SSE remains the metadata-only invalidation channel and REST snapshots remain authoritative.
+    - Run-correlated observation events may use the existing run resource identity already authorized by the live-event contract.
+    - Inactive Observatory workspaces do not load data or hold workspace-specific live streams.
+    - Generic Observatory observations do not invalidate run, analytics, or comparison snapshots.
+    - Active-run invalidations are cadence-limited and coalesced while preserving one trailing refresh.
+    - Paginated run counts are not interpreted as projection lag when a page is complete for its declared pagination state.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references: [OBS-005, OBS-009, OBS-039]
+ownership_zones:
+  - observatory-web.live-refresh
+  - aura-observatory.live-event-projection
+  - evaluation.aura0123
+  - delivery.aura0123
+allowed_paths:
+  - work-items/active/AURA-0123.yaml
+  - work-items/archived/AURA-0123.yaml
+  - work-items/handoffs/AURA-0123-*.yaml
+  - work-items/reviews/AURA-0123-*.yaml
+  - work-items/integration/AURA-0123.yaml
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web/src/app.component.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.spec.ts
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/tests/test_aura0123_live_efficiency.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/platform/**
+  - deploy/**
+  - compose.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected:
+    - existing observatory-v1 metadata-only live-event semantics
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: live-updates
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+  required_metrics: []
+  required_evaluators:
+    - observatory_self_monitoring
+    - metadata_v2_allowlist
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - SSE payloads remain content-free and owner-authorized.
+    - No request content owner identity credential evidence identifier or high-cardinality value enters metrics or logs.
+    - Aura Web remains completely isolated from Observatory.
+  data_classes:
+    - metadata_only_operational_observations
+required_agents:
+  implementation:
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Opening Observatory initially loads only the shared overview resources and the active workspace; inactive evaluation experiment and operations workspaces issue no requests and hold no workspace-specific live streams.
+  - Primary SSE heartbeats and generic self-observation events issue no REST refreshes.
+  - Run-correlated telemetry and evidence invalidations remain live through the existing run-scoped metadata-only event shape.
+  - Continuous run invalidations are coalesced to at most one active refresh and one trailing refresh per configured cadence window, with no unbounded queue.
+  - A completed paginated run page does not poll every two seconds merely because overview total count exceeds the current page length.
+  - Operations live events cannot overlap full workspace loads and coalesce to one trailing bounded refresh.
+  - With the Overview idle for at least ten seconds after convergence, only the long-lived SSE requests remain open and no repeated overview runs analytics comparison evaluation experiment or operations REST reads occur.
+  - A representative active run becomes visible without manual refresh within two seconds of a run-scoped invalidation.
+  - Browser and service tests prove request ceilings and that a REST read cannot sustain its own invalidation loop.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0123.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0123.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0123.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0123.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0123.yaml
+  - python3 -m pytest services/aura-observatory/tests/test_aura0123_live_efficiency.py -q
+  - pnpm --dir frontend exec nx lint observatory-web
+  - pnpm --dir frontend exec nx test observatory-web
+  - pnpm --dir frontend exec nx test observatory
+  - pnpm --dir frontend exec nx e2e observatory-web-e2e
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

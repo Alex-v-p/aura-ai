@@ -187,6 +187,10 @@ export function hasSessionRequiredRejection(
 export class LiveRefreshCoordinator {
   private running = false;
   private pending = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private lastStartedAt: number | null = null;
+
+  constructor(private readonly cadenceMs = 0) {}
 
   get isRunning(): boolean { return this.running; }
   get hasPending(): boolean { return this.pending; }
@@ -197,6 +201,20 @@ export class LiveRefreshCoordinator {
       this.pending = true;
       return;
     }
+    const elapsed = this.lastStartedAt === null ? this.cadenceMs : Date.now() - this.lastStartedAt;
+    if (this.cadenceMs > 0 && elapsed < this.cadenceMs) {
+      this.pending = true;
+      if (!this.timer) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          if (!this.pending) return;
+          this.pending = false;
+          this.request(run, canRun);
+        }, Math.max(0, this.cadenceMs - elapsed));
+      }
+      return;
+    }
+    this.lastStartedAt = Date.now();
     this.running = true;
     void run().then(() => undefined, () => undefined).finally(() => {
       this.running = false;
@@ -206,7 +224,11 @@ export class LiveRefreshCoordinator {
     });
   }
 
-  cancel(): void { this.pending = false; }
+  cancel(): void {
+    this.pending = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
 }
 
 /** Comparison data changes only; health and keepalive events cannot alter run evidence. */
@@ -214,9 +236,34 @@ export function isComparisonInvalidationEvent(eventType: string): boolean {
   return eventType === 'observation.changed' || eventType === 'retention.changed';
 }
 
+/**
+ * Only run-correlated metadata changes invalidate the live run projection.
+ * Observatory's own health observations are deliberately not a reason to
+ * read the same projection again: doing so would create a self-observation
+ * request loop.
+ */
+export function isRunProjectionInvalidation(eventType: string, resourceType: string | null): boolean {
+  return eventType === 'retention.changed'
+    || (eventType === 'observation.changed' && (resourceType === 'run' || resourceType === 'trace'));
+}
+
+/** Analytics and comparison snapshots follow the same run-scoped boundary. */
+export function isRunCorrelatedInvalidation(eventType: string, resourceType: string | null): boolean {
+  return eventType === 'observation.changed' && (resourceType === 'run' || resourceType === 'trace');
+}
+
 /** A selected-run refresh requires an explicit metadata-only run target. */
 export function matchesSelectedRunInvalidation(eventType: string, resourceType: string | null, resourceId: string | null, selectedRunId: string | null): boolean {
   return isComparisonInvalidationEvent(eventType) && resourceType === 'run' && resourceId !== null && resourceId === selectedRunId;
+}
+
+/**
+ * Clearing disclosed bytes must not erase an accepted deletion lifecycle.
+ * The idempotency key is the in-memory authority needed to resume polling on
+ * Trace re-entry; without it, a deleting state cannot safely be continued.
+ */
+export function shouldPreserveRunEvidenceDeletionState(state: string, hasDeletionKey: boolean): boolean {
+  return state === 'deleting' && hasDeletionKey;
 }
 
 export const SELECTED_RUN_LOAD_TIMEOUT_MS = 10_000;
@@ -629,7 +676,9 @@ export function normalizeRunFilters(filters: RunFilters): RunFilters {
 }
 /** The overview and run catalogue are separate bounded projections. */
 export function needsRunReconciliation(overview: Overview | null, runs: RunPage | null): boolean {
-  return Boolean(overview && runs && overview.runCount > runs.items.length);
+  // A non-null cursor means this page is only a prefix of the ordered run
+  // projection. Its item count cannot be compared with the overview total.
+  return Boolean(overview && runs && runs.nextCursor === null && overview.runCount > runs.items.length);
 }
 /** A successful run detail can predate trace materialization. */
 export function needsSelectedRunReconciliation(detail: RunDetail | null, trace: TraceDetail | null): boolean {

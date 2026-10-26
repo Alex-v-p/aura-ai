@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
-import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, needsRunReconciliation, needsSelectedRunReconciliation, ownerLoginHref } from './observatory-models';
+import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, isRunCorrelatedInvalidation, isRunProjectionInvalidation, needsRunReconciliation, needsSelectedRunReconciliation, ownerLoginHref, shouldPreserveRunEvidenceDeletionState } from './observatory-models';
 import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, inspectionEvidenceIsCurrent, isApprovedRunEvidenceMedia, isComparisonInvalidationEvent, isCurrentCapturedRunEvidenceManifest, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, matchesSelectedRunInvalidation, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor, SELECTED_RUN_LOAD_TIMEOUT_MS, selectedRunLoadError } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
@@ -131,11 +131,25 @@ describe('observatory metadata boundaries', () => {
     expect(isComparisonInvalidationEvent('heartbeat')).toBe(false);
   });
 
+  it('routes only run-correlated events to projection refreshes', () => {
+    expect(isRunProjectionInvalidation('observation.changed', 'run')).toBe(true);
+    expect(isRunProjectionInvalidation('observation.changed', 'trace')).toBe(true);
+    expect(isRunProjectionInvalidation('observation.changed', 'observation')).toBe(false);
+    expect(isRunProjectionInvalidation('heartbeat', 'run')).toBe(false);
+    expect(isRunCorrelatedInvalidation('retention.changed', 'retention')).toBe(false);
+  });
+
   it('refreshes a selected run only for a matching run-scoped invalidation', () => {
     expect(matchesSelectedRunInvalidation('observation.changed', 'run', 'run-1', 'run-1')).toBe(true);
     expect(matchesSelectedRunInvalidation('observation.changed', 'run', 'run-2', 'run-1')).toBe(false);
     expect(matchesSelectedRunInvalidation('snapshot', 'run', 'run-1', 'run-1')).toBe(false);
     expect(matchesSelectedRunInvalidation('retention.changed', 'component', 'run-1', 'run-1')).toBe(false);
+  });
+
+  it('preserves accepted evidence deletion state when disclosed bytes are cleared', () => {
+    expect(shouldPreserveRunEvidenceDeletionState('deleting', true)).toBe(true);
+    expect(shouldPreserveRunEvidenceDeletionState('deleting', false)).toBe(false);
+    expect(shouldPreserveRunEvidenceDeletionState('ready', true)).toBe(false);
   });
 
   it('bounds selected-run loading with truthful delayed recovery copy', () => {
@@ -171,8 +185,9 @@ describe('observatory metadata boundaries', () => {
 
   it('requests bounded run reconciliation when overview leads the catalogue', () => {
     const overview = { runCount: 2 } as Parameters<typeof needsRunReconciliation>[0];
-    const catalogue = { items: [{ runId: 'run-1' }] } as Parameters<typeof needsRunReconciliation>[1];
+    const catalogue = { items: [{ runId: 'run-1' }], nextCursor: null } as Parameters<typeof needsRunReconciliation>[1];
     expect(needsRunReconciliation(overview, catalogue)).toBe(true);
+    expect(needsRunReconciliation(overview, { ...catalogue, nextCursor: 'more' } as typeof catalogue)).toBe(false);
     expect(needsRunReconciliation({ runCount: 1 } as typeof overview, catalogue)).toBe(false);
     expect(needsRunReconciliation(overview, null)).toBe(false);
   });
@@ -394,6 +409,32 @@ describe('observatory metadata boundaries', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(runs).toBe(1);
     expect(coordinator.isRunning).toBe(false);
+  });
+
+  it('drops a queued refresh when its workspace deactivates before the live cadence', async () => {
+    vi.useFakeTimers();
+    try {
+      const coordinator = new LiveRefreshCoordinator(500);
+      let active = true;
+      let reads = 0;
+      let hiddenReads = 0;
+      const refresh = async (): Promise<void> => { reads += 1; if (!active) hiddenReads += 1; };
+
+      // This models a run event arriving immediately after the first request
+      // started. Navigation away cancels the trailing timer before its 500 ms
+      // cadence, so the destroyed workspace cannot issue a hidden REST read.
+      coordinator.request(refresh, () => active);
+      active = false;
+      coordinator.request(refresh, () => active);
+      coordinator.cancel();
+      await vi.runAllTimersAsync();
+
+      expect(reads).toBe(1);
+      expect(hiddenReads).toBe(0);
+      expect(coordinator.hasPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps an empty health history empty while the live stream is disconnected', () => {

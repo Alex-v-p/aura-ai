@@ -57,6 +57,8 @@ export class OperationsWorkspaceStore {
   private readonly gateway = inject(OBSERVATORY_GATEWAY) as ObservatoryGatewayPort;
   private readonly observatoryStore = inject(ObservatoryStore, { optional: true });
   private generation = 0;
+  private loadInFlight = false;
+  private loadPending = false;
   private liveRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private liveOpen = false;
   readonly state = signal<OperationsWorkspaceState>('loading');
@@ -74,6 +76,23 @@ export class OperationsWorkspaceStore {
   readonly openIncidentCount = computed(() => this.data().incidents?.items.filter((item) => item.state !== 'closed' && item.state !== 'resolved').length ?? 0);
 
   async load(): Promise<void> {
+    if (this.loadInFlight) {
+      this.loadPending = true;
+      return;
+    }
+    this.loadInFlight = true;
+    try {
+      await this.loadSnapshot();
+    } finally {
+      this.loadInFlight = false;
+      if (this.loadPending) {
+        this.loadPending = false;
+        void this.load();
+      }
+    }
+  }
+
+  private async loadSnapshot(): Promise<void> {
     const generation = ++this.generation;
     this.dashboardExecutions.update((executions) => Object.fromEntries(Object.entries(executions).map(([key, execution]) => [key, execution.snapshot || execution.result ? { ...execution, state: 'loading', error: null } : execution])) as Record<string, DashboardExecution>);
     this.state.set('loading');
@@ -134,7 +153,7 @@ export class OperationsWorkspaceStore {
   }
 
   refresh(): void { void this.load(); }
-  disconnect(): void { this.generation += 1; this.gateway.disconnectOperationsLive(); this.liveOpen = false; if (this.liveRefreshTimer) clearTimeout(this.liveRefreshTimer); this.liveRefreshTimer = null; this.data.set(emptyData()); this.error.set(null); this.notice.set(null); }
+  disconnect(preserveSnapshot = false): void { this.generation += 1; this.loadPending = false; this.gateway.disconnectOperationsLive(); this.liveOpen = false; if (this.liveRefreshTimer) clearTimeout(this.liveRefreshTimer); this.liveRefreshTimer = null; if (!preserveSnapshot) { this.data.set(emptyData()); this.error.set(null); this.notice.set(null); } }
 
   async createDashboard(name: string, description: string, queryId: string, queryVersion: string): Promise<void> {
     const query = this.data().queries?.items.find((item) => item.queryId === queryId && item.queryVersion === queryVersion);
@@ -228,7 +247,7 @@ export class OperationsWorkspaceStore {
   }
   private scheduleLiveRefresh(): void {
     if (this.liveRefreshTimer) return;
-    this.liveRefreshTimer = setTimeout(() => { this.liveRefreshTimer = null; void this.load(); }, 250);
+    this.liveRefreshTimer = setTimeout(() => { this.liveRefreshTimer = null; void this.load(); }, 500);
   }
 }
 

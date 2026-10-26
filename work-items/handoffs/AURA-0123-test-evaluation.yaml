@@ -1,0 +1,58 @@
+agent: test_evaluation_engineer
+work_item: AURA-0123
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0123_acceptance
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0123
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - "pnpm --dir frontend exec eslint apps/observatory-web-e2e/src/observatory-web.spec.ts"
+    - "git diff --check"
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0123.yaml"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 45s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --grep 'AURA-0123 (does not start inactive workspace reads|ignores generic observation invalidations)' (6 passed across desktop, tablet, and mobile)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'AURA-0123 ignores generic observation invalidations'"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 70s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'renders an authoritative Runs catalogue after activation|starts a fresh Runs reconciliation window|AURA-0123 cancels pending analytics' (3 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 90s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'stops active Runs reads after a paginated|selected-run projection recovery behind' (2 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'stops active Runs reads after a paginated|selected-run projection recovery behind|pauses selected-run reads after accepted deletion and resumes reconciliation on Trace re-entry' (3 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'reflows the comparison table|validates UTC ordering|moves focus and announces an in-session expiry|drops a pending selected-run refresh' (4 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=tablet --grep 'reflows the comparison table|validates UTC ordering|moves focus and announces an in-session expiry|drops a pending selected-run refresh' (4 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'keeps metric snapshots memory-only and exposes recovery when analytics is unavailable' (1 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=tablet --grep 'keeps metric snapshots memory-only and exposes recovery when analytics is unavailable' (1 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 120s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'AURA-0123 (does not start inactive|ignores generic observation|stops active Runs reads|keeps selected-run projection|cancels pending analytics|pauses selected-run reads)|renders an authoritative Runs catalogue|starts a fresh Runs reconciliation window' (8 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 90s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'reconciles an equal-length catalogue after a run-scoped invalidation|stops active Runs reads after a paginated|does not start inactive workspace reads' (3 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_REUSE_SERVERS=1 timeout 90s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=tablet --grep 'reconciles an equal-length catalogue after a run-scoped invalidation|stops active Runs reads after a paginated|does not start inactive workspace reads' (3 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_SKIP_SERVER=1 timeout 90s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=desktop --grep 'AURA-0123 keeps a run invalidation burst live|AURA-0123 lets idle Overview converge' (2 passed)"
+    - "AURA_OBSERVATORY_WEB_E2E_SKIP_SERVER=1 timeout 90s pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project=tablet --grep 'AURA-0123 keeps a run invalidation burst live|AURA-0123 lets idle Overview converge' (2 passed)"
+    - "pnpm --dir frontend exec nx e2e observatory-web-e2e (471 passed in 10m28s)"
+  failed: []
+  not_run: []
+decisions:
+  - "Count mocked API requests by method and pathname in the existing fixture so assertions remain deterministic and content-free."
+  - "Treat the shared initial /runs snapshot and metadata-only /evaluation/events SSE as startup resources; reject run-detail, evaluation REST, experiment, operations, analytics, component, and deployment workspace reads."
+  - "Model passive Overview explicitly: pre-activation clock advancement must not poll; activation assertions count the route override itself so the test remains observable when the fixture route is superseded."
+  - "Exercise the 500 ms analytics/comparison invalidation cadence, then leave immediately and assert no hidden REST refresh occurs after the workspace deactivation fence."
+  - "Use a metadata-only synthetic SSE bridge to emit generic observation and run-scoped invalidations without changing application contracts."
+  - "Bound the burst assertion to 100 invalidations, at most one trailing run-detail refresh, and a 2.5-second browser deadline around the configured two-second cadence."
+  - "Expose the fixture's run-catalogue cursor and run-detail request ledger so pagination convergence and the projection retry floor are asserted against authoritative request counts rather than incidental DOM timing."
+  - "Model accepted evidence deletion as an in-progress durable command; leaving Trace must cancel reads, while re-entry must resume status reconciliation using the retained idempotency state."
+  - "Keep the idle assertion on the authoritative REST resource paths and allow the long-lived SSE transport to remain outside the REST-read ledger."
+  - "Align legacy comparison, UTC analytics, session-expiry, and pending-refresh assertions with inactive-workspace unmounting; model equal-length identity recovery only after an explicit run-scoped invalidation."
+  - "Remove formatter-only churn from the shared E2E spec by restoring original token-equivalent formatting; preserve only the intentional request-ledger, lifecycle, and acceptance changes."
+risks:
+  - "The full observatory-web-e2e suite remains integration-owned and was not run in this focused handoff."
+unresolved:
+  - "None within the assigned E2E ownership zone."
