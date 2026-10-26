@@ -2,9 +2,34 @@ import { describe, expect, it } from 'vitest';
 import type { Overview } from '@aura/observatory-api-client';
 import { extractSessionCsrf } from './observatory-session';
 import { authCopyForState, authStateForRecoveryMarker, boundedReturnPath, DEFAULT_ANALYTICS_FILTERS, needsRunReconciliation, needsSelectedRunReconciliation, ownerLoginHref } from './observatory-models';
-import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor } from './observatory-models';
+import { ComponentDetailRequestGate, componentAvailabilityLabel, componentCatalogueViewFor, datetimeLocalToUtc, dependencyNodeForEdge, hasSessionRequiredRejection, healthHistoryAfterDisconnect, inspectionEvidenceIsCurrent, isApprovedRunEvidenceMedia, isComparisonInvalidationEvent, isCurrentCapturedRunEvidenceManifest, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, matchesSelectedRunInvalidation, normalizeRunFilters, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, RequestGenerationGate, resourceStateFor, SELECTED_RUN_LOAD_TIMEOUT_MS, selectedRunLoadError } from './observatory-models';
 
 describe('observatory metadata boundaries', () => {
+  it('fails closed for evidence size, media type, and classification mismatches', () => {
+    const manifest = { mediaClassification: 'structured', mediaType: 'application/json', byteCount: 12 } as const;
+    expect(isApprovedRunEvidenceMedia(manifest as never, 12, 'application/json')).toBe(true);
+    expect(isApprovedRunEvidenceMedia(manifest as never, 13, 'application/json')).toBe(false);
+    expect(isApprovedRunEvidenceMedia(manifest as never, 12, 'text/html')).toBe(false);
+    expect(isApprovedRunEvidenceMedia({ ...manifest, mediaType: 'image/png' } as never, 12, 'image/png')).toBe(false);
+    expect(isApprovedRunEvidenceMedia({ ...manifest, byteCount: 1_048_577 } as never, 1_048_577, 'application/json')).toBe(false);
+  });
+
+  it('invalidates disclosed evidence when a live inspection changes captured to deleted', () => {
+    const disclosed = { evidenceId: 'evidence-1', captureState: 'captured', mediaClassification: 'structured', mediaType: 'application/json', digest: 'sha256:one', byteCount: 12 } as const;
+    expect(isCurrentCapturedRunEvidenceManifest(disclosed as never, disclosed as never)).toBe(true);
+    expect(isCurrentCapturedRunEvidenceManifest({ ...disclosed, captureState: 'deleted' } as never, disclosed as never)).toBe(false);
+    expect(isCurrentCapturedRunEvidenceManifest({ ...disclosed, digest: 'sha256:two' } as never, disclosed as never)).toBe(false);
+    expect(isCurrentCapturedRunEvidenceManifest(null, disclosed as never)).toBe(false);
+  });
+
+  it('reconciles a fulfilled deleted inspection even when detail is timed out', () => {
+    const disclosed = { evidenceId: 'evidence-1', captureState: 'captured', mediaClassification: 'structured', mediaType: 'application/json', digest: 'sha256:one', byteCount: 12 } as const;
+    const detailResult: PromiseSettledResult<unknown> = { status: 'rejected', reason: new Error('timed out') };
+    const inspectionResult: PromiseSettledResult<never> = { status: 'fulfilled', value: { steps: [{ evidence: [{ ...disclosed, captureState: 'deleted' }] }] } as never };
+    expect(detailResult.status).toBe('rejected');
+    expect(inspectionResult.status === 'fulfilled' && inspectionEvidenceIsCurrent(inspectionResult.value, disclosed as never)).toBe(false);
+  });
+
   it('starts analytics with a bounded metadata-only query shape', () => {
     expect(DEFAULT_ANALYTICS_FILTERS).toMatchObject({ focus: 'all', metric: 'operation_duration_ms', unit: 'milliseconds', aggregation: 'p95', bucket: 'auto', groupBy: 'component' });
     expect(DEFAULT_ANALYTICS_FILTERS).not.toHaveProperty('prompt');
@@ -47,6 +72,14 @@ describe('observatory metadata boundaries', () => {
       expect(hasSessionRequiredRejection(results, (reason) => (reason as { kind?: string }).kind === 'session-required')).toBe(true);
     }
     expect(hasSessionRequiredRejection([{ status: 'rejected', reason: new Error('query failed') }], () => false)).toBe(false);
+  });
+
+  it('promotes an inspection-only session expiry to the global purge path', () => {
+    const results: ReadonlyArray<PromiseSettledResult<unknown>> = [
+      { status: 'fulfilled', value: { traceId: null } },
+      { status: 'rejected', reason: { kind: 'session-required' } },
+    ];
+    expect(hasSessionRequiredRejection(results, (reason) => (reason as { kind?: string }).kind === 'session-required')).toBe(true);
   });
 
   it('ignores a late session rejection from a stale load sequence', () => {
@@ -96,6 +129,19 @@ describe('observatory metadata boundaries', () => {
     expect(isComparisonInvalidationEvent('snapshot')).toBe(false);
     expect(isComparisonInvalidationEvent('health.changed')).toBe(false);
     expect(isComparisonInvalidationEvent('heartbeat')).toBe(false);
+  });
+
+  it('refreshes a selected run only for a matching run-scoped invalidation', () => {
+    expect(matchesSelectedRunInvalidation('observation.changed', 'run', 'run-1', 'run-1')).toBe(true);
+    expect(matchesSelectedRunInvalidation('observation.changed', 'run', 'run-2', 'run-1')).toBe(false);
+    expect(matchesSelectedRunInvalidation('snapshot', 'run', 'run-1', 'run-1')).toBe(false);
+    expect(matchesSelectedRunInvalidation('retention.changed', 'component', 'run-1', 'run-1')).toBe(false);
+  });
+
+  it('bounds selected-run loading with truthful delayed recovery copy', () => {
+    expect(SELECTED_RUN_LOAD_TIMEOUT_MS).toBe(10_000);
+    expect(selectedRunLoadError(true)).toMatch(/did not respond within 10 seconds.*Retry/);
+    expect(selectedRunLoadError(false)).toBe('Run detail is unavailable.');
   });
 
   it('publishes live runs without waiting for an unresolved components health request', async () => {

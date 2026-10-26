@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { type ComponentHealth, type EvaluationLiveEvent } from '@aura/observatory-api-client';
+import { type ComponentHealth, type EvaluationLiveEvent, type RunEvidenceManifest } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
-import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, needsRunReconciliation, needsSelectedRunReconciliation, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
+import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, inspectionEvidenceIsCurrent, isApprovedRunEvidenceMedia, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, LiveRefreshCoordinator, matchesSelectedRunInvalidation, needsRunReconciliation, needsSelectedRunReconciliation, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, SELECTED_RUN_LOAD_TIMEOUT_MS, selectedRunLoadError, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 import { parseEvaluationLiveEvent } from './features/evaluation/evaluation-dto-adapter';
 
 // The run projection can lag Core ingestion well beyond a normal SSE retry.
@@ -17,10 +17,14 @@ export class ObservatoryStore {
   readonly healthHistory = signal<ObservatoryHealthHistory>({ page: null, state: 'loading', error: null });
   readonly resourceStates = signal<Record<ObservatoryResource, ObservatoryResourceState>>({ overview: 'loading', runs: 'loading', components: 'loading', deployments: 'loading' });
   readonly filters = signal<RunFilters>({});
-  readonly selectedRun = signal<SelectedRun>({ detail: null, trace: null });
+  readonly selectedRun = signal<SelectedRun>({ detail: null, trace: null, inspection: null });
   readonly selectedRunId = signal<string | null>(null);
   readonly selectedRunState = signal<'idle' | 'loading' | 'ready' | 'error'>('idle');
   readonly selectedRunError = signal<string | null>(null);
+  readonly selectedRunInspectionFreshness = signal<'fresh' | 'stale' | 'loading' | 'unavailable'>('loading');
+  readonly selectedRunEvidence = signal<{ readonly runId: string; readonly evidenceId: string; readonly manifest: RunEvidenceManifest; readonly blob: Blob } | null>(null);
+  readonly selectedRunEvidenceState = signal<'idle' | 'loading' | 'ready' | 'error' | 'deleting' | 'deleted'>('idle');
+  readonly selectedRunEvidenceError = signal<string | null>(null);
   readonly retention = signal<RetentionState>({ action: null, running: false, error: null });
   readonly authState = signal<ObservatoryAuthState>('checking');
   readonly sessionRequired = signal(false);
@@ -47,8 +51,13 @@ export class ObservatoryStore {
   private selectedRunReconciliationAttempts = 0;
   /** The active selected-run request owns the next invalidation; do not supersede it. */
   private selectedRunLoadInFlightSequence: number | null = null;
+  private selectedRunAbort: AbortController | null = null;
   private selectedRunRefreshPending = false;
   private selectedRunRetryPending = false;
+  private selectedRunEvidenceRequest = 0;
+  private selectedRunEvidenceAbort: AbortController | null = null;
+  private readonly evidenceDeletionKeys = new Map<string, string>();
+  private evidenceDeletionPoll: ReturnType<typeof setTimeout> | null = null;
   private loadSequence = 0;
   private openRunSequence = 0;
   private authGeneration = 0;
@@ -172,10 +181,18 @@ export class ObservatoryStore {
   }
   async openRun(runId: string): Promise<void> {
     this.resetSelectedRunReconciliation();
+    this.selectedRunAbort?.abort();
+    this.selectedRunAbort = null;
     const previousRun = this.selectedRun();
-    const preserveSelectedRun = this.selectedRunId() === runId && Boolean(previousRun.detail || previousRun.trace);
+    const preserveSelectedRun = this.selectedRunId() === runId && Boolean(previousRun.detail || previousRun.trace || previousRun.inspection);
+    if (this.selectedRunId() !== runId) {
+      this.evidenceDeletionKeys.delete(this.selectedRunId() ?? '');
+      if (this.evidenceDeletionPoll) { clearTimeout(this.evidenceDeletionPoll); this.evidenceDeletionPoll = null; }
+    }
     this.selectedRunId.set(runId);
-    if (!preserveSelectedRun) this.selectedRun.set({ detail: null, trace: null });
+    this.selectedRunInspectionFreshness.set('loading');
+    this.clearRunEvidence();
+    if (!preserveSelectedRun) this.selectedRun.set({ detail: null, trace: null, inspection: null });
     await this.loadSelectedRun(runId, preserveSelectedRun);
   }
   private async loadSelectedRun(runId: string, preserveSelectedRun: boolean): Promise<void> {
@@ -183,14 +200,46 @@ export class ObservatoryStore {
     this.selectedRunLoadInFlightSequence = sequence;
     this.selectedRunState.set('loading');
     this.selectedRunError.set(null);
+    this.selectedRunInspectionFreshness.set('loading');
+    this.selectedRunAbort?.abort();
+    const controller = new AbortController();
+    let timedOut = false;
+    let inspectionFresh = false;
+    this.selectedRunAbort = controller;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, SELECTED_RUN_LOAD_TIMEOUT_MS);
     try {
-      const detail = await this.gateway.execute('getRun', { ...blankInput('getRun'), path: { run_id: runId }, query: {} });
+      const [detailResult, inspectionResult] = await Promise.allSettled([
+        this.gateway.execute('getRun', { ...blankInput('getRun'), path: { run_id: runId }, query: {} }, controller.signal),
+        this.gateway.execute('getRunInspection', { ...blankInput('getRunInspection'), path: { run_id: runId }, query: {} }, controller.signal),
+      ]);
       if (sequence !== this.openRunSequence) return;
+      // Both projections share the same owner session. Inspect the settled
+      // results before preferring a metadata error so an inspection-only 401
+      // still purges the authenticated surface globally.
+      if (hasSessionRequiredRejection([detailResult, inspectionResult], (reason) => reason instanceof ObservatorySessionRequiredError)) {
+        throw new ObservatorySessionRequiredError();
+      }
+      // Inspection is authoritative for disclosed evidence. Reconcile it as
+      // soon as it is available, even when detail or trace is delayed, so a
+      // captured-to-deleted transition cannot leave old bytes rendered.
+      if (inspectionResult.status === 'fulfilled') {
+        inspectionFresh = true;
+        this.selectedRunInspectionFreshness.set('fresh');
+        const current = this.selectedRun();
+        const disclosedEvidence = this.selectedRunEvidence();
+        if (disclosedEvidence && !inspectionEvidenceIsCurrent(inspectionResult.value, disclosedEvidence.manifest)) this.clearRunEvidence();
+        this.selectedRun.set({ ...current, inspection: inspectionResult.value });
+      }
+      if (detailResult.status === 'rejected') throw detailResult.reason;
+      const detail = detailResult.value;
+      const inspection = inspectionResult.status === 'fulfilled' ? inspectionResult.value : this.selectedRun().inspection;
+      this.selectedRunInspectionFreshness.set(inspectionResult.status === 'fulfilled' ? 'fresh' : inspection ? 'stale' : 'unavailable');
       const previousTrace = this.selectedRun().trace;
-      this.selectedRun.set({ detail, trace: previousTrace });
-      const trace = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }) : previousTrace;
+      this.selectedRun.set({ detail, trace: previousTrace, inspection });
+      const trace = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }, controller.signal) : previousTrace;
       if (sequence !== this.openRunSequence) return;
-      this.selectedRun.set({ detail, trace });
+      this.selectedRun.set({ detail, trace, inspection });
+      if (inspectionResult.status === 'rejected') this.selectedRunError.set('The governed run inspection is unavailable; metadata remains visible.');
       const retryScheduled = needsSelectedRunReconciliation(detail, trace) && this.queueSelectedRunReconciliation(runId);
       this.selectedRunState.set(retryScheduled ? 'loading' : needsSelectedRunReconciliation(detail, trace) ? 'error' : 'ready');
       // A live invalidation can arrive while either snapshot request is in
@@ -201,19 +250,22 @@ export class ObservatoryStore {
     } catch (error) {
       if (sequence !== this.openRunSequence) return;
       if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
-      const message = error instanceof Error ? error.message : 'Run detail is unavailable.';
-      const hasSelectedEvidence = preserveSelectedRun || Boolean(this.selectedRun().detail || this.selectedRun().trace);
-      if (!hasSelectedEvidence) this.selectedRun.set({ detail: null, trace: null });
+      const message = timedOut ? selectedRunLoadError(true) : error instanceof Error ? error.message : selectedRunLoadError(false);
+      const hasSelectedEvidence = preserveSelectedRun || Boolean(this.selectedRun().detail || this.selectedRun().trace || this.selectedRun().inspection);
+      this.selectedRunInspectionFreshness.set(inspectionFresh ? 'fresh' : this.selectedRun().inspection ? 'stale' : 'unavailable');
+      if (!hasSelectedEvidence) this.selectedRun.set({ detail: null, trace: null, inspection: null });
       this.selectedRunError.set(message);
       this.snapshot.update((value) => ({ ...value, error: message, state: 'stale' }));
       // A previously rendered trace remains actionable with an explicit
       // manual retry. Only an initially uncaptured trace gets automatic
       // projection reconciliation; this preserves true refresh failures.
-      const retryNeeded = !this.selectedRun().trace;
+      const retryNeeded = !timedOut && !this.selectedRun().trace;
       const retryScheduled = retryNeeded && this.queueSelectedRunReconciliation(runId);
       this.selectedRunState.set(retryScheduled ? 'loading' : 'error');
       if (!retryScheduled && retryNeeded) this.selectedRunError.set('The selected run trace is not available yet.');
     } finally {
+      clearTimeout(timeout);
+      if (this.selectedRunAbort === controller) this.selectedRunAbort = null;
       if (this.selectedRunLoadInFlightSequence === sequence) {
         this.selectedRunLoadInFlightSequence = null;
         if ((this.selectedRunRefreshPending || this.selectedRunRetryPending) && this.selectedRunId() === runId && !this.sessionRequired()) {
@@ -223,6 +275,78 @@ export class ObservatoryStore {
         }
       }
     }
+  }
+  /** Fetch one manifest only after the owner explicitly discloses it. */
+  async loadRunEvidence(manifest: RunEvidenceManifest): Promise<void> {
+    const runId = this.selectedRunId();
+    if (!runId || manifest.captureState !== 'captured') return;
+    this.selectedRunEvidenceAbort?.abort();
+    const controller = new AbortController();
+    this.selectedRunEvidenceAbort = controller;
+    const request = ++this.selectedRunEvidenceRequest;
+    this.selectedRunEvidence.set(null);
+    this.selectedRunEvidenceState.set('loading');
+    this.selectedRunEvidenceError.set(null);
+    try {
+      const blob = await this.gateway.execute('getRunEvidence', { ...blankInput('getRunEvidence'), path: { run_id: runId, evidence_id: manifest.evidenceId }, query: {} }, controller.signal);
+      if (!(blob instanceof Blob)) throw new Error('Evidence response was unavailable.');
+      if (!isApprovedRunEvidenceMedia(manifest, blob.size, blob.type)) throw new Error('Evidence media did not satisfy the governed manifest bounds.');
+      if (this.selectedRunId() !== runId || request !== this.selectedRunEvidenceRequest) return;
+      this.selectedRunEvidence.set({ runId, evidenceId: manifest.evidenceId, manifest, blob });
+      this.selectedRunEvidenceState.set('ready');
+    } catch (error) {
+      if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
+      if (this.selectedRunId() !== runId || request !== this.selectedRunEvidenceRequest) return;
+      if (controller.signal.aborted) return;
+      this.selectedRunEvidenceError.set(error instanceof Error ? error.message : 'Evidence is unavailable.');
+      this.selectedRunEvidenceState.set('error');
+    }
+  }
+  clearRunEvidence(): void {
+    this.selectedRunEvidenceAbort?.abort();
+    this.selectedRunEvidenceAbort = null;
+    this.selectedRunEvidenceRequest += 1;
+    this.selectedRunEvidence.set(null);
+    this.selectedRunEvidenceError.set(null);
+    this.selectedRunEvidenceState.set('idle');
+  }
+  async deleteRunEvidence(): Promise<void> {
+    const runId = this.selectedRunId();
+    if (!runId || this.selectedRunEvidenceState() === 'deleting' || this.selectedRunEvidenceState() === 'loading') return;
+    this.clearRunEvidence();
+    this.selectedRunEvidenceState.set('deleting');
+    this.selectedRunEvidenceError.set(null);
+    try {
+      await this.gateway.ensureSession();
+      const idempotencyKey = this.evidenceDeletionKeys.get(runId) ?? crypto.randomUUID();
+      this.evidenceDeletionKeys.set(runId, idempotencyKey);
+      const deletion = await this.gateway.execute('deleteRunEvidence', { ...blankInput('deleteRunEvidence'), path: { run_id: runId }, headers: { 'X-Observatory-CSRF': '', 'Idempotency-Key': idempotencyKey, 'X-Observatory-Confirmation': 'DELETE_RUN_EVIDENCE' } });
+      if (this.selectedRunId() !== runId) return;
+      this.selectedRunEvidenceState.set(deletion.status === 'failed' ? 'error' : deletion.status === 'completed' ? 'deleted' : 'deleting');
+      if (deletion.status === 'failed') { this.selectedRunEvidenceError.set('Evidence deletion could not be completed.'); this.evidenceDeletionKeys.delete(runId); }
+      void this.loadSelectedRun(runId, true);
+      if (deletion.status === 'accepted' || deletion.status === 'in_progress') this.pollEvidenceDeletion(runId, 0);
+    } catch (error) {
+      if (error instanceof ObservatorySessionRequiredError) { this.markSignedOut('Owner Observatory session required.'); return; }
+      if (this.selectedRunId() !== runId) return;
+      this.selectedRunEvidenceError.set(error instanceof Error ? error.message : 'Evidence deletion failed.');
+      this.selectedRunEvidenceState.set('error');
+    }
+  }
+  private pollEvidenceDeletion(runId: string, attempt: number): void {
+    if (this.evidenceDeletionPoll) clearTimeout(this.evidenceDeletionPoll);
+    if (attempt >= 10) { if (this.selectedRunId() === runId && this.selectedRunEvidenceState() === 'deleting') { this.selectedRunEvidenceState.set('error'); this.selectedRunEvidenceError.set('Deletion status did not converge within the bounded retry window. Retry safely with the same command.'); } return; }
+    if (this.selectedRunId() !== runId || this.sessionRequired()) return;
+    this.evidenceDeletionPoll = setTimeout(() => {
+      this.evidenceDeletionPoll = null;
+      void this.loadSelectedRun(runId, true).then(() => {
+        if (this.selectedRunId() !== runId) return;
+        const inspection = this.selectedRun().inspection;
+        if (inspection?.completeness.state === 'deleted') { this.selectedRunEvidenceState.set('deleted'); this.evidenceDeletionKeys.delete(runId); return; }
+        this.selectedRunEvidenceState.set('deleting');
+        this.pollEvidenceDeletion(runId, attempt + 1);
+      });
+    }, 500);
   }
   /** Compare exactly two in-memory selections; no route, storage, or URL state is used. */
   async compareRuns(leftRunId: string, rightRunId: string): Promise<void> {
@@ -316,9 +440,12 @@ export class ObservatoryStore {
 
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
+    let resourceType: string | null = null;
+    let resourceId: string | null = null;
+    try { const payload = JSON.parse(message.data || '{}') as { readonly resourceType?: unknown; readonly resourceId?: unknown }; resourceType = typeof payload.resourceType === 'string' ? payload.resourceType : null; resourceId = typeof payload.resourceId === 'string' ? payload.resourceId : null; } catch { /* metadata-only invalidation payloads are ignored safely */ }
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: new Date().toISOString() }));
     if (event.type !== 'heartbeat') this.queueLiveRefresh();
-    if (event.type === 'observation.changed' || event.type === 'retention.changed' || event.type === 'snapshot') {
+    if (matchesSelectedRunInvalidation(event.type, resourceType, resourceId, this.selectedRunId())) {
       const selectedRunId = this.selectedRunId();
       if (selectedRunId) this.queueSelectedRunReconciliation(selectedRunId, true);
     }
@@ -633,6 +760,10 @@ export class ObservatoryStore {
   }
 
   private markSignedOut(message: string, explicitState?: ObservatoryAuthState): void {
+    this.selectedRunAbort?.abort();
+    this.selectedRunAbort = null;
+    if (this.evidenceDeletionPoll) { clearTimeout(this.evidenceDeletionPoll); this.evidenceDeletionPoll = null; }
+    this.evidenceDeletionKeys.clear();
     this.disconnectLive();
     this.liveRefresh.cancel();
     this.catalogRefresh.cancel();
@@ -655,10 +786,12 @@ export class ObservatoryStore {
     this.resourceStates.set({ overview: 'error', runs: 'error', components: 'error', deployments: 'error' });
     this.snapshot.set({ overview: null, runs: null, components: null, deployments: null, state: 'error', lastUpdatedAt: null, lastEventId: null, error: message, partial: false, resourceErrors: [] });
     this.healthHistory.set({ page: null, state: 'error', error: null });
-    this.selectedRun.set({ detail: null, trace: null });
+    this.selectedRun.set({ detail: null, trace: null, inspection: null });
+    this.selectedRunInspectionFreshness.set('loading');
     this.selectedRunId.set(null);
     this.selectedRunState.set('idle');
     this.selectedRunError.set(null);
+    this.clearRunEvidence();
     this.componentHealthById.set({});
     this.componentHealthErrors.set({});
     this.componentHealthLoading.set({});
@@ -677,6 +810,10 @@ export class ObservatoryStore {
   }
 
   private async refreshAfterRetention(): Promise<void> {
+    this.selectedRunAbort?.abort();
+    this.selectedRunAbort = null;
+    if (this.evidenceDeletionPoll) { clearTimeout(this.evidenceDeletionPoll); this.evidenceDeletionPoll = null; }
+    this.evidenceDeletionKeys.clear();
     this.authGeneration += 1;
     // Retention is a destructive boundary for all product-owned, in-memory
     // selections and idempotency material. Feature stores must discard their
@@ -685,10 +822,11 @@ export class ObservatoryStore {
     this.evaluationRevision.update((value) => value + 1);
     this.openRunSequence += 1;
     this.resetSelectedRunReconciliation();
-    this.selectedRun.set({ detail: null, trace: null });
+    this.selectedRun.set({ detail: null, trace: null, inspection: null });
     this.selectedRunId.set(null);
     this.selectedRunState.set('idle');
     this.selectedRunError.set(null);
+    this.clearRunEvidence();
     this.componentHealthById.set({});
     this.componentHealthErrors.set({});
     this.componentHealthLoading.set({});

@@ -1,0 +1,69 @@
+agent: test_evaluation_engineer
+work_item: AURA-0121
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0121_acceptance
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.aura0121
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - deploy/compose/e2e/test_full_stack_observability_path.sh
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - "bash deploy/compose/e2e/test_full_stack_observability_path.sh"
+    - >-
+      AURA_WORK_ITEM=AURA-0121 pnpm --dir frontend exec nx e2e
+      observatory-web-e2e --args='--grep=AURA-0114 keeps terminal run headers
+      readable --project=desktop --workers=1' (1 passed)
+    - >-
+      AURA_WORK_ITEM=AURA-0121 pnpm --dir frontend exec nx e2e
+      observatory-web-e2e --args='--grep=AURA-0121 --project=desktop
+      --project=mobile --workers=1' (16 passed)
+    - >-
+      Serial fresh-port desktop reruns after final-source reconciliation:
+      comparison keyboard-safe selection (2 passed including the responsive
+      companion), ingest health/counters (1 passed), selected trace unavailable
+      refresh (1 passed), delayed first trace projection (1 passed), selected
+      trace materialization after invalidation (1 passed), AURA-0116 burst
+      refresh (1 passed), AURA-0116 final reconciliation (1 passed), partial
+      trace filtering (1 passed), and forced-colors shell treatment (1 passed).
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0121.yaml"
+    - "git diff --check"
+    - "pnpm --dir frontend exec eslint apps/observatory-web-e2e/src/observatory-web.spec.ts"
+  failed: []
+  not_run:
+    - >-
+      The remaining AURA-0121 product-wide checks (full Storybook, production
+      build, and composed acceptance) remain with the delivery/integration
+      pass. A desktop Playwright matrix was exercised before the final
+      acceptance corrections (142 passed, 3 stale assertions); the affected
+      tests were then rerun serially on fresh ports, while integration should
+      rerun the complete matrix against the final source.
+decisions:
+  - "Added fixture-owned governed inspection snapshots for metadata-only, full, partial, deleted, and large bounded states without changing production contracts."
+  - "Acceptance asserts the authoritative inspection endpoint, lazy evidence fetch, inert rendering scoped to the evidence preview, run-scoped live refresh state preservation, bounded large-run DOM, deletion confirmation, and 390px navigation closure."
+  - "Added positive confirmed deletion coverage for exactly one DELETE with deleted manifests and retained timing metadata, plus delayed-evidence collapse/run-change race coverage that proves stale bytes never render or refetch."
+  - "Added live captured-to-deleted invalidation coverage that discloses evidence, applies a metadata-only run invalidation, and verifies text/preview bytes are cleared without a second evidence request."
+  - "Aligned fixtures to the hardened evidence validator: text evidence is an exact 168-byte text/plain body and the object-URL race uses an exact 19-byte image/png body; neither is emitted to logs, URLs, storage, or screenshots by the tests."
+  - "Updated the legacy AURA-0114 browser regression to the current governed-capture contract and manifest-derived Excluded by policy coverage labels, scoping repeated phase headings to the authoritative execution timeline."
+  - "Aligned AURA-0114 and AURA-0121 trace assertions with the hardened accessibility tree contract: Run execution steps and Trace span lineage use tree roles, and span rows use treeitem semantics."
+  - "Reconciled stale acceptance assumptions found by the desktop matrix: lifetime counter labels are scoped to semantic dt elements, trace recovery copy is 'latest run refresh', run invalidation fixtures carry resourceType=run/resourceId, delayed projection checks wait for the bounded retry ledger, and the runs component filter is scoped to observatory-runs."
+  - "Updated forced-colors verification to require visible text only from label/description spans while still requiring SVG glyph/current indicators to paint; the final icon contract intentionally has no text node for those icons."
+  - "The shell regression keeps the Aura Web zero-reference check scoped to production app source files and does not inspect unrelated fixture prose."
+risks:
+  - "The targeted suite uses fixture-owned inspection snapshots; the delivery/integration pass must retain the full-stack and production checks before release."
+unresolved:
+  - "No acceptance-slice defects remain; product-wide required checks are intentionally deferred to delivery/integration. The pre-correction desktop matrix exposed three stale assertions; each was corrected in this E2E file and rerun serially on a fresh port."

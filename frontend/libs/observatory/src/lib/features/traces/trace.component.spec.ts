@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { durationAriaLabel, formatDurationMs } from '../../observatory-models';
-import { continuationSummary, foregroundPhaseItemsFor, isAtOrBeforeBoundary, orderPhases, phaseFor, phaseItemsFor, terminalLifecycleAt, terminalObservationBoundary, type PhaseItem, type PhaseKey } from './trace-inspector.utils';
+import { aggregateInspectionSteps, continuationSummary, foregroundPhaseItemsFor, hasParallelBranch, inspectionStepPosition, inspectionStepSetSize, isAtOrBeforeBoundary, lineageLabel, orderPhases, phaseFor, phaseItemsFor, spanLineageLabel, terminalLifecycleAt, terminalObservationBoundary, traceSpanPosition, traceSpanSetSize, type PhaseItem, type PhaseKey } from './trace-inspector.utils';
 
 describe('run inspector presentation', () => {
   it('formats stable durations into bounded readable units', () => {
@@ -10,6 +10,14 @@ describe('run inspector presentation', () => {
     expect(formatDurationMs(12_500)).toBe('12.5 s');
     expect(formatDurationMs(65_100)).toBe('1m 05s');
     expect(formatDurationMs(3_661_000)).toBe('1h 01m');
+  });
+
+  it('aggregates repeat delivery before bounding so terminal failure remains visible', () => {
+    const base = { parentStepId: null, spanId: null, parentSpanId: null, category: 'thinking' as const, label: 'thinking stream', startedAt: '2026-10-25T12:00:00.000Z', finishedAt: null, durationMs: null, depth: 0, measurements: [], evidence: [], partial: false, partialReasons: [] };
+    const steps = Array.from({ length: 205 }, (_, index) => ({ ...base, stepId: 'repeat-0', sequence: index, state: index === 204 ? 'failed' as const : 'running' as const }));
+    const aggregated = aggregateInspectionSteps(steps, 1);
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].state).toBe('failed');
   });
 
   it('keeps exact timing available to assistive technology', () => {
@@ -23,6 +31,38 @@ describe('run inspector presentation', () => {
     expect(phaseFor('aura.memory memory.persist')).toBe('persistence');
     expect(phaseFor('aura.memory memory.retrieval')).toBe('context');
     expect(phaseFor('aura.model model.route')).toBe('routing');
+  });
+
+  it('exposes parent lineage and parallel branch semantics for the inspector', () => {
+    expect(lineageLabel('step-parent', null)).toBe('parent step step-parent');
+    expect(lineageLabel(null, 'span-parent')).toBe('parent span span-parent');
+    expect(lineageLabel(null, null)).toBe('root branch');
+    expect(spanLineageLabel('span-parent')).toBe('parent span-parent');
+    expect(spanLineageLabel(null)).toBe('root span');
+    expect(hasParallelBranch('span-parent', ['span-parent', 'span-parent', 'other'])).toBe(true);
+    expect(hasParallelBranch('span-parent', ['span-parent', 'other'])).toBe(false);
+  });
+
+  it('computes inspection tree positions among root and nested siblings', () => {
+    const step = (stepId: string, depth: number, parentStepId: string | null = null) => ({ stepId, sequence: 0, parentStepId, parentSpanId: null, category: 'request' as const, label: stepId, state: 'succeeded' as const, startedAt: '2026-10-25T12:00:00.000Z', finishedAt: null, durationMs: 1, depth, measurements: [], evidence: [], partial: false, partialReasons: [] });
+    const rootA = step('root-a', 0); const rootB = step('root-b', 0); const childA = step('child-a', 1, 'root-a'); const childB = step('child-b', 1, 'root-a'); const childOther = step('child-other', 1, 'root-b');
+    const steps = [rootA, rootB, childA, childB, childOther];
+    expect([inspectionStepPosition(rootA, steps), inspectionStepSetSize(rootA, steps)]).toEqual([1, 2]);
+    expect([inspectionStepPosition(rootB, steps), inspectionStepSetSize(rootB, steps)]).toEqual([2, 2]);
+    expect([inspectionStepPosition(childA, steps), inspectionStepSetSize(childA, steps)]).toEqual([1, 2]);
+    expect([inspectionStepPosition(childB, steps), inspectionStepSetSize(childB, steps)]).toEqual([2, 2]);
+    expect([inspectionStepPosition(childOther, steps), inspectionStepSetSize(childOther, steps)]).toEqual([1, 1]);
+  });
+
+  it('computes trace tree positions for parallel spans instead of global indexes', () => {
+    const span = (spanId: string, depth: number, parentSpanId: string | null = null) => ({ spanId, parentSpanId, depth, startedAt: '2026-10-25T12:00:00.000Z', durationMs: 1, componentId: 'aura.test', componentVersion: 'v1', operation: spanId, outcome: 'succeeded' as const, partial: false });
+    const rootA = span('root-a', 0); const rootB = span('root-b', 0); const childA = span('child-a', 1, 'root-a'); const childB = span('child-b', 1, 'root-a'); const childOther = span('child-other', 1, 'root-b');
+    const spans = [rootA, rootB, childA, childB, childOther];
+    expect([traceSpanPosition(rootA, spans), traceSpanSetSize(rootA, spans)]).toEqual([1, 2]);
+    expect([traceSpanPosition(rootB, spans), traceSpanSetSize(rootB, spans)]).toEqual([2, 2]);
+    expect([traceSpanPosition(childA, spans), traceSpanSetSize(childA, spans)]).toEqual([1, 2]);
+    expect([traceSpanPosition(childB, spans), traceSpanSetSize(childB, spans)]).toEqual([2, 2]);
+    expect([traceSpanPosition(childOther, spans), traceSpanSetSize(childOther, spans)]).toEqual([1, 1]);
   });
 
   it('counts one canonical phase record when a span mirrors its observation', () => {

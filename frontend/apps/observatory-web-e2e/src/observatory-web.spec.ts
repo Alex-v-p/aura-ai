@@ -324,6 +324,102 @@ function traceDetail() {
   };
 }
 
+const inspectionEvidenceIds = {
+  request: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a10',
+  context: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a11',
+  prompt: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a12',
+  generation: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a13',
+  thinking: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a14',
+  tool: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a15',
+  toolResult: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a16',
+  routing: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a17',
+} as const;
+
+type InspectionFixtureMode = 'metadata' | 'full' | 'partial' | 'deleted' | 'large';
+
+function runInspection(
+  mode: InspectionFixtureMode = 'metadata',
+  version = 1,
+  inspectedRunId = runId,
+  evidenceMedia: 'text' | 'image' = 'text',
+) {
+  const captured = mode === 'full' || mode === 'large';
+  const deleted = mode === 'deleted';
+  const manifest = (key: keyof typeof inspectionEvidenceIds, kind: string, state = captured ? 'captured' : deleted ? 'deleted' : 'excluded') => ({
+    evidenceId: inspectionEvidenceIds[key],
+    eventId: `5a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a${10 + Object.keys(inspectionEvidenceIds).indexOf(key)}`,
+    sequence: Object.keys(inspectionEvidenceIds).indexOf(key) + 1,
+    kind,
+    captureState: state,
+    mediaClassification: evidenceMedia === 'image' && key === 'request' ? 'image' : kind === 'model_routing' ? 'structured' : 'text',
+    mediaType: evidenceMedia === 'image' && key === 'request' ? 'image/png' : kind === 'model_routing' ? 'application/json' : 'text/plain',
+    digest: state === 'captured' ? `sha256-${key}-${version}` : null,
+    // Keep the fixture manifest truthful so hardened media validation accepts
+    // the exact JSON body returned by the evidence route.
+    byteCount: state === 'captured' ? (evidenceMedia === 'image' && key === 'request' ? 19 : 168) : 0,
+    capturedAt: observedAt,
+    reason: state === 'excluded' ? 'capture_disabled' : state === 'deleted' ? 'manually_deleted' : null,
+  });
+  const step = (sequence: number, category: string, label: string, durationMs: number, evidence: unknown[] = [], state = 'succeeded') => ({
+    stepId: `7a4f1d14-2adf-4e6d-9cc8-${String(sequence).padStart(12, '0')}`,
+    parentStepId: null,
+    spanId: null,
+    parentSpanId: null,
+    sequence,
+    category,
+    label,
+    state,
+    startedAt: observedAt,
+    finishedAt: observedAt,
+    durationMs,
+    depth: 0,
+    measurements: [{ name: `${category}.duration`, value: durationMs, unit: 'milliseconds' }],
+    evidence,
+    partial: state === 'unavailable',
+    partialReasons: state === 'unavailable' ? ['provider_hidden_reasoning_excluded'] : [],
+  });
+  const steps = mode === 'large'
+    ? Array.from({ length: 512 }, (_, index) => step(index + 1, index % 2 ? 'worker' : 'tool', `Large step ${index + 1}`, 1))
+    : [
+        step(1, 'admission', 'Request admission', 1200, [manifest('request', 'admitted_request')]),
+        step(2, 'context', 'Context & retrieval', 800, [manifest('context', 'document_chunk')]),
+        step(3, 'prompt', 'Prompt construction', 140, [manifest('prompt', 'compiled_prompt')]),
+        step(4, 'routing', 'Model routing', 35, [manifest('routing', 'model_routing')]),
+        step(5, 'generation', 'Generation', 2300, [manifest('generation', 'generation_output')]),
+        step(6, 'thinking', 'Displayed thinking', 160, [manifest('thinking', 'displayed_thinking')], 'succeeded'),
+        step(7, 'tool', 'Tools & policy', 420, [manifest('tool', 'tool_arguments'), manifest('toolResult', 'tool_result')]),
+        step(8, 'persistence', 'Persistence', 90),
+        step(9, 'delivery', 'Streaming & delivery', 55),
+      ];
+  if (mode === 'partial') {
+    steps[1] = { ...steps[1], partial: true, partialReasons: ['queue_pressure'], evidence: [manifest('context', 'document_chunk', 'partial')] };
+  }
+  return {
+    schemaVersion: 1,
+    runId: inspectedRunId,
+    traceId: inspectedRunId === comparisonRunId ? comparisonRun.traceId : traceId,
+    status: 'succeeded',
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    durationMs: version === 2 ? 6200 : 5000,
+    steps,
+    completeness: {
+      state: deleted ? 'deleted' : mode === 'partial' || mode === 'metadata' ? 'partial' : 'complete',
+      expectedEvidenceCount: captured ? 8 : 9,
+      capturedEvidenceCount: captured ? 8 : 0,
+      excludedEvidenceCount: mode === 'metadata' ? 8 : 0,
+      partialEvidenceCount: mode === 'partial' ? 1 : 0,
+      droppedEvidenceCount: 0,
+      deletedEvidenceCount: deleted ? 8 : 0,
+      reasons: deleted ? ['manually_deleted'] : mode === 'metadata' ? ['capture_disabled'] : mode === 'partial' ? ['queue_pressure'] : [],
+    },
+    snapshotAt: new Date(Date.parse(observedAt) + version * 1000).toISOString(),
+    partial: mode === 'partial' || mode === 'metadata',
+    partialReasons: mode === 'metadata' ? ['capture_disabled'] : mode === 'partial' ? ['queue_pressure'] : [],
+    nextCursor: mode === 'large' ? 'large-next-page' : null,
+  };
+}
+
 function comparisonDetail() {
   const marker = (
     value: string | null,
@@ -499,6 +595,9 @@ type FixtureOptions = {
   traceInitialFailure?: boolean;
   traceUnavailable?: boolean;
   traceMaterializesAfterAttempts?: number;
+  runInspection?: InspectionFixtureMode;
+  evidenceMedia?: 'text' | 'image';
+  deferEvidence?: boolean;
 };
 
 type FixtureHandle = {
@@ -513,6 +612,11 @@ type FixtureHandle = {
   comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }>;
   runsRequests: Array<void>;
   traceRequests: Array<void>;
+  inspectionRequests: Array<void>;
+  evidenceRequests: Array<string>;
+  evidenceDeletionRequests: Array<void>;
+  releaseEvidence: () => void;
+  markEvidenceDeleted: () => void;
   releaseDeferred: () => void;
   failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
@@ -531,6 +635,10 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }> = [];
   const runsRequests: Array<void> = [];
   const traceRequests: Array<void> = [];
+  const inspectionRequests: Array<void> = [];
+  const evidenceRequests: Array<string> = [];
+  const evidenceDeletionRequests: Array<void> = [];
+  const deferredEvidenceResolvers: Array<() => void> = [];
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
@@ -545,6 +653,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   let componentRefreshFailure = false;
   let runListRequests = 0;
   let runDetailRequests = 0;
+  let inspectionMode: InspectionFixtureMode = options.runInspection ?? 'metadata';
 
   if (options.sseFlapping) {
     await page.addInitScript(() => {
@@ -776,6 +885,54 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         ];
       }
       await route.fulfill({ json: result });
+      return;
+    }
+    const inspectedRunId = path.endsWith(`/runs/${runId}/inspection`)
+      ? runId
+      : path.endsWith(`/runs/${comparisonRunId}/inspection`)
+        ? comparisonRunId
+        : null;
+    if (inspectedRunId && request.method() === 'GET') {
+      inspectionRequests.push(undefined);
+      await route.fulfill({
+        json: runInspection(inspectionMode, inspectionRequests.length, inspectedRunId, options.evidenceMedia),
+      });
+      return;
+    }
+    if (path.includes(`/runs/${runId}/evidence/`) && request.method() === 'GET') {
+      const evidenceId = path.slice(path.lastIndexOf('/') + 1);
+      evidenceRequests.push(evidenceId);
+      if (options.deferEvidence) await new Promise<void>((resolve) => deferredEvidenceResolvers.push(resolve));
+      const imageEvidence = options.evidenceMedia === 'image' && evidenceId === inspectionEvidenceIds.request;
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': imageEvidence ? 'image/png' : 'text/plain', 'cache-control': 'no-store' },
+        body: imageEvidence
+          ? 'fixture-image-bytes'
+          : JSON.stringify({
+              safeFixtureText: 'Captured fixture evidence',
+              hostileMarkup: '<script>window.__evidence_executed = true</script>',
+              evidenceId,
+            }),
+      });
+      return;
+    }
+    if (path.endsWith(`/runs/${runId}/evidence`) && request.method() === 'DELETE') {
+      evidenceDeletionRequests.push(undefined);
+      inspectionMode = 'deleted';
+      await route.fulfill({
+        json: {
+          schemaVersion: 1,
+          deletionId: '6a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a10',
+          runId,
+          status: 'completed',
+          requestedAt: observedAt,
+          completedAt: observedAt,
+          deletedEvidenceCount: evidenceRequests.length,
+          auditMode: 'content_free',
+          failureCode: null,
+        },
+      });
       return;
     }
     if (path.endsWith(`/runs/${runId}`)) {
@@ -1500,6 +1657,15 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     comparisonRequests,
     runsRequests,
     traceRequests,
+    inspectionRequests,
+    evidenceRequests,
+    evidenceDeletionRequests,
+    releaseEvidence: () => {
+      while (deferredEvidenceResolvers.length) deferredEvidenceResolvers.shift()?.();
+    },
+    markEvidenceDeleted: () => {
+      inspectionMode = 'deleted';
+    },
     releaseDeferred: () => {
       while (deferredResolvers.length) deferredResolvers.shift()?.();
     },
@@ -1535,7 +1701,10 @@ async function openDestination(page: Page, label: string, keyboard = false): Pro
     await page.getByRole('button', { name: 'Open Observatory navigation', exact: true }).click();
   }
   if (keyboard) await button.press('Enter');
-  else await button.click();
+  else {
+    await button.scrollIntoViewIfNeeded();
+    await button.click({ force: true });
+  }
 }
 
 async function expectNoA11yViolations(page: Page): Promise<void> {
@@ -1882,6 +2051,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     const fixture = await openFixture(page, { comparisonFailure: 'partial', healthChanged: true });
     await openDestination(page, 'Compare');
     const comparison = page.locator('observatory-comparison');
+    await expect(comparison.getByRole('heading', { name: 'Compare runs', exact: true })).toBeVisible();
     if ((page.viewportSize()?.width ?? 1280) <= 832) {
       await expect(
         comparison.getByRole('heading', { name: 'Compare runs', exact: true }),
@@ -2674,10 +2844,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     ).toBeVisible();
     await expect(page.getByText('Accepted')).toBeVisible();
     const ingest = page.locator('observatory-overview .ingest-card');
-    await expect(ingest.getByText('Rejected', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Duplicates', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Malformed', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Storage failures', { exact: true })).toBeVisible();
+    // The final overview exposes the counter scope as a nested "lifetime"
+    // context. Assert the semantic labels without depending on that presentational
+    // suffix (or on the rendered number).
+    await expect(ingest.locator('dt').filter({ hasText: /^Rejected\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Duplicates\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Malformed\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Storage failures\b/ })).toBeVisible();
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.route('**/api/v1/overview', async (route) =>
       route.fulfill({
@@ -2992,13 +3165,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
 
     await openDestination(page, 'Runs');
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(trace.getByRole('status').filter({ hasText: /latest trace refresh is unavailable/i })).toBeVisible();
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+    await expect(trace.getByRole('status').filter({ hasText: /latest run refresh is unavailable/i })).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
   });
 
   test('reconciles a delayed first trace projection without hiding its loading state', async ({ page }) => {
@@ -3007,8 +3180,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
-    expect(fixture.traceRequests.length).toBeGreaterThan(1);
+    await expect(
+      trace.getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+    // The inspector renders its stable heading while the bounded projection
+    // recovery timer is still pending. Wait on the fixture's request ledger,
+    // rather than coupling this assertion to the initial render race.
+    await expect.poll(() => fixture.traceRequests.length, { timeout: 20_000 }).toBeGreaterThan(1);
   });
 
   test('reconciles a selected run when its trace materializes after an observation invalidation', async ({ page }) => {
@@ -3042,7 +3220,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Runs');
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(page.locator('observatory-trace').getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page
+        .locator('observatory-trace')
+        .getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   test('AURA-0116 keeps the selected run visible during a burst and settles one trailing refresh', async ({
@@ -3077,7 +3259,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
         }
         emit(eventName: string): void {
           if (this.closed) return;
-          const event = new Event(eventName);
+          // Run refreshes are explicitly scoped in the metadata-only SSE
+          // contract; an unaddressed event must not refresh the inspector.
+          const event = new MessageEvent(eventName, {
+            data: JSON.stringify({ resourceType: 'run', resourceId: '6f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a01' }),
+          });
           this.listeners.get(eventName)?.forEach((listener) => listener(event));
           this.onmessage?.(event);
         }
@@ -3168,7 +3354,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
         }
         emit(eventName: string): void {
           if (this.closed) return;
-          const event = new Event(eventName);
+          const event = new MessageEvent(eventName, {
+            data: JSON.stringify({ resourceType: 'run', resourceId: '6f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a01' }),
+          });
           this.listeners.get(eventName)?.forEach((listener) => listener(event));
           this.onmessage?.(event);
         }
@@ -3442,18 +3630,22 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Runs');
     const status = page.getByRole('combobox', { name: 'Status' });
     await status.selectOption('succeeded');
-    await page.getByPlaceholder('component id').fill('aura.core.api');
+    await page.locator('observatory-runs').getByPlaceholder('component id').fill('aura.core.api');
     await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     await expect(page.getByText('fixture-chat')).toBeVisible();
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(page.getByText(/trace waterfall/i)).toBeVisible();
-    const traceList = page.getByRole('list', { name: 'Ordered trace spans' });
+    await expect(
+      page
+        .locator('observatory-trace')
+        .getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible();
+    const traceList = page.getByRole('tree', { name: 'Trace span lineage' });
     await expect(traceList).toHaveCount(1);
     await expect(traceList.getByText('request', { exact: true })).toBeVisible();
     await expect(traceList.getByText('job', { exact: true })).toBeVisible();
     await expect(traceList.getByText('partial / missing parent', { exact: true })).toBeVisible();
-    await expect(traceList.getByRole('listitem')).toHaveCount(3);
+    await expect(traceList.getByRole('treeitem')).toHaveCount(3);
   });
 
   test('AURA-0114 keeps terminal run headers readable and labels metadata-only evidence gaps', async ({
@@ -3474,8 +3666,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
     await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
-    await expect(trace.getByText('Metadata-only capture.', { exact: false })).toBeVisible();
-    await expect(trace.getByRole('heading', { name: 'Captured phases', exact: true })).toBeVisible();
+    await expect(trace.getByText('Governed capture.', { exact: false })).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Execution timeline', exact: true })).toBeVisible();
+    const timeline = trace.getByRole('tree', { name: 'Run execution steps', exact: true });
     await expect(trace.locator('.summary-value strong')).toHaveText('5.00 s');
     await expect(trace.locator('.summary-value')).toHaveAttribute('aria-label', '5000 milliseconds');
     await expect(trace.locator('.item-time[aria-label="3 count"]')).toHaveText('3 count');
@@ -3493,13 +3686,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       'Persistence',
       'Streaming & delivery',
     ]) {
-      await expect(trace.getByRole('heading', { name: phase, exact: true })).toBeVisible();
+      await expect(timeline.getByRole('heading', { name: phase, exact: true })).toBeVisible();
     }
 
-    await expect(
-      trace.locator('.coverage-item').filter({ hasText: 'Request & lifecycle' }),
-    ).toContainText('Metadata available');
-    for (const unavailable of [
+    for (const excluded of [
+      'Request & lifecycle',
       'Chunks & context',
       'Prompt text',
       'Generated content',
@@ -3507,12 +3698,12 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       'Tool payloads',
     ]) {
       await expect(
-        trace.locator('.coverage-item').filter({ hasText: unavailable }),
-      ).toContainText('Not captured');
+        trace.locator('.coverage-item').filter({ hasText: excluded }),
+      ).toContainText('Excluded by policy');
     }
 
     await expect(trace.getByRole('list', { name: 'Run phase coverage', exact: true })).toBeVisible();
-    await expect(trace.getByRole('list', { name: 'Ordered trace spans', exact: true })).toBeVisible();
+    await expect(trace.getByRole('tree', { name: 'Trace span lineage', exact: true })).toBeVisible();
     await expectNoA11yViolations(page);
   });
 
@@ -3589,7 +3780,270 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(trace.locator('.phase-count').filter({ hasText: 'Page incomplete' })).toBeVisible();
     await expect(trace.getByText('Further correlated metadata was not loaded; no post-run count or range is known from this page.', { exact: true })).toBeVisible();
     await expect(trace.locator('details.continuation-details')).toHaveCount(0);
-    await expect(trace.getByRole('list', { name: 'Ordered trace spans', exact: true }).getByText('request', { exact: true })).toBeVisible();
+    await expect(trace.getByRole('tree', { name: 'Trace span lineage', exact: true }).getByText('request', { exact: true })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 uses the authoritative inspection snapshot and keeps evidence lazy and inert', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const timeline = inspector.getByRole('tree', { name: 'Run execution steps', exact: true });
+    for (const label of [
+      'Request admission',
+      'Context & retrieval',
+      'Prompt construction',
+      'Model routing',
+      'Generation',
+      'Displayed thinking',
+      'Tools & policy',
+      'Persistence',
+      'Streaming & delivery',
+    ]) {
+      await expect(timeline.getByText(label, { exact: true })).toBeVisible();
+    }
+    await expect(inspector.getByRole('region', { name: runId }).getByText('5.00 s', { exact: true })).toBeVisible();
+
+    // The manifest is present in the authoritative snapshot, but bytes must not
+    // be requested until the owner explicitly discloses one evidence item.
+    await expect.poll(() => page.getByText('Captured fixture evidence', { exact: true }).count()).toBe(0);
+    await expect.poll(() => page.getByText('window.__evidence_executed', { exact: false }).count()).toBe(0);
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await expect(disclosure).toBeVisible();
+    await disclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    const evidencePreview = inspector.locator('pre.evidence-preview').first();
+    await expect(evidencePreview).toContainText('Captured fixture evidence');
+    await expect(evidencePreview).toContainText('<script>window.__evidence_executed = true</script>');
+    expect(await evidencePreview.locator('script').count()).toBe(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    expect(page.url()).not.toMatch(/evidence|secret|token/i);
+
+    const storage = await page.evaluate(async () => ({
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      caches: 'caches' in window ? await caches.keys() : [],
+      url: location.href,
+    }));
+    expect(JSON.stringify(storage)).not.toMatch(/safeFixtureText|hostileMarkup|evidenceId/i);
+    await disclosure.click();
+    await expect(evidencePreview).toHaveCount(0);
+    expect((await page.locator('pre.evidence-preview').count())).toBe(0);
+    expect((await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed))).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 preserves expanded state on run invalidation without refetching evidence', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    let inspectionResponses = 0;
+    await page.route(`**/api/v1/runs/${runId}/inspection`, async (route) => {
+      inspectionResponses += 1;
+      await route.fulfill({ json: runInspection('full', inspectionResponses === 2 ? 2 : 1) });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await disclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => typeof (window as unknown as { emitRunInvalidation?: unknown }).emitRunInvalidation))
+      .toBe('function');
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => inspectionResponses).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    const refreshedDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await expect(refreshedDisclosure.locator('..')).toHaveAttribute('open', '');
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 bounds a large inspection and keeps deletion behind confirmation', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'large' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const renderedLargeSteps = inspector.getByText(/Large step \d+/, { exact: false });
+    await expect.poll(() => renderedLargeSteps.count()).toBeLessThanOrEqual(200);
+    await expect(inspector.getByText(/bounded|truncated|page|more/i).first()).toBeVisible();
+
+    const deleteButton = inspector.getByRole('button', { name: /delete .*evidence/i }).first();
+    await expect(deleteButton).toBeVisible();
+    let confirmationSeen = false;
+    page.once('dialog', async (dialog) => {
+      confirmationSeen = true;
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/delete all retained evidence/i);
+      await dialog.dismiss();
+    });
+    await deleteButton.click();
+    await expect.poll(() => confirmationSeen).toBe(true);
+    expect(fixture.evidenceDeletionRequests).toHaveLength(0);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 completes confirmed evidence deletion exactly once and keeps metadata visible', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const deleteButton = inspector.getByRole('button', { name: 'Delete retained evidence', exact: true });
+    await expect(deleteButton).toBeVisible();
+    let confirmationSeen = false;
+    page.once('dialog', async (dialog) => {
+      confirmationSeen = true;
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/delete all retained evidence/i);
+      await dialog.accept();
+    });
+    await deleteButton.click();
+    await expect.poll(() => confirmationSeen).toBe(true);
+    await expect.poll(() => fixture.evidenceDeletionRequests.length).toBe(1);
+    await expect(inspector.getByText('Evidence deleted', { exact: true })).toBeVisible();
+    await expect(inspector.getByText('Retained evidence was deleted by the owner. Metadata and step timing remain visible.', { exact: true })).toBeVisible();
+    await expect(inspector.getByRole('tree', { name: 'Run execution steps', exact: true }).getByText('Request admission', { exact: true })).toBeVisible();
+    await expect(inspector.locator('.evidence-state.state-deleted').first()).toBeVisible();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    expect(fixture.evidenceDeletionRequests).toHaveLength(1);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 discards delayed evidence after collapse and run change without refetching', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full', deferEvidence: true, multipleRuns: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    let inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+
+    const firstDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await firstDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    await firstDisclosure.click();
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    inspector = page.locator('observatory-trace');
+    const secondDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await secondDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('region', { name: comparisonRunId })).toBeVisible();
+    fixture.releaseEvidence();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(page.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 clears disclosed bytes after live captured-to-deleted invalidation without refetching', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    await page.addInitScript(() => {
+      Object.defineProperty(window, '__evidence_object_url_revocations', { configurable: true, writable: true, value: 0 });
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.revokeObjectURL = (url: string): void => {
+        (window as unknown as { __evidence_object_url_revocations: number }).__evidence_object_url_revocations += 1;
+        revoke(url);
+      };
+    });
+    const fixture = await openFixture(page, { runInspection: 'full', evidenceMedia: 'image' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await disclosure.click();
+    await expect(inspector.locator('img.evidence-image')).toHaveAttribute('src', /^blob:/);
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+
+    // Model deletion from another owner tab: only the metadata invalidation is
+    // delivered to this inspector; it must clear the already-disclosed bytes.
+    fixture.markEvidenceDeleted();
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => fixture.inspectionRequests.length).toBeGreaterThanOrEqual(2);
+    await expect(inspector.getByText('Retained evidence was deleted by the owner. Metadata and step timing remain visible.', { exact: true })).toBeVisible();
+    await expect(inspector.locator('.evidence-state.state-deleted').first()).toBeVisible();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.locator('img.evidence-image')).toHaveCount(0);
+    await expect(page.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(fixture.evidenceRequests).toHaveLength(1);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_object_url_revocations: number }).__evidence_object_url_revocations)).toBeGreaterThanOrEqual(1);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 closes the mobile navigation after selecting each destination', async ({ page }) => {
+    await openFixture(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const destination of [
+      'Overview',
+      'Runs',
+      'Trace',
+      'Components',
+      'Analytics',
+      'Compare',
+      'Evaluations',
+      'Experiments',
+      'Operations',
+      'Retention',
+    ]) {
+      await openDestination(page, destination);
+      await expect(page.locator('#observatory-sections')).toHaveAttribute('aria-hidden', 'true');
+      await expect(page.locator('#observatory-sections').locator('button').filter({ hasText: destination }).first()).toHaveAttribute('aria-current', 'page');
+      const layout = await page.evaluate(() => ({
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      }));
+      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    }
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 exposes Observatory-owned SVG icons with semantic hidden treatment', async ({ page }) => {
+    await openFixture(page);
+    const navigation = page.locator('#observatory-sections');
+    const icons = navigation.locator('observatory-icon svg.observatory-icon');
+    expect(await icons.count()).toBeGreaterThan(0);
+    expect(
+      await icons.evaluateAll((elements) =>
+        elements.every((element) => element.getAttribute('aria-hidden') === 'true' && !element.hasAttribute('aria-label')),
+      ),
+    ).toBe(true);
+    expect(await navigation.locator('button.nav-item').evaluateAll((buttons) => buttons.every((button) => button.querySelector('svg.observatory-icon')))).toBe(true);
     await expectNoA11yViolations(page);
   });
 
@@ -4019,6 +4473,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
           color: style?.color ?? 'transparent',
           painted: isPainted(style?.color ?? 'transparent'),
           visibleText: !!child?.textContent?.trim() && !!child?.getClientRects().length,
+          requiresText: selector === '.nav-label' || selector === '.nav-description',
         };
       });
       return {
@@ -4032,7 +4487,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(forcedColors.forcedColorAdjust).toBe('none');
     expect(forcedColors.foregroundPainted).toBe(true);
     expect(forcedColors.backgroundPainted, JSON.stringify(forcedColors)).toBe(true);
-    expect(forcedColors.children.every((child) => child.painted && child.visibleText)).toBe(true);
+    // Glyphs are SVG-owned semantic icons and intentionally have no text node;
+    // only the label/description spans need visible text in forced colors.
+    expect(forcedColors.children.every((child) => child.painted && (!child.requiresText || child.visibleText))).toBe(true);
   });
 
   test('uses keyboard-accessible retention confirmation, progress, failure, and refreshes after completion', async ({

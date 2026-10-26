@@ -1,7 +1,58 @@
+import type { RunInspection, TraceDetail } from '@aura/observatory-api-client';
+
 export type PhaseKey = 'request' | 'context' | 'prompt' | 'routing' | 'generation' | 'thinking' | 'tools' | 'persistence' | 'delivery' | 'other';
 export type PhaseItem = { readonly id: string; readonly label: string; readonly operation: string; readonly componentId: string; readonly component: string; readonly outcome: string; readonly startedAt: string; readonly durationMs: number | null; readonly measurementValue: number | null; readonly measurementUnit: string | null; readonly partial: boolean; readonly kind: 'span' | 'measurement' };
 export type LifecycleObservation = { readonly label: string; readonly startedAt: string; readonly outcome: string };
 export type ContinuationSummary = { readonly count: number; readonly startedAt: string | null; readonly endedAt: string | null; readonly outcomes: ReadonlyArray<string>; readonly partial: boolean };
+
+export function lineageLabel(parentStepId: string | null, parentSpanId: string | null): string {
+  return parentStepId ? `parent step ${parentStepId}` : parentSpanId ? `parent span ${parentSpanId}` : 'root branch';
+}
+
+export function spanLineageLabel(parentSpanId: string | null): string { return parentSpanId ? `parent ${parentSpanId}` : 'root span'; }
+
+export function hasParallelBranch(parentSpanId: string | null, siblingParentIds: ReadonlyArray<string | null>): boolean {
+  return parentSpanId !== null && siblingParentIds.filter((candidate) => candidate === parentSpanId).length > 1;
+}
+
+function siblingKey(parentStepId: string | null, parentSpanId: string | null, depth: number): string {
+  if (parentStepId) return `step:${parentStepId}`;
+  if (parentSpanId) return `span:${parentSpanId}`;
+  return `root:${depth}`;
+}
+
+/** ARIA tree positions are relative to siblings, not the flattened sequence. */
+export function inspectionStepPosition(step: RunInspection['steps'][number], steps: ReadonlyArray<RunInspection['steps'][number]>): number {
+  const key = siblingKey(step.parentStepId, step.parentSpanId, step.depth);
+  return steps.filter((candidate) => siblingKey(candidate.parentStepId, candidate.parentSpanId, candidate.depth) === key).findIndex((candidate) => candidate.stepId === step.stepId) + 1;
+}
+
+export function inspectionStepSetSize(step: RunInspection['steps'][number], steps: ReadonlyArray<RunInspection['steps'][number]>): number {
+  const key = siblingKey(step.parentStepId, step.parentSpanId, step.depth);
+  return steps.filter((candidate) => siblingKey(candidate.parentStepId, candidate.parentSpanId, candidate.depth) === key).length;
+}
+
+export function traceSpanPosition(span: TraceDetail['spans'][number], spans: ReadonlyArray<TraceDetail['spans'][number]>): number {
+  const key = siblingKey(null, span.parentSpanId, span.depth);
+  return spans.filter((candidate) => siblingKey(null, candidate.parentSpanId, candidate.depth) === key).findIndex((candidate) => candidate.spanId === span.spanId) + 1;
+}
+
+export function traceSpanSetSize(span: TraceDetail['spans'][number], spans: ReadonlyArray<TraceDetail['spans'][number]>): number {
+  const key = siblingKey(null, span.parentSpanId, span.depth);
+  return spans.filter((candidate) => siblingKey(null, candidate.parentSpanId, candidate.depth) === key).length;
+}
+
+/** Aggregate repeat deliveries by stable step identity before applying the UI bound. */
+export function aggregateInspectionSteps(steps: RunInspection['steps'], limit: number): RunInspection['steps'] {
+  const aggregate = new Map<string, RunInspection['steps'][number]>();
+  const rank = (state: string): number => ({ failed: 6, rejected: 5, cancelled: 4, succeeded: 3, running: 2, pending: 1, unavailable: 0 }[state] ?? 0);
+  for (const step of [...steps].sort((left, right) => left.sequence - right.sequence || left.stepId.localeCompare(right.stepId))) {
+    const prior = aggregate.get(step.stepId);
+    if (!prior) { aggregate.set(step.stepId, step); continue; }
+    aggregate.set(step.stepId, { ...prior, state: rank(step.state) >= rank(prior.state) ? step.state : prior.state, finishedAt: step.finishedAt ?? prior.finishedAt, durationMs: step.durationMs ?? prior.durationMs, measurements: step.measurements.length ? step.measurements : prior.measurements, evidence: [...new Map([...prior.evidence, ...step.evidence].map((item) => [item.evidenceId, item])).values()], partial: prior.partial || step.partial, partialReasons: [...new Set([...prior.partialReasons, ...step.partialReasons])] });
+  }
+  return [...aggregate.values()].sort((left, right) => left.sequence - right.sequence || left.stepId.localeCompare(right.stepId)).slice(0, limit);
+}
 
 const TERMINAL_OUTCOMES = new Set(['succeeded', 'failed', 'cancelled']);
 

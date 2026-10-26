@@ -21,6 +21,7 @@ import type {
 import { blankInput, OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort } from '../../observatory-gateway';
 import { ObservatoryStore } from '../../observatory-store';
 import { EXPERIMENT_VARIANT_MAX, EXPERIMENT_VARIANT_MIN, PROMOTION_CONFIRMATION, hasValidExperimentVariants } from './experiment-contract-guards';
+import { experimentWorkspaceStateFor as deriveExperimentWorkspaceState } from './experiment-state.utils';
 
 export type ExperimentWorkspaceState = 'loading' | 'ready' | 'empty' | 'partial' | 'stale' | 'disconnected' | 'rejected' | 'unauthorized' | 'unavailable' | 'incompatible' | 'insufficient-evidence' | 'inconclusive' | 'error';
 
@@ -40,6 +41,7 @@ export interface ExperimentWorkspaceData {
 const emptyData = (): ExperimentWorkspaceData => ({ experiments: null, baselines: null, regressions: null, history: null, suites: null, evaluators: null, results: null, cases: null, deployments: null, attribution: null });
 let fallbackId = 1;
 const id = (): string => typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(fallbackId++).padStart(12, '0')}`;
+
 
 /** Ephemeral experiment state. No browser storage, cache, or URL state is used. */
 @Injectable()
@@ -85,7 +87,9 @@ export class ExperimentWorkspaceStore {
       this.data.set(next);
       const selected = this.selectedRegression();
       if (selected) this.selectedRegression.set(next.regressions?.items.find((item) => item.regressionId === selected.regressionId && item.regressionVersion === selected.regressionVersion) ?? null);
-      this.state.set(this.stateFor(next, results.some((item) => item.status === 'rejected')));
+      const rejected = results.filter((item) => item.status === 'rejected').length;
+      const fulfilled = results.length - rejected;
+      this.state.set(this.stateFor(next, rejected > 0, fulfilled));
       this.lastUpdatedAt.set(new Date().toISOString());
     } catch (cause) {
       if (generation !== this.requestGeneration) return;
@@ -178,5 +182,5 @@ export class ExperimentWorkspaceStore {
 
   private captureError(cause: unknown, fallback: string): void { if (cause instanceof ObservatorySessionRequiredError) { this.observatoryStore?.requireSession(); this.state.set('unauthorized'); } else if (cause instanceof Error && /unavailable/i.test(cause.message)) this.state.set('unavailable'); else this.state.set(this.data().experiments ? 'stale' : 'error'); this.error.set(fallback); }
   private hasRows(data: ExperimentWorkspaceData): boolean { return Boolean(data.experiments?.items.length || data.baselines?.items.length || data.regressions?.items.length || data.history?.items.length); }
-  private stateFor(data: ExperimentWorkspaceData, rejected: boolean): ExperimentWorkspaceState { if (rejected) return this.hasRows(data) ? 'partial' : 'unavailable'; if (data.regressions?.items.some((item) => item.evidenceState === 'incompatible')) return 'incompatible'; if (data.regressions?.items.some((item) => item.evidenceState === 'insufficient' || item.evidenceState === 'missing')) return 'insufficient-evidence'; if (data.regressions?.items.some((item) => item.evidenceState === 'late')) return 'stale'; if (data.regressions?.items.some((item) => item.decision === 'inconclusive')) return 'inconclusive'; return this.hasRows(data) ? 'ready' : 'empty'; }
+  private stateFor(data: ExperimentWorkspaceData, rejected: boolean, fulfilledSources: number): ExperimentWorkspaceState { return deriveExperimentWorkspaceState(data, rejected, fulfilledSources) as ExperimentWorkspaceState; }
 }

@@ -1,10 +1,14 @@
-import { ChangeDetectionStrategy, Component, DoCheck, ElementRef, inject, ViewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DoCheck, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { componentAvailabilityLabel, componentCatalogueViewFor, dependencyNodeForEdge } from '../../observatory-models';
 import { ObservatoryStore } from '../../observatory-store';
+import { ObservatoryIconComponent } from '../../presentation/observatory-icon.component';
+
+const MAX_COMPONENTS = 60;
 
 @Component({
-  selector: 'observatory-components', standalone: true, imports: [DatePipe], changeDetection: ChangeDetectionStrategy.OnPush,
+  selector: 'observatory-components', standalone: true, imports: [DatePipe, FormsModule, ObservatoryIconComponent], changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="catalogue-section" [class.catalogue-hidden-small]="store.selectedComponent()" aria-labelledby="components-title">
       <div class="section-heading"><div><p class="eyebrow">Catalogue and topology</p><h2 id="components-title">Components</h2><p class="muted">Definitions are repository-approved metadata. Observed-only components are shown without inventing ownership or dependencies.</p></div><button type="button" class="secondary-button" (click)="retry()">Refresh catalogue</button></div>
@@ -13,11 +17,11 @@ import { ObservatoryStore } from '../../observatory-store';
       @else {
         @if (store.resourceState('components') === 'stale') { <div class="state notice" role="status"><strong>Showing the last known component catalogue.</strong><p>Some component data could not be refreshed.</p><button type="button" (click)="retry()">Retry</button></div> }
         @if (catalogueView() === 'empty') { <p class="empty" role="status">No component definitions or observed components are available yet.</p> }
-        @else { <div class="component-grid" aria-label="Component catalogue">
-          @for (component of store.components(); track component.componentId) {
+        @else { <div class="catalogue-controls" role="search" aria-label="Filter component catalogue"><label for="component-search">Search components<input id="component-search" type="search" [value]="searchTerm()" (input)="searchTerm.set($any($event.target).value)" placeholder="component id or version" /></label><label for="component-definition-filter">Definition state<select id="component-definition-filter" [value]="definitionFilter()" (change)="definitionFilter.set($any($event.target).value)"><option value="all">All states</option><option value="declared">Declared</option><option value="observed_only">Observed only</option><option value="missing">Definition unavailable</option></select></label><p class="catalogue-summary" role="status">Showing {{ visibleComponents().length }} of {{ store.components().length }} components</p></div>@if (!visibleComponents().length) { <p class="empty" role="status">No components match this search or definition filter.</p> } @else { <div class="component-grid" aria-label="Component catalogue">
+          @for (component of visibleComponents().slice(0, MAX_COMPONENTS); track component.componentId) {
             <article class="component-card" [attr.aria-labelledby]="'component-' + safeId(component.componentId)">
-              <div class="card-heading"><div><h3 [id]="'component-' + safeId(component.componentId)">{{ component.componentId }}</h3><p class="muted">Observed versions: {{ component.versions.join(', ') || 'none' }}</p></div><span class="state-badge" [class.badge-bad]="component.health.errorRate !== null && component.health.errorRate > .1" [class.badge-info]="component.health.errorRate === null" [class.badge-good]="component.health.errorRate !== null && component.health.errorRate <= .1"><span aria-hidden="true">{{ component.health.errorRate === null ? '?' : component.health.errorRate > .1 ? '!' : '✓' }}</span> {{ healthLabel(component.health.errorRate) }}</span></div>
-              <p class="definition-state" [class.observed-only]="component.definitionState === 'observed_only'"><span aria-hidden="true">{{ component.definitionState === 'declared' ? '◆' : '○' }}</span> {{ definitionLabel(component.definitionState) }}</p>
+              <div class="card-heading"><div><h3 [id]="'component-' + safeId(component.componentId)">{{ component.componentId }}</h3><p class="muted">Observed versions: {{ component.versions.join(', ') || 'none' }}</p></div><span class="state-badge" [class.badge-bad]="component.health.errorRate !== null && component.health.errorRate > .1" [class.badge-info]="component.health.errorRate === null" [class.badge-good]="component.health.errorRate !== null && component.health.errorRate <= .1"><observatory-icon [name]="healthIcon(component.health.errorRate)" /> {{ healthLabel(component.health.errorRate) }}</span></div>
+              <p class="definition-state" [class.observed-only]="component.definitionState === 'observed_only'"><observatory-icon [name]="component.definitionState === 'declared' ? 'success' : 'document'" /> {{ definitionLabel(component.definitionState) }}</p>
               @if (component.definitionVersions?.length) { <p class="muted">Declared versions: {{ component.definitionVersions.join(', ') }}</p> }
               <dl><div><dt>Samples</dt><dd>{{ component.health.sampleCount }}</dd></div><div><dt>P50 latency</dt><dd>{{ component.health.latencyP50Ms === null ? 'Not observed' : component.health.latencyP50Ms + ' ms' }}</dd></div><div><dt>P95 latency</dt><dd>{{ component.health.latencyP95Ms === null ? 'Not observed' : component.health.latencyP95Ms + ' ms' }}</dd></div><div><dt>Outcomes</dt><dd>{{ component.health.outcomes.succeeded }} succeeded / {{ component.health.outcomes.failed }} failed; {{ errorRateLabel(component.health.errorRate) }}</dd></div></dl>
               @if (store.isComponentHealthLoading(component.componentId)) { <p class="muted" role="status">Loading bounded health trend…</p> } @else { <div class="trend">@for (point of trend(component.componentId); track point.startAt) { <span [style.height.%]="bar(point.summary.sampleCount)" [attr.title]="point.startAt | date:'short'" [attr.aria-label]="point.summary.sampleCount + ' samples at ' + (point.startAt | date:'short')" role="img">{{ point.summary.sampleCount }}</span> }</div><p class="trend-legend">Trend shows sample volume; exact latency and outcome values are listed above.</p> }
@@ -27,7 +31,8 @@ import { ObservatoryStore } from '../../observatory-store';
               @else { <p class="observed-copy">No approved definition is available for this observed component.</p> }
             </article>
           }
-        </div> }
+        </div> } @if (visibleComponents().length > MAX_COMPONENTS) { <p class="catalogue-limit">Showing the first {{ MAX_COMPONENTS }} components to keep this workspace responsive. Refine the search to inspect more.</p> }
+      }
       }
     </section>
     @if (store.selectedComponent(); as selected) {
@@ -70,22 +75,37 @@ import { ObservatoryStore } from '../../observatory-store';
     .topology-summary { margin-top:1.5rem; padding-top:1.25rem; }
     .dependency-columns { gap:1.5rem; }
     @media (max-width:640px) { .component-card,.details-panel { padding:1.1rem; } .component-grid { gap:1rem; } }
+  `, `
+    .catalogue-controls { align-items:end; background:var(--surface-subtle); border:1px solid var(--border); border-radius:.65rem; display:grid; gap:1rem; grid-template-columns:minmax(12rem,1fr) minmax(10rem,16rem) auto; margin-bottom:1.25rem; padding:1rem; }
+    .catalogue-controls label { color:var(--text-muted); display:grid; font-size:.76rem; font-weight:700; gap:.35rem; }
+    .catalogue-controls input,.catalogue-controls select { background:var(--surface); border:1px solid var(--control-border); border-radius:.4rem; color:var(--text); min-height:2.35rem; padding:.4rem .55rem; }
+    .catalogue-summary,.catalogue-limit { color:var(--text-muted); font-size:.76rem; margin:0; }
+    .catalogue-limit { margin-top:1rem; }
+    .state-badge observatory-icon,.definition-state observatory-icon { vertical-align:-.1em; }
+    @media (max-width:640px) { .catalogue-controls { grid-template-columns:1fr; } }
   `],
 })
 export class ObservatoryComponentsComponent implements DoCheck {
   readonly store = inject(ObservatoryStore);
+  readonly MAX_COMPONENTS = MAX_COMPONENTS;
+  readonly searchTerm = signal('');
+  readonly definitionFilter = signal<'all' | 'declared' | 'observed_only' | 'missing'>('all');
   @ViewChild('componentDetailsTitle') private componentDetailsTitle?: ElementRef<HTMLHeadingElement>;
   private detailOpener: HTMLButtonElement | null = null;
   private readonly prefetchPending = new Set<string>();
   ngDoCheck(): void {
-    for (const component of this.store.components()) {
+    // Keep health prefetch bounded to the same catalogue window rendered by
+    // this view. A large catalogue must not turn change detection into an
+    // unbounded request fan-out.
+    for (const component of this.visibleComponents().slice(0, MAX_COMPONENTS)) {
       const id = component.componentId;
       if (this.store.componentHealthById()[id] || this.store.componentHealthErrors()[id] || this.store.isComponentHealthLoading(id) || this.prefetchPending.has(id)) continue;
       this.prefetchPending.add(id);
       queueMicrotask(() => { this.prefetchPending.delete(id); if (!this.store.componentHealthById()[id] && !this.store.isComponentHealthLoading(id)) void this.store.componentHealth(id); });
     }
   }
-  trend(componentId: string) { return this.store.componentHealthById()[componentId]?.points ?? []; }
+  trend(componentId: string) { return (this.store.componentHealthById()[componentId]?.points ?? []).slice(0, 12); }
+  visibleComponents() { const search = this.searchTerm().trim().toLowerCase(); const filter = this.definitionFilter(); return this.store.components().filter((component) => (!search || [component.componentId, ...component.versions].some((value) => value.toLowerCase().includes(search))) && (filter === 'all' || component.definitionState === filter)); }
   catalogueView() { return componentCatalogueViewFor(this.store.resourceState('components'), this.store.components().length); }
   bar(sampleCount: number): number { const max = Math.max(...this.store.components().map((component) => component.health.sampleCount), 1); return Math.max(5, Math.round((sampleCount / max) * 100)); }
   healthError(componentId: string): string | null { return this.store.componentHealthErrors()[componentId] ?? null; }
@@ -104,6 +124,7 @@ export class ObservatoryComponentsComponent implements DoCheck {
   versionFor(component: { readonly versions: ReadonlyArray<string>; readonly definitionVersions?: ReadonlyArray<string> }): string { return component.definitionVersions?.[0] ?? component.versions[0] ?? 'unknown'; }
   definitionLabel(state: string | undefined): string { return state === 'declared' ? 'Declared definition' : state === 'missing' ? 'Definition unavailable' : 'Observed only'; }
   healthLabel(errorRate: number | null): string { return errorRate === null ? 'No outcome data' : errorRate > .1 ? 'Degraded' : 'Healthy'; }
+  healthIcon(errorRate: number | null): 'success' | 'warning' | 'overview' { return errorRate === null ? 'overview' : errorRate > .1 ? 'warning' : 'success'; }
   errorRateLabel(errorRate: number | null): string { return errorRate === null ? 'No outcome data' : `${Math.round(errorRate * 100)}% errors`; }
   detailAnnouncement(state: string): string { return state === 'loading' ? 'Component details loading.' : state === 'partial' ? 'Component details partially loaded.' : state === 'error' ? 'Component details unavailable.' : state === 'ready' ? 'Component details loaded.' : ''; }
   resolutionLabel(resolution: string): string { return resolution === 'resolved' ? 'Resolved' : resolution === 'missing_definition' ? 'Missing definition' : 'Version unavailable'; }

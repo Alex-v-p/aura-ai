@@ -3,13 +3,14 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { StatePanelComponent } from '@aura/shared/ui';
 import { ObservatoryStore } from '../../observatory-store';
 import { ownerLoginHref } from '../../observatory-models';
+import { ObservatoryIconComponent, type ObservatoryIconName } from '../../presentation/observatory-icon.component';
 
 type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable';
 
 @Component({
   selector: 'observatory-overview',
   standalone: true,
-  imports: [StatePanelComponent, DatePipe, DecimalPipe],
+  imports: [StatePanelComponent, DatePipe, DecimalPipe, ObservatoryIconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.snapshot().state === 'loading') {
@@ -24,17 +25,19 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
     @if (store.snapshot().state !== 'loading' && store.snapshot().state !== 'error') {
       <section class="overview-grid" aria-label="System and ingest health">
         <article class="hero-card" aria-labelledby="system-health-title">
-          <div class="card-heading"><h2 id="system-health-title">System health</h2><span class="state-badge" [class]="'state-' + stateValue()" role="status"><span aria-hidden="true">{{ stateSymbol() }}</span> {{ stateLabel() }}</span></div>
+          <div class="card-heading"><h2 id="system-health-title">System health</h2><span class="state-badge" [class]="'state-' + stateValue()" role="status"><observatory-icon [name]="stateIcon(stateValue())" /> {{ stateLabel() }}</span></div>
           <p class="health-summary">{{ stateMessage() }}</p>
           <p class="muted">Snapshot observed {{ store.snapshot().lastUpdatedAt | date:'medium' }}. State is based on bounded Observatory metadata.</p>
         </article>
-        <article class="metric-card" aria-labelledby="observations-title"><h2 id="observations-title">Observations</h2><strong>{{ store.snapshot().overview?.observationCount ?? 0 | number }}</strong><small>Metadata-only records</small></article>
-        <article class="metric-card" aria-labelledby="runs-title"><h2 id="runs-title">Runs</h2><strong>{{ store.snapshot().overview?.runCount ?? 0 | number }}</strong><small>Derived run projections</small></article>
+        <article class="metric-card" aria-labelledby="observations-title"><h2 id="observations-title">Observations <span class="metric-context">lifetime</span></h2><strong>{{ store.snapshot().overview?.observationCount ?? 0 | number }}</strong><small>Cumulative retained metadata records</small></article>
+        <article class="metric-card" aria-labelledby="runs-title"><h2 id="runs-title">Runs <span class="metric-context">lifetime</span></h2><strong>{{ store.snapshot().overview?.runCount ?? 0 | number }}</strong><small>Cumulative derived run projections</small></article>
         <article class="ingest-card" aria-labelledby="ingest-title">
-          <div class="card-heading"><h2 id="ingest-title">Ingest health</h2><span class="state-badge" [class]="'state-' + ingestState()"><span aria-hidden="true">{{ stateSymbol(ingestState()) }}</span> {{ stateLabel(ingestState()) }}</span></div>
-          <dl class="counts"><div><dt>Accepted</dt><dd>{{ store.snapshot().overview?.ingest?.counts?.accepted ?? 0 | number }}</dd></div><div><dt>Rejected</dt><dd>{{ store.snapshot().overview?.ingest?.counts?.rejected ?? 0 | number }}</dd></div><div><dt>Duplicates</dt><dd>{{ store.snapshot().overview?.ingest?.counts?.duplicate ?? 0 | number }}</dd></div><div><dt>Malformed</dt><dd>{{ store.snapshot().overview?.ingest?.counts?.malformed ?? 0 | number }}</dd></div><div><dt>Storage failures</dt><dd>{{ store.snapshot().overview?.ingest?.counts?.storageFailure ?? 0 | number }}</dd></div></dl>
+          <div class="card-heading"><h2 id="ingest-title">Ingest health</h2><span class="state-badge" [class]="'state-' + ingestState()"><observatory-icon [name]="stateIcon(ingestState())" /> {{ stateLabel(ingestState()) }}</span></div>
+          <p class="metric-note">These are cumulative ingest counters; the health verdict above is based on current freshness, backlog, and worker signals.</p><dl class="counts"><div><dt>Accepted <span class="metric-context">lifetime</span></dt><dd>{{ store.snapshot().overview?.ingest?.counts?.accepted ?? 0 | number }}</dd></div><div><dt>Rejected <span class="metric-context">lifetime</span></dt><dd>{{ store.snapshot().overview?.ingest?.counts?.rejected ?? 0 | number }}</dd></div><div><dt>Duplicates <span class="metric-context">lifetime</span></dt><dd>{{ store.snapshot().overview?.ingest?.counts?.duplicate ?? 0 | number }}</dd></div><div><dt>Malformed <span class="metric-context">lifetime</span></dt><dd>{{ store.snapshot().overview?.ingest?.counts?.malformed ?? 0 | number }}</dd></div><div><dt>Storage failures <span class="metric-context">lifetime</span></dt><dd>{{ store.snapshot().overview?.ingest?.counts?.storageFailure ?? 0 | number }}</dd></div></dl>
         </article>
       </section>
+
+      @if (historyTrend().length) { <section class="trend-section" aria-labelledby="trend-title"><div class="section-heading"><div><p class="eyebrow">Current signal</p><h2 id="trend-title">Backlog trend</h2><p class="muted">Recent health snapshots, newest first. This compact view is separate from cumulative counters.</p></div><span class="trend-summary">Latest {{ historyTrend()[0].backlogCount | number }} pending</span></div><div class="trend-strip" role="img" [attr.aria-label]="trendAriaLabel()">@for (item of historyTrend(); track item.snapshotId) { <span [style.height.%]="trendHeight(item.backlogCount)" [attr.title]="(item.observedAt | date:'short') + ': ' + item.backlogCount + ' pending'" aria-hidden="true"></span> }</div><p class="trend-legend">Bars show pending receipts; exact values remain available to assistive technology below.</p><ul class="sr-only">@for (item of historyTrend(); track item.snapshotId) { <li>{{ item.observedAt | date:'medium' }}: {{ item.backlogCount | number }} pending receipts</li> }</ul></section> }
 
       @if (currentHealth(); as health) {
         <section class="health-section" aria-labelledby="self-monitoring-title">
@@ -57,7 +60,7 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
         @if (store.healthHistory().state === 'stale') { <p role="status" class="notice">Showing the last known health history while the service catches up. <button type="button" (click)="store.refreshHealthHistory()">Retry</button></p> }
         @if (store.healthHistory().state === 'empty') { <p role="status" class="empty">No health snapshots have been recorded yet.</p> }
         @if (store.healthHistory().page; as page) {
-          @if (page.items.length) { <div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable recent health snapshots table"><table><caption class="sr-only">Recent Observatory health snapshots</caption><thead><tr><th scope="col">Observed</th><th scope="col">State</th><th scope="col">Intake lag</th><th scope="col">Backlog</th><th scope="col">Heartbeat age</th><th scope="col">Visibility lag</th></tr></thead><tbody>@for (item of page.items; track item.snapshotId) { <tr><th scope="row">{{ item.observedAt | date:'short' }}</th><td><span class="state-text"><span aria-hidden="true">{{ stateSymbol(item.state) }}</span> {{ stateLabel(item.state) }}</span></td><td>{{ duration(item.intakeLagMs) }}</td><td>{{ item.backlogCount | number }}</td><td>{{ duration(item.workerHeartbeatAgeMs) }}</td><td>{{ item.visibilityLagCount | number }}</td></tr> }</tbody></table></div> }
+          @if (page.items.length) { <div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable recent health snapshots table"><table><caption class="sr-only">Recent Observatory health snapshots</caption><thead><tr><th scope="col">Observed</th><th scope="col">State</th><th scope="col">Intake lag</th><th scope="col">Backlog</th><th scope="col">Heartbeat age</th><th scope="col">Visibility lag</th></tr></thead><tbody>@for (item of page.items; track item.snapshotId) { <tr><th scope="row">{{ item.observedAt | date:'short' }}</th><td><span class="state-text"><observatory-icon [name]="stateIcon(item.state)" /> {{ stateLabel(item.state) }}</span></td><td>{{ duration(item.intakeLagMs) }}</td><td>{{ item.backlogCount | number }}</td><td>{{ duration(item.workerHeartbeatAgeMs) }}</td><td>{{ item.visibilityLagCount | number }}</td></tr> }</tbody></table></div> }
         }
         @if (store.healthHistory().page; as page) { <p class="muted history-footnote">Showing up to {{ page.items.length | number }} snapshots. Updated {{ page.snapshotAt | date:'medium' }}. History is operational metadata only.</p> }
       </section>
@@ -111,6 +114,16 @@ type HealthState = 'healthy' | 'delayed' | 'partial' | 'degraded' | 'unavailable
     @media (max-width:700px) {
       .hero-card,.ingest-card { padding-block:1.25rem; }
     }
+  `, `
+    .metric-card h2 { align-items:baseline; display:flex; gap:.35rem; }
+    .metric-context { color:var(--text-muted); font-size:.68em; font-weight:600; letter-spacing:.02em; text-transform:uppercase; }
+    .metric-note { color:var(--text-muted); font-size:.78rem; margin:.85rem 0 -.45rem; }
+    .trend-section { border-top:1px solid var(--border); margin-top:var(--obs-section-gap); padding-top:1rem; }
+    .trend-summary { background:var(--success-surface); border-radius:999px; color:var(--success-text); font-size:.78rem; font-weight:750; padding:.35rem .6rem; }
+    .trend-strip { align-items:end; background:var(--surface-subtle); border-bottom:1px solid var(--border); display:flex; gap:.35rem; height:5rem; padding:.5rem .6rem 0; }
+    .trend-strip span { background:var(--accent); border-radius:.2rem .2rem 0 0; flex:1; min-height:.25rem; }
+    .trend-legend { color:var(--text-muted); font-size:.75rem; margin:.5rem 0 0; }
+    @media (max-width:700px) { .trend-section { margin-top:1.25rem; } .trend-strip { gap:.2rem; } }
   `],
 })
 export class ObservatoryOverviewComponent {
@@ -121,9 +134,12 @@ export class ObservatoryOverviewComponent {
   stateValue(): HealthState { return this.currentHealth()?.state ?? this.store.snapshot().overview?.systemState ?? 'unavailable'; }
   ingestState(): HealthState { return this.store.snapshot().overview?.ingest?.state ?? 'unavailable'; }
   stateLabel(state: HealthState = this.stateValue()): string { return state.replace('_', ' '); }
-  stateSymbol(state: HealthState = this.stateValue()): string { return ({ healthy: '✓', delayed: '≈', partial: '◐', degraded: '!', unavailable: '×' })[state]; }
+  stateIcon(state: HealthState = this.stateValue()): ObservatoryIconName { return state === 'healthy' ? 'success' : state === 'delayed' || state === 'partial' ? 'warning' : state === 'degraded' ? 'danger' : 'overview'; }
   stateMessage(): string { return ({ healthy: 'Telemetry is arriving and the worker is reporting normally.', delayed: 'Telemetry is arriving, but freshness or backlog thresholds need attention.', partial: 'Some health measurements are incomplete; inspect the explicit metrics below.', degraded: 'One or more health measurements are outside the expected operating range.', unavailable: 'No current health snapshot is available.' })[this.stateValue()]; }
   duration(milliseconds: number | null): string { if (milliseconds === null || !Number.isFinite(milliseconds)) return 'Not reported'; if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`; const seconds = milliseconds / 1000; return seconds < 60 ? `${seconds.toFixed(1)} s` : `${(seconds / 60).toFixed(1)} min`; }
   latency(summary: { latestMs: number | null; p50Ms: number | null; p95Ms: number | null }): string { return `${this.duration(summary.latestMs)} / ${this.duration(summary.p50Ms)} / ${this.duration(summary.p95Ms)}`; }
   reasonLabel(reason: string): string { return reason.replaceAll('_', ' '); }
+  historyTrend() { return (this.store.healthHistory().page?.items ?? []).slice(0, 12); }
+  trendHeight(value: number): number { const max = Math.max(...this.historyTrend().map((item) => item.backlogCount), 1); return Math.max(8, Math.round((value / max) * 100)); }
+  trendAriaLabel(): string { const items = this.historyTrend(); return `Backlog trend across ${items.length} health snapshots; latest ${items[0]?.backlogCount ?? 0} pending receipts.`; }
 }

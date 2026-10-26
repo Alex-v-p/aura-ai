@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0121
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0121-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0121-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0121-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0121-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0121-ux.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0121.yaml
+  - work-items/integration/AURA-0121.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs are schema-valid, respect their authorized
+      paths, and report no unresolved defects; the test/evaluation handoff is
+      intentionally partial because it defers product-wide integration checks.
+    - >-
+      All five required review artifacts are schema-valid PASS verdicts with
+      no findings or unresolved blocks.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators passed; contract and baseline checks
+      correctly reported no applicable changes.
+    - >-
+      The implementation handoff reports 74 Observatory unit tests, one
+      Observatory Web unit test, lint, production build, Storybook build, and
+      whitespace validation passing; the acceptance handoff reports the focused
+      AURA-0114 regression, 16 AURA-0121 desktop/mobile scenarios, full-stack
+      shell, ESLint, changed-path, and whitespace checks passing.
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and the complete current changed-path set remains within its authorized
+      scope.
+    - "git diff --check"
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The complete observatory-web-e2e matrix and the composed full-stack
+    acceptance pass remain delivery-environment checks; the handoff records
+    focused browser and shell coverage while integration did not alter product
+    behavior or test baselines.
+  - >-
+    Final visual browser inspection against the restarted local stack remains
+    an environment-level validation concern and must not expose governed
+    evidence in screenshots or logs.

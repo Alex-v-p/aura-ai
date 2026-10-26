@@ -61,6 +61,24 @@ for field in kindCounts spanRowCount metricRowCount distinctNonEmptyTraceIds uni
 done
 grep -Fq 'publicBoundary' "$ROOT/frontend/apps/observatory-web-e2e/src/full-stack.spec.ts"
 grep -Fq 'renderedState' "$ROOT/frontend/apps/observatory-web-e2e/src/full-stack.spec.ts"
+for marker in \
+  'AURA-0121 uses the authoritative inspection snapshot' \
+  'AURA-0121 preserves expanded state on run invalidation' \
+  'AURA-0121 bounds a large inspection' \
+  'AURA-0121 completes confirmed evidence deletion exactly once' \
+  'AURA-0121 discards delayed evidence after collapse and run change' \
+  'AURA-0121 clears disclosed bytes after live captured-to-deleted invalidation' \
+  'AURA-0121 closes the mobile navigation' \
+  'AURA-0121 exposes Observatory-owned SVG icons'; do
+  grep -Fq "$marker" "$ROOT/frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts"
+done
+# Aura Web is a separate product surface. Keep the regression check scoped to
+# production app sources so fixture prose elsewhere cannot create a false
+# coupling alarm.
+if rg -n -i 'observatory' "$ROOT/frontend/apps/aura-web" --glob '*.{ts,html,scss,css,json}' >/dev/null; then
+  echo 'Aura Web contains an Observatory reference' >&2
+  exit 1
+fi
 grep -Fq 'identity-unavailable' "$runner"
 grep -Fq 'regressed on the same instance' "$runner"
 grep -Fq 'containerId' "$core_probe"
